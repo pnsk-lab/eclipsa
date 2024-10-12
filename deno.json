@@ -1,0 +1,19 @@
+{
+  "name": "@xely/eclipsa",
+  "tasks": {
+    "dev": "cd app && deno run -A --watch start.ts"
+  },
+  "imports": { "hono": "npm:hono@^4.6.4", "vite": "npm:vite@^6.0.0-beta.2" },
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true
+  },
+  "nodeModulesDir": "auto",
+  "exports": {
+    "./vite": "./src/vite/mod.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
+  }
+}
