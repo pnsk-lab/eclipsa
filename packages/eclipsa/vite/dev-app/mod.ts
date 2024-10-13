@@ -23,6 +23,7 @@ const createDevApp = (init: DevAppInit) => {
       await init.runner.import('/app/+page.tsx'),
       await init.runner.import('/app/+ssr-root.tsx')
     ])
+    init.runner
 
     const page = Page()
     const parent = SSRRoot({

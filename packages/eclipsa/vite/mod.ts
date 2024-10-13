@@ -9,7 +9,7 @@ import {
   incomingMessageToRequest,
   responseForServerResponse,
 } from '../utils/node-connect.ts'
-import { transformJSX } from './transformer/mod.ts'
+import { transformServerJSX } from './transformer/ssr.ts'
 
 export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
@@ -25,8 +25,7 @@ export const eclipsa = (): Plugin => {
         environments: {
           ssr: {
             dev: {
-              createEnvironment(name, config, context) {
-                context.ws
+              createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
                   hot: false,
                 })
@@ -60,10 +59,13 @@ export const eclipsa = (): Plugin => {
         next()
       })
     },
+    hotUpdate(options) {
+      options.server.hot.send({ type: 'full-reload' })
+    },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
         return {
-          code: transformJSX(code),
+          code: transformServerJSX(code),
         }
       }
     },

@@ -1,6 +1,5 @@
-import {
-  type IncomingMessage,
-  OutgoingMessage,
+import type {
+  IncomingMessage,
   ServerResponse,
 } from 'node:http'
 

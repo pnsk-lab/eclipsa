@@ -8,7 +8,10 @@ export default function Root(props: SSRRootProps) {
         <meta charset='UTF-8' />
         <meta name='viewport' content='width=device-width, initial-scale=1.0' />
         <title>Document</title>
+        <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+        <script>eruda.init();</script>
         {props.head}
+        <script type="module" src="/app/+client.tsx"></script>
       </head>
       <body>
         {props.children}
