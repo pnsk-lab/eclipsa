@@ -1,11 +1,15 @@
 import {
+  createServerModuleRunner,
+  DevEnvironment,
   type Plugin,
   type ResolvedConfig,
-  DevEnvironment,
-  createServerModuleRunner
 } from 'vite'
 import { createDevFetch } from './dev-app/mod.ts'
-import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
+import {
+  incomingMessageToRequest,
+  responseForServerResponse,
+} from '../utils/node-connect.ts'
+import { transformJSX } from './transformer/mod.ts'
 
 export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
@@ -13,17 +17,22 @@ export const eclipsa = (): Plugin => {
     name: 'vite-plugin-eclipsa',
     config() {
       return {
+        esbuild: {
+          jsxFactory: 'jsx',
+          jsxImportSource: '@xely/eclipsa',
+          jsx: 'automatic',
+        },
         environments: {
           ssr: {
             dev: {
               createEnvironment(name, config, context) {
                 context.ws
                 return new DevEnvironment(name, config, {
-                  hot: false
+                  hot: false,
                 })
               },
-            }
-          }
+            },
+          },
         },
       }
     },
@@ -33,13 +42,13 @@ export const eclipsa = (): Plugin => {
     configureServer(server) {
       const ssrEnv = server.environments.ssr
       const runner = createServerModuleRunner(ssrEnv, {
-        hmr: false
+        hmr: false,
       })
       const devFetch = createDevFetch({
         resolvedConfig: config,
         devServer: server,
         runner,
-        ssrEnv
+        ssrEnv,
       })
       server.middlewares.use(async (req, res, next) => {
         const webReq = incomingMessageToRequest(req)
@@ -52,8 +61,10 @@ export const eclipsa = (): Plugin => {
       })
     },
     transform(code, id) {
-      if (id.endsWith('.tsx') && this.environment.name === 'ssr') {
-        return `import { jsx, Fragment } from 'hono/jsx'\n${code}`
+      if (id.endsWith('.tsx')) {
+        return {
+          code: transformJSX(code),
+        }
       }
     },
   }

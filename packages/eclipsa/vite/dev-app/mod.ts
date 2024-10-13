@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
-import type { ResolvedConfig, ViteDevServer, DevEnvironment } from 'vite'
+import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
+import { renderToString } from '../../jsx/mod.ts'
 
 interface DevAppInit {
   resolvedConfig: ResolvedConfig
@@ -11,17 +12,19 @@ interface DevAppInit {
 
 const createDevApp = ({ runner }: DevAppInit) => {
   const app = new Hono()
-  
-  app.get('/', async c => {
+
+  app.get('/', async (c) => {
     const imported = await runner.import('/app/+page.tsx')
-    return c.html(imported.default().toString())
+    return c.html(renderToString(imported.default()))
   })
   return app
 }
-export const createDevFetch = (init: DevAppInit): ((req: Request) => Promise<Response>) => {
+export const createDevFetch = (
+  init: DevAppInit,
+): (req: Request) => Promise<Response> => {
   let app = createDevApp(init)
 
-  return async req => {
+  return async (req) => {
     return await app.fetch(req)
   }
 }

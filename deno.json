@@ -10,5 +10,5 @@
     "singleQuote": true
   },
   "nodeModulesDir": "auto",
-  "compilerOptions": {"jsx": "react-jsx","jsxImportSource": "hono/jsx"}
+  "compilerOptions": {"jsx": "react-jsx","jsxImportSource": "@xely/eclipsa" }
 }

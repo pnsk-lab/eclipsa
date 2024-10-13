@@ -1,7 +1,10 @@
-import { component$ } from '../../packages/eclipsa/mod.ts'
+import { component$, useSignal } from '@xely/eclipsa'
 
-export default component$(() => {
+export default component$((a) => {
+  const count = useSignal(0)
+
   return <div>
-    Hello World
+    <div>Count: {count.value}</div>
+    <button>count ++</button>
   </div>
 })
