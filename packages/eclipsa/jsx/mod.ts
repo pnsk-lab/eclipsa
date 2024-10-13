@@ -1,18 +1,34 @@
 import type { JSX } from './jsx-runtime.ts'
-
-const renderChildable = (childable: JSX.Childable): string =>
-  (childable && typeof childable === 'object' && 'type' in childable)? renderToString(childable): String(childable)
+import { FRAGMENT } from './shared.ts'
 
 export const renderToString = (elem: JSX.Element): string => {
+  if (!elem) {
+    return ''
+  }
+  if (typeof elem === 'string' || typeof elem === 'boolean' || typeof elem === 'number') {
+    return elem.toString()
+  }
   if (typeof elem.type === 'function') {
     return renderToString(elem.type(elem.props))
   }
-  const attrs = elem.props
-  delete attrs.children
-  console.log(elem)
-  return `<${elem.type} ${
-    Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ')
-  }>${
-    Array.isArray(elem.children) ? elem.children?.map(renderChildable).join('') : renderChildable(elem.children)
-  }</${elem.type}>`
+  let attrText = ''
+  for (const [k, v] of Object.entries(elem.props)) {
+    switch (k) {
+      case 'children':
+        break
+      default: {
+        attrText += `${k}="${v}"`
+      }
+    }
+  }
+  let childrenText = ''
+  if (Array.isArray(elem.props.children)) {
+    for (const child of elem.props.children) {
+      childrenText += renderToString(child)
+    }
+  } else {
+    childrenText += renderToString(elem.props.children as JSX.Element)
+  }
+  const result = elem.type === FRAGMENT ? childrenText : `<${elem.type} ${attrText}>${childrenText}</${elem.type}>`
+  return result
 }

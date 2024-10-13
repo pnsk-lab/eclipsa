@@ -54,7 +54,7 @@ export const eclipsa = (): Plugin => {
         const webReq = incomingMessageToRequest(req)
         const webRes = await devFetch(webReq)
         if (webRes) {
-          responseForServerResponse(await devFetch(webReq), res)
+          responseForServerResponse(webRes, res)
           return
         }
         next()

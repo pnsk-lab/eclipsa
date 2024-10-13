@@ -1,14 +1,13 @@
 // deno-lint-ignore no-namespace
 export namespace JSX {
   export type Type = string | ((props: unknown) => Element)
-  export type Childable = Element | string | number | null | undefined | boolean
+  export type Childable = Element
   export type Element = {
     type: Type
     props: Record<string, unknown>
-    children: Childable[] | Childable
-    key: string | number | symbol
+    key?: string | number | symbol
     isStatic: boolean
-  }
+  } | string | number | undefined | null | boolean
 
   export interface IntrinsicAttributes {
     key?: any

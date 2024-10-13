@@ -1,10 +1,12 @@
 import { component$, useSignal } from '@xely/eclipsa'
 
-export default component$((a) => {
+export default component$(() => {
   const count = useSignal(0)
 
   return <div>
     <div>Count: {count.value}</div>
-    <button>count ++</button>
+    <button type="button" onClick$={() => {
+      count.value ++
+    }}>count ++</button>
   </div>
 })

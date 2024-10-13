@@ -1,3 +1,4 @@
+import { FRAGMENT } from './shared.ts'
 import type { JSX } from './types.ts'
 
 interface Source {
@@ -14,5 +15,5 @@ export const jsxDEV = (
   props,
   key,
   isStatic,
-  children: props.children as JSX.Element[],
 })
+export const Fragment = FRAGMENT
