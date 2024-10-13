@@ -1,9 +1,15 @@
-import { defineConfig, DevEnvironment } from 'vite'
-import { eclipsa } from '../src/vite/mod.ts'
+import { defineConfig, type Plugin } from 'vite'
+import { eclipsa } from '@xely/eclipsa/vite'
+import deno from '@deno/vite-plugin'
 
 export default defineConfig({
   appType: 'custom',
   plugins: [
-    eclipsa()
+    deno() as unknown as Plugin,
+    eclipsa() as Plugin
   ],
+  esbuild: {
+    jsxFactory: 'jsx',
+    jsxImportSource: 'hono/jsx'
+  }
 })

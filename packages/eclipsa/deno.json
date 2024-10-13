@@ -1,0 +1,11 @@
+{
+  "name": "@xely/eclipsa",
+  "exports": {
+    ".": "./mod.ts",
+    "./vite": "./vite/mod.ts"
+  },
+  "imports": {
+    "hono": "npm:hono@^4.6.4",
+    "vite": "npm:vite@^6.0.0-beta.2"
+  }
+}

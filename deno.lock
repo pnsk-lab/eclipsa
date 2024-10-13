@@ -1,12 +1,19 @@
 {
   "version": "4",
   "specifiers": {
+    "npm:@deno/vite-plugin@1": "1.0.0_vite@5.4.8__@types+node@22.5.4_@types+node@22.5.4",
     "npm:@types/node@*": "22.5.4",
     "npm:hono@^4.6.4": "4.6.4",
     "npm:vite@*": "5.4.8_@types+node@22.5.4",
     "npm:vite@^6.0.0-beta.2": "6.0.0-beta.2_@types+node@22.5.4"
   },
   "npm": {
+    "@deno/vite-plugin@1.0.0_vite@5.4.8__@types+node@22.5.4_@types+node@22.5.4": {
+      "integrity": "sha512-Q9UeWqs3s7B5lqzu1Z5QrzYAzqTj3+F9YW17tWobGRbT2G40ihwis6zK/+QgMgcG4fm3IqdIfXmpQYhkZpdMfw==",
+      "dependencies": [
+        "vite@5.4.8_@types+node@22.5.4"
+      ]
+    },
     "@esbuild/aix-ppc64@0.21.5": {
       "integrity": "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ=="
     },
@@ -333,9 +340,20 @@
     }
   },
   "workspace": {
-    "dependencies": [
-      "npm:hono@^4.6.4",
-      "npm:vite@^6.0.0-beta.2"
-    ]
+    "members": {
+      "app": {
+        "dependencies": [
+          "npm:@deno/vite-plugin@1",
+          "npm:hono@^4.6.4",
+          "npm:vite@^6.0.0-beta.2"
+        ]
+      },
+      "packages/eclipsa": {
+        "dependencies": [
+          "npm:hono@^4.6.4",
+          "npm:vite@^6.0.0-beta.2"
+        ]
+      }
+    }
   }
 }

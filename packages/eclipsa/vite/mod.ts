@@ -1,5 +1,9 @@
-import { type Plugin, type ResolvedConfig, DevEnvironment } from 'vite'
-import * as path from 'node:path'
+import {
+  type Plugin,
+  type ResolvedConfig,
+  DevEnvironment,
+  createServerModuleRunner
+} from 'vite'
 import { createDevFetch } from './dev-app/mod.ts'
 import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
 
@@ -7,31 +11,37 @@ export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
   return {
     name: 'vite-plugin-eclipsa',
-    config(config, env) {
+    config() {
       return {
         environments: {
-          edge: {
+          ssr: {
             dev: {
               createEnvironment(name, config, context) {
+                context.ws
                 return new DevEnvironment(name, config, {
                   hot: false
                 })
               },
             }
           }
-        }
+        },
       }
     },
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
     configureServer(server) {
+      const ssrEnv = server.environments.ssr
+      const runner = createServerModuleRunner(ssrEnv, {
+        hmr: false
+      })
       const devFetch = createDevFetch({
         resolvedConfig: config,
-        devServer: server
+        devServer: server,
+        runner,
+        ssrEnv
       })
       server.middlewares.use(async (req, res, next) => {
-        console.log(await server.environments.edge.fetchModule('./app/+page.tsx'))
         const webReq = incomingMessageToRequest(req)
         const webRes = await devFetch(webReq)
         if (webRes) {
@@ -40,6 +50,11 @@ export const eclipsa = (): Plugin => {
         }
         next()
       })
-    }
+    },
+    transform(code, id) {
+      if (id.endsWith('.tsx') && this.environment.name === 'ssr') {
+        return `import { jsx, Fragment } from 'hono/jsx'\n${code}`
+      }
+    },
   }
 }
