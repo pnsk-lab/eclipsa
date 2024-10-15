@@ -1,9 +1,10 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
 import { renderToString } from '../../jsx/mod.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import { Fragment } from '../../jsx/jsx-dev-runtime.ts'
+import { createRoutes, type RouteEntry } from '../utils/routing.ts'
 
 interface DevAppInit {
   resolvedConfig: ResolvedConfig
@@ -12,10 +13,10 @@ interface DevAppInit {
   ssrEnv: DevEnvironment
 }
 
-const createDevApp = (init: DevAppInit) => {
+const createDevApp = async (init: DevAppInit) => {
   const app = new Hono()
 
-  app.get('/', async (c) => {
+  const createHandler = (entry: RouteEntry) => async (c: Context) => {
     const [
       { default: Page },
       { default: SSRRoot }
@@ -23,7 +24,6 @@ const createDevApp = (init: DevAppInit) => {
       await init.runner.import('/app/+page.tsx'),
       await init.runner.import('/app/+ssr-root.tsx')
     ])
-    init.runner
 
     const page = Page()
     const parent = SSRRoot({
@@ -46,7 +46,12 @@ const createDevApp = (init: DevAppInit) => {
     } satisfies SSRRootProps)
   
     return c.html(renderToString(parent))
-  })
+  }
+
+  for (const entry of await createRoutes(init.resolvedConfig.root)) {
+    app.get(entry.honoPath, createHandler(entry))
+  }
+
   return app
 }
 export const createDevFetch = (
@@ -55,7 +60,7 @@ export const createDevFetch = (
   let app = createDevApp(init)
 
   return async (req) => {
-    const fetched = await app.fetch(req)
+    const fetched = await (await app).fetch(req)
     if (fetched.status === 404) {
       return
     }

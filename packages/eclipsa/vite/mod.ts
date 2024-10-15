@@ -9,7 +9,6 @@ import {
   incomingMessageToRequest,
   responseForServerResponse,
 } from '../utils/node-connect.ts'
-import { transformServerJSX } from './transformer/ssr.ts'
 
 export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
@@ -63,6 +62,10 @@ export const eclipsa = (): Plugin => {
       options.server.hot.send({ type: 'full-reload' })
     },
     transform(code, id) {
+      if (this.environment.name === 'client') {
+        console.log(id)
+      }
+      return
       if (id.endsWith('.tsx')) {
         return {
           code: transformServerJSX(code),
