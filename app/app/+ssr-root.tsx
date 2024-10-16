@@ -11,7 +11,6 @@ export default function Root(props: SSRRootProps) {
         <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
         <script>eruda.init();</script>
         {props.head}
-        <script type="module" src="/app/+client.tsx"></script>
       </head>
       <body>
         {props.children}

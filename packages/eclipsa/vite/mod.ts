@@ -66,11 +66,6 @@ export const eclipsa = (): Plugin => {
         console.log(id)
       }
       return
-      if (id.endsWith('.tsx')) {
-        return {
-          code: transformServerJSX(code),
-        }
-      }
     },
   }
 }

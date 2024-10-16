@@ -10,7 +10,12 @@
     "singleQuote": true
   },
   "nodeModulesDir": "auto",
-  "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "@xely/eclipsa" },
+  "compilerOptions": {
+    "jsx": "react-jsx", "jsxImportSource": "@xely/eclipsa",
+  "lib": [
+    "deno.window",
+    "dom"
+  ]},
   "imports": {
     "fast-glob": "npm:fast-glob@^3.3.2"
   }

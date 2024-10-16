@@ -5,6 +5,7 @@ import { renderToString } from '../../jsx/mod.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import { Fragment } from '../../jsx/jsx-dev-runtime.ts'
 import { createRoutes, type RouteEntry } from '../utils/routing.ts'
+import type { DevClientInfo } from '../../core/dev-client/types.ts'
 
 interface DevAppInit {
   resolvedConfig: ResolvedConfig
@@ -21,7 +22,7 @@ const createDevApp = async (init: DevAppInit) => {
       { default: Page },
       { default: SSRRoot }
     ] = await Promise.all([
-      await init.runner.import('/app/+page.tsx'),
+      await init.runner.import(entry.filePath),
       await init.runner.import('/app/+ssr-root.tsx')
     ])
 
@@ -35,11 +36,29 @@ const createDevApp = async (init: DevAppInit) => {
           children: [
             {
               type: 'script',
-              isStatic: false,
+              isStatic: true,
               props: {
                 children: 'import("/@vite/client")'
               } 
             },
+            {
+              type: 'script',
+              props: {
+                type: 'module',
+                src: '/app/+client.dev.tsx'
+              }
+            },
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
+                type: 'text/eclipsa+devinfo',
+                id: 'eclipsa-devinfo',
+                children: JSON.stringify({
+                  filePath: entry.filePath
+                } satisfies DevClientInfo)
+              }
+            }
           ]
         }
       }
