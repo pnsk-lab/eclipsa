@@ -9,6 +9,7 @@ import {
   incomingMessageToRequest,
   responseForServerResponse,
 } from '../utils/node-connect.ts'
+import { transformJSX } from '../transformers/dev-ssr/mod.ts'
 
 export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
@@ -19,7 +20,7 @@ export const eclipsa = (): Plugin => {
         esbuild: {
           jsxFactory: 'jsx',
           jsxImportSource: '@xely/eclipsa',
-          jsx: 'automatic',
+          jsx: 'preserve',
         },
         environments: {
           ssr: {
@@ -62,8 +63,11 @@ export const eclipsa = (): Plugin => {
       options.server.hot.send({ type: 'full-reload' })
     },
     transform(code, id) {
-      if (this.environment.name === 'client') {
-        console.log(id)
+      if (id.endsWith('.tsx')) {
+        //console.log(code)
+        //if (this.environment.name === 'client') {
+        console.log(transformJSX(code))
+        //}
       }
       return
     },

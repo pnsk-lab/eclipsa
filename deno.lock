@@ -2,9 +2,12 @@
   "version": "4",
   "specifiers": {
     "npm:@babel/core@^7.25.8": "7.25.8",
+    "npm:@babel/plugin-syntax-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
     "npm:@babel/plugin-transform-react-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
+    "npm:@babel/traverse@^7.25.7": "7.25.7",
     "npm:@deno/vite-plugin@1": "1.0.0_vite@5.4.8__@types+node@22.5.4_@types+node@22.5.4",
     "npm:@types/babel__core@^7.20.5": "7.20.5",
+    "npm:@types/babel__traverse@^7.20.6": "7.20.6",
     "npm:@types/node@*": "22.5.4",
     "npm:alien-signals@^0.0.6": "0.0.6",
     "npm:babel-plugin-jsx-dom-expressions@~0.39.2": "0.39.2_@babel+core@7.25.8",
@@ -885,8 +888,11 @@
       "packages/eclipsa": {
         "dependencies": [
           "npm:@babel/core@^7.25.8",
+          "npm:@babel/plugin-syntax-jsx@^7.25.7",
           "npm:@babel/plugin-transform-react-jsx@^7.25.7",
+          "npm:@babel/traverse@^7.25.7",
           "npm:@types/babel__core@^7.20.5",
+          "npm:@types/babel__traverse@^7.20.6",
           "npm:alien-signals@^0.0.6",
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
           "npm:hono@^4.6.4",
