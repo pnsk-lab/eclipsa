@@ -22,8 +22,8 @@ export const eclipsa = (): Plugin => {
           jsxImportSource: '@xely/eclipsa',
           jsx: 'preserve',
         },
-        environments: {
-          ssr: {
+        //environments: {
+         /* ssr: {
             dev: {
               createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
@@ -31,8 +31,8 @@ export const eclipsa = (): Plugin => {
                 })
               },
             },
-          },
-        },
+          },*/
+       // },
       }
     },
     configResolved(resolvedConfig) {
@@ -64,10 +64,12 @@ export const eclipsa = (): Plugin => {
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
-        //console.log(code)
-        //if (this.environment.name === 'client') {
-        console.log(transformJSX(code))
-        //}
+        if (true || this.environment.name === 'ssr') {
+          const result = transformJSX(code)
+          return {
+            code: result
+          }
+        }
       }
       return
     },

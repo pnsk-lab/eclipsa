@@ -1,7 +1,19 @@
 import { createServer } from 'vite'
-import viteConfig from './vite.config.ts'
+import { fileURLToPath } from 'node:url'
+import { eclipsa } from '@xely/eclipsa/vite'
+import { denoEclipsa } from './plugins/deno-load-eclipsa.ts'
 
-console.log('eclipsa with vite: DEV')
-const server = await createServer(viteConfig)
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+
+console.info('eclipsa with vite: DEV')
+const server = await createServer({ 
+  root: __dirname,
+  mode: 'custom',
+  configFile: false,
+  plugins: [
+    eclipsa(),
+    denoEclipsa(),
+  ],
+})
 await server.listen()
 server.printUrls()

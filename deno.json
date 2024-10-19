@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "cd app && deno run -A --watch start.ts"
+    "dev": "cd app && deno run --watch -A start.ts"
   },
   "workspace": {
     "members": ["./app", "./packages/eclipsa"]
