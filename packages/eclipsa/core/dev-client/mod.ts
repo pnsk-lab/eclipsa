@@ -1,3 +1,4 @@
+import { hydrate } from './renderer.ts'
 import type { DevClientInfo } from './types.ts'
 
 const getDevInfo = (): DevClientInfo => {
@@ -11,6 +12,6 @@ const getDevInfo = (): DevClientInfo => {
 }
 
 export const initDevClient = async () => {
-  console.log((await import(/* @vite-ignore */getDevInfo().filePath)).default())
-  console.log('Hello!')
+  const Component = (await import(/* @vite-ignore */getDevInfo().filePath)).default
+  hydrate(Component, document.body)
 }

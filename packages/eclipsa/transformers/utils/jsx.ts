@@ -49,7 +49,6 @@ export const getJSXType = (elem: t.JSXOpeningElement) => {
   }
   const name = elem.name.name
   if (UPPER_CASE_REGEX.test(name[0])) {
-    console.log(name)
     return t.identifier(name)
   }
   return t.stringLiteral(name)
