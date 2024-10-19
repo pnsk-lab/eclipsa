@@ -42,7 +42,7 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
   }
 }
 
-const UPPER_CASE_REGEX = /A-Z/
+const UPPER_CASE_REGEX = /[A-Z]/
 export const getJSXType = (elem: t.JSXOpeningElement) => {
   if (elem.name.type !== 'JSXIdentifier') {
     throw new TypeError('expected JSXIdentifier')

@@ -21,7 +21,6 @@ const pluginJSX = () => {
       },
       JSXElement(path) {
         const openingElement = path.node.openingElement
-        path.node
 
         const type = getJSXType(openingElement)
         const { props, key } = transformProps(openingElement)
