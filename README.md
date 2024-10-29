@@ -1,3 +1,3 @@
 # eclipsa
 
-eclipsa is an frontend framework, built on Vite Environment API and Hono.
+eclipsa is a frontend framework, built on Vite Environment API and Hono.
