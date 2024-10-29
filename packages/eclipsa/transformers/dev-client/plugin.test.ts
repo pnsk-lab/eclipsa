@@ -4,7 +4,7 @@ import { transform } from '@babel/core'
 import { pluginClientDevJSX } from './plugin.ts'
 
 Deno.test('Transform', () => {
-  const resultCode = transform('<div>aa{a}<div>{a}a</div></div>', {
+  const resultCode = transform('<div><div>{a}</div>{a}</div>', {
     plugins: [pluginClientDevJSX()],
     sourceMaps: 'inline',
   })?.code
