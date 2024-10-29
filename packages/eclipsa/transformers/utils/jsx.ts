@@ -43,12 +43,22 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
 }
 
 const UPPER_CASE_REGEX = /[A-Z]/
-export const getJSXType = (elem: t.JSXOpeningElement) => {
+export const getJSXType = (elem: t.JSXOpeningElement): {
+  type: 'component' | 'element'
+  name: string
+} => {
   if (elem.name.type !== 'JSXIdentifier') {
     throw new TypeError('expected JSXIdentifier')
   }
   const name = elem.name.name
   if (UPPER_CASE_REGEX.test(name[0])) {
+    return { type: 'component', name }
+  }
+  return { type: 'element', name }
+}
+export const getJSXTypeNode = (elem: t.JSXOpeningElement) => {
+  const { type, name } = getJSXType(elem)
+  if (type === 'component') {
     return t.identifier(name)
   }
   return t.stringLiteral(name)

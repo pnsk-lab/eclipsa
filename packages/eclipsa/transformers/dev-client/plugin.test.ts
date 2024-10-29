@@ -1,14 +1,15 @@
+import { assertEquals } from '@std/assert'
 // @ts-types="@types/babel__core"
 import { transform } from '@babel/core'
 import { pluginClientDevJSX } from './plugin.ts'
 
-export const transformClientDevJSX = (input: string) => {
-  const resultCode = transform(input, {
+Deno.test('Transform', () => {
+  const resultCode = transform('<div>aa{a}<div>{a}a</div></div>', {
     plugins: [pluginClientDevJSX()],
-    sourceMaps: 'inline'
+    sourceMaps: 'inline',
   })?.code
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')
   }
-  return resultCode
-}
+  console.log(resultCode)
+})

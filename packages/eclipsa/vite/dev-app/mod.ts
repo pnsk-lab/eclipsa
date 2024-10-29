@@ -6,6 +6,7 @@ import type { SSRRootProps } from '../../core/types.ts'
 import { Fragment } from '../../jsx/jsx-dev-runtime.ts'
 import { createRoutes, type RouteEntry } from '../utils/routing.ts'
 import type { DevClientInfo } from '../../core/dev-client/types.ts'
+import * as path from 'node:path'
 
 interface DevAppInit {
   resolvedConfig: ResolvedConfig
@@ -55,7 +56,10 @@ const createDevApp = async (init: DevAppInit) => {
                 type: 'text/eclipsa+devinfo',
                 id: 'eclipsa-devinfo',
                 children: JSON.stringify({
-                  filePath: entry.filePath
+                  entry: {
+                    absolutePath: entry.filePath,
+                    url: '/' + path.relative(init.resolvedConfig.root, entry.filePath).replaceAll('\\', '/')
+                  }
                 } satisfies DevClientInfo)
               }
             }

@@ -15,7 +15,7 @@ export interface RouteEntry {
 export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
   const appDir = path.join(root, 'app')
   const result = []
-  for await (const entry of fg.stream(path.join(root, '/**/+page.tsx'))) {
+  for await (const entry of fg.stream(path.join(root, '/**/+page.tsx').replaceAll('\\', '/'))) {
     const relativePath = path.relative(appDir, entry.toString())
     result.push({
       filePath: entry.toString(),

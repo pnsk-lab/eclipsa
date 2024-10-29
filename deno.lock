@@ -1,6 +1,8 @@
 {
   "version": "4",
   "specifiers": {
+    "jsr:@std/assert@^1.0.6": "1.0.6",
+    "jsr:@std/internal@^1.0.4": "1.0.4",
     "npm:@babel/core@^7.25.8": "7.25.8",
     "npm:@babel/plugin-syntax-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
     "npm:@babel/plugin-transform-react-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
@@ -16,6 +18,17 @@
     "npm:hono@^4.6.4": "4.6.4",
     "npm:vite@*": "5.4.8_@types+node@22.5.4",
     "npm:vite@^6.0.0-beta.2": "6.0.0-beta.2_@types+node@22.5.4"
+  },
+  "jsr": {
+    "@std/assert@1.0.6": {
+      "integrity": "1904c05806a25d94fe791d6d883b685c9e2dcd60e4f9fc30f4fc5cf010c72207",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.4": {
+      "integrity": "62e8e4911527e5e4f307741a795c0b0a9e6958d0b3790716ae71ce085f755422"
+    }
   },
   "npm": {
     "@ampproject/remapping@2.3.0": {
@@ -876,6 +889,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/assert@^1.0.6",
       "npm:fast-glob@^3.3.2"
     ],
     "members": {
