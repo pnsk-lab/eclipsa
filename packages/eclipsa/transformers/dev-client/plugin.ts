@@ -6,6 +6,12 @@ import * as t from '@babel/types'
 
 export const pluginClientDevJSX = () => {
   let createTemplate!: t.Identifier
+
+  const templates: {
+    id: t.Identifier
+    tmpl: string
+  }[] = []
+
   return {
     inherits: SyntaxJSX.default,
     visitor: {
@@ -13,10 +19,23 @@ export const pluginClientDevJSX = () => {
         enter(path) {
           createTemplate = path.scope.generateUidIdentifier('createTemplate')
           const importDeclaration = t.importDeclaration([
-            t.importSpecifier(createTemplate, t.identifier('createTemplate'))
+            t.importSpecifier(createTemplate, t.identifier('createTemplate')),
           ], t.stringLiteral('@xely/eclipsa'))
           path.unshiftContainer('body', importDeclaration)
-        }
+        },
+        exit(path) {
+          for (const template of templates) {
+            const declaration = t.variableDeclaration('const', [
+              t.variableDeclarator(
+                template.id,
+                t.callExpression(createTemplate, [
+                  t.stringLiteral(template.tmpl),
+                ]),
+              ),
+            ])
+            path.unshiftContainer('body', declaration)
+          }
+        },
       },
       JSXElement(path) {
         const processChildren = (children: t.JSXElement['children']) => {
@@ -38,10 +57,16 @@ export const pluginClientDevJSX = () => {
         }
         const processJSXElement = (elem: t.JSXElement) => {
           const jsxTypeName = getJSXType(elem.openingElement).name
-          return `<${jsxTypeName}>${processChildren(elem.children)}</${jsxTypeName}>`
+          return `<${jsxTypeName}>${
+            processChildren(elem.children)
+          }</${jsxTypeName}>`
         }
-        
-        console.log([processJSXElement(path.node)])
+        const tmplHTML = processJSXElement(path.node)
+        const tmplID = path.scope.generateUidIdentifier('template')
+        templates.push({
+          id: tmplID,
+          tmpl: tmplHTML,
+        })
         /*
         const openingElement = path.node.openingElement
         const type = getJSXType(openingElement)
@@ -54,7 +79,7 @@ export const pluginClientDevJSX = () => {
           t.objectProperty(t.stringLiteral('props'), props),
         ]))
         path.replaceWith(fn)*/
-      }
-    } satisfies Visitor
+      },
+    } satisfies Visitor,
   }
 }
