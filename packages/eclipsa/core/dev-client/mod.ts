@@ -15,3 +15,5 @@ export const initDevClient = async () => {
   const Component = (await import(/* @vite-ignore */getDevInfo().filePath)).default
   hydrate(Component, document.body)
 }
+
+export * from './dom.ts'

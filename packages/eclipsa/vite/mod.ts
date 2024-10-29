@@ -10,6 +10,7 @@ import {
   responseForServerResponse,
 } from '../utils/node-connect.ts'
 import { transformJSX } from '../transformers/dev-ssr/mod.ts'
+import { transformClientDevJSX } from '../transformers/dev-client/mod.ts'
 
 export const eclipsa = (): Plugin => {
   let config: ResolvedConfig
@@ -64,11 +65,9 @@ export const eclipsa = (): Plugin => {
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
-        if (true || this.environment.name === 'ssr') {
-          const result = transformJSX(code)
-          return {
-            code: result
-          }
+        const result = (this.environment.name === 'ssr' ? transformJSX : transformClientDevJSX)(code)
+        return {
+          code: result
         }
       }
       return

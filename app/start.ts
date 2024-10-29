@@ -14,6 +14,11 @@ const server = await createServer({
     eclipsa(),
     denoEclipsa(),
   ],
+  server: {
+    fs: {
+      allow: ['..']
+    }
+  }
 })
 await server.listen()
 server.printUrls()
