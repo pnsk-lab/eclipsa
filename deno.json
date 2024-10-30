@@ -1,9 +1,9 @@
 {
   "tasks": {
-    "dev": "cd app && deno run --watch -A start.ts"
+    "dev": "cd example && deno run --watch -A start.ts"
   },
   "workspace": {
-    "members": ["./app", "./packages/eclipsa"]
+    "members": ["./example", "./packages/eclipsa"]
   },
   "fmt": {
     "semiColons": false,
