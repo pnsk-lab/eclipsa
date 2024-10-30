@@ -5,7 +5,7 @@ export default component$(() => {
   const count = useSignal(0)
 
   return <div>
-    <div>Count: {count.value}</div>
+    <div>Count:{count.value}</div>
     <button type="button" onClick$={() => {
       count.value ++
     }}>count ++</button>
