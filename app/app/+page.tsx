@@ -4,6 +4,9 @@ import { component$, useSignal } from '@xely/eclipsa'
 export default component$(() => {
   const count = useSignal(0)
 
+  setTimeout(() => {
+    count.value ++
+  }, 1000)
   return <div>
     <div>Count: {count.value}</div>
     <button type="button" onClick$={() => {

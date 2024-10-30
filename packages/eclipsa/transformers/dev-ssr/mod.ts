@@ -66,6 +66,5 @@ export const transformJSX = (code: string): string => {
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')
   }
-  console.log(resultCode)
   return resultCode
 }

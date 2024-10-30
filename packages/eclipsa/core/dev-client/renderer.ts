@@ -1,5 +1,5 @@
 import type { Component } from '../component.ts'
 
 export const hydrate = (Component: Component, target: HTMLElement) => {
-  //console.log(Component)
+  document.body.appendChild(Component({}))
 }

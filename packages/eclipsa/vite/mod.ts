@@ -22,6 +22,7 @@ export const eclipsa = (): Plugin => {
           jsxFactory: 'jsx',
           jsxImportSource: '@xely/eclipsa',
           jsx: 'preserve',
+          sourcemap: false
         },
         //environments: {
          /* ssr: {

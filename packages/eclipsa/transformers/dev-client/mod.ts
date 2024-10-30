@@ -5,7 +5,7 @@ import { pluginClientDevJSX } from './plugin.ts'
 export const transformClientDevJSX = (input: string) => {
   const resultCode = transform(input, {
     plugins: [pluginClientDevJSX()],
-    sourceMaps: 'inline'
+    sourceMaps: false
   })?.code
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')

@@ -113,16 +113,16 @@ export const pluginClientDevJSX = () => {
           for (let i = 0; i < apply.path.length; i++) {
             const path = apply.path[i]
             marker = t.memberExpression(
-              t.memberExpression(marker, t.identifier('children')),
+              t.memberExpression(marker, t.identifier('childNodes')),
               t.numericLiteral(path),
               true
             )
             if (i + 2 === apply.path.length && apply.path.length > 1) {
-              parent = marker        
+              parent = marker
             }
           }
           return t.expressionStatement(t.callExpression(insert, [
-            apply.expr,
+            t.arrowFunctionExpression([], apply.expr),
             parent,
             marker,
           ]))

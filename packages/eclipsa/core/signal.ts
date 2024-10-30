@@ -1,4 +1,4 @@
-import { signal } from 'alien-signals'
+import { signal, effect as alienEffect } from 'alien-signals'
 
 interface Signal<T> {
   value: T
@@ -18,3 +18,4 @@ export const useSignal: UseSignal = (value) => {
     },
   }
 }
+export const effect = (fn: () => void) => alienEffect(fn)
