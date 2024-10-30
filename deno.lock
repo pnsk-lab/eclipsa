@@ -893,7 +893,7 @@
       "npm:fast-glob@^3.3.2"
     ],
     "members": {
-      "app": {
+      "example": {
         "dependencies": [
           "npm:@deno/vite-plugin@1",
           "npm:hono@^4.6.4",
