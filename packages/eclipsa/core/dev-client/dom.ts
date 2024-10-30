@@ -24,3 +24,7 @@ export const insert = (value: () => string | number | boolean, parent: Node, mar
     lastNode = newNode
   })
 }
+
+export const addListener = (elem: Element, eventName: string, listener: () => void) => {
+  elem.addEventListener(eventName, listener)
+}

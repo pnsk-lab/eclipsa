@@ -11,7 +11,6 @@ Deno.test('Transform', () => {
     }}>count ++</button>
   </div>`, {
     plugins: [pluginClientDevJSX()],
-    sourceMaps: 'inline',
   })?.code
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')

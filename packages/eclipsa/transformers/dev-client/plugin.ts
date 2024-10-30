@@ -4,9 +4,12 @@ import SyntaxJSX from '@babel/plugin-syntax-jsx'
 import { getJSXType, transformChildren, transformProps } from '../utils/jsx.ts'
 import * as t from '@babel/types'
 
+const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
+
 export const pluginClientDevJSX = () => {
   let createTemplate!: t.Identifier
   let insert!: t.Identifier
+  let addListener!: t.Identifier
 
   const templates: {
     id: t.Identifier
@@ -20,9 +23,11 @@ export const pluginClientDevJSX = () => {
         enter(path) {
           createTemplate = path.scope.generateUidIdentifier('createTemplate')
           insert = path.scope.generateUidIdentifier('insert')
+          addListener = path.scope.generateUidIdentifier('addListener')
           const importDeclaration = t.importDeclaration([
             t.importSpecifier(createTemplate, t.identifier('createTemplate')),
             t.importSpecifier(insert, t.identifier('insert')),
+            t.importSpecifier(addListener, t.identifier('addListener')), 
           ], t.stringLiteral('@xely/eclipsa'))
           path.unshiftContainer('body', importDeclaration)
         },
@@ -46,16 +51,17 @@ export const pluginClientDevJSX = () => {
           path: Path
           expr: t.Expression
         }
-        interface ElemResult {
-          text: string
-          applies: Apply[]
-        }
+        const applies: Apply[] = []
+        const eventListeners: {
+          path: Path
+          eventName: string
+          listener: t.Expression
+        }[] = []
         const processChildren = (
           children: t.JSXElement['children'],
           path: Path,
-        ): ElemResult => {
+        ) => {
           let text = ''
-          const applies: Apply[] = []
           let pathIndex = 0
           for (let i = 0; i < children.length; i++) {
             const child = children[i]
@@ -72,30 +78,49 @@ export const pluginClientDevJSX = () => {
                 path: childPath,
               })
             } else if (t.isJSXElement(child)) {
-              const processed = processJSXElement(child, childPath)
-              text += processed.text
-              applies.push(...processed.applies)
+              text += processJSXElement(child, childPath)
             } else if (t.isJSXFragment(child)) {
-              const processed = processChildren(child.children, childPath)
-              text += processed.text
-              applies.push(...processed.applies)
+              text += processChildren(child.children, childPath)
             } else {
               throw new Error(`${child.type} is not supported.`)
             }
             pathIndex ++
           }
-          return { text, applies }
+          return text
         }
         const processJSXElement = (
           elem: t.JSXElement,
           path: Path,
-        ): ElemResult => {
+        ) => {
+          for (const attr of elem.openingElement.attributes) {
+            if (attr.type === 'JSXAttribute') {
+              const name = typeof attr.name.name === 'string' ? attr.name.name : attr.name.name.name
+              if (EVENT_ATTR_REGEX.test(name)) {
+                // Add Event Listener
+                const eventName = name.slice(2, -1).toLowerCase()
+                if (attr.value?.type !== 'JSXExpressionContainer') {
+                  throw new Error(`${attr.value?.type} as a event handler is not supported`)
+                }
+                const expr = attr.value.expression
+                if (t.isJSXEmptyExpression(expr)) {
+                  throw new Error('JSXEmptyExpression as a event handler is not supported.')
+                }
+                eventListeners.push({
+                  path,
+                  eventName,
+                  listener: expr
+                })
+              }
+              continue
+            }
+            throw new Error(`${attr.type} is not supported.`)
+          }
           const jsxTypeName = getJSXType(elem.openingElement).name
           const processed = processChildren(elem.children, path)
-          const text = `<${jsxTypeName}>${processed.text}</${jsxTypeName}>`
-          return { text, applies: processed.applies }
+          const text = `<${jsxTypeName}>${processed}</${jsxTypeName}>`
+          return text
         }
-        const { text: tmplHTML, applies } = processJSXElement(path.node, [])
+        const tmplHTML = processJSXElement(path.node, [])
         const tmplID = path.scope.generateUidIdentifier('template')
         templates.push({
           id: tmplID,
@@ -106,33 +131,42 @@ export const pluginClientDevJSX = () => {
         const varDecolation = t.variableDeclaration('var', [
           t.variableDeclarator(clonedID, t.callExpression(tmplID, [])),
         ])
-
-        const insertDecolations = applies.map((apply) => {
+        const createParentAndMarker = (path: Path) => {
           let marker: t.Expression = clonedID
           let parent: t.Expression = clonedID
-          for (let i = 0; i < apply.path.length; i++) {
-            const path = apply.path[i]
+          for (let i = 0; i < path.length; i++) {
+            const thisPath = path[i]
             marker = t.memberExpression(
               t.memberExpression(marker, t.identifier('childNodes')),
-              t.numericLiteral(path),
+              t.numericLiteral(thisPath),
               true
             )
-            if (i + 2 === apply.path.length && apply.path.length > 1) {
+            if (i + 2 === path.length && path.length > 1) {
               parent = marker
             }
           }
+          return {marker, parent}
+        }
+        const insertDecolations = applies.map((apply) => {
+          const { parent, marker } = createParentAndMarker(apply.path)
           return t.expressionStatement(t.callExpression(insert, [
             t.arrowFunctionExpression([], apply.expr),
             parent,
             marker,
           ]))
         })
+        const eventDecolations = eventListeners.map(({ path, eventName, listener }) => t.expressionStatement(t.callExpression(addListener, [
+          createParentAndMarker(path).marker,
+          t.stringLiteral(eventName),
+          listener
+        ])))
         const iife = t.callExpression(
           t.arrowFunctionExpression(
             [],
             t.blockStatement([
               varDecolation,
               ...insertDecolations,
+              ...eventDecolations,
               t.returnStatement(clonedID),
             ]),
           ),
