@@ -3,7 +3,13 @@ import { transform, types as t } from '@babel/core'
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-import { getJSXType, getJSXTypeNode, transformChildren, transformProps } from '../utils/jsx.ts'
+import {
+  getJSXType,
+  getJSXTypeNode,
+  transformChildren,
+  transformProps,
+} from '../utils/jsx.ts'
+import { FRAGMENT } from '../../jsx/shared.ts'
 
 const pluginJSX = () => {
   return {
@@ -13,11 +19,11 @@ const pluginJSX = () => {
         enter(path) {
           const jsxDEV = t.identifier('jsxDEV')
           const importDeclaration = t.importDeclaration([
-            t.importSpecifier(jsxDEV, jsxDEV)
+            t.importSpecifier(jsxDEV, jsxDEV),
           ], t.stringLiteral('@xely/eclipsa/jsx-dev-runtime'))
 
           path.unshiftContainer('body', importDeclaration)
-        }
+        },
       },
       JSXElement(path) {
         const openingElement = path.node.openingElement
@@ -25,15 +31,27 @@ const pluginJSX = () => {
         const type = getJSXTypeNode(openingElement)
         const { props, key } = transformProps(openingElement)
         const children = transformChildren(path.node)
-        props.properties.push(t.objectProperty(t.stringLiteral('children'), children))
-        
+        props.properties.push(
+          t.objectProperty(t.stringLiteral('children'), children),
+        )
+
         const fn = t.callExpression(t.identifier('jsxDEV'), [
           type,
           props,
           key ?? t.nullLiteral(),
-          t.booleanLiteral(false)
+          t.booleanLiteral(false),
         ])
         path.replaceWith(fn)
+      },
+      JSXFragment(path) {
+        const fragmentString = t.jsxIdentifier(FRAGMENT)
+        path.replaceWith(
+          t.jsxElement(
+            t.jsxOpeningElement(fragmentString, [], true),
+            t.jsxClosingElement(fragmentString),
+            path.node.children,
+          ),
+        )
       },
     } satisfies Visitor,
   }
@@ -42,11 +60,12 @@ const pluginJSX = () => {
 export const transformJSX = (code: string): string => {
   const resultCode = transform(code, {
     plugins: [pluginJSX()],
-    sourceMaps: 'inline'
+    sourceMaps: 'inline',
   })?.code
 
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')
   }
+  console.log(resultCode)
   return resultCode
 }
