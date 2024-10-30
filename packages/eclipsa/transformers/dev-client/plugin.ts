@@ -56,10 +56,14 @@ export const pluginClientDevJSX = () => {
         ): ElemResult => {
           let text = ''
           const applies: Apply[] = []
+          let pathIndex = 0
           for (let i = 0; i < children.length; i++) {
             const child = children[i]
-            const childPath = [...path, i]
+            const childPath = [...path, pathIndex]
             if (t.isJSXText(child)) {
+              if (child.value.replaceAll(/[\n ]/g, '') === '') {
+                continue
+              }
               text += child.value
             } else if (t.isJSXExpressionContainer(child)) {
               text += `<!-- ${childPath.join(',')} -->`
@@ -78,6 +82,7 @@ export const pluginClientDevJSX = () => {
             } else {
               throw new Error(`${child.type} is not supported.`)
             }
+            pathIndex ++
           }
           return { text, applies }
         }

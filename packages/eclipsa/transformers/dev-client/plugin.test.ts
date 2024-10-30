@@ -4,7 +4,12 @@ import { transform } from '@babel/core'
 import { pluginClientDevJSX } from './plugin.ts'
 
 Deno.test('Transform', () => {
-  const resultCode = transform('<div><div>{a}</div>{a}</div>', {
+  const resultCode = transform(`<div>
+    <div>Count: {count.value}</div>
+    <button type="button" onClick$={() => {
+      count.value ++
+    }}>count ++</button>
+  </div>`, {
     plugins: [pluginClientDevJSX()],
     sourceMaps: 'inline',
   })?.code
