@@ -2,7 +2,7 @@ import type { JSX } from './jsx-runtime.ts'
 import { FRAGMENT } from './shared.ts'
 
 export const renderToString = (elem: JSX.Element): string => {
-  if (!elem) {
+  if (elem === false || elem === null || elem === undefined) {
     return ''
   }
   if (typeof elem === 'string' || typeof elem === 'boolean' || typeof elem === 'number') {
