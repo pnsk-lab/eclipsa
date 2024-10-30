@@ -3,7 +3,7 @@ import { transform, types as t } from '@babel/core'
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-import { getJSXType, transformChildren, transformProps } from '../utils/jsx.ts'
+import { getJSXType, getJSXTypeNode, transformChildren, transformProps } from '../utils/jsx.ts'
 
 const pluginJSX = () => {
   return {
@@ -22,7 +22,7 @@ const pluginJSX = () => {
       JSXElement(path) {
         const openingElement = path.node.openingElement
 
-        const type = getJSXType(openingElement)
+        const type = getJSXTypeNode(openingElement)
         const { props, key } = transformProps(openingElement)
         const children = transformChildren(path.node)
         props.properties.push(t.objectProperty(t.stringLiteral('children'), children))
