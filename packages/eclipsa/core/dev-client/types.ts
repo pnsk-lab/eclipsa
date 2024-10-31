@@ -6,3 +6,5 @@ export interface DevClientInfo {
 }
 
 export type Insertable = string | number | boolean | undefined | null | Node
+
+export type ClientElementLike = (Insertable | Insertable[])

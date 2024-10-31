@@ -1,6 +1,6 @@
 import type { Component } from '../component.ts'
 import { effect } from '../signal.ts'
-import type { Insertable } from './types.ts'
+import type { ClientElementLike, Insertable } from './types.ts'
 
 export const createTemplate = (html: string): () => Node => {
   let template: HTMLTemplateElement | null = null
@@ -55,7 +55,7 @@ export const addListener = (elem: Element, eventName: string, listener: () => vo
 }
 
 export const hydrate = (Component: Component, target: HTMLElement) => {
-  const elem = Component({}) as unknown as (Insertable | Insertable[])
+  const elem = Component({}) as unknown as ClientElementLike
 
   //const lengthToInsert = Array.isArray(elem) ? elem.length : 1
   while (true) {
@@ -67,4 +67,9 @@ export const hydrate = (Component: Component, target: HTMLElement) => {
   for (const e of Array.isArray(elem) ? elem : [elem]) {
     insert(() => e, target)
   }
+}
+
+export const createComponent = (Component: Component, props: unknown) => {
+  const elem = Component(props) as unknown as ClientElementLike
+  return () => elem
 }
