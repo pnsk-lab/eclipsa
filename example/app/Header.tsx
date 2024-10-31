@@ -1,8 +1,5 @@
 import { component$ } from '@xely/eclipsa'
 
-export const Header = component$<{
-  message: string
-}>((props) => <div>
-  <div>Eclipsaa</div>
-  <button onClick$={() => alert(props.message)}>Click me</button>
+export const Header = component$(() => <div>
+  <h1>Todo List</h1>
 </div>)

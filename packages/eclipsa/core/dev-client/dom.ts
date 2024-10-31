@@ -27,26 +27,42 @@ export const insert = (
   parent: Node,
   marker?: Node,
 ) => {
-  let lastNode = marker
+  // 前回の、一番最初のノード
+  let lastFirstNode = marker
+  let lastNodeLength = 0
 
   effect(() => {
     const insertable = value()
 
-    let newNode: Node
-    if (insertable === null || insertable === undefined || insertable === false) {
-      newNode = document.createComment('eclipsa-empty')
-    } else if (insertable instanceof Node) {
-      newNode = insertable
-    } else {
-      newNode = document.createTextNode(insertable.toString())
-    }
-    if (lastNode) {
-      parent.replaceChild(newNode, lastNode)
-    } else {
-      parent.appendChild(newNode)
+    const elemArr = Array.isArray(insertable) ? insertable : [insertable]
+
+    const newNodes: Node[] = []
+
+    for (let i = 0; i < elemArr.length; i++) {
+      const elem = elemArr[i]
+      if (insertable === null || insertable === undefined || insertable === false) {
+        newNodes.push(document.createComment('eclipsa-empty'))
+      } else if (insertable instanceof Node) {
+        newNodes.push(insertable)
+      } else {
+        newNodes.push(document.createTextNode(insertable.toString()))
+      }
     }
 
-    lastNode = newNode
+    if (lastFirstNode) {
+      for (let i = 0; i < lastNodeLength; i++) {
+        lastFirstNode.nextSibling?.remove()
+      }
+      parent.replaceChild(newNodes[0], lastFirstNode)
+    } else {
+      for (let i = 0; i < newNodes.length; i++) {
+        console.log(newNodes[i])
+        parent.appendChild(newNodes[i])
+      }
+    }
+
+    lastFirstNode = newNodes[0]
+    lastNodeLength = elemArr.length
   })
 }
 
