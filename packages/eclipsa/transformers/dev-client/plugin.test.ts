@@ -5,10 +5,7 @@ import { pluginClientDevJSX } from './plugin.ts'
 
 Deno.test('Transform', () => {
   const resultCode = transform(`<div>
-    <div>Count: {count.value}</div>
-    <button type="button" onClick$={() => {
-      count.value ++
-    }}>count ++</button>
+    <Header />
   </div>`, {
     plugins: [pluginClientDevJSX()],
   })?.code
