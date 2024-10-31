@@ -12,6 +12,7 @@ export default component$(() => {
     }} value={inputting.value} />
     <button onClick$={() => {
       todos.value = [...todos.value, inputting.value]
+      inputting.value = ''
     }}>Add</button>
     <ul>
       {todos.value.map((todo, i) => <li key={i}>{todo}</li>)}

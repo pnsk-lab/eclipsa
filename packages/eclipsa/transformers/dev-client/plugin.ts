@@ -4,12 +4,10 @@ import SyntaxJSX from '@babel/plugin-syntax-jsx'
 import { getJSXType, transformChildren, transformProps } from '../utils/jsx.ts'
 import * as t from '@babel/types'
 
-const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
-
 export const pluginClientDevJSX = () => {
   let createTemplate!: t.Identifier
   let insert!: t.Identifier
-  let addListener!: t.Identifier
+  let attr!: t.Identifier
   let createComponent!: t.Identifier
 
   const templates: {
@@ -24,13 +22,13 @@ export const pluginClientDevJSX = () => {
         enter(path) {
           createTemplate = path.scope.generateUidIdentifier('createTemplate')
           insert = path.scope.generateUidIdentifier('insert')
-          addListener = path.scope.generateUidIdentifier('addListener')
+          attr = path.scope.generateUidIdentifier('attr')
           createComponent = path.scope.generateUidIdentifier('createComponent')
 
           const importDeclaration = t.importDeclaration([
             t.importSpecifier(createTemplate, t.identifier('createTemplate')),
             t.importSpecifier(insert, t.identifier('insert')),
-            t.importSpecifier(addListener, t.identifier('addListener')),
+            t.importSpecifier(attr, t.identifier('attr')),
             t.importSpecifier(createComponent, t.identifier('createComponent')),
           ], t.stringLiteral('@xely/eclipsa/dev-client'))
           path.unshiftContainer('body', importDeclaration)
@@ -55,10 +53,10 @@ export const pluginClientDevJSX = () => {
           path: Path
           expr: t.Expression
         }[] = []
-        const eventListeners: {
+        const attrs: {
           path: Path
-          eventName: string
-          listener: t.Expression
+          name: string
+          value: t.Expression
         }[] = []
         const components: {
           path: Path
@@ -105,26 +103,23 @@ export const pluginClientDevJSX = () => {
               const name = typeof attr.name.name === 'string'
                 ? attr.name.name
                 : attr.name.name.name
-              if (EVENT_ATTR_REGEX.test(name)) {
-                // Add Event Listener
-                const eventName = name.slice(2, -1).toLowerCase()
-                if (attr.value?.type !== 'JSXExpressionContainer') {
-                  throw new Error(
-                    `${attr.value?.type} as a event handler is not supported`,
-                  )
-                }
-                const expr = attr.value.expression
-                if (t.isJSXEmptyExpression(expr)) {
-                  throw new Error(
-                    'JSXEmptyExpression as a event handler is not supported.',
-                  )
-                }
-                eventListeners.push({
-                  path,
-                  eventName,
-                  listener: expr,
-                })
+
+              if (attr.value?.type !== 'JSXExpressionContainer' && attr.value?.type !== 'StringLiteral') {
+                throw new Error(
+                  `${attr.value?.type} as a event handler is not supported`,
+                )
               }
+              const expr = 'expression' in attr.value ? attr.value.expression : t.stringLiteral(attr.value.value)
+              if (t.isJSXEmptyExpression(expr)) {
+                throw new Error(
+                  'JSXEmptyExpression as a event handler is not supported.',
+                )
+              }
+              attrs.push({
+                path,
+                name,
+                value: t.arrowFunctionExpression([], expr),
+              })
               continue
             }
             throw new Error(`${attr.type} is not supported.`)
@@ -132,9 +127,8 @@ export const pluginClientDevJSX = () => {
           const jsxType = getJSXType(elem.openingElement)
           if (jsxType.type === 'element') {
             // Element
-            return `<${jsxType.name}>${
-              processChildren(elem.children, path)
-            }</${jsxType.name}>`
+            return `<${jsxType.name}>${processChildren(elem.children, path)
+              }</${jsxType.name}>`
           }
           // Component
           const componentId = t.identifier(jsxType.name)
@@ -181,13 +175,13 @@ export const pluginClientDevJSX = () => {
             marker,
           ]))
         })
-        const eventDecolations = eventListeners.map((
-          { path, eventName, listener },
+        const eventDecolations = attrs.map((
+          { path, name, value },
         ) =>
-          t.expressionStatement(t.callExpression(addListener, [
+          t.expressionStatement(t.callExpression(attr, [
             createParentAndMarker(path).marker,
-            t.stringLiteral(eventName),
-            listener,
+            t.stringLiteral(name),
+            value,
           ]))
         )
         const componentDecolations = components.map((component) => {

@@ -68,8 +68,32 @@ export const insert = (
   })
 }
 
-export const addListener = (elem: Element, eventName: string, listener: () => void) => {
-  elem.addEventListener(eventName, listener)
+const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
+
+export const attr = (elem: Element, name: string, value: () => unknown) => {
+  if (EVENT_ATTR_REGEX.test(name)) {
+    // Add event listener
+    const eventName = name[2].toLowerCase() + name.slice(3, -1)
+    elem.addEventListener(eventName, value() as () => void)
+    return
+  }
+  if (name === 'style') {
+    // Style
+    effect(() => {
+      const styleValue = Object.entries(value() as Record<string, string>).map(([k, v]) => `${k}: ${v}`).join(';')
+      elem.setAttribute('style', styleValue)
+    })
+    return
+  }
+  if (name === 'class') {
+    effect(() => {
+      elem.className = String(value())
+    })
+  }
+  effect(() => {
+    // @ts-expect-error Assign values
+    elem[name] = String(value())
+  })
 }
 
 export const hydrate = (Component: Component, target: HTMLElement) => {
