@@ -1,3 +1,3 @@
-import { initDevClient } from '@xely/eclipsa'
+import { initDevClient } from '@xely/eclipsa/dev-client'
 
 initDevClient()

@@ -4,3 +4,5 @@ export interface DevClientInfo {
     url: string
   }
 }
+
+export type Insertable = string | number | boolean | undefined | null | Node

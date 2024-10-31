@@ -1,5 +1,5 @@
-import { hydrate } from './renderer.ts'
 import type { DevClientInfo } from './types.ts'
+import { hydrate } from './dom.ts'
 
 const getDevInfo = (): DevClientInfo => {
   const elem = document.getElementById('eclipsa-devinfo')
