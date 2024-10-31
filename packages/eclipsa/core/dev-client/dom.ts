@@ -40,23 +40,25 @@ export const insert = (
 
     for (let i = 0; i < elemArr.length; i++) {
       const elem = elemArr[i]
-      if (insertable === null || insertable === undefined || insertable === false) {
+      if (elem === null || elem === undefined || elem === false) {
         newNodes.push(document.createComment('eclipsa-empty'))
-      } else if (insertable instanceof Node) {
-        newNodes.push(insertable)
+      } else if (elem instanceof Node) {
+        newNodes.push(elem)
       } else {
-        newNodes.push(document.createTextNode(insertable.toString()))
+        newNodes.push(document.createTextNode(elem.toString()))
       }
     }
 
-    if (lastFirstNode) {
+    if (lastFirstNode && newNodes.length !== 0) {
       for (let i = 0; i < lastNodeLength; i++) {
         lastFirstNode.nextSibling?.remove()
       }
       parent.replaceChild(newNodes[0], lastFirstNode)
+      for (let i = 1; i < newNodes.length; i++) {
+        parent.insertBefore(newNodes[i], newNodes[i - 1].nextSibling)
+      }
     } else {
       for (let i = 0; i < newNodes.length; i++) {
-        console.log(newNodes[i])
         parent.appendChild(newNodes[i])
       }
     }
