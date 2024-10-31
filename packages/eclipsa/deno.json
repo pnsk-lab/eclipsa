@@ -5,7 +5,8 @@
     "./vite": "./vite/mod.ts",
     "./jsx-runtime": "./jsx/jsx-runtime.ts",
     "./jsx-dev-runtime": "./jsx/jsx-dev-runtime.ts",
-    "./jsx": "./jsx/mod.ts"
+    "./jsx": "./jsx/mod.ts",
+    "./dev-client": "./core/dev-client/mod.ts"
   },
   "imports": {
     "@babel/core": "npm:@babel/core@^7.25.8",

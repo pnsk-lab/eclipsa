@@ -4,14 +4,18 @@ import { transform, types as t } from '@babel/core'
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
 import {
-  getJSXType,
+getJSXType,
   getJSXTypeNode,
   transformChildren,
   transformProps,
 } from '../utils/jsx.ts'
 import { FRAGMENT } from '../../jsx/shared.ts'
 
-const pluginJSX = () => {
+interface PluginInit {
+  fileid: string
+}
+const pluginJSXDevSSR = (init: PluginInit) => {
+  let componentID = 0
   return {
     inherits: SyntaxJSX.default,
     visitor: {
@@ -28,18 +32,35 @@ const pluginJSX = () => {
       JSXElement(path) {
         const openingElement = path.node.openingElement
 
-        const type = getJSXTypeNode(openingElement)
+        const type = getJSXType(openingElement)
+        const jsxTypeExpr = getJSXTypeNode(type)
         const { props, key } = transformProps(openingElement)
         const children = transformChildren(path.node)
         props.properties.push(
           t.objectProperty(t.stringLiteral('children'), children),
         )
 
+        const metaData = t.objectExpression([])
+        if (type.type === 'component') {
+          metaData.properties.push(
+            t.objectProperty(
+              t.identifier('fileid'),
+              t.stringLiteral(init.fileid),
+            ),
+            t.objectProperty(
+              t.identifier('componentID'),
+              t.numericLiteral(componentID++),
+            ),
+          )
+          componentID++
+        }
+
         const fn = t.callExpression(t.identifier('jsxDEV'), [
-          type,
+          jsxTypeExpr,
           props,
           key ?? t.nullLiteral(),
           t.booleanLiteral(false),
+          metaData,
         ])
         path.replaceWith(fn)
       },
@@ -57,10 +78,12 @@ const pluginJSX = () => {
   }
 }
 
-export const transformJSX = (code: string): string => {
+export const transformJSXDevSSR = (code: string, id: string): string => {
   const resultCode = transform(code, {
-    plugins: [pluginJSX()],
-    sourceMaps: 'inline',
+    plugins: [pluginJSXDevSSR({
+      fileid: id,
+    })],
+    //sourceMaps: 'inline',
   })?.code
 
   if (!resultCode) {

@@ -1,7 +1,14 @@
 import type { JSX } from './jsx-runtime.ts'
 import { FRAGMENT } from './shared.ts'
 
-export const renderToString = (elem: JSX.Element): string => {
+export const renderToString = (elem: JSX.Element | JSX.Element[]): string => {
+  if (Array.isArray(elem)) {
+    let result = ''
+    for (let i = 0; i < elem.length; i++) {
+      result += renderToString(elem[i])
+    }
+    return result
+  }
   if (elem === false || elem === null || elem === undefined) {
     return ''
   }
@@ -9,7 +16,7 @@ export const renderToString = (elem: JSX.Element): string => {
     return elem.toString()
   }
   if (typeof elem.type === 'function') {
-    return renderToString(elem.type(elem.props))
+    return `<!-- ecc ${elem.metadata?.fileid} ${elem.metadata?.componentID} -->${renderToString(elem.type(elem.props))}<!-- /ecc -->`
   }
   let attrText = ''
   for (const [k, v] of Object.entries(elem.props)) {

@@ -9,7 +9,7 @@ import {
   incomingMessageToRequest,
   responseForServerResponse,
 } from '../utils/node-connect.ts'
-import { transformJSX } from '../transformers/dev-ssr/mod.ts'
+import { transformJSXDevSSR } from '../transformers/dev-ssr/mod.ts'
 import { transformClientDevJSX } from '../transformers/dev-client/mod.ts'
 
 export const eclipsa = (): Plugin => {
@@ -22,10 +22,10 @@ export const eclipsa = (): Plugin => {
           jsxFactory: 'jsx',
           jsxImportSource: '@xely/eclipsa',
           jsx: 'preserve',
-          sourcemap: false
+          sourcemap: false,
         },
         //environments: {
-         /* ssr: {
+        /* ssr: {
             dev: {
               createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
@@ -34,7 +34,7 @@ export const eclipsa = (): Plugin => {
               },
             },
           },*/
-       // },
+        // },
       }
     },
     configResolved(resolvedConfig) {
@@ -66,9 +66,13 @@ export const eclipsa = (): Plugin => {
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
-        const result = (this.environment.name === 'ssr' ? transformJSX : transformClientDevJSX)(code)
+        const result = (
+          this.environment.name === 'ssr'
+            ? transformJSXDevSSR
+            : transformClientDevJSX
+        )(code, id)
         return {
-          code: result
+          code: result,
         }
       }
       return

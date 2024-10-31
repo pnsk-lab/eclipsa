@@ -1,5 +1,5 @@
 import { component$ } from '@xely/eclipsa'
 
 export const Header = component$(() => <div>
-  <div>Eclipsaa</div>
+  <h1>Todo List</h1>
 </div>)
