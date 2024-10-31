@@ -28,7 +28,7 @@ export const pluginClientDevJSX = () => {
             t.importSpecifier(createTemplate, t.identifier('createTemplate')),
             t.importSpecifier(insert, t.identifier('insert')),
             t.importSpecifier(addListener, t.identifier('addListener')), 
-          ], t.stringLiteral('@xely/eclipsa'))
+          ], t.stringLiteral('@xely/eclipsa/dev-client'))
           path.unshiftContainer('body', importDeclaration)
         },
         exit(path) {
