@@ -9,7 +9,7 @@ export const renderToString = (elem: JSX.Element): string => {
     return elem.toString()
   }
   if (typeof elem.type === 'function') {
-    return renderToString(elem.type(elem.props))
+    return `<!-- ecc ${elem.metadata?.fileid} ${elem.metadata?.componentID} -->${renderToString(elem.type(elem.props))}<!-- /ecc -->`
   }
   let attrText = ''
   for (const [k, v] of Object.entries(elem.props)) {

@@ -2,7 +2,7 @@
 import { transform } from '@babel/core'
 import { pluginClientDevJSX } from './plugin.ts'
 
-export const transformClientDevJSX = (input: string) => {
+export const transformClientDevJSX = (input: string, id: string) => {
   const resultCode = transform(input, {
     plugins: [pluginClientDevJSX()],
     sourceMaps: false

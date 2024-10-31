@@ -7,7 +7,12 @@ export namespace JSX {
     props: Record<string, unknown>
     key?: string | number | symbol
     isStatic: boolean
+    metadata?: Metadata
   } | string | number | undefined | null | boolean
+  export interface Metadata {
+    componentID?: number
+    fileid?: string
+  }
 
   export interface IntrinsicAttributes {
     key?: any
