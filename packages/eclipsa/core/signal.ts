@@ -1,4 +1,4 @@
-import { signal, effect as alienEffect } from 'alien-signals'
+import { signal, effect } from './reactive/mod.ts'
 
 interface Signal<T> {
   value: T
@@ -18,4 +18,5 @@ export const useSignal: UseSignal = (value) => {
     },
   }
 }
-export const effect = (fn: () => void) => alienEffect(fn)
+
+export { effect }

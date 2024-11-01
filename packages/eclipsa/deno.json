@@ -16,7 +16,6 @@
     "@babel/types": "npm:@babel/types@^7.25.8",
     "@types/babel__core": "npm:@types/babel__core@^7.20.5",
     "@types/babel__traverse": "npm:@types/babel__traverse@^7.20.6",
-    "alien-signals": "npm:alien-signals@^0.0.6",
     "babel-plugin-jsx-dom-expressions": "npm:babel-plugin-jsx-dom-expressions@^0.39.2",
     "hono": "npm:hono@^4.6.4",
     "vite": "npm:vite@^6.0.0-beta.2"
