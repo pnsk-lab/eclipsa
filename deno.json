@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "dev": "cd example && deno run --watch -A start.ts"
+    "dev": "cd example && deno run --watch -A start.ts",
+    "build": "cd example && deno run npm:vite build"
   },
   "workspace": {
     "members": ["./example", "./packages/eclipsa"]

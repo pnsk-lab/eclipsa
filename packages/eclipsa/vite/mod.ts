@@ -24,17 +24,17 @@ export const eclipsa = (): Plugin => {
           jsx: 'preserve',
           sourcemap: false,
         },
-        //environments: {
-        /* ssr: {
+        environments: {
+          ssr: {
             dev: {
               createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
                   hot: false,
                 })
               },
-            },
-          },*/
-        // },
+            }
+          },
+        },
       }
     },
     configResolved(resolvedConfig) {
