@@ -55,7 +55,7 @@ export const insert = (
     }
 
     if (lastFirstNode && newNodes.length !== 0) {
-      for (let i = 0; i < lastNodeLength; i++) {
+      for (let i = 1; i < lastNodeLength; i++) {
         lastFirstNode.nextSibling?.remove()
       }
       parent.replaceChild(newNodes[0], lastFirstNode)

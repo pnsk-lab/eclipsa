@@ -6,7 +6,7 @@ export default component$(() => {
   const inputting = useSignal('')
 
   return <div>
-    <Header />
+    <Header a={0} />
     <input onInput$={(e: InputEvent) => {
       inputting.value = (e.currentTarget as HTMLInputElement).value
     }} value={inputting.value} />
