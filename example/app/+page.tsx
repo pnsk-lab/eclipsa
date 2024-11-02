@@ -6,13 +6,14 @@ export default component$(() => {
   const inputting = useSignal('')
 
   return <div>
+    <Header />
     <input onInput$={(e: InputEvent) => {
       inputting.value = (e.currentTarget as HTMLInputElement).value
     }} value={inputting.value} />
     <button onClick$={() => {
       todos.value = [...todos.value, inputting.value]
       inputting.value = ''
-    }}>Adaaabaaa</button>
+    }}>Add</button>
     <ul>
       <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />
     </ul>

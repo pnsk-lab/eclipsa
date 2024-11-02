@@ -10,7 +10,7 @@ export const initHot = (hot: ViteHotContext | undefined, stringURL: string, regi
   const url = new URL(stringURL)
   const id = url.pathname
 
-  hot.on('update-client', async data => {
+  const handler: Parameters<typeof hot.on>[1] = async data => {
     const hotTargetId: string = data.url
     if (hotTargetId === id) {
       // Update module
@@ -22,6 +22,7 @@ export const initHot = (hot: ViteHotContext | undefined, stringURL: string, regi
       if (!newRegistry) {
         return
       }
+      newRegistry.setIsChild()
       for (const [name, newHotComponentData] of newRegistry.components) {
         const oldHotComponentData = registry.components.get(name)
         if (!oldHotComponentData) {
@@ -30,18 +31,23 @@ export const initHot = (hot: ViteHotContext | undefined, stringURL: string, regi
           // TODO: without full page reloading
           console.info('[Eclipsa HMR]: New component detected, reloading page...')
           location.reload()
-          return
+          continue
         }
         if (oldHotComponentData.hash === newHotComponentData.hash) {
           // No change for this component
           // Do nothing
-          return
+          continue
         }
         // Run HMR
         oldHotComponentData.update(newHotComponentData.Component)
       }
+      hot.on('update-client', handler)
     }
-  })
+  }
+  registry.setIsChild = () => {
+    hot.off('update-client', handler)
+  }
+  hot.on('update-client', handler)
 }
 
 interface ComponentMetaInput {
@@ -60,6 +66,7 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
     hash,
     update(newComponent) {
       comp.value = newComponent
+      console.log('updated', newComponent)
     },
     Component
   })
@@ -74,9 +81,11 @@ interface HotComponentData {
 }
 interface HotRegistry {
   components: Map<string, HotComponentData>
+  setIsChild(): void
 }
 export const createHotRegistry = (): HotRegistry => {
   return {
-    components: new Map()
+    components: new Map(),
+    setIsChild: () => null
   }
 }
