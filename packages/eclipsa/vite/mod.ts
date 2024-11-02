@@ -24,11 +24,6 @@ export const eclipsa = (): Plugin => {
           jsx: 'preserve',
           sourcemap: false,
         },
-        builder: {
-          async buildApp(builder) {
-            await builder.build(builder.environments.client)
-          }
-        },
         environments: {
           ssr: {
             dev: {
@@ -37,7 +32,7 @@ export const eclipsa = (): Plugin => {
                   hot: false,
                 })
               },
-            }
+            },
           },
         },
       }
@@ -80,6 +75,9 @@ export const eclipsa = (): Plugin => {
       return []
     },
     transform(code, id) {
+      if (config.mode === 'production') {
+        return code
+      }
       if (id.endsWith('.tsx')) {
         const result = (
           this.environment.name === 'ssr'

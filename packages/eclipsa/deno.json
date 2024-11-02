@@ -3,6 +3,7 @@
   "exports": {
     ".": "./mod.ts",
     "./vite": "./vite/mod.ts",
+    "./vite/build": "./vite/build/mod.ts",
     "./jsx-runtime": "./jsx/jsx-runtime.ts",
     "./jsx-dev-runtime": "./jsx/jsx-dev-runtime.ts",
     "./jsx": "./jsx/mod.ts",
