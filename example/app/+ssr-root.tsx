@@ -10,10 +10,12 @@ export default function Root(props: SSRRootProps) {
         <title>Document</title>
         {
           // @ts-expect-error: Deno
-          import.meta.env.VITE_ERUDA && <>
-            <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-            <script>eruda.init();</script>
-          </>
+          import.meta.env.VITE_ERUDA && (
+            <>
+              <script src='https://cdn.jsdelivr.net/npm/eruda'></script>
+              <script>eruda.init();</script>
+            </>
+          )
         }
         {props.head}
       </head>

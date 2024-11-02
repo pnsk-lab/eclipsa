@@ -62,15 +62,16 @@ export const eclipsa = (): Plugin => {
       })
     },
     hotUpdate(options) {
-      if (this.environment.name !== 'client')
+      if (this.environment.name !== 'client') {
         return
+      }
       const module = options.modules[0]
       options.server.hot.send({
         type: 'custom',
         event: 'update-client',
         data: {
-          url: module.url
-        }
+          url: module.url,
+        },
       })
       return []
     },

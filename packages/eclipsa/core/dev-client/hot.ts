@@ -3,21 +3,25 @@ import type { Component } from '../component.ts'
 import { useSignal } from '../signal.ts'
 import type { JSX } from '../../jsx/jsx-runtime.ts'
 
-export const initHot = (hot: ViteHotContext | undefined, stringURL: string, registry: HotRegistry) => {
+export const initHot = (
+  hot: ViteHotContext | undefined,
+  stringURL: string,
+  registry: HotRegistry,
+) => {
   if (!hot) {
     return
   }
   const url = new URL(stringURL)
   const id = url.pathname
 
-  const handler: Parameters<typeof hot.on>[1] = async data => {
+  const handler: Parameters<typeof hot.on>[1] = async (data) => {
     const hotTargetId: string = data.url
     if (hotTargetId === id) {
       // Update module
       const newModURL = new URL(hotTargetId, stringURL)
       newModURL.searchParams.append('t', Date.now().toString())
-      const newMod = await import(/* @vite-ignore */newModURL.href)
-      
+      const newMod = await import(/* @vite-ignore */ newModURL.href)
+
       const newRegistry: HotRegistry | undefined = newMod.__eclipsa$hotRegistry
       if (!newRegistry) {
         return
@@ -29,7 +33,9 @@ export const initHot = (hot: ViteHotContext | undefined, stringURL: string, regi
           // new component detected
           // full page reloading
           // TODO: without full page reloading
-          console.info('[Eclipsa HMR]: New component detected, reloading page...')
+          console.info(
+            '[Eclipsa HMR]: New component detected, reloading page...',
+          )
           location.reload()
           continue
         }
@@ -54,7 +60,10 @@ interface ComponentMetaInput {
   registry: HotRegistry
   name: string
 }
-export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
+export const defineHotComponent = (
+  Component: Component,
+  meta: ComponentMetaInput,
+): Component => {
   const comp = useSignal(Component)
 
   const hash = Component.toString() // TODO
@@ -64,7 +73,7 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
     update(newComponent) {
       comp.value = newComponent
     },
-    Component
+    Component,
   })
 
   return (props) => {
@@ -84,6 +93,6 @@ interface HotRegistry {
 export const createHotRegistry = (): HotRegistry => {
   return {
     components: new Map(),
-    setIsChild: () => null
+    setIsChild: () => null,
   }
 }

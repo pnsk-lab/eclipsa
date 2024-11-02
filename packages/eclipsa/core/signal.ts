@@ -1,4 +1,4 @@
-import { signal, effect as alienEffect } from 'alien-signals'
+import { effect as alienEffect, signal } from 'alien-signals'
 
 interface Signal<T> {
   value: T
