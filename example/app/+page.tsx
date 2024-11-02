@@ -3,7 +3,6 @@ import { Header } from './Header.tsx'
 
 export default component$(() => {
   const todos = useSignal<string[]>(['ToDo1'])
-
   const inputting = useSignal('')
 
   return <div>

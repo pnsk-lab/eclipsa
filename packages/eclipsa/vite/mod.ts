@@ -62,15 +62,18 @@ export const eclipsa = (): Plugin => {
       })
     },
     hotUpdate(options) {
-      /*
-      options.server.hot.send({ type: 'update', updates: [
-        {
-          type: 'js-update',
-          path: options.file,
-          timestamp: Date.now(),
-          acceptedPath: options.file
+      console.log('env', this.environment.name)
+      if (this.environment.name !== 'client')
+        return
+      const module = options.modules[0]
+      options.server.hot.send({
+        type: 'custom',
+        event: 'update-client',
+        data: {
+          url: module.url
         }
-      ] })*/
+      })
+      return []
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
