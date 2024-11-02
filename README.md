@@ -1,5 +1,3 @@
-
-
 # eclipsa
 
 <img src="./docs/eclipsa.svg" align="right" width="128">

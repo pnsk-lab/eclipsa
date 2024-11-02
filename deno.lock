@@ -2,9 +2,18 @@
   "version": "4",
   "specifiers": {
     "jsr:@std/assert@^1.0.6": "1.0.6",
+<<<<<<< HEAD
     "jsr:@std/fs@^1.0.5": "1.0.5",
     "jsr:@std/internal@^1.0.4": "1.0.4",
     "jsr:@std/path@^1.0.7": "1.0.8",
+=======
+    "jsr:@std/data-structures@^1.0.4": "1.0.4",
+    "jsr:@std/fs@^1.0.4": "1.0.5",
+    "jsr:@std/internal@^1.0.4": "1.0.4",
+    "jsr:@std/path@^1.0.6": "1.0.7",
+    "jsr:@std/path@^1.0.7": "1.0.7",
+    "jsr:@std/testing@^1.0.3": "1.0.3",
+>>>>>>> ce29dff0d2a1cab549fa2dbc865d776d0e6b2c23
     "npm:@babel/core@^7.25.8": "7.25.8",
     "npm:@babel/plugin-syntax-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
     "npm:@babel/plugin-transform-react-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
@@ -14,7 +23,6 @@
     "npm:@types/babel__core@^7.20.5": "7.20.5",
     "npm:@types/babel__traverse@^7.20.6": "7.20.6",
     "npm:@types/node@*": "22.5.4",
-    "npm:alien-signals@^0.0.6": "0.0.6",
     "npm:babel-plugin-jsx-dom-expressions@~0.39.2": "0.39.2_@babel+core@7.25.8",
     "npm:fast-glob@^3.3.2": "3.3.2",
     "npm:hono@^4.6.4": "4.6.4",
@@ -28,17 +36,42 @@
         "jsr:@std/internal"
       ]
     },
+<<<<<<< HEAD
     "@std/fs@1.0.5": {
       "integrity": "41806ad6823d0b5f275f9849a2640d87e4ef67c51ee1b8fb02426f55e02fd44e",
       "dependencies": [
         "jsr:@std/path"
+=======
+    "@std/data-structures@1.0.4": {
+      "integrity": "fa0e20c11eb9ba673417450915c750a0001405a784e2a4e0c3725031681684a0"
+    },
+    "@std/fs@1.0.5": {
+      "integrity": "41806ad6823d0b5f275f9849a2640d87e4ef67c51ee1b8fb02426f55e02fd44e",
+      "dependencies": [
+        "jsr:@std/path@^1.0.7"
+>>>>>>> ce29dff0d2a1cab549fa2dbc865d776d0e6b2c23
       ]
     },
     "@std/internal@1.0.4": {
       "integrity": "62e8e4911527e5e4f307741a795c0b0a9e6958d0b3790716ae71ce085f755422"
     },
+<<<<<<< HEAD
     "@std/path@1.0.8": {
       "integrity": "548fa456bb6a04d3c1a1e7477986b6cffbce95102d0bb447c67c4ee70e0364be"
+=======
+    "@std/path@1.0.7": {
+      "integrity": "76a689e07f0e15dcc6002ec39d0866797e7156629212b28f27179b8a5c3b33a1"
+    },
+    "@std/testing@1.0.3": {
+      "integrity": "f98c2bee53860a5916727d7e7d3abe920dd6f9edace022e2d059f00d05c2cf42",
+      "dependencies": [
+        "jsr:@std/assert",
+        "jsr:@std/data-structures",
+        "jsr:@std/fs",
+        "jsr:@std/internal",
+        "jsr:@std/path@^1.0.6"
+      ]
+>>>>>>> ce29dff0d2a1cab549fa2dbc865d776d0e6b2c23
     }
   },
   "npm": {
@@ -497,9 +530,6 @@
         "undici-types"
       ]
     },
-    "alien-signals@0.0.6": {
-      "integrity": "sha512-xAe7bc56tmNRsgKjx2fojOOH+TB7y83cRaKsazo9cGyaojHaRsR62chnLPBoT3kpJvvKKHd9pmA2f/C1CNgZFA=="
-    },
     "ansi-styles@3.2.1": {
       "integrity": "sha512-VT0ZI6kZRdTh8YyJw3SMbYm/u+NqfsAxEpWO0Pf9sq8/e94WxxOpPKx9FR1FlyCtOVDNOQ+8ntlqFxiRc+r5qA==",
       "dependencies": [
@@ -900,7 +930,11 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@^1.0.6",
+<<<<<<< HEAD
       "jsr:@std/fs@^1.0.5",
+=======
+      "jsr:@std/testing@^1.0.3",
+>>>>>>> ce29dff0d2a1cab549fa2dbc865d776d0e6b2c23
       "npm:fast-glob@^3.3.2"
     ],
     "members": {
@@ -920,7 +954,6 @@
           "npm:@babel/types@^7.25.8",
           "npm:@types/babel__core@^7.20.5",
           "npm:@types/babel__traverse@^7.20.6",
-          "npm:alien-signals@^0.0.6",
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
           "npm:hono@^4.6.4",
           "npm:vite@^6.0.0-beta.8"

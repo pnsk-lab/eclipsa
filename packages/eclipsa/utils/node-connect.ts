@@ -1,7 +1,4 @@
-import type {
-  IncomingMessage,
-  ServerResponse,
-} from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export const incomingMessageToRequest = (
   incomingMessage: IncomingMessage,

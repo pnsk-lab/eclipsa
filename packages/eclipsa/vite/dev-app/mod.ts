@@ -1,4 +1,4 @@
-import { Hono, type Context } from 'hono'
+import { type Context, Hono } from 'hono'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
 import { renderToString } from '../../jsx/mod.ts'
@@ -21,53 +21,61 @@ const createDevApp = async (init: DevAppInit) => {
   const createHandler = (entry: RouteEntry) => async (c: Context) => {
     const [
       { default: Page },
-      { default: SSRRoot }
+      { default: SSRRoot },
     ] = await Promise.all([
       await init.runner.import(entry.filePath),
-      await init.runner.import('/app/+ssr-root.tsx')
+      await init.runner.import('/app/+ssr-root.tsx'),
     ])
 
     const page = Page()
-    const parent = SSRRoot({
-      children: page,
-      head: {
-        type: Fragment,
-        isStatic: true,
-        props: {
-          children: [
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: 'import("/@vite/client")'
-              } 
-            },
-            {
-              type: 'script',
-              props: {
-                type: 'module',
-                src: '/app/+client.dev.tsx'
-              }
-            },
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                type: 'text/eclipsa+devinfo',
-                id: 'eclipsa-devinfo',
-                children: JSON.stringify({
-                  entry: {
-                    absolutePath: entry.filePath,
-                    url: '/' + path.relative(init.resolvedConfig.root, entry.filePath).replaceAll('\\', '/')
-                  }
-                } satisfies DevClientInfo)
-              }
-            }
-          ]
-        }
-      }
-    } satisfies SSRRootProps)
-  
+    const parent = SSRRoot(
+      {
+        children: page,
+        head: {
+          type: Fragment,
+          isStatic: true,
+          props: {
+            children: [
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  children: 'import("/@vite/client")',
+                },
+              },
+              {
+                type: 'script',
+                props: {
+                  type: 'module',
+                  src: '/app/+client.dev.tsx',
+                },
+              },
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  type: 'text/eclipsa+devinfo',
+                  id: 'eclipsa-devinfo',
+                  children: JSON.stringify(
+                    {
+                      entry: {
+                        absolutePath: entry.filePath,
+                        url: '/' +
+                          path.relative(
+                            init.resolvedConfig.root,
+                            entry.filePath,
+                          ).replaceAll('\\', '/'),
+                      },
+                    } satisfies DevClientInfo,
+                  ),
+                },
+              },
+            ],
+          },
+        },
+      } satisfies SSRRootProps,
+    )
+
     return c.html(renderToString(parent))
   }
 

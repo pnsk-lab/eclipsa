@@ -4,7 +4,15 @@ import viteConfig from './vite.config.ts'
 console.info('eclipsa with vite: DEV')
 const server = await createServer({ 
   configFile: false,
-  ...viteConfig
+  plugins: [
+    eclipsa(),
+    denoEclipsa(),
+  ],
+  server: {
+    fs: {
+      allow: ['..']
+    }
+  }
 })
 await server.listen()
 server.printUrls()
