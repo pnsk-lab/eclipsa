@@ -19,6 +19,6 @@
     "alien-signals": "npm:alien-signals@^0.0.6",
     "babel-plugin-jsx-dom-expressions": "npm:babel-plugin-jsx-dom-expressions@^0.39.2",
     "hono": "npm:hono@^4.6.4",
-    "vite": "npm:vite@^6.0.0-beta.2"
+    "vite": "npm:vite@^6.0.0-beta.8"
   }
 }
