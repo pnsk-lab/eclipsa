@@ -3,6 +3,6 @@
     "@deno/vite-plugin": "npm:@deno/vite-plugin@^1.0.0",
     "@xely/eclipsa/vite": "../packages/eclipsa/vite/mod.ts",
     "hono": "npm:hono@^4.6.4",
-    "vite": "npm:vite@^6.0.0-beta.2"
+    "vite": "npm:vite@^6.0.0-beta.8"
   }
 }
