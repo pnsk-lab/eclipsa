@@ -28,9 +28,9 @@ export const eclipsa = (): Plugin => {
           async buildApp(builder) {
             await builder.build(builder.environments.client)
           }
-        }
-        //environments: {
-        /* ssr: {
+        },
+        environments: {
+          ssr: {
             dev: {
               createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
