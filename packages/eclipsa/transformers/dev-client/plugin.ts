@@ -5,10 +5,16 @@ import { getJSXType, transformChildren, transformProps } from '../utils/jsx.ts'
 import * as t from '@babel/types'
 
 export const pluginClientDevJSX = () => {
+  // Imported from @xely/eclipsa or @xely/eclipsa/dev-client
   let createTemplate!: t.Identifier
   let insert!: t.Identifier
   let attr!: t.Identifier
   let createComponent!: t.Identifier
+  let component$Id: t.Identifier | null = null
+  let defineHotComponent!: t.Identifier
+
+  //
+  let hotRegistry!: t.Identifier
 
   const templates: {
     id: t.Identifier
@@ -24,14 +30,63 @@ export const pluginClientDevJSX = () => {
           insert = path.scope.generateUidIdentifier('insert')
           attr = path.scope.generateUidIdentifier('attr')
           createComponent = path.scope.generateUidIdentifier('createComponent')
+          defineHotComponent = path.scope.generateUidIdentifier(
+            'defineHotComponent',
+          )
+          const initHot = path.scope.generateUidIdentifier('initHot')
+          const createHotRegistry = path.scope.generateUidIdentifier(
+            'createHotRegistry',
+          )
 
           const importDeclaration = t.importDeclaration([
             t.importSpecifier(createTemplate, t.identifier('createTemplate')),
             t.importSpecifier(insert, t.identifier('insert')),
             t.importSpecifier(attr, t.identifier('attr')),
             t.importSpecifier(createComponent, t.identifier('createComponent')),
+            t.importSpecifier(initHot, t.identifier('initHot')),
+            t.importSpecifier(
+              defineHotComponent,
+              t.identifier('defineHotComponent'),
+            ),
+            t.importSpecifier(
+              createHotRegistry,
+              t.identifier('createHotRegistry'),
+            ),
           ], t.stringLiteral('@xely/eclipsa/dev-client'))
           path.unshiftContainer('body', importDeclaration)
+
+          hotRegistry = t.identifier('__eclipsa$hotRegistry')
+          path.unshiftContainer(
+            'body',
+            t.expressionStatement(t.callExpression(initHot, [
+              t.memberExpression(
+                t.memberExpression(
+                  t.identifier('import'),
+                  t.identifier('meta'),
+                ),
+                t.identifier('hot'),
+              ),
+              t.memberExpression(
+                t.memberExpression(
+                  t.identifier('import'),
+                  t.identifier('meta'),
+                ),
+                t.identifier('url'),
+              ),
+              hotRegistry,
+            ])),
+          )
+          path.unshiftContainer(
+            'body',
+            t.exportNamedDeclaration(
+              t.variableDeclaration('var', [
+                t.variableDeclarator(
+                  hotRegistry,
+                  t.callExpression(createHotRegistry, []),
+                ),
+              ]),
+            ),
+          )
         },
         exit(path) {
           for (const template of templates) {
@@ -44,6 +99,23 @@ export const pluginClientDevJSX = () => {
               ),
             ])
             path.unshiftContainer('body', declaration)
+          }
+        },
+      },
+      ImportDeclaration: {
+        enter(path) {
+          if (path.node.source.value === '@xely/eclipsa') {
+            for (const specifier of path.node.specifiers) {
+              if (t.isImportSpecifier(specifier)) {
+                const importedName = t.isStringLiteral(specifier.imported)
+                  ? specifier.imported.value
+                  : specifier.imported.name
+                if (importedName === 'component$') {
+                  component$Id = specifier.local
+                  break
+                }
+              }
+            }
           }
         },
       },
@@ -104,12 +176,17 @@ export const pluginClientDevJSX = () => {
                 ? attr.name.name
                 : attr.name.name.name
 
-              if (attr.value?.type !== 'JSXExpressionContainer' && attr.value?.type !== 'StringLiteral') {
+              if (
+                attr.value?.type !== 'JSXExpressionContainer' &&
+                attr.value?.type !== 'StringLiteral'
+              ) {
                 throw new Error(
                   `${attr.value?.type} as a event handler is not supported`,
                 )
               }
-              const expr = 'expression' in attr.value ? attr.value.expression : t.stringLiteral(attr.value.value)
+              const expr = 'expression' in attr.value
+                ? attr.value.expression
+                : t.stringLiteral(attr.value.value)
               if (t.isJSXEmptyExpression(expr)) {
                 throw new Error(
                   'JSXEmptyExpression as a event handler is not supported.',
@@ -127,8 +204,9 @@ export const pluginClientDevJSX = () => {
           const jsxType = getJSXType(elem.openingElement)
           if (jsxType.type === 'element') {
             // Element
-            return `<${jsxType.name}>${processChildren(elem.children, path)
-              }</${jsxType.name}>`
+            return `<${jsxType.name}>${
+              processChildren(elem.children, path)
+            }</${jsxType.name}>`
           }
           // Component
           const componentId = t.identifier(jsxType.name)
@@ -136,7 +214,7 @@ export const pluginClientDevJSX = () => {
           components.push({
             path,
             id: componentId,
-            props
+            props,
           })
           return `<!-- ${path.join(',')} -->`
         }
@@ -196,32 +274,86 @@ export const pluginClientDevJSX = () => {
             marker,
           ]))
         })
-        const iife = t.callExpression(
-          t.arrowFunctionExpression(
-            [],
-            t.blockStatement([
-              varDecolation,
-              ...insertDecolations,
-              ...eventDecolations,
-              ...componentDecolations,
-              t.returnStatement(clonedID),
-            ]),
-          ),
+        const keyNode = path.node.openingElement.attributes.find((attr) => {
+          if (attr.type !== 'JSXAttribute') {
+            return
+          }
+          return (typeof attr.name.name === 'string'
+            ? attr.name.name
+            : attr.name.name.name) === 'key'
+        })
+        const key = keyNode
+          ? ((keyNode as t.JSXAttribute).value as t.JSXExpressionContainer)
+            .expression as t.Expression
+          : undefined
+        let resultExpr: t.Expression
+        const baseElementFnBlock = t.blockStatement([
+          varDecolation,
+          ...insertDecolations,
+          ...eventDecolations,
+          ...componentDecolations,
+          t.returnStatement(clonedID),
+        ])
+        t.addComment(baseElementFnBlock, 'inner', tmplHTML)
+        const baseElementFn = t.arrowFunctionExpression(
           [],
+          baseElementFnBlock,
         )
-        path.replaceWith(iife)
-        /*
-        const openingElement = path.node.openingElement
-        const type = getJSXType(openingElement)
-        const { props } = transformProps(openingElement)
-        const children = transformChildren(path.node)
-        props.properties.push(t.objectProperty(t.stringLiteral('children'), children))
-
-        const fn = t.arrowFunctionExpression([], t.objectExpression([
-          t.objectProperty(t.stringLiteral('type'), type),
-          t.objectProperty(t.stringLiteral('props'), props),
-        ]))
-        path.replaceWith(fn)*/
+        if (key) {
+          const id = t.identifier('f')
+          resultExpr = t.callExpression(
+            t.arrowFunctionExpression(
+              [],
+              t.blockStatement([
+                t.variableDeclaration('var', [
+                  t.variableDeclarator(id, baseElementFn),
+                ]),
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.memberExpression(id, t.identifier('key')),
+                    key,
+                  ),
+                ),
+                t.returnStatement(id),
+              ]),
+            ),
+            [],
+          )
+        } else {
+          resultExpr = t.callExpression(baseElementFn, [])
+        }
+        path.replaceWith(resultExpr)
+      },
+      CallExpression: {
+        exit(path) {
+          if (
+            t.isIdentifier(path.node.callee) &&
+            component$Id?.name === path.node.callee.name
+          ) {
+            if (
+              t.isCallExpression(path.parent) &&
+              t.isIdentifier(path.parent.callee) &&
+              path.parent.callee.name === defineHotComponent.name
+            ) {
+              return
+            }
+            let name: string | null = null
+            if (t.isExportDeclaration(path.parent)) {
+              name = 'default'
+            }
+            path.replaceWith(t.callExpression(defineHotComponent, [
+              path.node,
+              t.objectExpression([
+                t.objectProperty(t.identifier('registry'), hotRegistry),
+                t.objectProperty(
+                  t.identifier('name'),
+                  name ? t.stringLiteral(name) : t.nullLiteral(),
+                ),
+              ]),
+            ]))
+          }
+        },
       },
     } satisfies Visitor,
   }

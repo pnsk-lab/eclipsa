@@ -12,8 +12,10 @@ const getDevInfo = (): DevClientInfo => {
 }
 
 export const initDevClient = async () => {
-  const Component = (await import(/* @vite-ignore */getDevInfo().entry.url)).default
+  const Component =
+    (await import(/* @vite-ignore */ getDevInfo().entry.url)).default
   hydrate(Component, document.body)
 }
 
 export * from './dom.ts'
+export * from './hot.ts'

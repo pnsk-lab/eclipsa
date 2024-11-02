@@ -20,3 +20,13 @@ export const useSignal: UseSignal = (value) => {
 }
 
 export { effect }
+
+export const useComputed = <T>(fn: () => T) => {
+  const result = useSignal<T>()
+
+  effect(() => {
+    result.value = fn()
+  })
+
+  return result as Signal<T>
+}

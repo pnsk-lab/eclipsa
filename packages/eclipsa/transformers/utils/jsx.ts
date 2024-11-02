@@ -2,7 +2,7 @@
 import { types as t } from '@babel/core'
 
 export const transformProps = (elem: t.JSXOpeningElement) => {
-  const propArr: (t.ObjectProperty | t.SpreadElement)[] = []
+  const propArr: (t.ObjectProperty | t.SpreadElement | t.ObjectMethod)[] = []
   let key: t.Expression | undefined
   for (const attr of elem.attributes) {
     if (t.isJSXSpreadAttribute(attr)) {
@@ -32,7 +32,22 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
       if (isKey) {
         key = attr.value.expression
       }
-      propArr.push(t.objectProperty(name, attr.value.expression))
+      const isStatic = t.isLiteral(attr.value.expression)
+      if (isStatic) {
+        propArr.push(t.objectProperty(name, attr.value.expression))
+      } else {
+        // Use getter
+        propArr.push(
+          t.objectMethod(
+            'get',
+            t.identifier(attr.name.name),
+            [],
+            t.blockStatement([
+              t.returnStatement(attr.value.expression),
+            ]),
+          ),
+        )
+      }
       continue
     }
   }
@@ -67,24 +82,25 @@ export const getJSXTypeNode = (source: t.JSXOpeningElement | JSXType) => {
   return t.stringLiteral(name)
 }
 
-export const transformChildren = (elem: t.JSXElement) => t.arrayExpression(
-  elem.children.map((child) => {
-    if (t.isJSXText(child)) {
-      const str = child.value.trim()
-      if (str === '') {
-        return null
+export const transformChildren = (elem: t.JSXElement) =>
+  t.arrayExpression(
+    elem.children.map((child) => {
+      if (t.isJSXText(child)) {
+        const str = child.value.trim()
+        if (str === '') {
+          return null
+        }
+        return t.stringLiteral(str)
       }
-      return t.stringLiteral(str)
-    }
-    if (t.isJSXExpressionContainer(child)) {
-      if (t.isJSXEmptyExpression(child.expression)) {
-        return null
+      if (t.isJSXExpressionContainer(child)) {
+        if (t.isJSXEmptyExpression(child.expression)) {
+          return null
+        }
+        return child.expression
       }
-      return child.expression
-    }
-    if (t.isJSXElement(child)) {
-      return child as unknown as t.Expression
-    }
-    return null
-  }).filter(Boolean)
-)
+      if (t.isJSXElement(child)) {
+        return child as unknown as t.Expression
+      }
+      return null
+    }).filter(Boolean),
+  )
