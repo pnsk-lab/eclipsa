@@ -12,7 +12,7 @@ export default component$(() => {
     <button onClick$={() => {
       todos.value = [...todos.value, inputting.value]
       inputting.value = ''
-    }}>Add</button>
+    }}>Adaaabaaa</button>
     <ul>
       <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />
     </ul>

@@ -62,7 +62,6 @@ export const eclipsa = (): Plugin => {
       })
     },
     hotUpdate(options) {
-      console.log('env', this.environment.name)
       if (this.environment.name !== 'client')
         return
       const module = options.modules[0]
