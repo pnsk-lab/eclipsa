@@ -13,6 +13,7 @@
     "npm:@babel/plugin-syntax-jsx@^7.25.7": "7.25.9_@babel+core@7.26.0",
     "npm:@babel/plugin-transform-react-jsx@^7.25.7": "7.25.9_@babel+core@7.26.0",
     "npm:@babel/traverse@^7.25.7": "7.25.9",
+    "npm:@babel/traverse@^7.25.9": "7.25.9",
     "npm:@babel/types@^7.25.8": "7.26.0",
     "npm:@deno/vite-plugin@1": "1.0.0_vite@5.4.10",
     "npm:@types/babel__core@^7.20.5": "7.20.5",
@@ -817,7 +818,13 @@
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
           "npm:hono@^4.6.4",
           "npm:vite@^6.0.0-beta.8"
-        ]
+        ],
+        "packageJson": {
+          "dependencies": [
+            "npm:@babel/traverse@^7.25.9",
+            "npm:@types/babel__traverse@^7.20.6"
+          ]
+        }
       }
     }
   }
