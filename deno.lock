@@ -17,7 +17,7 @@
     "npm:fast-glob@^3.3.2": "3.3.2",
     "npm:hono@^4.6.4": "4.6.4",
     "npm:vite@*": "5.4.8_@types+node@22.5.4",
-    "npm:vite@^6.0.0-beta.2": "6.0.0-beta.2_@types+node@22.5.4"
+    "npm:vite@^6.0.0-beta.8": "6.0.0-beta.8_@types+node@22.5.4"
   },
   "jsr": {
     "@std/assert@1.0.6": {
@@ -873,12 +873,11 @@
         "rollup"
       ]
     },
-    "vite@6.0.0-beta.2_@types+node@22.5.4": {
-      "integrity": "sha512-TdrjEhCnVNjT3kjohFhVJQL9V3SguxMAphP2RW085QbE0Xc+lRvql9l5hTIr/mttO2jhivYXEP4xfaIRPjzqiw==",
+    "vite@6.0.0-beta.8_@types+node@22.5.4": {
+      "integrity": "sha512-KbUpk2e8NvL1aYGJdV4FfppDq/ygwTm+YUqGyUUb30K9R2Z9Up6a1D4203D2YRQb5pT4hChmYsXPA3MZ1R3ohA==",
       "dependencies": [
         "@types/node",
         "esbuild@0.24.0",
-        "fsevents",
         "postcss",
         "rollup"
       ]
@@ -897,7 +896,7 @@
         "dependencies": [
           "npm:@deno/vite-plugin@1",
           "npm:hono@^4.6.4",
-          "npm:vite@^6.0.0-beta.2"
+          "npm:vite@^6.0.0-beta.8"
         ]
       },
       "packages/eclipsa": {
@@ -912,7 +911,7 @@
           "npm:alien-signals@^0.0.6",
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
           "npm:hono@^4.6.4",
-          "npm:vite@^6.0.0-beta.2"
+          "npm:vite@^6.0.0-beta.8"
         ]
       }
     }
