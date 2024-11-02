@@ -24,8 +24,13 @@ export const eclipsa = (): Plugin => {
           jsx: 'preserve',
           sourcemap: false,
         },
-        environments: {
-          ssr: {
+        builder: {
+          async buildApp(builder) {
+            await builder.build(builder.environments.client)
+          }
+        }
+        //environments: {
+        /* ssr: {
             dev: {
               createEnvironment(name, config, _context) {
                 return new DevEnvironment(name, config, {
