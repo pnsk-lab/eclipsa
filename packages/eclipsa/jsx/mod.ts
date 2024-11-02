@@ -1,16 +1,23 @@
 import type { JSX } from './jsx-runtime.ts'
 import { FRAGMENT } from './shared.ts'
 
-export const renderToString = (elem: JSX.Element | JSX.Element[]): string => {
-  if (Array.isArray(elem)) {
+export const renderToString = (inputElementLike: JSX.Element | JSX.Element[]): string => {
+  if (Array.isArray(inputElementLike)) {
     let result = ''
-    for (let i = 0; i < elem.length; i++) {
-      result += renderToString(elem[i])
+    for (let i = 0; i < inputElementLike.length; i++) {
+      result += renderToString(inputElementLike[i])
     }
     return result
   }
+  let elem = inputElementLike
+  while (typeof elem === 'function') {
+    elem = elem()
+  }
   if (elem === false || elem === null || elem === undefined) {
     return ''
+  }
+  if (Array.isArray(elem)) {
+    return renderToString(elem)
   }
   if (typeof elem === 'string' || typeof elem === 'boolean' || typeof elem === 'number') {
     return elem.toString()

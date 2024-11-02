@@ -196,20 +196,37 @@ export const pluginClientDevJSX = () => {
             marker,
           ]))
         })
-        const iife = t.callExpression(
-          t.arrowFunctionExpression(
-            [],
-            t.blockStatement([
-              varDecolation,
-              ...insertDecolations,
-              ...eventDecolations,
-              ...componentDecolations,
-              t.returnStatement(clonedID),
-            ]),
-          ),
+        const keyNode = path.node.openingElement.attributes.find(attr => {
+          if (attr.type !== 'JSXAttribute') {
+            return
+          }
+          return (typeof attr.name.name === 'string' ? attr.name.name : attr.name.name.name) === 'key'
+        })
+        const key = keyNode ? ((keyNode as t.JSXAttribute).value as t.JSXExpressionContainer).expression as t.Expression : undefined
+        let resultExpr: t.Expression
+        const baseElementFn = t.arrowFunctionExpression(
           [],
+          t.blockStatement([
+            varDecolation,
+            ...insertDecolations,
+            ...eventDecolations,
+            ...componentDecolations,
+            t.returnStatement(clonedID),
+          ]),
         )
-        path.replaceWith(iife)
+        if (key) {
+          const id = t.identifier('f')
+          resultExpr = t.callExpression(t.arrowFunctionExpression([], t.blockStatement([
+            t.variableDeclaration('var', [
+              t.variableDeclarator(id, baseElementFn)
+            ]),
+            t.expressionStatement(t.assignmentExpression('=', t.memberExpression(id, t.identifier('key')), key)),
+            t.returnStatement(id)
+          ])), [])
+        } else {
+          resultExpr = t.callExpression(baseElementFn, [])
+        }
+        path.replaceWith(resultExpr)
         /*
         const openingElement = path.node.openingElement
         const type = getJSXType(openingElement)

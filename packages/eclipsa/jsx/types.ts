@@ -8,7 +8,7 @@ export namespace JSX {
     key?: string | number | symbol
     isStatic: boolean
     metadata?: Metadata
-  } | string | number | undefined | null | boolean
+  } | string | number | undefined | null | boolean | ((() => Element) & { key?: string |  number | symbol})
   export interface Metadata {
     componentID?: number
     fileid?: string
