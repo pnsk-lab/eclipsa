@@ -12,6 +12,6 @@ export const jsxDEV = (
   props,
   key,
   isStatic,
-  metadata
+  metadata,
 })
 export const Fragment = FRAGMENT

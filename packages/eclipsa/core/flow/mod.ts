@@ -19,7 +19,11 @@ export const For = <T>(props: {
     for (let i = 0; i < arr.length; i++) {
       const item = arr[i]
       const elem = fn(item, i)
-      if ((typeof elem === 'function' || typeof elem === 'object') && (elem !== null) && ('key' in elem) && elem.key !== undefined && elem.key !== null) {
+      if (
+        (typeof elem === 'function' || typeof elem === 'object') &&
+        (elem !== null) && ('key' in elem) && elem.key !== undefined &&
+        elem.key !== null
+      ) {
         const got = map.get(elem.key)
         if (got) {
           if (got.item === item) {
@@ -27,11 +31,11 @@ export const For = <T>(props: {
             continue
           }
         }
-        const thisElem = typeof elem === 'function'? elem(): elem
+        const thisElem = typeof elem === 'function' ? elem() : elem
         newResult.push(thisElem)
         newMap.set(elem.key, {
           item,
-          lastRendered: thisElem
+          lastRendered: thisElem,
         })
       } else {
         throw new Error('Key is expected.')

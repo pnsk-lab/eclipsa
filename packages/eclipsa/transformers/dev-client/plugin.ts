@@ -288,16 +288,16 @@ export const pluginClientDevJSX = () => {
           : undefined
         let resultExpr: t.Expression
         const baseElementFnBlock = t.blockStatement([
-            varDecolation,
-            ...insertDecolations,
-            ...eventDecolations,
-            ...componentDecolations,
-            t.returnStatement(clonedID),
-          ])
+          varDecolation,
+          ...insertDecolations,
+          ...eventDecolations,
+          ...componentDecolations,
+          t.returnStatement(clonedID),
+        ])
         t.addComment(baseElementFnBlock, 'inner', tmplHTML)
         const baseElementFn = t.arrowFunctionExpression(
           [],
-          baseElementFnBlock
+          baseElementFnBlock,
         )
         if (key) {
           const id = t.identifier('f')
