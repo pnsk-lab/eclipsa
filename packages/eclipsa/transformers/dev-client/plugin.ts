@@ -24,14 +24,21 @@ export const pluginClientDevJSX = () => {
           insert = path.scope.generateUidIdentifier('insert')
           attr = path.scope.generateUidIdentifier('attr')
           createComponent = path.scope.generateUidIdentifier('createComponent')
+          const initHot = path.scope.generateUidIdentifier('initHot')
 
           const importDeclaration = t.importDeclaration([
             t.importSpecifier(createTemplate, t.identifier('createTemplate')),
             t.importSpecifier(insert, t.identifier('insert')),
             t.importSpecifier(attr, t.identifier('attr')),
             t.importSpecifier(createComponent, t.identifier('createComponent')),
+            t.importSpecifier(initHot, t.identifier('initHot'))
           ], t.stringLiteral('@xely/eclipsa/dev-client'))
           path.unshiftContainer('body', importDeclaration)
+
+          path.unshiftContainer('body', t.expressionStatement(t.callExpression(initHot, [
+            t.memberExpression(t.memberExpression(t.identifier('import'), t.identifier('meta')), t.identifier('hot')),
+            t.memberExpression(t.memberExpression(t.identifier('import'), t.identifier('meta')), t.identifier('url'))
+          ])))
         },
         exit(path) {
           for (const template of templates) {

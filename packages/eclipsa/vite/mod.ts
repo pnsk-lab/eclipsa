@@ -62,7 +62,15 @@ export const eclipsa = (): Plugin => {
       })
     },
     hotUpdate(options) {
-      options.server.hot.send({ type: 'full-reload' })
+      /*
+      options.server.hot.send({ type: 'update', updates: [
+        {
+          type: 'js-update',
+          path: options.file,
+          timestamp: Date.now(),
+          acceptedPath: options.file
+        }
+      ] })*/
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {

@@ -17,3 +17,4 @@ export const initDevClient = async () => {
 }
 
 export * from './dom.ts'
+export * from './hot.ts'
