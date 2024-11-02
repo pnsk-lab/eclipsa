@@ -2,13 +2,11 @@ import { component$, For, useSignal } from '@xely/eclipsa'
 import { Header } from './Header.tsx'
 
 export default component$(() => {
-  console.log(import.meta.url)
-
   const todos = useSignal<string[]>(['ToDo1'])
-
   const inputting = useSignal('')
 
   return <div>
+    <Header />
     <input onInput$={(e: InputEvent) => {
       inputting.value = (e.currentTarget as HTMLInputElement).value
     }} value={inputting.value} />

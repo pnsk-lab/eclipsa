@@ -62,7 +62,17 @@ export const eclipsa = (): Plugin => {
       })
     },
     hotUpdate(options) {
-      options.server.hot.send({ type: 'full-reload' })
+      if (this.environment.name !== 'client')
+        return
+      const module = options.modules[0]
+      options.server.hot.send({
+        type: 'custom',
+        event: 'update-client',
+        data: {
+          url: module.url
+        }
+      })
+      return []
     },
     transform(code, id) {
       if (id.endsWith('.tsx')) {
