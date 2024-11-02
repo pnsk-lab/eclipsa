@@ -54,10 +54,7 @@ interface ComponentMetaInput {
   registry: HotRegistry
   name: string
 }
-interface HotComponent {
-  (): () => Component
-}
-export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): HotComponent => {
+export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
   const comp = useSignal(Component)
 
   const hash = Component.toString() // TODO
@@ -66,12 +63,13 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
     hash,
     update(newComponent) {
       comp.value = newComponent
-      console.log('updated', newComponent)
     },
     Component
   })
 
-  return () => () => comp.value
+  return (props) => {
+    return () => comp.value(props)
+  }
 }
 
 interface HotComponentData {
