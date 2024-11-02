@@ -4,7 +4,7 @@ import { transform, types as t } from '@babel/core'
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
 import {
-getJSXType,
+  getJSXType,
   getJSXTypeNode,
   transformChildren,
   transformProps,

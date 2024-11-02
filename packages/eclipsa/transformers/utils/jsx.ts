@@ -2,7 +2,7 @@
 import { types as t } from '@babel/core'
 
 export const transformProps = (elem: t.JSXOpeningElement) => {
-  const propArr: (t.ObjectProperty | t.SpreadElement)[] = []
+  const propArr: (t.ObjectProperty | t.SpreadElement | t.ObjectMethod)[] = []
   let key: t.Expression | undefined
   for (const attr of elem.attributes) {
     if (t.isJSXSpreadAttribute(attr)) {
@@ -32,7 +32,15 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
       if (isKey) {
         key = attr.value.expression
       }
-      propArr.push(t.objectProperty(name, attr.value.expression))
+      const isStatic = t.isLiteral(attr.value.expression)
+      if (isStatic) {
+        propArr.push(t.objectProperty(name, attr.value.expression))
+      } else {
+        // Use getter
+        propArr.push(t.objectMethod('get', t.identifier(attr.name.name), [], t.blockStatement([
+          t.returnStatement(attr.value.expression)
+        ])))
+      }
       continue
     }
   }

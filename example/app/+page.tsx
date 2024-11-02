@@ -1,12 +1,14 @@
-import { component$, useSignal } from '@xely/eclipsa'
+import { component$, For, useSignal } from '@xely/eclipsa'
 import { Header } from './Header.tsx'
 
 export default component$(() => {
-  const todos = useSignal<string[]>([])
+  console.log(import.meta.url)
+
+  const todos = useSignal<string[]>(['ToDo1'])
 
   const inputting = useSignal('')
+
   return <div>
-    <Header />
     <input onInput$={(e: InputEvent) => {
       inputting.value = (e.currentTarget as HTMLInputElement).value
     }} value={inputting.value} />
@@ -15,7 +17,7 @@ export default component$(() => {
       inputting.value = ''
     }}>Add</button>
     <ul>
-      {todos.value.map((todo, i) => <li key={i}>{todo}</li>)}
+      <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />
     </ul>
   </div>
 })

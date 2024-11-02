@@ -5,7 +5,7 @@ import { pluginClientDevJSX } from './plugin.ts'
 
 Deno.test('Transform', () => {
   const resultCode = transform(`<div a="a">
-    <Header />
+    <Header a="a" />
   </div>`, {
     plugins: [pluginClientDevJSX()],
   })?.code

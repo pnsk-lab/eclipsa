@@ -23,7 +23,7 @@ export const createTemplate = (html: string): () => Node => {
  * @param marker Marker to insert, default
  */
 export const insert = (
-  value: () => Insertable,
+  value: Insertable,
   parent: Node,
   marker?: Node,
 ) => {
@@ -32,7 +32,12 @@ export const insert = (
   let lastNodeLength = 0
 
   effect(() => {
-    const insertable = value()
+    let insertable = value
+    let key: string | number | symbol | undefined = undefined
+    while (typeof insertable === 'function') {
+      key ??= insertable.key
+      insertable = insertable()
+    }
 
     const elemArr = Array.isArray(insertable) ? insertable : [insertable]
 

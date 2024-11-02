@@ -19,3 +19,13 @@ export const useSignal: UseSignal = (value) => {
   }
 }
 export const effect = (fn: () => void) => alienEffect(fn)
+
+export const useComputed = <T>(fn: () => T) => {
+  const result = useSignal<T>()
+
+  effect(() => {
+    result.value = fn()
+  })
+
+  return result as Signal<T>
+}
