@@ -1,7 +1,7 @@
-import { build as viteBuild, mergeConfig, type UserConfig, type InlineConfig } from 'vite'
+import { createBuilder, mergeConfig, type UserConfig, type InlineConfig } from 'vite'
 
 export const build = async (config: UserConfig) => {
-  const built = await viteBuild(mergeConfig(config, {
+  const built = await createBuilder(mergeConfig(config, {
     configFile: false,
     build: {
       rollupOptions: {
@@ -9,4 +9,5 @@ export const build = async (config: UserConfig) => {
       }
     }
   } satisfies InlineConfig))
+  await built.buildApp()
 }

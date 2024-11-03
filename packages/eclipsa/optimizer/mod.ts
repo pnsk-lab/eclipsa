@@ -18,10 +18,8 @@ export const buildFile = async (source: string): Promise<Built | null> => {
 
   const imports = analyzeImports(parsed)
 
-  analyzeComponents(parsed, imports)
+  const client = analyzeComponents(parsed, imports)
 
-  const client = new Map<string, string>()
-  client.set('a.js', 'console.log(0)')
   return {
     client
   }

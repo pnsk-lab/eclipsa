@@ -1,0 +1,24 @@
+// ================= ENTRY (component_eurl.tsx) ==
+import { component$, useSignal } from '@xely/eclipsa'
+
+export default component$(() => {
+  const count = useSignal(0)
+  return <button onClick$={() => count.value ++}>
+    Count: {count.value}
+  </button>
+})
+
+
+// ================= 826bf207.js ==
+import { component$, useSignal } from "@xely/eclipsa";
+export default () => count.value++;
+
+// ================= 22400cbe.js ==
+import { component$, useSignal } from "@xely/eclipsa";
+export default () => {
+  const count = useSignal(0);
+  return <button ec:onClick$="826bf207.js">
+    Count: {count.value}
+  </button>;
+};
+
