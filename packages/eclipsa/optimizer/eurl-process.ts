@@ -66,6 +66,7 @@ const importsToImportDeclarations = (
 export const processEurlFunction = (
   path: NodePath<t.FunctionExpression | t.ArrowFunctionExpression>,
   importDeclarations: t.ImportDeclaration[],
+  componentPath: NodePath,
   variablesID: t.Identifier
 ) => {
   const eurl = `${nodeToHash(path.node)}.js`
@@ -75,10 +76,27 @@ export const processEurlFunction = (
     [componentVariablesID],
     path.node
   )
-  const chunk = t.program([
+  const chunk = t.file(t.program([
     ...importDeclarations,
     t.exportDefaultDeclaration(chunkExpr),
-  ])
+  ]))
+
+  traverse(chunk, {
+    Identifier: {
+      exit(path) {
+        if (path.node.name === componentVariablesID.name) {
+          return
+        }
+        if (!path.isReferencedIdentifier()) {
+          return
+        }
+
+        if (!path.scope.hasBinding(path.node.name) && componentPath.scope.hasBinding(path.node.name)) {
+          path.replaceWith(t.memberExpression(componentVariablesID, path.node))
+        }
+      }
+    }
+  })
 
   const callEurlExpr = t.callExpression(
     t.identifier('eurlFn'),
@@ -146,6 +164,7 @@ export const processComponent = (
               t.FunctionExpression | t.ArrowFunctionExpression
             >,
             importDeclarations,
+            componentPath,
             componentVariableID
           )
           clientFiles.set(eurl, generate(chunk).code)
