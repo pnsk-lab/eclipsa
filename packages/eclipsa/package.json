@@ -1,8 +1,0 @@
-{
-  "name": "eclipsa",
-  "version": "0.1.0",
-  "dependencies": {
-    "@babel/traverse": "^7.25.9",
-    "@types/babel__traverse": "^7.20.6"
-  }
-}

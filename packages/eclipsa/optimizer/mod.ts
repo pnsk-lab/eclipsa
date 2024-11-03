@@ -1,10 +1,7 @@
-// @ts-types="@types/babel__core"
-import * as babel from '@babel/core'
-// @ts-types="@types/babel__traverse"
-import _traverse from '@babel/traverse'
+import { analyzeImports } from './analyze-import.ts'
+import { babel, t } from './babel.ts'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-const traverse = _traverse.default
-const { types: t } = babel
+import { analyzeComponents } from './eurl-process.ts'
 
 export interface Built {
   client: Map<string, string>
@@ -19,13 +16,10 @@ export const buildFile = async (source: string): Promise<Built | null> => {
     return null
   }
 
-  traverse(parsed, {
-    Program: {
-      enter(path) {
-        //console.log(path)
-      }
-    }
-  })
+  const imports = analyzeImports(parsed)
+
+  analyzeComponents(parsed, imports)
+
   const client = new Map<string, string>()
   client.set('a.js', 'console.log(0)')
   return {
