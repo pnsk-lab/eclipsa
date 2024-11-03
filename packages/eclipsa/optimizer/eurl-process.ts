@@ -67,7 +67,8 @@ export const processEurlFunction = (
   path: NodePath<t.FunctionExpression | t.ArrowFunctionExpression>,
   importDeclarations: t.ImportDeclaration[],
   componentPath: NodePath,
-  variablesID: t.Identifier
+  variablesID: t.Identifier,
+  componentEurl: string
 ) => {
   const eurl = `${nodeToHash(path.node)}.js`
 
@@ -76,9 +77,15 @@ export const processEurlFunction = (
     [componentVariablesID],
     path.node
   )
+
+  const metadataObjectUid = path.scope.generateUidIdentifier('meta')
   const chunk = t.file(t.program([
     ...importDeclarations,
     t.exportDefaultDeclaration(chunkExpr),
+    t.variableDeclaration('var', [t.variableDeclarator(metadataObjectUid, t.objectExpression([
+      t.objectProperty(t.identifier('parentComponent'), t.stringLiteral(componentEurl))
+    ]))]),
+    t.exportNamedDeclaration(null, [t.exportSpecifier(metadataObjectUid, t.identifier('meta'))])
   ]))
 
   traverse(chunk, {
@@ -123,6 +130,7 @@ export const processComponent = (
 ) => {
   const componentPath = path.get('arguments')[0] as NodePath<t.FunctionExpression | t.ArrowFunctionExpression>
   const componentNode = t.cloneDeep(componentPath.node)
+  const eurl = `${nodeToHash(componentPath.node)}.js`
 
   const importDeclarations = importsToImportDeclarations(imports)
   const componentVariableObject = getComponentVariableObject(componentPath)
@@ -159,15 +167,16 @@ export const processComponent = (
             t.Expression
           >
 
-          const { eurl, chunk, callEurlExpr } = processEurlFunction(
+          const { eurl: fnEurl, chunk, callEurlExpr } = processEurlFunction(
             exprPath as NodePath<
               t.FunctionExpression | t.ArrowFunctionExpression
             >,
             importDeclarations,
             componentPath,
-            componentVariableID
+            componentVariableID,
+            eurl
           )
-          clientFiles.set(eurl, generate(chunk).code)
+          clientFiles.set(fnEurl, generate(chunk).code)
 
           path.replaceWith(
             t.jsxAttribute(
@@ -180,13 +189,11 @@ export const processComponent = (
     },
   })
 
-  const componentHash = nodeToHash(componentPath.node)
-  const componentEntryEurl = `${componentHash}.js`
-  const componentEurl = t.program([
+  const componentChunk = t.program([
     ...importDeclarations,
     t.exportDefaultDeclaration(componentPath.node as t.Expression),
   ])
-  clientFiles.set(componentEntryEurl, generate(componentEurl).code)
+  clientFiles.set(eurl, generate(componentChunk).code)
 }
 
 export const analyzeComponents = (

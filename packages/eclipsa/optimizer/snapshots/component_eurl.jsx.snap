@@ -12,8 +12,12 @@ export default component$(() => {
 // ================= 3192be53.js ==
 import { component$, useSignal } from "@xely/eclipsa";
 export default _vars2 => evt => _vars2.count.value++;
+var _meta = {
+  parentComponent: "65582711.js"
+};
+export { _meta as meta };
 
-// ================= 31036273.js ==
+// ================= 65582711.js ==
 import { component$, useSignal } from "@xely/eclipsa";
 export default () => {
   var _vars = {
