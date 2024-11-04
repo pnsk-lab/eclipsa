@@ -10,25 +10,27 @@ export default component$(() => {
 
 
 // ================= 3192be53.js ==
+import { createTemplate as _createTemplate } from "@xely/eclipsa/prod-client";
 import { component$, useSignal } from "@xely/eclipsa";
 export default _vars2 => evt => _vars2.count.value++;
 var _meta = {
-  parentComponent: "65582711.js"
+  parentComponent: "23dbe213.js"
 };
 export { _meta as meta };
 
-// ================= 65582711.js ==
+// ================= 23dbe213.js ==
+var _template = _createTemplate("<div></div>");
+import { createTemplate as _createTemplate } from "@xely/eclipsa/prod-client";
 import { component$, useSignal } from "@xely/eclipsa";
 export default () => {
-  var _template;
   var _vars = {
     get count() {
       return count;
     }
   };
   const count = useSignal(0);
-  return _ssrElem => {
-    var _elem = _ssrElem ?? _elem();
-  };
+  return <button ec:onClick$="3192be53.js">
+    Count: {count.value}
+  </button>;
 };
 
