@@ -181,7 +181,7 @@ export const processComponent = (
           path.replaceWith(
             t.jsxAttribute(
               t.jsxIdentifier(`ec:${name}`),
-              t.jsxExpressionContainer(callEurlExpr),
+              t.stringLiteral(fnEurl),
             ),
           )
         }

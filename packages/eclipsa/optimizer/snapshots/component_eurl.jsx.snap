@@ -20,14 +20,15 @@ export { _meta as meta };
 // ================= 65582711.js ==
 import { component$, useSignal } from "@xely/eclipsa";
 export default () => {
+  var _template;
   var _vars = {
     get count() {
       return count;
     }
   };
   const count = useSignal(0);
-  return <button ec:onClick$={eurlFn("3192be53.js", _vars)}>
-    Count: {count.value}
-  </button>;
+  return _ssrElem => {
+    var _elem = _ssrElem ?? _elem();
+  };
 };
 
