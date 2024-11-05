@@ -83,7 +83,7 @@ export const transformJSXDevSSR = (code: string, id: string): string => {
     plugins: [pluginJSXDevSSR({
       fileid: id,
     })],
-    //sourceMaps: 'inline',
+    sourceMaps: 'inline',
   })?.code
 
   if (!resultCode) {
