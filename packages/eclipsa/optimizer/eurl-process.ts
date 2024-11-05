@@ -1,6 +1,7 @@
 import type { AnalyzedImports } from './analyze-import.ts'
 import { babel, generate, type NodePath, t, traverse } from './babel.ts'
 import { xxHash32 } from '../utils/xxhash32.ts'
+import { transformJSX } from './jsx/mod.ts'
 
 export interface AnalyzedComponents {}
 
@@ -186,11 +187,16 @@ export const processComponent = (
           )
         }
       },
-    },
+    }
+  })
+
+  const { toInsertBody } = transformJSX(componentPath, {
+    componentVariableObjectIdentifier: componentVariableID,
   })
 
   const componentChunk = t.program([
     ...importDeclarations,
+    ...toInsertBody,
     t.exportDefaultDeclaration(componentPath.node as t.Expression),
   ])
   clientFiles.set(eurl, generate(componentChunk).code)

@@ -21,14 +21,6 @@ export const buildFile = async (source: string): Promise<Built | null> => {
 
   const client = analyzeComponents(parsed, imports)
 
-  for (const [file, code] of client) {
-    client.set(file, generate(transformJSX(babel.parse(code, {
-      plugins: [
-        SyntaxJSX.default
-      ]
-    })!)).code)
-  }
-
   return {
     client
   }

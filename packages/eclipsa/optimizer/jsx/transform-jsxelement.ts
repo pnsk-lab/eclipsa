@@ -1,25 +1,32 @@
+import { getJSXType } from '../../transformers/utils/jsx.ts'
 import { type NodePath, t } from '../babel.ts'
 
 interface Init {
   prodClientIdenifiers: {
     createTemplate: t.Identifier
   }
+  componentVariableObjectIdentifier: t.Identifier
 }
 interface Result {
   toInsertBody: t.Statement[]
 }
 
-export const processElement = (path: NodePath<t.JSXElement>): {
+type NodeAccessPath = number[]
+
+export const processElement = (path: NodePath<t.JSXElement>, nodeAccessPath: NodeAccessPath): {
   template: string
 } => {
   let template = ''
 
-  path.traverse({
-    JSXElement: {
-      enter(path) {
-      }
-    }
-  })
+  if (path.node.children.length === 0) {
+    // No children, forever
+    const type = getJSXType(path.node.openingElement)
+    template += `<${type.name}></${type.name}>`
+  } else {
+    // Has children!
+    const type = getJSXType(path.node.openingElement)
+    template += `<${type.name}>We are children.</${type.name}>`
+  }
 
   return {
     template
@@ -31,12 +38,13 @@ export const transformJSXElement = (path: NodePath<t.JSXElement>, init: Init): R
 
   // Generate Template
   const templateId = path.scope.generateUidIdentifier('template')
+  const templateStr = processElement(path, []).template
   toInsertBody.push(
     t.variableDeclaration('var', [
       t.variableDeclarator(
         templateId,
         t.callExpression(init.prodClientIdenifiers.createTemplate, [
-          t.stringLiteral('<div></div>'),
+          t.stringLiteral(templateStr),
         ]),
       ),
     ]),
@@ -55,8 +63,19 @@ export const transformJSXElement = (path: NodePath<t.JSXElement>, init: Init): R
       ]),
     ]),
   )
+  const functionIdentifier = path.scope.generateUidIdentifier('fn')
 
-  processElement(path)
+  path.replaceWith(t.callExpression(t.arrowFunctionExpression([], t.blockStatement([
+    t.variableDeclaration('var', [
+      t.variableDeclarator(functionIdentifier, functionExpr),
+    ]),
+    t.expressionStatement(t.assignmentExpression(
+      '=',
+      t.memberExpression(functionIdentifier, t.identifier('_var')),
+      init.componentVariableObjectIdentifier
+    )),
+    t.returnStatement(functionIdentifier)
+  ])), []))
 
   return {
     toInsertBody,
