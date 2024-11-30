@@ -1,13 +1,15 @@
 {
   "version": "4",
   "specifiers": {
-    "jsr:@std/assert@^1.0.6": "1.0.6",
+    "jsr:@std/assert@^1.0.6": "1.0.8",
+    "jsr:@std/assert@^1.0.8": "1.0.8",
+    "jsr:@std/async@^1.0.8": "1.0.9",
     "jsr:@std/data-structures@^1.0.4": "1.0.4",
-    "jsr:@std/fs@^1.0.4": "1.0.5",
-    "jsr:@std/internal@^1.0.4": "1.0.4",
-    "jsr:@std/path@^1.0.6": "1.0.7",
-    "jsr:@std/path@^1.0.7": "1.0.7",
-    "jsr:@std/testing@^1.0.3": "1.0.3",
+    "jsr:@std/fs@^1.0.5": "1.0.6",
+    "jsr:@std/internal@^1.0.4": "1.0.5",
+    "jsr:@std/internal@^1.0.5": "1.0.5",
+    "jsr:@std/path@^1.0.8": "1.0.8",
+    "jsr:@std/testing@^1.0.5": "1.0.5",
     "npm:@babel/core@^7.25.8": "7.25.8",
     "npm:@babel/plugin-syntax-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
     "npm:@babel/plugin-transform-react-jsx@^7.25.7": "7.25.7_@babel+core@7.25.8",
@@ -21,38 +23,53 @@
     "npm:fast-glob@^3.3.2": "3.3.2",
     "npm:hono@^4.6.4": "4.6.4",
     "npm:vite@*": "5.4.8_@types+node@22.5.4",
+    "npm:vite@6": "6.0.1_@types+node@22.5.4",
+    "npm:vite@6.0.0": "6.0.0_@types+node@22.5.4",
     "npm:vite@^6.0.0-beta.8": "6.0.0-beta.8_@types+node@22.5.4"
   },
   "jsr": {
     "@std/assert@1.0.6": {
       "integrity": "1904c05806a25d94fe791d6d883b685c9e2dcd60e4f9fc30f4fc5cf010c72207",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.4"
       ]
+    },
+    "@std/assert@1.0.8": {
+      "integrity": "ebe0bd7eb488ee39686f77003992f389a06c3da1bbd8022184804852b2fa641b",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.5"
+      ]
+    },
+    "@std/async@1.0.9": {
+      "integrity": "c6472fd0623b3f3daae023cdf7ca5535e1b721dfbf376562c0c12b3fb4867f91"
     },
     "@std/data-structures@1.0.4": {
       "integrity": "fa0e20c11eb9ba673417450915c750a0001405a784e2a4e0c3725031681684a0"
     },
-    "@std/fs@1.0.5": {
-      "integrity": "41806ad6823d0b5f275f9849a2640d87e4ef67c51ee1b8fb02426f55e02fd44e",
+    "@std/fs@1.0.6": {
+      "integrity": "42b56e1e41b75583a21d5a37f6a6a27de9f510bcd36c0c85791d685ca0b85fa2",
       "dependencies": [
-        "jsr:@std/path@^1.0.7"
+        "jsr:@std/path"
       ]
     },
     "@std/internal@1.0.4": {
       "integrity": "62e8e4911527e5e4f307741a795c0b0a9e6958d0b3790716ae71ce085f755422"
     },
-    "@std/path@1.0.7": {
-      "integrity": "76a689e07f0e15dcc6002ec39d0866797e7156629212b28f27179b8a5c3b33a1"
+    "@std/internal@1.0.5": {
+      "integrity": "54a546004f769c1ac9e025abd15a76b6671ddc9687e2313b67376125650dc7ba"
     },
-    "@std/testing@1.0.3": {
-      "integrity": "f98c2bee53860a5916727d7e7d3abe920dd6f9edace022e2d059f00d05c2cf42",
+    "@std/path@1.0.8": {
+      "integrity": "548fa456bb6a04d3c1a1e7477986b6cffbce95102d0bb447c67c4ee70e0364be"
+    },
+    "@std/testing@1.0.5": {
+      "integrity": "6e693cbec94c81a1ad3df668685c7ba8e20742bb10305bc7137faa5cf16d2ec4",
       "dependencies": [
-        "jsr:@std/assert",
+        "jsr:@std/assert@^1.0.8",
+        "jsr:@std/async",
         "jsr:@std/data-structures",
         "jsr:@std/fs",
-        "jsr:@std/internal",
-        "jsr:@std/path@^1.0.6"
+        "jsr:@std/internal@^1.0.5",
+        "jsr:@std/path"
       ]
     }
   },
@@ -68,7 +85,7 @@
       "integrity": "sha512-0xZJFNE5XMpENsgfHYTw8FbX4kv53mFLn2i3XPoq69LyhYSCBJtitaHx9QnsVTrsogI4Z3+HtEfZ2/GFPOtf5g==",
       "dependencies": [
         "@babel/highlight",
-        "picocolors"
+        "picocolors@1.1.0"
       ]
     },
     "@babel/compat-data@7.25.8": {
@@ -174,7 +191,7 @@
         "@babel/helper-validator-identifier",
         "chalk@2.4.2",
         "js-tokens",
-        "picocolors"
+        "picocolors@1.1.0"
       ]
     },
     "@babel/parser@7.25.8": {
@@ -788,6 +805,9 @@
     "picocolors@1.1.0": {
       "integrity": "sha512-TQ92mBOW0l3LeMeyLV6mzy/kWr8lkd/hp3mTg7wYK7zJhuBStmGMBG0BdeDZS/dZx1IukaX6Bk11zcln25o1Aw=="
     },
+    "picocolors@1.1.1": {
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
+    },
     "picomatch@2.3.1": {
       "integrity": "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="
     },
@@ -795,7 +815,15 @@
       "integrity": "sha512-56rxCq7G/XfB4EkXq9Egn5GCqugWvDFjafDOThIdMBsI15iqPqR5r15TfSr1YPYeEI19YeaXMCbY6u88Y76GLQ==",
       "dependencies": [
         "nanoid",
-        "picocolors",
+        "picocolors@1.1.0",
+        "source-map-js"
+      ]
+    },
+    "postcss@8.4.49": {
+      "integrity": "sha512-OCVPnIObs4N29kxTjzLfUryOkvZEq+pf8jTF0lg8E7uETuWHA+v7j3c/xJmiqpX450191LlmZfUKkXxkTry7nA==",
+      "dependencies": [
+        "nanoid",
+        "picocolors@1.1.1",
         "source-map-js"
       ]
     },
@@ -880,7 +908,7 @@
       "dependencies": [
         "browserslist",
         "escalade",
-        "picocolors"
+        "picocolors@1.1.0"
       ]
     },
     "validate-html-nesting@1.2.2": {
@@ -892,7 +920,7 @@
         "@types/node",
         "esbuild@0.21.5",
         "fsevents",
-        "postcss",
+        "postcss@8.4.47",
         "rollup"
       ]
     },
@@ -901,7 +929,27 @@
       "dependencies": [
         "@types/node",
         "esbuild@0.24.0",
-        "postcss",
+        "postcss@8.4.47",
+        "rollup"
+      ]
+    },
+    "vite@6.0.0_@types+node@22.5.4": {
+      "integrity": "sha512-Q2+5yQV79EdnpbNxjD3/QHVMCBaQ3Kpd4/uL51UGuh38bIIM+s4o3FqyCzRvTRwFb+cWIUeZvaWwS9y2LD2qeQ==",
+      "dependencies": [
+        "@types/node",
+        "esbuild@0.24.0",
+        "fsevents",
+        "postcss@8.4.49",
+        "rollup"
+      ]
+    },
+    "vite@6.0.1_@types+node@22.5.4": {
+      "integrity": "sha512-Ldn6gorLGr4mCdFnmeAOLweJxZ34HjKnDm4HGo6P66IEqTxQb36VEdFJQENKxWjupNfoIjvRUnswjn1hpYEpjQ==",
+      "dependencies": [
+        "@types/node",
+        "esbuild@0.24.0",
+        "fsevents",
+        "postcss@8.4.49",
         "rollup"
       ]
     },
@@ -912,7 +960,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@^1.0.6",
-      "jsr:@std/testing@^1.0.3",
+      "jsr:@std/testing@^1.0.5",
       "npm:fast-glob@^3.3.2"
     ],
     "members": {
@@ -934,7 +982,7 @@
           "npm:@types/babel__traverse@^7.20.6",
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
           "npm:hono@^4.6.4",
-          "npm:vite@^6.0.0-beta.8"
+          "npm:vite@6.0.0"
         ]
       }
     }
