@@ -126,12 +126,16 @@ export const processEurlFunction = (
  */
 export const processComponent = (
   path: NodePath<t.CallExpression>,
-  clientFiles: Map<string, string>,
+  clientFiles: Map<string, {
+    code: string
+    id?: string
+  }>,
   imports: AnalyzedImports,
+  id: string
 ) => {
   const componentPath = path.get('arguments')[0] as NodePath<t.FunctionExpression | t.ArrowFunctionExpression>
   const componentNode = t.cloneDeep(componentPath.node)
-  const eurl = `${nodeToHash(componentPath.node)}.js`
+  const eurl = `${nodeToHash(path.node)}.js`
 
   const importDeclarations = importsToImportDeclarations(imports)
   const componentVariableObject = getComponentVariableObject(componentPath)
@@ -177,7 +181,9 @@ export const processComponent = (
             componentVariableID,
             eurl
           )
-          clientFiles.set(fnEurl, generate(chunk).code)
+          clientFiles.set(fnEurl, {
+            code: generate(chunk).code
+          })
 
           path.replaceWith(
             t.jsxAttribute(
@@ -199,34 +205,48 @@ export const processComponent = (
     ...toInsertBody,
     t.exportDefaultDeclaration(componentPath.node as t.Expression),
   ])
-  clientFiles.set(eurl, generate(componentChunk).code)
+  clientFiles.set(eurl, {
+    code: generate(componentChunk).code,
+    id
+  })
 }
 
 export const analyzeComponents = (
   ast: babel.ParseResult,
   imports: AnalyzedImports,
 ) => {
-  const clientMap = new Map<string, string>()
+  const componentHashMap = new Map<string, {
+    code: string
+    id?: string
+  }>()
 
   const component$Name = imports.get('@xely/eclipsa')?.get('component$')
   if (!component$Name) {
-    return clientMap
+    return componentHashMap
   }
 
   traverse(ast, {
     CallExpression: {
       enter(path) {
         const callee = path.node.callee
-        if (t.isIdentifier(callee)) {
-          if (callee.name === component$Name) {
-            // Make component!
-            processComponent(path, clientMap, imports)
+        if (t.isIdentifier(callee) && callee.name === component$Name) {
+          const parent = path.parent
+          let id: string | null = null
+          if (parent.type === 'VariableDeclarator') {
+            id = (parent.id as t.Identifier).name
+          } else if (parent.type === 'ExportDefaultDeclaration') {
+            id = 'default'
           }
+          if (!id) {
+            throw new Error('component$')
+          }
+          //const hash = nodeToHash(path.node)
+          processComponent(path, componentHashMap, imports, id)
           return
         }
       },
     },
   })
 
-  return clientMap
+  return componentHashMap
 }

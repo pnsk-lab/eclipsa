@@ -1,5 +1,5 @@
-import { defineConfig, type Plugin } from 'vite'
-import { eclipsa } from '@xely/eclipsa/vite'
+import { defineConfig } from 'vite'
+import { eclipsa } from '../packages/eclipsa/vite/mod.ts'
 import { denoEclipsa } from './plugins/deno-load-eclipsa.ts'
 import { fileURLToPath } from 'node:url'
 

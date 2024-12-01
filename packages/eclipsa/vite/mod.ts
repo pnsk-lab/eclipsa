@@ -1,7 +1,7 @@
 import {
   createServerModuleRunner,
   DevEnvironment,
-  type Plugin,
+  type PluginOption,
   type ResolvedConfig,
 } from 'vite'
 import { createDevFetch } from './dev-app/mod.ts'
@@ -11,32 +11,13 @@ import {
 } from '../utils/node-connect.ts'
 import { transformJSXDevSSR } from '../transformers/dev-ssr/mod.ts'
 import { transformClientDevJSX } from '../transformers/dev-client/mod.ts'
+import { createConfig } from './config.ts'
 
-export const eclipsa = (): Plugin => {
+export const eclipsa = (): PluginOption => {
   let config: ResolvedConfig
   return {
     name: 'vite-plugin-eclipsa',
-    config() {
-      return {
-        esbuild: {
-          jsxFactory: 'jsx',
-          jsxImportSource: '@xely/eclipsa',
-          jsx: 'preserve',
-          sourcemap: false,
-        },
-        environments: {
-          ssr: {
-            dev: {
-              createEnvironment(name, config, _context) {
-                return new DevEnvironment(name, config, {
-                  hot: false,
-                })
-              },
-            },
-          },
-        },
-      }
-    },
+    config: createConfig,
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },

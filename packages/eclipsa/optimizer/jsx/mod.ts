@@ -10,6 +10,8 @@ export const transformJSX = (path: NodePath, init: {
   const createTemplateID = path.scope.generateUidIdentifier('createTemplate')
   const createComponentResultID = path.scope.generateUidIdentifier('createComponentResult')
   const effectID = path.scope.generateUidIdentifier('effect')
+  const insertID = path.scope.generateUidIdentifier('insert')
+  const createComponentEurlID = path.scope.generateUidIdentifier('createComponentEurl')
 
   const applyID = path.scope.generateUidIdentifier('apply')
   let toInsertBody: t.Statement[] = [
@@ -17,7 +19,9 @@ export const transformJSX = (path: NodePath, init: {
       t.importSpecifier(createTemplateID, t.identifier('createTemplate')),
       t.importSpecifier(createComponentResultID, t.identifier('createComponentResult')),
       t.importSpecifier(applyID, t.identifier('apply')),
-      t.importSpecifier(effectID, t.identifier('effect'))
+      t.importSpecifier(effectID, t.identifier('effect')),
+      t.importSpecifier(insertID, t.identifier('insert')),
+      t.importSpecifier(createComponentEurlID, t.identifier('createComponentEurl')),
     ], t.stringLiteral('@xely/eclipsa/prod-client'))
   ]
 
@@ -27,7 +31,9 @@ export const transformJSX = (path: NodePath, init: {
         prodClientIdenifiers: {
           createTemplate: createTemplateID,
           createComponentResult: createComponentResultID,
-          effect: effectID
+          effect: effectID,
+          insert: insertID,
+          createComponentEurl: createComponentEurlID
         },
         componentVariableObjectIdentifier: init.componentVariableObjectIdentifier
       })

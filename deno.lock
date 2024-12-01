@@ -21,10 +21,12 @@
     "npm:@types/babel__traverse@^7.20.6": "7.20.6",
     "npm:@types/node@*": "22.5.4",
     "npm:babel-plugin-jsx-dom-expressions@~0.39.2": "0.39.3_@babel+core@7.26.0",
+    "npm:esbuild@0.24": "0.24.0",
     "npm:fast-glob@^3.3.2": "3.3.2",
     "npm:hono@^4.6.4": "4.6.12",
+    "npm:vite@*": "6.0.1_@types+node@22.5.4",
     "npm:vite@6.0.0": "6.0.0",
-    "npm:vite@^6.0.0-beta.8": "6.0.1"
+    "npm:vite@^6.0.0-beta.8": "6.0.1_@types+node@22.5.4"
   },
   "jsr": {
     "@std/assert@1.0.8": {
@@ -804,6 +806,16 @@
         "rollup"
       ]
     },
+    "vite@6.0.1_@types+node@22.5.4": {
+      "integrity": "sha512-Ldn6gorLGr4mCdFnmeAOLweJxZ34HjKnDm4HGo6P66IEqTxQb36VEdFJQENKxWjupNfoIjvRUnswjn1hpYEpjQ==",
+      "dependencies": [
+        "@types/node",
+        "esbuild@0.24.0",
+        "fsevents",
+        "postcss",
+        "rollup"
+      ]
+    },
     "yallist@3.1.1": {
       "integrity": "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="
     }
@@ -834,6 +846,7 @@
           "npm:@types/babel__generator@^7.6.8",
           "npm:@types/babel__traverse@^7.20.6",
           "npm:babel-plugin-jsx-dom-expressions@~0.39.2",
+          "npm:esbuild@0.24",
           "npm:hono@^4.6.4",
           "npm:vite@6.0.0"
         ]

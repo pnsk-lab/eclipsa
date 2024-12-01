@@ -1,7 +1,7 @@
 {
   "tasks": {
     "dev": "cd example && deno run --watch -A start.ts",
-    "build": "cd example && deno run -A build.ts",
+    "build": "cd example && deno run -A npm:vite build",
     "test:watch": "deno test -A --watch --no-check -- --update"
   },
   "workspace": {

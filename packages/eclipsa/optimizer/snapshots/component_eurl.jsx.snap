@@ -1,39 +1,57 @@
 // ================= ENTRY (component_eurl.jsx) ==
 import { component$, useSignal } from '@xely/eclipsa'
 
+const A = component$(() => {
+  return <div>Hello World</div>
+})
 export default component$(() => {
   const count = useSignal(0)
   return <button onClick$={(evt) => count.value ++}>
     Count: {count.value}
+    <div />
+    <A />
   </button>
 })
 
 
+// ================= e228f2df.js ==
+import { component$, useSignal } from "@xely/eclipsa";
+import { createTemplate as _createTemplate, createComponentResult as _createComponentResult, apply as _apply, effect as _effect, insert as _insert, createComponentEurl as _createComponentEurl } from "@xely/eclipsa/prod-client";
+var _template = _createTemplate("<div ></div>");
+export default () => {
+  var _vars = {};
+  return _createComponentResult(_vars, _ssrElem => {
+    var _elem = _ssrElem ?? _template();
+    _effect(() => _elem.textContent = `Hello World`);
+    return _elem;
+  });
+};
+
 // ================= 3192be53.js ==
 import { component$, useSignal } from "@xely/eclipsa";
-export default _vars2 => evt => _vars2.count.value++;
+export default _vars3 => evt => _vars3.count.value++;
 var _meta = {
-  parentComponent: "65582711.js"
+  parentComponent: "73a519b2.js"
 };
 export { _meta as meta };
 
-// ================= 65582711.js ==
+// ================= 73a519b2.js ==
 import { component$, useSignal } from "@xely/eclipsa";
-import { createTemplate as _createTemplate, createComponentResult as _createComponentResult, apply as _apply, effect as _effect } from "@xely/eclipsa/prod-client";
-var _template = _createTemplate("<button></button>");
+import { createTemplate as _createTemplate2, createComponentResult as _createComponentResult2, apply as _apply2, effect as _effect2, insert as _insert2, createComponentEurl as _createComponentEurl2 } from "@xely/eclipsa/prod-client";
+var _template2 = _createTemplate2("<button ec:onClick$=\"3192be53.js\" >\n    Count: <ec:s sig=\"0\" />\n    <div ></div>\n    <ec:s sig=\"1\" />\n  </button>");
 export default () => {
-  var _vars = {
+  var _vars2 = {
     get count() {
       return count;
     }
   };
   const count = useSignal(0);
-  return _createComponentResult(_vars, _ssrElem => {
-    var _elem = _ssrElem ?? _template();
-    _effect(() => _elem.textContent = `
-    Count: ${count.value}
-  `);
-    return _elem;
+  return _createComponentResult2(_vars2, _ssrElem2 => {
+    var _elem2 = _ssrElem2 ?? _template2();
+    _insert2(_elem2, 0, () => count.value);
+    _effect2(() => _elem2.textContent = ``);
+    _createComponentEurl2(_elem2, 1, "eurl", {});
+    return _elem2;
   });
 };
 

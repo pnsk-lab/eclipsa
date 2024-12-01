@@ -11,9 +11,10 @@ Deno.test('Main', async () => {
   for await (const testFile of Deno.readDir(testsDir)) {
     console.info(`Testing with snapshots... ${testFile.name}`)
 
-    const tsx = await Deno.readTextFile(path.join(testsDir, testFile.name))
+    const filePath = path.join(testsDir, testFile.name)
+    const tsx = await Deno.readTextFile(filePath)
 
-    const built = await buildFile(tsx)
+    const built = await buildFile(tsx, testFile.name)
     if (!built) {
       continue
     }

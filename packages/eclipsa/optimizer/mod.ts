@@ -5,7 +5,10 @@ import { analyzeComponents } from './eurl-process.ts'
 import { transformJSX } from './jsx/mod.ts'
 
 export interface Built {
-  client: Map<string, string>
+  client: Map<string, {
+    code: string
+    id?: string
+  }>
 }
 export const buildFile = async (source: string): Promise<Built | null> => {
   const parsed = babel.parse(source, {
