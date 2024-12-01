@@ -15,5 +15,4 @@ Deno.test('Transform', () => {
   if (!resultCode) {
     throw new Error('Compiling JSX was failed.')
   }
-  console.log(resultCode)
 })

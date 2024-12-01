@@ -3,7 +3,9 @@ import { component$, useSignal } from '@xely/eclipsa'
 
 export default component$(() => {
   const count = useSignal(0)
-  return <button onClick$={(evt) => count.value ++}></button>
+  return <button onClick$={(evt) => count.value ++}>
+    Count: {count.value}
+  </button>
 })
 
 
@@ -11,13 +13,13 @@ export default component$(() => {
 import { component$, useSignal } from "@xely/eclipsa";
 export default _vars2 => evt => _vars2.count.value++;
 var _meta = {
-  parentComponent: "36d7d4bb.js"
+  parentComponent: "65582711.js"
 };
 export { _meta as meta };
 
-// ================= 36d7d4bb.js ==
+// ================= 65582711.js ==
 import { component$, useSignal } from "@xely/eclipsa";
-import { createTemplate as _createTemplate, apply as _apply } from "@xely/eclipsa/prod-client";
+import { createTemplate as _createTemplate, createComponentResult as _createComponentResult, apply as _apply, effect as _effect } from "@xely/eclipsa/prod-client";
 var _template = _createTemplate("<button></button>");
 export default () => {
   var _vars = {
@@ -26,12 +28,12 @@ export default () => {
     }
   };
   const count = useSignal(0);
-  return (() => {
-    var _fn = _ssrElem => {
-      var _elem = _ssrElem ?? _elem();
-    };
-    _fn._var = _vars;
-    return _fn;
-  })();
+  return _createComponentResult(_vars, _ssrElem => {
+    var _elem = _ssrElem ?? _template();
+    _effect(() => _elem.textContent = `
+    Count: ${count.value}
+  `);
+    return _elem;
+  });
 };
 
