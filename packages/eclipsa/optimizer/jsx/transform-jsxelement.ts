@@ -109,7 +109,7 @@ export const processElement = (
   let children = ''
 
   let commentSignalI = 0
-  for (const child of Array.from(childPaths)) {
+  for (const [i, child] of Array.from(childPaths).entries()) {
     if (child.isJSXSpreadChild()) {
       throw new TypeError('JSXSpreadChild is not supported.')
     } else if (child.isJSXExpressionContainer()) {
@@ -124,16 +124,23 @@ export const processElement = (
       const jsxType = getJSXType(child.node.openingElement)
       if (jsxType.type === 'element') {
         // Process pure element
-        children += processElement(child as NodePath<t.JSXElement | t.JSXFragment>, nodeAccessPath, elemId, init, insertStatements).template
+        const elem = t.memberExpression(elemId, t.identifier('xx'))
+        children += processElement(
+          child as NodePath<t.JSXElement | t.JSXFragment>,
+          nodeAccessPath,
+          elemId,
+          init,
+          insertStatements
+        ).template
         continue
       }
       // Process component
-      children += `<ec:s sig="${commentSignalI}" />`
+      children += `<ec:s sig="${commentSignalI}" is:cmp />`
       insertStatements.push(
         t.expressionStatement(
           t.callExpression(
             init.prodClientIdenifiers.createComponentEurl,
-            [elemId, t.numericLiteral(commentSignalI), t.stringLiteral('eurl'), transformProps(child.node.openingElement).props]
+            [elemId, t.numericLiteral(commentSignalI), t.identifier(jsxType.name), transformProps(child.node.openingElement).props]
           )
         )
       )

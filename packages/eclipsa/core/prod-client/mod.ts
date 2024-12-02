@@ -1,3 +1,3 @@
 export * from './eurl.ts'
-export * from './element.ts'
+export * from './dom.ts'
 export { effect } from '../reactive/mod.ts'

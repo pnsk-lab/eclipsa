@@ -3,6 +3,7 @@ import {
   DevEnvironment,
   type PluginOption,
   type ResolvedConfig,
+  type Plugin
 } from 'vite'
 import { createDevFetch } from './dev-app/mod.ts'
 import {
@@ -12,12 +13,15 @@ import {
 import { transformJSXDevSSR } from '../transformers/dev-ssr/mod.ts'
 import { transformClientDevJSX } from '../transformers/dev-client/mod.ts'
 import { createConfig } from './config.ts'
+import { vitePluginEclipsaBuild } from './build/plugin.ts'
 
-export const eclipsa = (): PluginOption => {
+const eclipsaCore = (): Plugin => {
   let config: ResolvedConfig
+
   return {
     name: 'vite-plugin-eclipsa',
     config: createConfig,
+
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
@@ -57,8 +61,8 @@ export const eclipsa = (): PluginOption => {
       return []
     },
     transform(code, id) {
-      if (config.mode === 'production') {
-        return code
+      if (this.environment.mode !== 'dev') {
+        return
       }
       if (id.endsWith('.tsx')) {
         const result = (
@@ -73,4 +77,11 @@ export const eclipsa = (): PluginOption => {
       return
     },
   }
+}
+
+export const eclipsa = (): PluginOption => {
+  return [
+    eclipsaCore(),
+    vitePluginEclipsaBuild()
+  ]
 }

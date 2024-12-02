@@ -1,8 +1,11 @@
 import type { Plugin } from 'vite'
-import { DevEnvironment } from 'vite'
 import { build } from './build/mod.ts'
+import { createRoutes } from './utils/routing.ts'
+import { cwd } from 'node:process'
 
-export const createConfig: Plugin['config'] = (userConfig) => {
+export const createConfig: Plugin['config'] = async (userConfig) => {
+  const routes = await createRoutes(userConfig.root ?? cwd())
+
   return {
     esbuild: {
       jsxFactory: 'jsx',
@@ -13,8 +16,10 @@ export const createConfig: Plugin['config'] = (userConfig) => {
     environments: {
       client: {
         build: {
-          manifest: true,
-          
+          rollupOptions: {
+            input: routes.map(route => route.filePath),
+            preserveEntrySignatures: 'allow-extension'
+          }
         }
       }
     },

@@ -7,7 +7,7 @@ export default component$(() => {
 
   return (
     <div>
-      <Header a={0} />
+      <Header />
       <input
         onInput$={(e: InputEvent) => {
           inputting.value = (e.currentTarget as HTMLInputElement).value

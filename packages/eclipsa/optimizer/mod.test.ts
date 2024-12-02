@@ -14,13 +14,13 @@ Deno.test('Main', async () => {
     const filePath = path.join(testsDir, testFile.name)
     const tsx = await Deno.readTextFile(filePath)
 
-    const built = await buildFile(tsx, testFile.name)
+    const built = await buildFile(tsx)
     if (!built) {
       continue
     }
     let snapshot = `// ================= ENTRY (${testFile.name}) ==\n${tsx}\n\n`
-    for (const [name, code] of built.client) {
-      snapshot += `// ================= ${name} ==\n${code}\n\n`
+    for (const [name, {id, code}] of built.client) {
+      snapshot += `// ================= ${name} (${id}) ==\n${code}\n\n`
     }
     const snapShotPath = path.join(optimizerDir, 'snapshots', testFile.name + '.snap')
 

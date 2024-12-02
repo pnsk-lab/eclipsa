@@ -1,9 +1,7 @@
 import { component$ } from '@xely/eclipsa'
 
-export const Header = component$((props: {
-  a: number
-}) => (
+export const Header = component$(() => (
   <div>
-    <h1>Todo List{props.a}</h1>
+    <h1>Todo List</h1>
   </div>
 ))
