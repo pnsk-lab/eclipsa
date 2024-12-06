@@ -1,7 +1,7 @@
 import { analyzeImports } from './analyze-import.ts'
 import { babel, generate, t } from './babel.ts'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-import { analyzeComponents } from './eurl-process.ts'
+import { analyzeEurl } from './eurl-process.ts'
 import { transformJSX } from './jsx/mod.ts'
 
 export interface Built {
@@ -9,6 +9,7 @@ export interface Built {
     code: string
     id?: string
   }>
+  clientEntry: string
 }
 export const buildFile = async (source: string): Promise<Built | null> => {
   const parsed = babel.parse(source, {
@@ -22,9 +23,10 @@ export const buildFile = async (source: string): Promise<Built | null> => {
 
   const imports = analyzeImports(parsed)
 
-  const client = analyzeComponents(parsed, imports)
+  const { client, clientEntry } = analyzeEurl(parsed, imports)
 
   return {
-    client
+    client,
+    clientEntry
   }
 }

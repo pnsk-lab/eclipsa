@@ -8,7 +8,7 @@ import { types } from '@babel/core'
 import _generate from '@babel/generator'
 
 // @ts-types="@types/babel__traverse"
-export type { NodePath } from '@babel/traverse'
+export type { NodePath, Scope, Binding } from '@babel/traverse'
 
 export const generate = _generate.default
 export const traverse = _traverse.default

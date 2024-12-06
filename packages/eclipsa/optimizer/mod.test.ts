@@ -19,7 +19,12 @@ Deno.test('Main', async () => {
       continue
     }
     let snapshot = `// ================= ENTRY (${testFile.name}) ==\n${tsx}\n\n`
-    for (const [name, {id, code}] of built.client) {
+
+    snapshot += `// ================= client entry ==\n${built.clientEntry}\n\n`
+
+    for (const [name, {id, code}] of [
+      ...built.client,
+    ]) {
       snapshot += `// ================= ${name} (${id}) ==\n${code}\n\n`
     }
     const snapShotPath = path.join(optimizerDir, 'snapshots', testFile.name + '.snap')

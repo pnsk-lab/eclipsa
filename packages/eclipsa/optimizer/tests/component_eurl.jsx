@@ -1,13 +1,11 @@
-import { component$, useSignal } from '@xely/eclipsa'
-
-const A = component$(() => {
-  return <div>Hello World</div>
-})
+import { component$, useSignal, $ } from '@xely/eclipsa'
 export default component$(() => {
-  const count = useSignal(0)
-  return <button onClick$={(evt) => count.value ++}>
-    Count: {count.value}
-    <div />
-    <A />
+  const a = 0
+  const add = $(() => {
+    console.log(a)
+  })
+
+  return <button onClick$={() => add()}>
+    Add
   </button>
 })

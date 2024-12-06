@@ -1,252 +1,170 @@
-import type { AnalyzedImports } from './analyze-import.ts'
-import { babel, generate, type NodePath, t, traverse } from './babel.ts'
-import { xxHash32 } from '../utils/xxhash32.ts'
-import { transformJSX } from './jsx/mod.ts'
+import { AnalyzedImports } from './analyze-import.ts'
+import { traverse, babel, t, generate, NodePath, } from './babel.ts'
+import { nodeToHash } from './utils/node-hash.ts'
+import type { Built } from './mod.ts'
+import { canBeReferedWithOnlyScope } from './utils/scope.ts'
 
-export interface AnalyzedComponents {}
-
-const ECLIPSA_EVENT_REGEX = /^on[A-Z].+\$$/
-
-const nodeToHash = (node: t.Node) => xxHash32(generate(node).code).toString(16)
-
-/**
- * Bundle variables in a component to a single object.
- */
-const getComponentVariableObject = (componentPath: NodePath<t.FunctionExpression | t.ArrowFunctionExpression>): t.ObjectExpression => {
-  const componentVariableObject = t.objectExpression([])
-  for (const [name, info] of Object.entries(componentPath.scope.bindings)) {
-    // Add getter
-    componentVariableObject.properties.push(
-      t.objectMethod(
-        'get',
-        t.identifier(name),
-        [],
-        t.blockStatement([t.returnStatement(t.identifier(name))]),
-      ),
-    )
-    if (!info.constant) {
-      // If variable isn't constant, setter is needed.
-      // Add setter
-      componentVariableObject.properties.push(
-        t.objectMethod(
-          'set',
-          t.identifier(name),
-          [t.identifier(name)],
-          t.blockStatement([
-            t.expressionStatement(
-              t.assignmentExpression(
-                '=',
-                t.identifier(name),
-                t.identifier(name),
-              ),
-            ),
-          ]),
-        ),
-      )
-    }
+interface ProdClientImports {
+  identifier: {
+    eurlFn: t.Identifier
   }
-  return componentVariableObject
+  imports: t.ImportDeclaration[]
 }
 
-const importsToImportDeclarations = (
+const processComponent = (
+  componentPath: NodePath<t.CallExpression>,
+  built: Built,
   imports: AnalyzedImports,
-): t.ImportDeclaration[] => {
-  const result: t.ImportDeclaration[] = []
-  for (const [name, value] of imports) {
-    const specifiers: t.ImportSpecifier[] = []
-    for (const [imported, local] of value) {
-      specifiers.push(
-        t.importSpecifier(t.identifier(local), t.identifier(imported)),
-      )
-    }
-    result.push(t.importDeclaration(specifiers, t.stringLiteral(name)))
-  }
-  return result
-}
-
-export const processEurlFunction = (
-  path: NodePath<t.FunctionExpression | t.ArrowFunctionExpression>,
-  importDeclarations: t.ImportDeclaration[],
-  componentPath: NodePath,
-  variablesID: t.Identifier,
-  componentEurl: string
+  prodImports: ProdClientImports
 ) => {
-  const eurl = `${nodeToHash(path.node)}.js`
 
-  const componentVariablesID = path.scope.generateUidIdentifier('vars')
-  const chunkExpr = t.arrowFunctionExpression(
-    [componentVariablesID],
-    path.node
-  )
+  const eclisaImports = imports.get('@xely/eclipsa')
+  const $Identifier = eclisaImports?.get('$')
 
-  const metadataObjectUid = path.scope.generateUidIdentifier('meta')
-  const chunk = t.file(t.program([
-    ...importDeclarations,
-    t.exportDefaultDeclaration(chunkExpr),
-    t.variableDeclaration('var', [t.variableDeclarator(metadataObjectUid, t.objectExpression([
-      t.objectProperty(t.identifier('parentComponent'), t.stringLiteral(componentEurl))
-    ]))]),
-    t.exportNamedDeclaration(null, [t.exportSpecifier(metadataObjectUid, t.identifier('meta'))])
-  ]))
+  const arrowFunctionPath = componentPath.get('arguments')[0] as NodePath<t.ArrowFunctionExpression>
 
-  traverse(chunk, {
-    Identifier: {
-      exit(path) {
-        if (path.node.name === componentVariablesID.name) {
-          return
+  // Process component-level functions
+  const topLevelVariables = new Set<string>()
+  const arrowFunctionBodyPath = arrowFunctionPath.get('body')
+  if (arrowFunctionBodyPath.node.type === 'BlockStatement') {
+    for (const statement of (arrowFunctionBodyPath as NodePath<t.BlockStatement>).get('body')) {
+      if (statement.isVariableDeclaration()) {
+        for (const declaration of statement.get('declarations')) {
+          const id = declaration.node.id as t.Identifier
+          topLevelVariables.add(id.name)
         }
-        if (!path.isReferencedIdentifier()) {
-          return
+      } else if (statement.isFunctionDeclaration()) {
+        const id = statement.node.id
+        if (id) {
+          topLevelVariables.add(id.name)
         }
+      }
+    }
+  }
 
-        if (!path.scope.hasBinding(path.node.name) && componentPath.scope.hasBinding(path.node.name)) {
-          path.replaceWith(t.memberExpression(componentVariablesID, path.node))
+  // eurl-ize all async functions
+  const eurls = new Map<string, NodePath<t.ArrowFunctionExpression | t.FunctionExpression>>()
+  arrowFunctionPath.traverse({
+    CallExpression(path) {
+      const callee = path.get('callee')
+      if (callee.isIdentifier() && callee.node.name === $Identifier) {
+        const fn = path.get('arguments')[0]
+        path.replaceWith(t.callExpression(prodImports.identifier.eurlFn, [fn.node]))
+        if (fn.isArrowFunctionExpression() || fn.isFunctionExpression()) {
+          eurls.set(nodeToHash(fn.node), fn)
         }
+      }
+    },
+    JSXAttribute(path) {
+      const name = path.node.name.type === 'JSXIdentifier' ? path.node.name.name : path.node.name.name.name
+      if (name.at(-1) !== '$') {
+        return
+      }
+      const value = path.get('value')
+      if (!value.isJSXExpressionContainer()) {
+        return
+      }
+      const expr = value.get('expression')
+
+      if (expr && (expr.isFunctionExpression() || expr.isArrowFunctionExpression())) {
+        const hash = nodeToHash(path.node)
+        eurls.set(hash, expr)
+        value.replaceWith(t.stringLiteral(hash))
       }
     }
   })
 
-  const callEurlExpr = t.callExpression(
-    t.identifier('eurlFn'),
-    [
-      t.stringLiteral(eurl),
-      variablesID
-    ]
-  )
+  const componentEurl = nodeToHash(componentPath.node)
+  eurls.set(componentEurl, componentPath.get('arguments')[0] as NodePath<t.ArrowFunctionExpression>)
 
-  return {
-    eurl,
-    chunk,
-    callEurlExpr
+  // Build client codes
+  for (const [eurl, fnPath] of eurls) {
+    const usingVars = new Set<string>()
+    const vars = fnPath.scope.generateUidIdentifier('vars')
+
+    const imports: t.ImportDeclaration[] = []
+    fnPath.traverse({
+      Identifier: {
+        enter(path) {
+          if (path.parentPath.isMemberExpression()) {
+            return
+          }
+          const varName = path.node.name
+          const varBinding = path.scope.getBinding(varName)
+          if (!varBinding) {
+            return
+          }
+          if (!canBeReferedWithOnlyScope(varBinding, fnPath.scope)) {
+            if (varBinding.kind === 'module') {
+              // import
+              imports.push(varBinding.path.parent as t.ImportDeclaration)
+              return
+            }
+            path.replaceWith(t.memberExpression(vars, path.node))
+            usingVars.add(varName)
+          }
+        }
+      }
+    })
+    const resultNode = t.program([
+      ...prodImports.imports,
+      ...imports,
+      t.exportDefaultDeclaration(t.arrowFunctionExpression([vars], fnPath.node))
+    ])
+    built.client.set(`${eurl}.js`, {
+      code: generate(resultNode).code
+    })
+    fnPath.replaceWith(t.stringLiteral(eurl))
+    if (t.isCallExpression(fnPath.parent)) {
+      fnPath.parent.arguments.push(t.objectExpression([...usingVars].map(usingVar => (t.objectMethod('get', t.identifier(usingVar), [], t.blockStatement([
+        t.returnStatement(t.identifier(usingVar))
+      ]))))))
+    }
   }
 }
 
 /**
- * Process `component$`
+ * Build eurls.
  */
-export const processComponent = (
-  path: NodePath<t.CallExpression>,
-  clientFiles: Map<string, {
-    code: string
-    id?: string
-  }>,
-  imports: AnalyzedImports,
-  id: string
-) => {
-  const componentPath = path.get('arguments')[0] as NodePath<t.FunctionExpression | t.ArrowFunctionExpression>
-  const componentNode = t.cloneDeep(componentPath.node)
-  const eurl = `${nodeToHash(path.node)}.js`
+export const analyzeEurl = (parsed: babel.ParseResult, imports: AnalyzedImports) => {
+  const eclisaImports = imports.get('@xely/eclipsa')
+  const component$Identifier = eclisaImports?.get('component$')
 
-  const importDeclarations = importsToImportDeclarations(imports)
-  const componentVariableObject = getComponentVariableObject(componentPath)
-  const componentVariableID = componentPath.scope.generateUidIdentifier('vars')
-  const setComponentVariable = t.variableDeclaration('var', [
-    t.variableDeclarator(componentVariableID, componentVariableObject),
-  ])
+  let prodClientImports!: ProdClientImports
 
-  componentPath.node.body = t.isExpression(componentPath.node.body) ? t.blockStatement([
-    setComponentVariable,
-    t.returnStatement(componentPath.node.body)
-  ]) : t.blockStatement([
-    setComponentVariable,
-    ...componentPath.node.body.body,
-  ])
-
-  // Process `onXxxx$` Events
-  componentPath.traverse({
-    JSXAttribute: {
+  const built: Built = {
+    client: new Map(),
+    clientEntry: ''
+  }
+  traverse(parsed, {
+    Program: {
       enter(path) {
-        const name = typeof path.node.name.name === 'string'
-          ? path.node.name.name
-          : path.node.name.name.name
-        if (ECLIPSA_EVENT_REGEX.test(name)) {
-          // It's eclipsa event (onClick$, onInput$, ...)
-          const value = path.node.value
-          if (!value) {
-            return
-          }
-          if (!t.isJSXExpressionContainer(value)) {
-            return
-          }
-          const exprPath = path.get('value.expression') as NodePath<
-            t.Expression
-          >
-
-          const { eurl: fnEurl, chunk, callEurlExpr } = processEurlFunction(
-            exprPath as NodePath<
-              t.FunctionExpression | t.ArrowFunctionExpression
-            >,
-            importDeclarations,
-            componentPath,
-            componentVariableID,
-            eurl
-          )
-          clientFiles.set(fnEurl, {
-            code: generate(chunk).code
-          })
-
-          path.replaceWith(
-            t.jsxAttribute(
-              t.jsxIdentifier(`ec:${name}`),
-              t.stringLiteral(fnEurl),
-            ),
-          )
+        const eurlFn = path.scope.generateUidIdentifier('eurlFn')
+        prodClientImports = {
+          identifier: {
+            eurlFn
+          },
+          imports: [
+            t.importDeclaration([
+              t.importSpecifier(eurlFn, t.identifier('eurlFn'))
+            ], t.stringLiteral('@xely/eclipsa'))
+          ]
         }
-      },
+      }
+    },
+    CallExpression: {
+      enter(path) {
+        if (path.node.callee.type === 'Identifier' && path.node.callee.name === component$Identifier) {
+          processComponent(path, built, imports, prodClientImports)
+        }
+      }
+    },
+    BlockStatement: {
+      enter(path) {
+        path.skip()
+      }
     }
   })
 
-  const { toInsertBody } = transformJSX(componentPath, {
-    componentVariableObjectIdentifier: componentVariableID,
-  })
-
-  const componentChunk = t.program([
-    ...importDeclarations,
-    ...toInsertBody,
-    t.exportDefaultDeclaration(componentPath.node as t.Expression),
-  ])
-  clientFiles.set(eurl, {
-    code: generate(componentChunk).code,
-    id
-  })
-}
-
-export const analyzeComponents = (
-  ast: babel.ParseResult,
-  imports: AnalyzedImports,
-) => {
-  const componentHashMap = new Map<string, {
-    code: string
-    id?: string
-  }>()
-
-  const component$Name = imports.get('@xely/eclipsa')?.get('component$')
-  if (!component$Name) {
-    return componentHashMap
-  }
-
-  traverse(ast, {
-    CallExpression: {
-      enter(path) {
-        const callee = path.node.callee
-        if (t.isIdentifier(callee) && callee.name === component$Name) {
-          const parent = path.parent
-          let id: string | null = null
-          if (parent.type === 'VariableDeclarator') {
-            id = (parent.id as t.Identifier).name
-          } else if (parent.type === 'ExportDefaultDeclaration') {
-            id = 'default'
-          }
-          if (!id) {
-            throw new Error('component$')
-          }
-          //const hash = nodeToHash(path.node)
-          processComponent(path, componentHashMap, imports, id)
-          return
-        }
-      },
-    },
-  })
-
-  return componentHashMap
+  return built
 }
