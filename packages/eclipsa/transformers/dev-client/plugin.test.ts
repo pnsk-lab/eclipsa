@@ -1,19 +1,26 @@
-import { assertEquals } from '@std/assert'
 // @ts-types="@types/babel__core"
-import { transform } from '@babel/core'
-import { pluginClientDevJSX } from './plugin.ts'
+import { transform } from "@babel/core";
+import { describe, expect, it } from "vitest";
+import { pluginClientDevJSX } from "./plugin.ts";
 
-Deno.test('Transform', () => {
-  const resultCode = transform(
-    `<div a="a">
-    <Header a="a" />
-  </div>`,
-    {
-      plugins: [pluginClientDevJSX()],
-    },
-  )?.code
-  if (!resultCode) {
-    throw new Error('Compiling JSX was failed.')
-  }
-  console.log(resultCode)
-})
+describe("pluginClientDevJSX", () => {
+  it("injects the runtime helpers and template setup", () => {
+    const resultCode = transform(
+      `<div a="a">
+        <Header a="a" />
+      </div>`,
+      {
+        filename: "plugin.test.tsx",
+        parserOpts: {
+          plugins: ["jsx"],
+        },
+        plugins: [pluginClientDevJSX()],
+      },
+    )?.code;
+
+    expect(resultCode).toBeTruthy();
+    expect(resultCode).toContain('from "eclipsa/dev-client"');
+    expect(resultCode).toContain("createTemplate");
+    expect(resultCode).toContain("createComponent");
+  });
+});

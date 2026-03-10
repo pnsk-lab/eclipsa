@@ -1,4 +1,53 @@
 {
   "name": "eclipsa",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "import": "./mod.ts"
+    },
+    "./vite": {
+      "types": "./vite/mod.ts",
+      "import": "./vite/mod.ts"
+    },
+    "./jsx-runtime": {
+      "types": "./jsx/jsx-runtime.ts",
+      "import": "./jsx/jsx-runtime.ts"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./jsx/jsx-dev-runtime.ts",
+      "import": "./jsx/jsx-dev-runtime.ts"
+    },
+    "./jsx": {
+      "types": "./jsx/mod.ts",
+      "import": "./jsx/mod.ts"
+    },
+    "./dev-client": {
+      "types": "./core/dev-client/mod.ts",
+      "import": "./core/dev-client/mod.ts"
+    }
+  },
+  "scripts": {
+    "build": "vp pack",
+    "pack": "vp pack",
+    "test": "vp test --run"
+  },
+  "dependencies": {
+    "@babel/core": "^7.25.8",
+    "@babel/plugin-syntax-jsx": "^7.25.7",
+    "@babel/plugin-transform-react-jsx": "^7.25.7",
+    "@babel/traverse": "^7.25.7",
+    "@babel/types": "^7.25.8",
+    "babel-plugin-jsx-dom-expressions": "^0.39.2",
+    "fast-glob": "^3.3.2",
+    "hono": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__traverse": "^7.20.6"
+  },
+  "peerDependencies": {
+    "vite": "*"
+  }
 }

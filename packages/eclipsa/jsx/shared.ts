@@ -1,1 +1,1 @@
-export const FRAGMENT = '__ECLIPSA_FRAGMENT'
+export const FRAGMENT = "__ECLIPSA_FRAGMENT";

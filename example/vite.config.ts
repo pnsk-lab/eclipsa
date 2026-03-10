@@ -1,11 +1,12 @@
-import { defineConfig, type Plugin } from 'vite'
-import { eclipsa } from '@xely/eclipsa/vite'
-import { denoEclipsa } from './plugins/deno-load-eclipsa.ts'
+import { defineConfig } from "vite-plus";
+import { eclipsa } from "eclipsa/vite";
 
 export default defineConfig({
-  appType: 'custom',
-  plugins: [
-    eclipsa() as Plugin,
-    denoEclipsa(),
-  ],
-})
+  appType: "custom",
+  plugins: [eclipsa()],
+  server: {
+    fs: {
+      allow: [".."],
+    },
+  },
+});

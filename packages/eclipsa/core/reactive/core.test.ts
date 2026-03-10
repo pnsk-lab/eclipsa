@@ -1,32 +1,35 @@
-import { effect, signal } from './core.ts'
-import { assertSpyCall, spy } from '@std/testing/mock'
-import { assertEquals } from '@std/assert/equals'
+import { effect, signal } from "./core.ts";
+import { describe, expect, it, vi } from "vitest";
 
-Deno.test('Signal value should be valid', () => {
-  const count = signal(0)
+describe("signal", () => {
+  it("returns the current value", () => {
+    const count = signal(0);
 
-  assertEquals(count.get(), 0)
-})
+    expect(count.get()).toBe(0);
+  });
 
-Deno.test('Signal value should be updated', () => {
-  const count = signal(0)
+  it("updates the stored value", () => {
+    const count = signal(0);
 
-  count.set(1)
+    count.set(1);
 
-  assertEquals(count.get(), 1)
-})
+    expect(count.get()).toBe(1);
+  });
 
-Deno.test('Effect should be called', () => {
-  const count = signal(0)
+  it("re-runs effects when the value changes", () => {
+    const count = signal(0);
 
-  const cb = spy()
-  effect(() => {
-    cb(count.get())
-  })
-  assertSpyCall(cb, 0)
+    const cb = vi.fn();
+    effect(() => {
+      cb(count.get());
+    });
 
-  count.set(1)
-  assertSpyCall(cb, 1, {
-    args: [1],
-  })
-})
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(cb).toHaveBeenNthCalledWith(1, 0);
+
+    count.set(1);
+
+    expect(cb).toHaveBeenCalledTimes(2);
+    expect(cb).toHaveBeenNthCalledWith(2, 1);
+  });
+});
