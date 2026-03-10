@@ -22,7 +22,7 @@ export const transformJSX = (path: NodePath, init: {
       t.importSpecifier(effectID, t.identifier('effect')),
       t.importSpecifier(insertID, t.identifier('insert')),
       t.importSpecifier(createComponentEurlID, t.identifier('createComponentEurl')),
-    ], t.stringLiteral('@xely/eclipsa/prod-client'))
+    ], t.stringLiteral('eclipsa/prod-client'))
   ]
 
   path.traverse({

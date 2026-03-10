@@ -18,7 +18,7 @@ const processComponent = (
   prodImports: ProdClientImports
 ) => {
 
-  const eclisaImports = imports.get('@xely/eclipsa')
+  const eclisaImports = imports.get('eclipsa')
   const $Identifier = eclisaImports?.get('$')
 
   const arrowFunctionPath = componentPath.get('arguments')[0] as NodePath<t.ArrowFunctionExpression>
@@ -127,7 +127,7 @@ const processComponent = (
  * Build eurls.
  */
 export const analyzeEurl = (parsed: babel.ParseResult, imports: AnalyzedImports) => {
-  const eclisaImports = imports.get('@xely/eclipsa')
+  const eclisaImports = imports.get('eclipsa')
   const component$Identifier = eclisaImports?.get('component$')
 
   let prodClientImports!: ProdClientImports
@@ -147,7 +147,7 @@ export const analyzeEurl = (parsed: babel.ParseResult, imports: AnalyzedImports)
           imports: [
             t.importDeclaration([
               t.importSpecifier(eurlFn, t.identifier('eurlFn'))
-            ], t.stringLiteral('@xely/eclipsa'))
+            ], t.stringLiteral('eclipsa'))
           ]
         }
       }

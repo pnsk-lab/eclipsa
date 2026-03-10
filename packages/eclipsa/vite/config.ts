@@ -9,7 +9,7 @@ export const createConfig: Plugin['config'] = async (userConfig) => {
   return {
     esbuild: {
       jsxFactory: 'jsx',
-      jsxImportSource: '@xely/eclipsa',
+      jsxImportSource: 'eclipsa',
       jsx: 'preserve',
       sourcemap: false,
     },

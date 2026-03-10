@@ -1,21 +1,12 @@
-import { defineConfig } from 'vite'
-import { eclipsa } from '../packages/eclipsa/vite/mod.ts'
-import { denoEclipsa } from './plugins/deno-load-eclipsa.ts'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
+import { defineConfig } from "vite-plus";
+import { eclipsa } from "eclipsa/vite";
 
 export default defineConfig({
-  appType: 'custom',
-  root: __dirname,
-  mode: 'custom',
-  plugins: [
-    eclipsa(),
-    denoEclipsa(),
-  ],
+  appType: "custom",
+  plugins: [eclipsa()],
   server: {
     fs: {
-      allow: ['..']
-    }
+      allow: [".."],
+    },
   },
-})
+});

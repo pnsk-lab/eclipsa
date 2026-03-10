@@ -1,0 +1,31 @@
+{
+  "name": "eclipsa-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "example"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev --filter=example",
+    "build": "turbo run build",
+    "pack": "turbo run pack --filter=eclipsa",
+    "test": "turbo run test",
+    "fmt": "vp fmt"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@voidzero-dev/vite-plus-core": "^0.1.4",
+    "@voidzero-dev/vite-plus-test": "^0.1.4",
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
+    "vite-plus": "^0.1.4",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4"
+  },
+  "packageManager": "bun@1.3.10"
+}

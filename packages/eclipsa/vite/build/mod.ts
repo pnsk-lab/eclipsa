@@ -32,7 +32,7 @@ export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
       build: {
         rollupOptions: {
           input: routes.map(route => route.filePath),
-          external: ['@xely/eclipsa']
+          external: ['eclipsa']
         }
       }
     })*/

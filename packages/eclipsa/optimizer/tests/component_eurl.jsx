@@ -1,4 +1,4 @@
-import { component$, useSignal, $ } from '@xely/eclipsa'
+import { component$, useSignal, $ } from 'eclipsa'
 export default component$(() => {
   const a = 0
   const add = $(() => {

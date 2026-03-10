@@ -1,14 +1,14 @@
 export interface DevClientInfo {
   entry: {
-    absolutePath: string
-    url: string
-  }
+    absolutePath: string;
+    url: string;
+  };
 }
 
 interface ElemWithKey {
-  (): Insertable
-  key?: string | symbol | number
-  returnFn?: boolean
+  (): Insertable;
+  key?: string | symbol | number;
+  returnFn?: boolean;
 }
 export type Insertable =
   | string
@@ -18,6 +18,6 @@ export type Insertable =
   | null
   | Node
   | Insertable[]
-  | ElemWithKey
+  | ElemWithKey;
 
-export type ClientElementLike = Insertable | Insertable[]
+export type ClientElementLike = Insertable | Insertable[];

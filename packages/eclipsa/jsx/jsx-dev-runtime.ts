@@ -1,5 +1,5 @@
-import { FRAGMENT } from './shared.ts'
-import type { JSX } from './types.ts'
+import { FRAGMENT } from "./shared.ts";
+import type { JSX } from "./types.ts";
 
 export const jsxDEV = (
   type: JSX.Type,
@@ -13,5 +13,5 @@ export const jsxDEV = (
   key,
   isStatic,
   metadata,
-})
-export const Fragment = FRAGMENT
+});
+export const Fragment = FRAGMENT;

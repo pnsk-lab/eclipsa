@@ -1,5 +1,5 @@
 // ================= ENTRY (component_eurl.jsx) ==
-import { component$, useSignal, $ } from '@xely/eclipsa'
+import { component$, useSignal, $ } from 'eclipsa'
 export default component$(() => {
   const a = 0
   const add = $(() => {
@@ -16,17 +16,17 @@ export default component$(() => {
 
 
 // ================= 16d974t.js (undefined) ==
-import { eurlFn as _eurlFn } from "@xely/eclipsa";
+import { eurlFn as _eurlFn } from "eclipsa";
 export default _vars => () => {
   console.log(_vars.a);
 };
 
 // ================= grr5qj.js (undefined) ==
-import { eurlFn as _eurlFn } from "@xely/eclipsa";
+import { eurlFn as _eurlFn } from "eclipsa";
 export default _vars2 => () => _vars2.add();
 
 // ================= p7v0uv.js (undefined) ==
-import { eurlFn as _eurlFn } from "@xely/eclipsa";
+import { eurlFn as _eurlFn } from "eclipsa";
 export default _vars3 => () => {
   const a = 0;
   const add = _eurlFn("16d974t", {
@@ -38,4 +38,3 @@ export default _vars3 => () => {
     Add
   </button>;
 };
-
