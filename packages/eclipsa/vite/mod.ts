@@ -9,10 +9,14 @@ import {
   incomingMessageToRequest,
   responseForServerResponse,
 } from "../utils/node-connect.ts";
-import { transformJSXDevSSR } from "../transformers/dev-ssr/mod.ts";
-import { transformClientDevJSX } from "../transformers/dev-client/mod.ts";
 import { createConfig } from "./config.ts";
-import { vitePluginEclipsaBuild } from "./build/plugin.ts";
+import {
+  compileModuleForClient,
+  compileModuleForSSR,
+  loadSymbolModuleForClient,
+  loadSymbolModuleForSSR,
+  parseSymbolRequest,
+} from "./compiler.ts";
 
 const eclipsaCore = (): Plugin => {
   let config: ResolvedConfig;
@@ -58,23 +62,26 @@ const eclipsaCore = (): Plugin => {
       });
       return [];
     },
-    transform(code, id) {
-      if (id.endsWith(".tsx")) {
-        if (this.environment.mode !== "dev") {
-          return;
-        }
-        const result = (
-          this.environment.name === "ssr" ? transformJSXDevSSR : transformClientDevJSX
-        )(code, id);
-        return {
-          code: result,
-        };
+    async load(id) {
+      if (!parseSymbolRequest(id)) {
+        return null;
       }
-      return;
+      return this.environment.name === "client" ? loadSymbolModuleForClient(id) : loadSymbolModuleForSSR(id);
+    },
+    async transform(code, id) {
+      if (!id.endsWith(".tsx") || parseSymbolRequest(id)) {
+        return;
+      }
+      const isClient = this.environment.name === "client";
+      return {
+        code: isClient
+          ? await compileModuleForClient(code, id, {
+              hmr: !config.isProduction,
+            })
+          : await compileModuleForSSR(code, id),
+      };
     },
   };
 };
 
-export const eclipsa = (): PluginOption => {
-  return [eclipsaCore(), vitePluginEclipsaBuild()];
-};
+export const eclipsa = (): PluginOption => [eclipsaCore()];

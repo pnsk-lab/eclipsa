@@ -1,0 +1,47 @@
+// ================= ENTRY (component_eurl.jsx) ==
+import { component$, useSignal, $ } from 'eclipsa'
+export default component$(() => {
+  const a = 0
+  const add = $(() => {
+    console.log(a)
+  })
+
+  return <button onClick$={() => add()}>
+    Add
+  </button>
+})
+
+
+// ================= analyzed ==
+import { __eclipsaComponent, __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
+import { component$, $ } from "eclipsa";
+var analyze_input_default = component$(__eclipsaComponent(() => {
+  const a = 0;
+  const add = __eclipsaLazy("3poia1", () => {
+    console.log(a);
+  }, () => [a]);
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>
+    Add
+  </button>;
+}, "1ugpm1l", () => []));
+export { analyze_input_default as default };
+
+// ================= 3poia1 (lazy) ==
+export default __scope => {
+  console.log(__scope[0]);
+};
+
+// ================= 1r40ykv (event) ==
+export default __scope => __scope[0]();
+
+// ================= 1ugpm1l (component) ==
+import { __eclipsaLazy, __eclipsaEvent } from "eclipsa/internal";
+export default __scope => {
+  const a = 0;
+  const add = __eclipsaLazy("3poia1", () => {
+    console.log(a);
+  }, () => [a]);
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>
+    Add
+  </button>;
+};

@@ -1,7 +1,11 @@
-import type { ViteHotContext } from "vite/types/hot";
 import type { Component } from "../component.ts";
 import { useSignal } from "../signal.ts";
 import type { JSX } from "../../jsx/jsx-runtime.ts";
+
+interface ViteHotContext {
+  off(event: string, listener: (data: { url: string }) => void): void;
+  on(event: string, listener: (data: { url: string }) => void): void;
+}
 
 export const initHot = (
   hot: ViteHotContext | undefined,
@@ -14,7 +18,7 @@ export const initHot = (
   const url = new URL(stringURL);
   const id = url.pathname;
 
-  const handler: Parameters<typeof hot.on>[1] = async (data) => {
+  const handler: Parameters<typeof hot.on>[1] = async (data: { url: string }) => {
     const hotTargetId: string = data.url;
     if (hotTargetId === id) {
       // Update module

@@ -1,25 +1,17 @@
-import { signal, effect } from "./reactive/mod.ts";
+import { createEffect, useRuntimeSignal } from "./runtime.ts";
 
 interface Signal<T> {
   value: T;
 }
-interface UseSignal {
-  <T>(v: T): Signal<T>;
-  <T>(v?: T | undefined): Signal<T | undefined>;
-}
-export const useSignal: UseSignal = (value) => {
-  const sig = signal(value);
-  return {
-    get value() {
-      return sig.get();
-    },
-    set value(value) {
-      sig.set(value);
-    },
-  };
-};
 
-export { effect };
+interface UseSignal {
+  <T>(value: T): Signal<T>;
+  <T>(value?: T | undefined): Signal<T | undefined>;
+}
+
+export const useSignal: UseSignal = (value) => useRuntimeSignal(value);
+
+export const effect = createEffect;
 
 export const useComputed = <T>(fn: () => T) => {
   const result = useSignal<T>();

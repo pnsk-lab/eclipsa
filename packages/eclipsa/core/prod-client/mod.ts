@@ -1,3 +1,3 @@
-export * from './eurl.ts'
-export * from './dom.ts'
-export { effect } from '../reactive/mod.ts'
+export * from "../client/mod.ts";
+export * from "./eurl.ts";
+export { createComponentEurl, createComponentResult } from "./dom.ts";

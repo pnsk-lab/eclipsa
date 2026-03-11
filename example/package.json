@@ -3,9 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev"
+    "build": "vp build",
+    "dev": "vp dev",
+    "start": "bun dist/server/index.mjs",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "eclipsa": "workspace:*"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "^7.0.0-dev.20260310.1"
   }
 }

@@ -1,5 +1,5 @@
 import type { DevClientInfo } from "./types.ts";
-import { hydrate } from "./dom.ts";
+import { hydrate } from "../client/mod.ts";
 
 const getDevInfo = (): DevClientInfo => {
   const elem = document.getElementById("eclipsa-devinfo");
@@ -16,5 +16,4 @@ export const initDevClient = async () => {
   hydrate(Component, document.body);
 };
 
-export * from "./dom.ts";
 export * from "./hot.ts";

@@ -13,6 +13,10 @@
       "dependsOn": ["^pack"],
       "outputs": ["dist/**"]
     },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
     "test": {
       "dependsOn": ["^test"],
       "outputs": []

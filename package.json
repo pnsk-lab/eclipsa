@@ -10,6 +10,7 @@
     "dev": "turbo run dev --filter=example",
     "build": "turbo run build",
     "pack": "turbo run pack --filter=eclipsa",
+    "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "fmt": "vp fmt"
   },

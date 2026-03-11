@@ -23,6 +23,14 @@
       "types": "./jsx/mod.ts",
       "import": "./jsx/mod.ts"
     },
+    "./internal": {
+      "types": "./core/internal.ts",
+      "import": "./core/internal.ts"
+    },
+    "./client": {
+      "types": "./core/client/mod.ts",
+      "import": "./core/client/mod.ts"
+    },
     "./dev-client": {
       "types": "./core/dev-client/mod.ts",
       "import": "./core/dev-client/mod.ts"
@@ -35,6 +43,7 @@
   "scripts": {
     "build": "vp pack",
     "pack": "vp pack",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
     "test": "vp test --run"
   },
   "dependencies": {
@@ -49,7 +58,8 @@
   },
   "devDependencies": {
     "@types/babel__core": "^7.20.5",
-    "@types/babel__traverse": "^7.20.6"
+    "@types/babel__traverse": "^7.20.6",
+    "@typescript/native-preview": "^7.0.0-dev.20260310.1"
   },
   "peerDependencies": {
     "vite": "*"

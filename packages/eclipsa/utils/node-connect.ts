@@ -38,10 +38,6 @@ export const responseForServerResponse = async (res: Response, serverRes: Server
   serverRes.statusCode = res.status;
   serverRes.statusMessage = res.statusText;
 
-  if (res.body) {
-    for await (const chunk of res.body) {
-      serverRes.write(chunk);
-    }
-  }
-  serverRes.end();
+  const buffer = Buffer.from(await res.arrayBuffer());
+  serverRes.end(buffer);
 };
