@@ -667,7 +667,7 @@ const extractWatchSymbol = (
               t.blockStatement([
                 t.throwStatement(
                   t.newExpression(t.identifier("TypeError"), [
-                    t.stringLiteral("watch$ dependencies must be signals or getter functions."),
+                    t.stringLiteral("useWatch dependencies must be signals or getter functions."),
                   ]),
                 ),
               ]),
@@ -777,7 +777,7 @@ export const analyzeModule = async (
   const eclipsaImports = imports.get("eclipsa");
   const componentIdentifier = eclipsaImports?.get("component$");
   const lazyIdentifier = eclipsaImports?.get("$");
-  const watchIdentifier = eclipsaImports?.get("watch$");
+  const watchIdentifier = eclipsaImports?.get("useWatch");
   const hmrMetadata = buildResumeHmrMetadata(parsed, {
     componentIdentifier,
     lazyIdentifier,
@@ -909,7 +909,7 @@ export const analyzeModule = async (
         if (watchIdentifier && calleeName === watchIdentifier) {
           const argPath = path.get("arguments")[0];
           if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
-            throw path.buildCodeFrameError("watch$() expects a function expression as the first argument.");
+            throw path.buildCodeFrameError("useWatch() expects a function expression as the first argument.");
           }
 
           const dependenciesPath = path.get("arguments")[1];

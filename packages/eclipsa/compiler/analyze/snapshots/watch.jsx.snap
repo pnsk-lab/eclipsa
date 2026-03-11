@@ -1,16 +1,16 @@
 // ================= ENTRY (watch.jsx) ==
-import { component$, useSignal, watch$ } from 'eclipsa'
+import { component$, useSignal, useWatch } from 'eclipsa'
 
 export default component$(() => {
   const tracked = useSignal(0)
   const dynamic = useSignal('a')
   const explicit = useSignal('b')
 
-  watch$(() => {
+  useWatch(() => {
     console.log(dynamic.value)
   })
 
-  watch$(() => {
+  useWatch(() => {
     console.log(explicit.value)
   }, [tracked, () => explicit.value])
 
@@ -20,15 +20,15 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaWatch } from "eclipsa/internal";
-import { component$, useSignal, watch$ } from "eclipsa";
+import { component$, useSignal, useWatch } from "eclipsa";
 var analyze_input_default = component$(__eclipsaComponent(() => {
   const tracked = useSignal(0);
   const dynamic = useSignal("a");
   const explicit = useSignal("b");
-  watch$(__eclipsaWatch("1wpyu3h", () => {
+  useWatch(__eclipsaWatch("1wpyu3h", () => {
     console.log(dynamic.value);
   }, () => [dynamic]));
-  watch$(__eclipsaWatch("1v0uxh9", () => {
+  useWatch(__eclipsaWatch("1v0uxh9", () => {
     console.log(explicit.value);
   }, () => [explicit, tracked]), [tracked, () => explicit.value]);
   return <button>{tracked.value}</button>;
@@ -55,7 +55,7 @@ export default (__scope, __phase) => {
       }
       const __signalMeta = getSignalMeta(__dependency);
       if (!__signalMeta) {
-        throw new TypeError("watch$ dependencies must be signals or getter functions.");
+        throw new TypeError("useWatch dependencies must be signals or getter functions.");
       }
       __dependency.value;
     }
@@ -65,16 +65,16 @@ export default (__scope, __phase) => {
 };
 
 // ================= xbfsvw (component) ==
-import { component$, useSignal, watch$ } from "eclipsa";
+import { component$, useSignal, useWatch } from "eclipsa";
 import { __eclipsaWatch } from "eclipsa/internal";
 export default __scope => {
   const tracked = useSignal(0);
   const dynamic = useSignal("a");
   const explicit = useSignal("b");
-  watch$(__eclipsaWatch("1wpyu3h", () => {
+  useWatch(__eclipsaWatch("1wpyu3h", () => {
     console.log(dynamic.value);
   }, () => [dynamic]));
-  watch$(__eclipsaWatch("1v0uxh9", () => {
+  useWatch(__eclipsaWatch("1v0uxh9", () => {
     console.log(explicit.value);
   }, () => [explicit, tracked]), [tracked, () => explicit.value]);
   return <button>{tracked.value}</button>;

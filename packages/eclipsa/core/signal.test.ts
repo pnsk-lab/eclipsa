@@ -1,14 +1,14 @@
 import { expect, it, describe } from "vitest";
 
-import { useSignal, watch$ } from "./signal.ts";
+import { useSignal, useWatch } from "./signal.ts";
 
-describe("watch$", () => {
+describe("useWatch", () => {
   it("auto-tracks callback reads when dependencies are omitted", () => {
     const tracked = useSignal(0);
     const untracked = useSignal("a");
     const values: string[] = [];
 
-    watch$(() => {
+    useWatch(() => {
       values.push(`${tracked.value}:${untracked.value}`);
     });
 
@@ -23,7 +23,7 @@ describe("watch$", () => {
     const untracked = useSignal("a");
     const values: string[] = [];
 
-    watch$(() => {
+    useWatch(() => {
       values.push(untracked.value);
     }, [tracked]);
 
@@ -38,7 +38,7 @@ describe("watch$", () => {
     const untracked = useSignal("a");
     const values: string[] = [];
 
-    watch$(() => {
+    useWatch(() => {
       values.push(untracked.value);
     }, [() => tracked.value]);
 

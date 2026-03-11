@@ -137,19 +137,19 @@ describe("createResumeHmrUpdate", () => {
 
   it("marks local symbol graph changes for owner rerender", async () => {
     const previous = await analyze(`
-      import { component$, useSignal, watch$ } from "eclipsa";
+      import { component$, useSignal, useWatch } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
-        watch$(() => { count.value; });
+        useWatch(() => { count.value; });
         return <button>{count.value}</button>;
       });
     `, "/tmp/watch-change.tsx");
     const next = await analyze(`
-      import { component$, useSignal, watch$ } from "eclipsa";
+      import { component$, useSignal, useWatch } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
-        watch$(() => { count.value; });
-        watch$(() => { console.log(count.value); });
+        useWatch(() => { count.value; });
+        useWatch(() => { console.log(count.value); });
         return <button>{count.value}</button>;
       });
     `, "/tmp/watch-change.tsx");

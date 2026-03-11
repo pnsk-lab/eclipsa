@@ -15,9 +15,9 @@ export const useSignal: UseSignal = (value) => useRuntimeSignal(value);
 
 export const effect = createEffect;
 export const onMount = createOnMount;
-export const watch$ = createWatch as (fn: () => void, dependencies?: WatchDependency[]) => void;
+export const useWatch = createWatch as (fn: () => void, dependencies?: WatchDependency[]) => void;
 
-export const useComputed = <T>(fn: () => T) => {
+export const useComputed$ = <T>(fn: () => T) => {
   const result = useSignal<T>();
 
   effect(() => {

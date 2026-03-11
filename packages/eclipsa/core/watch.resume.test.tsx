@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { component$ } from "./component.ts";
 import { __eclipsaComponent, __eclipsaWatch } from "./internal.ts";
-import { useSignal, watch$ } from "./signal.ts";
+import { useSignal, useWatch } from "./signal.ts";
 import { renderSSR } from "./ssr.ts";
 
-describe("watch$ resume payload", () => {
+describe("useWatch resume payload", () => {
   it("serializes resumable watch subscriptions without activating the component", () => {
     const App = component$(
       __eclipsaComponent(() => {
         const tracked = useSignal(0);
         const explicit = useSignal("a");
 
-        watch$(
+        useWatch(
           __eclipsaWatch("watch-symbol", () => {
             explicit.value;
           }, () => [explicit]),

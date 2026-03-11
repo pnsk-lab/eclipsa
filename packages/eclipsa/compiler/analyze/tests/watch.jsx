@@ -1,15 +1,15 @@
-import { component$, useSignal, watch$ } from 'eclipsa'
+import { component$, useSignal, useWatch } from 'eclipsa'
 
 export default component$(() => {
   const tracked = useSignal(0)
   const dynamic = useSignal('a')
   const explicit = useSignal('b')
 
-  watch$(() => {
+  useWatch(() => {
     console.log(dynamic.value)
   })
 
-  watch$(() => {
+  useWatch(() => {
     console.log(explicit.value)
   }, [tracked, () => explicit.value])
 

@@ -233,7 +233,7 @@ const trackWatchDependencies = (dependencies: WatchDependency[]) => {
     }
     const signalMeta = getSignalMeta(dependency);
     if (!signalMeta) {
-      throw new TypeError("watch$ dependencies must be signals or getter functions.");
+      throw new TypeError("useWatch dependencies must be signals or getter functions.");
     }
     dependency.value;
   }
