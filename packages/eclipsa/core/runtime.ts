@@ -1,5 +1,6 @@
 import type { JSX } from "../jsx/types.ts";
 import { FRAGMENT } from "../jsx/shared.ts";
+import type { ResumeHmrUpdatePayload } from "./resume-hmr.ts";
 import type { Component } from "./component.ts";
 import {
   getComponentMeta,
@@ -16,6 +17,7 @@ import {
 const CONTAINER_STACK_KEY = Symbol.for("eclipsa.container-stack");
 const FRAME_STACK_KEY = Symbol.for("eclipsa.frame-stack");
 const DIRTY_FLUSH_PROMISE_KEY = Symbol.for("eclipsa.dirty-flush-promise");
+const RESUME_CONTAINERS_KEY = Symbol.for("eclipsa.resume-containers");
 const ROOT_COMPONENT_ID = "$root";
 
 interface EncodedUndefined {
@@ -111,7 +113,7 @@ interface RenderFrame {
   watchCursor: number;
 }
 
-interface RuntimeContainer {
+export interface RuntimeContainer {
   components: Map<string, ComponentState>;
   dirty: Set<string>;
   doc?: Document;
@@ -180,6 +182,17 @@ const getFrameStack = (): RenderFrame[] => {
   }
   const created: RenderFrame[] = [];
   globalRecord[FRAME_STACK_KEY] = created;
+  return created;
+};
+
+const getResumeContainers = () => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>;
+  const existing = globalRecord[RESUME_CONTAINERS_KEY];
+  if (existing instanceof Set) {
+    return existing as Set<RuntimeContainer>;
+  }
+  const created = new Set<RuntimeContainer>();
+  globalRecord[RESUME_CONTAINERS_KEY] = created;
   return created;
 };
 
@@ -323,6 +336,14 @@ const createContainer = (symbols: Record<string, string>, doc?: Document): Runti
   symbols: new Map(Object.entries(symbols)),
   watches: new Map(),
 });
+
+export const registerResumeContainer = (container: RuntimeContainer) => {
+  const containers = getResumeContainers();
+  containers.add(container);
+  return () => {
+    containers.delete(container);
+  };
+};
 
 const createSignalHandle = <T>(record: SignalRecord<T>, container: RuntimeContainer | null) => {
   const handle = {} as { value: T };
@@ -1393,10 +1414,11 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   const position = nextComponentPosition(container);
   const componentId = createComponentId(container, position.parentId, position.childIndex);
   const existing = container.components.get(componentId);
+  const symbolChanged = !!existing && existing.symbol !== meta.symbol;
   const component = getOrCreateComponentState(container, componentId, meta.symbol, position.parentId);
   component.props =
     props && typeof props === "object" ? evaluateProps(props as Record<string, unknown>) : (props as unknown);
-  if (!existing) {
+  if (!existing || symbolChanged) {
     component.scopeId = registerScope(container, meta.captures());
   }
   component.active = true;
@@ -1472,6 +1494,147 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
 
 const sortDirtyComponents = (ids: Iterable<string>) =>
   [...ids].sort((a, b) => a.split(".").length - b.split(".").length);
+
+const parseSymbolIdFromUrl = (url: string) => {
+  const parsed = new URL(url, "http://localhost");
+  return parsed.searchParams.get("eclipsa-symbol");
+};
+
+const findNearestMountedBoundary = (container: RuntimeContainer, componentId: string) => {
+  let currentId: string | null = componentId;
+  while (currentId && currentId !== ROOT_COMPONENT_ID) {
+    const component = container.components.get(currentId);
+    if (!component) {
+      return null;
+    }
+    if (component.start && component.end) {
+      return component.id;
+    }
+    currentId = component.parentId;
+  }
+  return null;
+};
+
+export const collectResumeHmrBoundaryIds = (
+  container: RuntimeContainer,
+  symbolIds: Iterable<string>,
+) => {
+  const targetSymbols = new Set(symbolIds);
+  const pendingBoundaries = new Set<string>();
+
+  for (const component of container.components.values()) {
+    if (!targetSymbols.has(component.symbol)) {
+      continue;
+    }
+    const boundaryId = findNearestMountedBoundary(container, component.id);
+    if (!boundaryId) {
+      if (component.active) {
+        return null;
+      }
+      continue;
+    }
+    pendingBoundaries.add(boundaryId);
+  }
+
+  const result: string[] = [];
+  for (const boundaryId of sortDirtyComponents(pendingBoundaries)) {
+    if (result.some((parentId) => boundaryId === parentId || isDescendantOf(parentId, boundaryId))) {
+      continue;
+    }
+    result.push(boundaryId);
+  }
+  return result;
+};
+
+export const applyResumeHmrSymbolReplacements = (
+  container: RuntimeContainer,
+  replacements: Record<string, string>,
+) => {
+  for (const [oldSymbolId, url] of Object.entries(replacements)) {
+    const currentUrl = container.symbols.get(oldSymbolId);
+    const affectedIds = new Set<string>([oldSymbolId]);
+
+    if (currentUrl) {
+      for (const [candidateId, candidateUrl] of container.symbols.entries()) {
+        if (candidateUrl === currentUrl) {
+          affectedIds.add(candidateId);
+        }
+      }
+    }
+
+    for (const affectedId of affectedIds) {
+      container.symbols.set(affectedId, url);
+      container.imports.delete(affectedId);
+    }
+
+    const nextSymbolId = parseSymbolIdFromUrl(url);
+    if (!nextSymbolId) {
+      continue;
+    }
+
+    for (const component of container.components.values()) {
+      if (affectedIds.has(component.symbol)) {
+        component.symbol = nextSymbolId;
+      }
+    }
+
+    for (const watch of container.watches.values()) {
+      if (affectedIds.has(watch.symbol)) {
+        watch.symbol = nextSymbolId;
+      }
+    }
+
+    container.symbols.set(nextSymbolId, url);
+    container.imports.delete(nextSymbolId);
+  }
+};
+
+export const applyResumeHmrUpdate = async (
+  container: RuntimeContainer,
+  payload: ResumeHmrUpdatePayload,
+) => {
+  if (payload.fullReload) {
+    return "reload" as const;
+  }
+
+  const boundaryIds = collectResumeHmrBoundaryIds(container, [
+    ...payload.rerenderComponentSymbols,
+    ...payload.rerenderOwnerSymbols,
+  ]);
+  if (boundaryIds === null) {
+    return "reload" as const;
+  }
+
+  applyResumeHmrSymbolReplacements(container, payload.symbolUrlReplacements);
+
+  for (const boundaryId of boundaryIds) {
+    const component = container.components.get(boundaryId);
+    if (!component) {
+      continue;
+    }
+    component.active = false;
+    container.dirty.add(boundaryId);
+  }
+
+  if (container.dirty.size > 0) {
+    await flushDirtyComponents(container);
+  }
+
+  return "updated" as const;
+};
+
+export const applyResumeHmrUpdateToRegisteredContainers = async (
+  payload: ResumeHmrUpdatePayload,
+) => {
+  for (const container of getResumeContainers()) {
+    const result = await applyResumeHmrUpdate(container, payload);
+    if (result === "reload") {
+      return "reload" as const;
+    }
+  }
+
+  return "updated" as const;
+};
 
 export const flushDirtyComponents = async (container: RuntimeContainer) => {
   const globalRecord = globalThis as Record<PropertyKey, unknown>;

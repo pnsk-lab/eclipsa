@@ -16,7 +16,9 @@ import {
   loadSymbolModuleForClient,
   loadSymbolModuleForSSR,
   parseSymbolRequest,
+  resolveResumeHmrUpdate,
 } from "./compiler.ts";
+import { RESUME_HMR_EVENT } from "../core/resume-hmr.ts";
 
 const eclipsaCore = (): Plugin => {
   let config: ResolvedConfig;
@@ -48,17 +50,34 @@ const eclipsaCore = (): Plugin => {
         next();
       });
     },
-    hotUpdate(options) {
+    async hotUpdate(options) {
       if (this.environment.name !== "client") {
         return;
       }
-      const module = options.modules[0];
-      options.server.hot.send({
-        type: "custom",
-        event: "update-client",
-        data: {
-          url: module.url,
-        },
+      if (!options.file.endsWith(".tsx")) {
+        return;
+      }
+      const source = await options.read();
+      const resumableUpdate = await resolveResumeHmrUpdate({
+        filePath: options.file,
+        root: config.root,
+        source,
+      });
+      if (resumableUpdate.isResumable) {
+        if (resumableUpdate.update) {
+          this.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update);
+        }
+        return [];
+      }
+
+      const module =
+        options.modules[0] ??
+        [...(this.environment.moduleGraph?.getModulesByFile(options.file) ?? [])][0];
+      if (!module) {
+        return;
+      }
+      this.environment.hot.send("update-client", {
+        url: module.url,
       });
       return [];
     },

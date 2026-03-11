@@ -15,8 +15,31 @@ export interface ResumeSymbol {
   kind: SymbolKind;
 }
 
+export interface ResumeHmrSymbolEntry {
+  captures: string[];
+  hmrKey: string;
+  id: string;
+  kind: SymbolKind;
+  ownerComponentKey: string | null;
+  signature: string;
+}
+
+export interface ResumeHmrComponentEntry {
+  captures: string[];
+  hmrKey: string;
+  id: string;
+  localSymbolKeys: string[];
+  signature: string;
+}
+
+export interface ResumeHmrManifest {
+  components: Map<string, ResumeHmrComponentEntry>;
+  symbols: Map<string, ResumeHmrSymbolEntry>;
+}
+
 export interface AnalyzedModule {
   code: string;
+  hmrManifest: ResumeHmrManifest;
   symbols: Map<string, ResumeSymbol>;
 }
 
@@ -33,6 +56,11 @@ const EVENT_PROP_REGEX = /^on([A-Z].+)\$$/;
 
 const createSymbolId = (filePath: string, kind: SymbolKind, node: t.Node) =>
   xxHash32(`${filePath}:${kind}:${generate(node as any).code}`).toString(36);
+
+const createSymbolSignature = (
+  kind: SymbolKind,
+  code: string,
+) => xxHash32(`${kind}:${code}`).toString(36);
 
 const toEventName = (propName: string) => {
   const matched = propName.match(EVENT_PROP_REGEX);
@@ -144,12 +172,214 @@ interface ExtractedSymbol {
   code: string;
   id: string;
   kind: SymbolKind;
+  signature: string;
 }
+
+interface PrecomputedComponentInfo {
+  hmrKey: string;
+  localSymbolKeys: string[];
+}
+
+interface PrecomputedSymbolInfo {
+  hmrKey: string;
+  ownerComponentKey: string | null;
+}
+
+const createIndexedKey = (base: string, count: number) => (count === 0 ? base : `${base}:${count}`);
+
+const getComponentBindingName = (path: NodePath<t.CallExpression>) => {
+  const parent = path.parentPath;
+  if (!parent) {
+    return null;
+  }
+  if (parent.isExportDefaultDeclaration()) {
+    return "default";
+  }
+  if (parent.isVariableDeclarator()) {
+    const idPath = parent.get("id");
+    if (idPath.isIdentifier()) {
+      return idPath.node.name;
+    }
+  }
+  if (parent.isAssignmentExpression()) {
+    const leftPath = parent.get("left");
+    if (leftPath.isIdentifier()) {
+      return leftPath.node.name;
+    }
+  }
+  return null;
+};
+
+const findOwnerComponentInfo = (
+  path: NodePath<t.Node>,
+  componentInfoByFunction: WeakMap<t.Node, PrecomputedComponentInfo>,
+) => {
+  let current = path.parentPath;
+  while (current) {
+    if (
+      (current.isArrowFunctionExpression() || current.isFunctionExpression()) &&
+      componentInfoByFunction.has(current.node)
+    ) {
+      return componentInfoByFunction.get(current.node) ?? null;
+    }
+    current = current.parentPath;
+  }
+  return null;
+};
+
+const buildResumeHmrMetadata = (
+  parsed: t.File,
+  identifiers: {
+    componentIdentifier?: string;
+    lazyIdentifier?: string;
+    watchIdentifier?: string;
+  },
+) => {
+  const componentInfoByFunction = new WeakMap<t.Node, PrecomputedComponentInfo>();
+  const symbolInfoByFunction = new WeakMap<t.Node, PrecomputedSymbolInfo>();
+  const componentCounts = new Map<string, number>();
+  const ownerSymbolCounts = new Map<string, number>();
+
+  traverse(parsed, {
+    CallExpression: {
+      enter(path: any) {
+        if (!path.get("callee").isIdentifier()) {
+          return;
+        }
+        const calleeName = path.node.callee.name;
+
+        if (identifiers.componentIdentifier && calleeName === identifiers.componentIdentifier) {
+          const argPath = path.get("arguments")[0];
+          if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
+            return;
+          }
+          const bindingName = getComponentBindingName(path as NodePath<t.CallExpression>);
+          const base = bindingName ? `component:${bindingName}` : "component:slot";
+          const count = componentCounts.get(base) ?? 0;
+          componentCounts.set(base, count + 1);
+          componentInfoByFunction.set(argPath.node, {
+            hmrKey: createIndexedKey(base, count),
+            localSymbolKeys: [],
+          });
+          return;
+        }
+
+        const kind =
+          identifiers.lazyIdentifier && calleeName === identifiers.lazyIdentifier
+            ? "lazy"
+            : identifiers.watchIdentifier && calleeName === identifiers.watchIdentifier
+              ? "watch"
+              : null;
+        if (!kind) {
+          return;
+        }
+
+        const argPath = path.get("arguments")[0];
+        if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
+          return;
+        }
+
+        const ownerComponent = findOwnerComponentInfo(path as NodePath<t.Node>, componentInfoByFunction);
+        const ownerKey = ownerComponent?.hmrKey ?? null;
+        const base = `${ownerKey ?? "file"}:${kind}:slot`;
+        const count = ownerSymbolCounts.get(base) ?? 0;
+        ownerSymbolCounts.set(base, count + 1);
+        const hmrKey = createIndexedKey(base, count);
+        symbolInfoByFunction.set(argPath.node, {
+          hmrKey,
+          ownerComponentKey: ownerKey,
+        });
+        ownerComponent?.localSymbolKeys.push(hmrKey);
+      },
+    },
+    JSXAttribute: {
+      enter(path: any) {
+        const nameNode = path.node.name;
+        const attrName = t.isJSXIdentifier(nameNode) ? nameNode.name : nameNode.name.name;
+        const eventName = toEventName(attrName);
+        if (!eventName) {
+          return;
+        }
+
+        const valuePath = path.get("value");
+        if (!valuePath.isJSXExpressionContainer()) {
+          return;
+        }
+
+        const expressionPath = valuePath.get("expression");
+        if (!expressionPath.isArrowFunctionExpression() && !expressionPath.isFunctionExpression()) {
+          return;
+        }
+
+        const ownerComponent = findOwnerComponentInfo(path as NodePath<t.Node>, componentInfoByFunction);
+        const ownerKey = ownerComponent?.hmrKey ?? null;
+        const base = `${ownerKey ?? "file"}:event:${eventName}`;
+        const count = ownerSymbolCounts.get(base) ?? 0;
+        ownerSymbolCounts.set(base, count + 1);
+        const hmrKey = createIndexedKey(base, count);
+        symbolInfoByFunction.set(expressionPath.node, {
+          hmrKey,
+          ownerComponentKey: ownerKey,
+        });
+        ownerComponent?.localSymbolKeys.push(hmrKey);
+      },
+    },
+  });
+
+  return {
+    componentInfoByFunction,
+    symbolInfoByFunction,
+  };
+};
+
+const getNormalizedSymbolProgramCode = (
+  program: t.Program,
+  normalizeSymbolId?: (id: string) => string | undefined,
+) => {
+  if (!normalizeSymbolId) {
+    return generate(program as any).code;
+  }
+
+  const normalizedProgram = t.cloneNode(program, true);
+  const normalizedFile = t.file(normalizedProgram);
+  traverse(normalizedFile as any, {
+    CallExpression(path: any) {
+      if (!path.get("callee").isIdentifier()) {
+        return;
+      }
+      const calleeName = path.node.callee.name;
+      const idArgIndex =
+        calleeName === "__eclipsaEvent"
+          ? 1
+          : calleeName === "__eclipsaLazy" || calleeName === "__eclipsaWatch"
+            ? 0
+            : -1;
+      if (idArgIndex < 0) {
+        return;
+      }
+
+      const argPath = path.get(`arguments.${idArgIndex}`);
+      if (!argPath.isStringLiteral()) {
+        return;
+      }
+      const normalizedId = normalizeSymbolId(argPath.node.value);
+      if (!normalizedId) {
+        return;
+      }
+      argPath.replaceWith(t.stringLiteral(normalizedId));
+    },
+  });
+
+  return generate(normalizedProgram as any).code;
+};
 
 const extractSymbol = (
   fnPath: FunctionPath,
   kind: SymbolKind,
   filePath: string,
+  options?: {
+    normalizeSymbolId?: (id: string) => string | undefined;
+  },
 ): ExtractedSymbol => {
   const id = createSymbolId(filePath, kind, fnPath.node);
   const capturedBindings = new Map<string, number>();
@@ -295,12 +525,18 @@ const extractSymbol = (
     ...moduleImports,
     t.exportDefaultDeclaration(clonedFunction),
   ]);
+  const code = generate(symbolProgram as any).code;
+  const signature = createSymbolSignature(
+    kind,
+    getNormalizedSymbolProgramCode(symbolProgram, options?.normalizeSymbolId),
+  );
 
   return {
     captures: [...capturedBindings.keys()],
-    code: generate(symbolProgram as any).code,
+    code,
     id,
     kind,
+    signature,
   };
 };
 
@@ -504,12 +740,14 @@ const extractWatchSymbol = (
     ...moduleImports,
     t.exportDefaultDeclaration(clonedFunction),
   ]);
+  const code = generate(symbolProgram as any).code;
 
   return {
     captures: [...capturedBindings.keys()],
-    code: generate(symbolProgram as any).code,
+    code,
     id,
     kind: "watch",
+    signature: createSymbolSignature("watch", code),
   };
 };
 
@@ -540,8 +778,16 @@ export const analyzeModule = async (
   const componentIdentifier = eclipsaImports?.get("component$");
   const lazyIdentifier = eclipsaImports?.get("$");
   const watchIdentifier = eclipsaImports?.get("watch$");
+  const hmrMetadata = buildResumeHmrMetadata(parsed, {
+    componentIdentifier,
+    lazyIdentifier,
+    watchIdentifier,
+  });
 
   const builtSymbols = new Map<string, ResumeSymbol>();
+  const hmrComponents = new Map<string, ResumeHmrComponentEntry>();
+  const hmrSymbols = new Map<string, ResumeHmrSymbolEntry>();
+  const hmrKeyBySymbolId = new Map<string, string>();
   const usedHelpers = new Set<string>();
   let programPath!: NodePath<t.Program>;
 
@@ -585,6 +831,7 @@ export const analyzeModule = async (
         }
 
         const extracted = extractSymbol(expressionPath as FunctionPath, "event", id);
+        const symbolInfo = hmrMetadata.symbolInfoByFunction.get(expressionPath.node);
         builtSymbols.set(extracted.id, {
           captures: extracted.captures,
           code: extracted.code,
@@ -592,6 +839,16 @@ export const analyzeModule = async (
           id: extracted.id,
           kind: extracted.kind,
         });
+        const hmrKey = symbolInfo?.hmrKey ?? `file:event:${extracted.id}`;
+        hmrSymbols.set(hmrKey, {
+          captures: extracted.captures,
+          hmrKey,
+          id: extracted.id,
+          kind: extracted.kind,
+          ownerComponentKey: symbolInfo?.ownerComponentKey ?? null,
+          signature: extracted.signature,
+        });
+        hmrKeyBySymbolId.set(extracted.id, hmrKey);
         usedHelpers.add("__eclipsaEvent");
 
         valuePath.replaceWith(
@@ -619,6 +876,7 @@ export const analyzeModule = async (
           }
 
           const extracted = extractSymbol(argPath as FunctionPath, "lazy", id);
+          const symbolInfo = hmrMetadata.symbolInfoByFunction.get(argPath.node);
           builtSymbols.set(extracted.id, {
             captures: extracted.captures,
             code: extracted.code,
@@ -626,6 +884,16 @@ export const analyzeModule = async (
             id: extracted.id,
             kind: extracted.kind,
           });
+          const hmrKey = symbolInfo?.hmrKey ?? `file:lazy:${extracted.id}`;
+          hmrSymbols.set(hmrKey, {
+            captures: extracted.captures,
+            hmrKey,
+            id: extracted.id,
+            kind: extracted.kind,
+            ownerComponentKey: symbolInfo?.ownerComponentKey ?? null,
+            signature: extracted.signature,
+          });
+          hmrKeyBySymbolId.set(extracted.id, hmrKey);
           usedHelpers.add("__eclipsaLazy");
 
           path.replaceWith(
@@ -650,6 +918,7 @@ export const analyzeModule = async (
             dependenciesPath && !Array.isArray(dependenciesPath) ? (dependenciesPath as NodePath<t.Node>) : undefined,
             id,
           );
+          const symbolInfo = hmrMetadata.symbolInfoByFunction.get(argPath.node);
           builtSymbols.set(extracted.id, {
             captures: extracted.captures,
             code: extracted.code,
@@ -657,6 +926,16 @@ export const analyzeModule = async (
             id: extracted.id,
             kind: extracted.kind,
           });
+          const hmrKey = symbolInfo?.hmrKey ?? `file:watch:${extracted.id}`;
+          hmrSymbols.set(hmrKey, {
+            captures: extracted.captures,
+            hmrKey,
+            id: extracted.id,
+            kind: extracted.kind,
+            ownerComponentKey: symbolInfo?.ownerComponentKey ?? null,
+            signature: extracted.signature,
+          });
+          hmrKeyBySymbolId.set(extracted.id, hmrKey);
           usedHelpers.add("__eclipsaWatch");
 
           path.node.arguments[0] = t.callExpression(t.identifier("__eclipsaWatch"), [
@@ -673,7 +952,12 @@ export const analyzeModule = async (
             throw path.buildCodeFrameError("component$() expects a function expression.");
           }
 
-          const extracted = extractSymbol(argPath as FunctionPath, "component", id);
+          const extracted = extractSymbol(argPath as FunctionPath, "component", id, {
+            normalizeSymbolId(symbolId) {
+              return hmrKeyBySymbolId.get(symbolId);
+            },
+          });
+          const componentInfo = hmrMetadata.componentInfoByFunction.get(argPath.node);
           builtSymbols.set(extracted.id, {
             captures: extracted.captures,
             code: extracted.code,
@@ -681,6 +965,23 @@ export const analyzeModule = async (
             id: extracted.id,
             kind: extracted.kind,
           });
+          const hmrKey = componentInfo?.hmrKey ?? `component:${extracted.id}`;
+          hmrSymbols.set(hmrKey, {
+            captures: extracted.captures,
+            hmrKey,
+            id: extracted.id,
+            kind: extracted.kind,
+            ownerComponentKey: null,
+            signature: extracted.signature,
+          });
+          hmrComponents.set(hmrKey, {
+            captures: extracted.captures,
+            hmrKey,
+            id: extracted.id,
+            localSymbolKeys: [...(componentInfo?.localSymbolKeys ?? [])],
+            signature: extracted.signature,
+          });
+          hmrKeyBySymbolId.set(extracted.id, hmrKey);
           usedHelpers.add("__eclipsaComponent");
 
           path.node.arguments[0] = t.callExpression(t.identifier("__eclipsaComponent"), [
@@ -695,6 +996,10 @@ export const analyzeModule = async (
 
   return {
     code: generate(programPath.node as any).code,
+    hmrManifest: {
+      components: hmrComponents,
+      symbols: hmrSymbols,
+    },
     symbols: builtSymbols,
   };
 };

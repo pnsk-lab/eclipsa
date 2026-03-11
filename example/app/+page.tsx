@@ -24,7 +24,7 @@ export default component$(() => {
           inputting.value = "";
         }}
       >
-        Addaaaa
+        Add
       </button>
       <ul>
         <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />

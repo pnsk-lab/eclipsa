@@ -31,23 +31,9 @@ export const initHot = (
         return;
       }
       newRegistry.setIsChild();
-      for (const [name, newHotComponentData] of newRegistry.components) {
-        const oldHotComponentData = registry.components.get(name);
-        if (!oldHotComponentData) {
-          // new component detected
-          // full page reloading
-          // TODO: without full page reloading
-          console.info("[Eclipsa HMR]: New component detected, reloading page...");
-          location.reload();
-          continue;
-        }
-        if (oldHotComponentData.hash === newHotComponentData.hash) {
-          // No change for this component
-          // Do nothing
-          continue;
-        }
-        // Run HMR
-        oldHotComponentData.update(newHotComponentData.Component);
+      if (applyHotUpdate(registry, newRegistry) === "reload") {
+        console.info("[Eclipsa HMR]: Component graph changed, reloading page...");
+        location.reload();
       }
       hot.on("update-client", handler);
     }
@@ -65,10 +51,7 @@ interface ComponentMetaInput {
 export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
   const comp = useSignal(Component);
 
-  const hash = Component.toString(); // TODO
-
   meta.registry.components.set(meta.name, {
-    hash,
     update(newComponent) {
       comp.value = newComponent;
     },
@@ -81,7 +64,6 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
 };
 
 interface HotComponentData {
-  hash: string;
   update(newComponent: Component): void;
   Component: Component;
 }
@@ -89,6 +71,23 @@ interface HotRegistry {
   components: Map<string, HotComponentData>;
   setIsChild(): void;
 }
+
+export const applyHotUpdate = (registry: HotRegistry, newRegistry: HotRegistry) => {
+  if (registry.components.size !== newRegistry.components.size) {
+    return "reload" as const;
+  }
+
+  for (const [name, newHotComponentData] of newRegistry.components) {
+    const oldHotComponentData = registry.components.get(name);
+    if (!oldHotComponentData) {
+      return "reload" as const;
+    }
+    oldHotComponentData.update(newHotComponentData.Component);
+  }
+
+  return "updated" as const;
+};
+
 export const createHotRegistry = (): HotRegistry => {
   return {
     components: new Map(),
