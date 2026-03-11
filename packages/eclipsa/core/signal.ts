@@ -1,6 +1,6 @@
-import { createEffect, useRuntimeSignal } from "./runtime.ts";
+import { createEffect, createOnMount, createWatch, useRuntimeSignal } from "./runtime.ts";
 
-interface Signal<T> {
+export interface Signal<T> {
   value: T;
 }
 
@@ -9,9 +9,13 @@ interface UseSignal {
   <T>(value?: T | undefined): Signal<T | undefined>;
 }
 
+export type WatchDependency<T = unknown> = Signal<T> | (() => T);
+
 export const useSignal: UseSignal = (value) => useRuntimeSignal(value);
 
 export const effect = createEffect;
+export const onMount = createOnMount;
+export const watch$ = createWatch as (fn: () => void, dependencies?: WatchDependency[]) => void;
 
 export const useComputed = <T>(fn: () => T) => {
   const result = useSignal<T>();

@@ -1,9 +1,13 @@
-import { component$, For, useSignal } from "eclipsa";
+import { component$, For, useSignal, watch$ } from "eclipsa";
 import { Header } from "./Header.tsx";
 
 export default component$(() => {
   const todos = useSignal<string[]>(["ToDo1"]);
   const inputting = useSignal("");
+
+  watch$(() => {
+    console.log("todos changed", inputting.value);
+  });
 
   return (
     <div>

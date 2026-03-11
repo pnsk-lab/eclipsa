@@ -2,7 +2,6 @@
 import { transformAsync, types as t } from "@babel/core";
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from "@babel/traverse";
-// @ts-expect-error babel does not ship a declaration for this parser helper
 import SyntaxJSX from "@babel/plugin-syntax-jsx";
 import { getJSXType, getJSXTypeNode, transformChildren, transformProps } from "../shared/jsx.ts";
 import { FRAGMENT } from "../../jsx/shared.ts";

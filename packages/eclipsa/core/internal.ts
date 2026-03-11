@@ -3,6 +3,7 @@ import type { Component, EURL } from "./component.ts";
 const COMPONENT_META_KEY = Symbol.for("eclipsa.component-meta");
 const LAZY_META_KEY = Symbol.for("eclipsa.lazy-meta");
 const SIGNAL_META_KEY = Symbol.for("eclipsa.signal-meta");
+const WATCH_META_KEY = Symbol.for("eclipsa.watch-meta");
 
 export interface ComponentMeta {
   captures: () => unknown[];
@@ -12,6 +13,11 @@ export interface ComponentMeta {
 export interface LazyMeta {
   captures: () => unknown[];
   eventName?: string;
+  symbol: string;
+}
+
+export interface WatchMeta {
+  captures: () => unknown[];
   symbol: string;
 }
 
@@ -31,6 +37,12 @@ export interface LazyReference<T extends (...args: any[]) => unknown = (...args:
   extends Function {
   (...args: Parameters<T>): ReturnType<T>;
   [LAZY_META_KEY]?: LazyMeta;
+}
+
+export interface WatchReference<T extends (...args: any[]) => unknown = (...args: any[]) => unknown>
+  extends Function {
+  (...args: Parameters<T>): ReturnType<T>;
+  [WATCH_META_KEY]?: WatchMeta;
 }
 
 export const __eclipsaComponent = <T>(
@@ -68,6 +80,24 @@ export const __eclipsaLazy = <T extends (...args: any[]) => unknown>(
   return wrapped as EURL<T>;
 };
 
+export const __eclipsaWatch = <T extends (...args: any[]) => unknown>(
+  symbol: string,
+  fn: T,
+  captures: () => unknown[],
+): T => {
+  const wrapped = ((...args: Parameters<T>) => fn(...args)) as WatchReference<T>;
+  Object.defineProperty(wrapped, WATCH_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      symbol,
+      captures,
+    } satisfies WatchMeta,
+    writable: true,
+  });
+  return wrapped as T;
+};
+
 export const __eclipsaEvent = (
   eventName: string,
   symbol: string,
@@ -93,6 +123,14 @@ export const getLazyMeta = (value: unknown): LazyMeta | null => {
     return null;
   }
   return ((value as unknown as Record<PropertyKey, unknown>)[LAZY_META_KEY] as LazyMeta | undefined) ??
+    null;
+};
+
+export const getWatchMeta = (value: unknown): WatchMeta | null => {
+  if (typeof value !== "function") {
+    return null;
+  }
+  return ((value as unknown as Record<PropertyKey, unknown>)[WATCH_META_KEY] as WatchMeta | undefined) ??
     null;
 };
 

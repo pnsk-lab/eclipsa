@@ -6,6 +6,7 @@ import {
   getEventMeta,
   getLazyMeta,
   getSignalMeta,
+  getWatchMeta,
   setSignalMeta,
   type EventDescriptor,
   type LazyMeta,
@@ -55,6 +56,15 @@ export interface ResumeComponentPayload {
   scope: string;
   signalIds: string[];
   symbol: string;
+  watchCount: number;
+}
+
+interface ResumeWatchPayload {
+  componentId: string;
+  mode: WatchMode;
+  scope: string;
+  signals: string[];
+  symbol: string;
 }
 
 export interface ResumePayload {
@@ -63,6 +73,7 @@ export interface ResumePayload {
   signals: Record<string, EncodedValue>;
   subscriptions: Record<string, string[]>;
   symbols: Record<string, string>;
+  watches: Record<string, ResumeWatchPayload>;
 }
 
 interface SignalRecord<T = unknown> {
@@ -77,6 +88,7 @@ interface SignalRecord<T = unknown> {
 
 interface ComponentState {
   active: boolean;
+  didMount: boolean;
   end?: Comment;
   id: string;
   parentId: string | null;
@@ -85,15 +97,18 @@ interface ComponentState {
   signalIds: string[];
   start?: Comment;
   symbol: string;
+  watchCount: number;
 }
 
 interface RenderFrame {
   childCursor: number;
   component: ComponentState;
   container: RuntimeContainer;
+  mountCallbacks: Array<() => void>;
   visitedDescendants: Set<string>;
   mode: "client" | "ssr";
   signalCursor: number;
+  watchCursor: number;
 }
 
 interface RuntimeContainer {
@@ -110,6 +125,7 @@ interface RuntimeContainer {
   scopes: Map<string, ResumeScopeSlot[]>;
   signals: Map<string, SignalRecord>;
   symbols: Map<string, string>;
+  watches: Map<string, WatchState>;
 }
 
 interface RuntimeSymbolModule {
@@ -119,6 +135,21 @@ interface RuntimeSymbolModule {
 interface ReactiveEffect {
   fn: () => void;
   signals: Set<SignalRecord>;
+}
+
+type WatchDependency = { value: unknown } | (() => unknown);
+type WatchMode = "dynamic" | "explicit";
+
+interface WatchState {
+  componentId: string;
+  effect: ReactiveEffect;
+  id: string;
+  mode: WatchMode;
+  pending: Promise<void> | null;
+  run: (() => void) | null;
+  scopeId: string;
+  symbol: string;
+  track: (() => void) | null;
 }
 
 type RenderObject = Extract<
@@ -163,6 +194,52 @@ const getCurrentFrame = (): RenderFrame | null => {
 };
 
 let currentEffect: ReactiveEffect | null = null;
+
+const clearEffectSignals = (effect: ReactiveEffect) => {
+  for (const signal of effect.signals) {
+    signal.effects.delete(effect);
+  }
+  effect.signals.clear();
+};
+
+const collectTrackedDependencies = (effect: ReactiveEffect, fn: () => void) => {
+  clearEffectSignals(effect);
+  currentEffect = effect;
+  try {
+    fn();
+  } finally {
+    currentEffect = null;
+  }
+};
+
+const trackWatchDependencies = (dependencies: WatchDependency[]) => {
+  for (const dependency of dependencies) {
+    if (typeof dependency === "function") {
+      dependency();
+      continue;
+    }
+    const signalMeta = getSignalMeta(dependency);
+    if (!signalMeta) {
+      throw new TypeError("watch$ dependencies must be signals or getter functions.");
+    }
+    dependency.value;
+  }
+};
+
+const createLocalWatchRunner = (
+  effect: ReactiveEffect,
+  fn: () => void,
+  dependencies?: WatchDependency[],
+) => () => {
+  if (!dependencies) {
+    collectTrackedDependencies(effect, fn);
+    return;
+  }
+  collectTrackedDependencies(effect, () => {
+    trackWatchDependencies(dependencies);
+  });
+  fn();
+};
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (!value || typeof value !== "object") {
@@ -244,6 +321,7 @@ const createContainer = (symbols: Record<string, string>, doc?: Document): Runti
   scopes: new Map(),
   signals: new Map(),
   symbols: new Map(Object.entries(symbols)),
+  watches: new Map(),
 });
 
 const createSignalHandle = <T>(record: SignalRecord<T>, container: RuntimeContainer | null) => {
@@ -316,7 +394,7 @@ const recordSignalRead = (record: SignalRecord) => {
 };
 
 const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRecord) => {
-  for (const effect of record.effects) {
+  for (const effect of [...record.effects]) {
     effect.fn();
   }
   if (!container) {
@@ -429,9 +507,11 @@ const createFrame = (
   childCursor: 0,
   component,
   container,
+  mountCallbacks: [],
   mode,
   signalCursor: 0,
   visitedDescendants: new Set(),
+  watchCursor: 0,
 });
 
 const createComponentId = (container: RuntimeContainer, parentId: string | null, childIndex: number) => {
@@ -455,21 +535,102 @@ const getOrCreateComponentState = (
   }
   const component: ComponentState = {
     active: false,
+    didMount: false,
     id,
     parentId,
     props: {},
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol,
+    watchCount: 0,
   };
   container.components.set(id, component);
   return component;
+};
+
+const createWatchId = (componentId: string, watchIndex: number) => `${componentId}:w${watchIndex}`;
+
+const getOrCreateWatchState = (
+  container: RuntimeContainer,
+  id: string,
+  componentId: string,
+): WatchState => {
+  const existing = container.watches.get(id);
+  if (existing) {
+    existing.componentId = componentId;
+    return existing;
+  }
+  const effect: ReactiveEffect = {
+    fn() {},
+    signals: new Set(),
+  };
+  const watch: WatchState = {
+    componentId,
+    effect,
+    id,
+    mode: "dynamic",
+    pending: null,
+    run: null,
+    scopeId: registerScope(container, []),
+    symbol: "",
+    track: null,
+  };
+  effect.fn = () => {
+    if (watch.run) {
+      watch.run();
+      return;
+    }
+    if (!container.doc) {
+      return;
+    }
+    const scheduled = (watch.pending ?? Promise.resolve()).then(async () => {
+      const module = await loadSymbol(container, watch.symbol);
+      const scope = materializeScope(container, watch.scopeId);
+      await withClientContainer(container, () => {
+        if (watch.mode === "dynamic") {
+          collectTrackedDependencies(effect, () => {
+            module.default(scope);
+          });
+          return;
+        }
+        collectTrackedDependencies(effect, () => {
+          module.default(scope, "track");
+        });
+        module.default(scope, "run");
+      });
+      await flushDirtyComponents(container);
+    });
+    const queued = scheduled.finally(() => {
+      if (watch.pending === queued) {
+        watch.pending = null;
+      }
+    });
+    watch.pending = queued;
+  };
+  container.watches.set(id, watch);
+  return watch;
 };
 
 const clearComponentSubscriptions = (container: RuntimeContainer, componentId: string) => {
   for (const record of container.signals.values()) {
     record.subscribers.delete(componentId);
   }
+};
+
+const removeWatchState = (container: RuntimeContainer, watchId: string) => {
+  const watch = container.watches.get(watchId);
+  if (!watch) {
+    return;
+  }
+  clearEffectSignals(watch.effect);
+  container.watches.delete(watchId);
+};
+
+const pruneComponentWatches = (container: RuntimeContainer, component: ComponentState, nextCount: number) => {
+  for (let index = nextCount; index < component.watchCount; index++) {
+    removeWatchState(container, createWatchId(component.id, index));
+  }
+  component.watchCount = nextCount;
 };
 
 const isDescendantOf = (parentId: string, candidateId: string) => candidateId.startsWith(`${parentId}.`);
@@ -487,8 +648,38 @@ const pruneRemovedComponents = (
       continue;
     }
     clearComponentSubscriptions(container, descendantId);
+    const descendant = container.components.get(descendantId);
+    if (descendant) {
+      pruneComponentWatches(container, descendant, 0);
+    }
     container.components.delete(descendantId);
   }
+};
+
+const scheduleMicrotask = (fn: () => void) => {
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(fn);
+    return;
+  }
+  Promise.resolve().then(fn);
+};
+
+const scheduleMountCallbacks = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  callbacks: Array<() => void>,
+) => {
+  if (component.didMount || callbacks.length === 0) {
+    return;
+  }
+  component.didMount = true;
+  scheduleMicrotask(() => {
+    void withClientContainer(container, () => {
+      for (const callback of callbacks) {
+        callback();
+      }
+    }).then(() => flushDirtyComponents(container));
+  });
 };
 
 const replaceBoundaryContents = (start: Comment, end: Comment, nodes: Node[]) => {
@@ -894,6 +1085,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
 
     const componentFn = resolved.type as Component;
     const body = pushFrame(frame, () => renderStringNode(componentFn(evaluatedProps)));
+    pruneComponentWatches(container, component, frame.watchCursor);
     return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`;
   }
 
@@ -987,6 +1179,7 @@ const renderComponentToNodes = (
   component.start = start;
   component.end = end;
   const rendered = pushFrame(frame, () => renderClientNodes(componentFn(props), container));
+  pruneComponentWatches(container, component, frame.watchCursor);
   pruneRemovedComponents(container, componentId, frame.visitedDescendants);
 
   for (const descendantId of oldDescendants) {
@@ -1003,6 +1196,8 @@ const renderComponentToNodes = (
       currentFrame.visitedDescendants.add(descendantId);
     }
   }
+
+  scheduleMountCallbacks(container, component, frame.mountCallbacks);
 
   return [start, ...rendered, end];
 };
@@ -1212,6 +1407,7 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   const oldDescendants = collectDescendantIds(container, componentId);
   clearComponentSubscriptions(container, componentId);
   const rendered = pushFrame(frame, () => componentFn(props));
+  pruneComponentWatches(container, component, frame.watchCursor);
   pruneRemovedComponents(container, componentId, frame.visitedDescendants);
 
   for (const descendantId of oldDescendants) {
@@ -1225,6 +1421,8 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   for (const descendantId of frame.visitedDescendants) {
     parentFrame.visitedDescendants.add(descendantId);
   }
+
+  scheduleMountCallbacks(container, component, frame.mountCallbacks);
 
   return rendered;
 };
@@ -1244,6 +1442,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const rendered = pushContainer(container, () =>
     pushFrame(frame, () => module.default(scope, component.props))
   );
+  pruneComponentWatches(container, component, frame.watchCursor);
   const nodes = toMountedNodes(rendered, container);
   replaceBoundaryContents(component.start, component.end, nodes);
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot);
@@ -1268,6 +1467,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     clearComponentSubscriptions(container, descendantId);
   }
   clearComponentSubscriptions(container, componentId);
+  scheduleMountCallbacks(container, component, frame.mountCallbacks);
 };
 
 const sortDirtyComponents = (ids: Iterable<string>) =>
@@ -1318,12 +1518,14 @@ export const beginSSRContainer = <T>(
   const container = createContainer(symbols);
   const rootComponent: ComponentState = {
     active: false,
+    didMount: false,
     id: ROOT_COMPONENT_ID,
     parentId: null,
     props: {},
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    watchCount: 0,
   };
 
   const rootFrame = createFrame(container, rootComponent, "ssr");
@@ -1343,6 +1545,7 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
         scope: component.scopeId,
         signalIds: [...component.signalIds],
         symbol: component.symbol,
+        watchCount: component.watchCount,
       } satisfies ResumeComponentPayload,
     ]),
   ),
@@ -1354,6 +1557,18 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
     [...container.signals.entries()].map(([id, record]) => [id, [...record.subscribers]]),
   ),
   symbols: Object.fromEntries(container.symbols.entries()),
+  watches: Object.fromEntries(
+    [...container.watches.entries()].map(([id, watch]) => [
+      id,
+      {
+        componentId: watch.componentId,
+        mode: watch.mode,
+        scope: watch.scopeId,
+        signals: [...watch.effect.signals].map((signal) => signal.id),
+        symbol: watch.symbol,
+      } satisfies ResumeWatchPayload,
+    ]),
+  ),
 });
 
 export const createResumeContainer = (source: Document | HTMLElement, payload: ResumePayload) => {
@@ -1375,12 +1590,14 @@ export const createResumeContainer = (source: Document | HTMLElement, payload: R
   for (const [id, componentPayload] of Object.entries(payload.components)) {
     container.components.set(id, {
       active: false,
+      didMount: false,
       id,
       parentId: id.includes(".") ? id.slice(0, id.lastIndexOf(".")) : ROOT_COMPONENT_ID,
       props: decodeValue(componentPayload.props),
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
+      watchCount: componentPayload.watchCount,
     });
   }
 
@@ -1390,6 +1607,24 @@ export const createResumeContainer = (source: Document | HTMLElement, payload: R
       continue;
     }
     record.subscribers = new Set(subscribers);
+  }
+
+  for (const [id, watchPayload] of Object.entries(payload.watches)) {
+    const watch = getOrCreateWatchState(container, id, watchPayload.componentId);
+    watch.mode = watchPayload.mode;
+    watch.scopeId = watchPayload.scope;
+    watch.symbol = watchPayload.symbol;
+    watch.track = null;
+    watch.run = null;
+    clearEffectSignals(watch.effect);
+    for (const signalId of watchPayload.signals) {
+      const record = container.signals.get(signalId);
+      if (!record) {
+        continue;
+      }
+      watch.effect.signals.add(record);
+      record.effects.add(watch.effect);
+    }
   }
 
   for (const [id, boundary] of scanComponentBoundaries(root as HTMLElement)) {
@@ -1522,17 +1757,47 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
 export const createEffect = (fn: () => void) => {
   const effect: ReactiveEffect = {
     fn() {
-      currentEffect = effect;
-      try {
-        fn();
-      } finally {
-        currentEffect = null;
-      }
+      collectTrackedDependencies(effect, fn);
     },
     signals: new Set(),
   };
 
   effect.fn();
+};
+
+export const createOnMount = (fn: () => void) => {
+  const frame = getCurrentFrame();
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== "client") {
+    return;
+  }
+  frame.mountCallbacks.push(fn);
+};
+
+export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) => {
+  const container = getCurrentContainer();
+  const frame = getCurrentFrame();
+  const watchMeta = getWatchMeta(fn);
+
+  if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID || !watchMeta) {
+    const effect: ReactiveEffect = {
+      fn() {
+        createLocalWatchRunner(effect, fn, dependencies)();
+      },
+      signals: new Set(),
+    };
+    effect.fn();
+    return;
+  }
+
+  const watchIndex = frame.watchCursor++;
+  const watchId = createWatchId(frame.component.id, watchIndex);
+  const watch = getOrCreateWatchState(container, watchId, frame.component.id);
+  watch.mode = dependencies ? "explicit" : "dynamic";
+  watch.scopeId = registerScope(container, watchMeta.captures());
+  watch.symbol = watchMeta.symbol;
+  watch.track = dependencies ? () => trackWatchDependencies(dependencies) : null;
+  watch.run = createLocalWatchRunner(watch.effect, fn, dependencies);
+  watch.effect.fn();
 };
 
 export const getResumePayloadScriptContent = (payload: ResumePayload) => JSON.stringify(payload);
