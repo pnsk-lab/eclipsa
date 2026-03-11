@@ -1,19 +1,23 @@
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from "@babel/traverse";
 import SyntaxJSX from "@babel/plugin-syntax-jsx";
-import { getJSXType, transformChildren, transformProps } from "../utils/jsx.ts";
+import { getJSXType, transformChildren, transformProps } from "../shared/jsx.ts";
 import * as t from "@babel/types";
 
-export const pluginClientDevJSX = () => {
-  // Imported from eclipsa or eclipsa/dev-client
+export const pluginClientJSX = (options?: {
+  hmr?: boolean;
+}) => {
+  const hmr = options?.hmr ?? true;
+  // Imported from eclipsa or eclipsa/client
   let createTemplate!: t.Identifier;
   let insert!: t.Identifier;
   let attr!: t.Identifier;
   let createComponent!: t.Identifier;
   let component$Id: t.Identifier | null = null;
+  let initHot!: t.Identifier;
   let defineHotComponent!: t.Identifier;
+  let createHotRegistry!: t.Identifier;
 
-  //
   let hotRegistry!: t.Identifier;
 
   const templates: {
@@ -30,49 +34,63 @@ export const pluginClientDevJSX = () => {
           insert = path.scope.generateUidIdentifier("insert");
           attr = path.scope.generateUidIdentifier("attr");
           createComponent = path.scope.generateUidIdentifier("createComponent");
-          defineHotComponent = path.scope.generateUidIdentifier("defineHotComponent");
-          const initHot = path.scope.generateUidIdentifier("initHot");
-          const createHotRegistry = path.scope.generateUidIdentifier("createHotRegistry");
 
-          const importDeclaration = t.importDeclaration(
-            [
-              t.importSpecifier(createTemplate, t.identifier("createTemplate")),
-              t.importSpecifier(insert, t.identifier("insert")),
-              t.importSpecifier(attr, t.identifier("attr")),
-              t.importSpecifier(createComponent, t.identifier("createComponent")),
-              t.importSpecifier(initHot, t.identifier("initHot")),
-              t.importSpecifier(defineHotComponent, t.identifier("defineHotComponent")),
-              t.importSpecifier(createHotRegistry, t.identifier("createHotRegistry")),
-            ],
-            t.stringLiteral("eclipsa/dev-client"),
-          );
-          path.unshiftContainer("body", importDeclaration);
+          const specifiers = [
+            t.importSpecifier(createTemplate, t.identifier("createTemplate")),
+            t.importSpecifier(insert, t.identifier("insert")),
+            t.importSpecifier(attr, t.identifier("attr")),
+            t.importSpecifier(createComponent, t.identifier("createComponent")),
+          ];
 
-          hotRegistry = t.identifier("__eclipsa$hotRegistry");
-          path.unshiftContainer(
-            "body",
-            t.expressionStatement(
-              t.callExpression(initHot, [
-                t.memberExpression(
-                  t.memberExpression(t.identifier("import"), t.identifier("meta")),
-                  t.identifier("hot"),
-                ),
-                t.memberExpression(
-                  t.memberExpression(t.identifier("import"), t.identifier("meta")),
-                  t.identifier("url"),
-                ),
-                hotRegistry,
-              ]),
-            ),
+          if (hmr) {
+            defineHotComponent = path.scope.generateUidIdentifier("defineHotComponent");
+            initHot = path.scope.generateUidIdentifier("initHot");
+            createHotRegistry = path.scope.generateUidIdentifier("createHotRegistry");
+            hotRegistry = t.identifier("__eclipsa$hotRegistry");
+            path.unshiftContainer(
+              "body",
+              t.expressionStatement(
+                t.callExpression(initHot, [
+                  t.memberExpression(
+                    t.memberExpression(t.identifier("import"), t.identifier("meta")),
+                    t.identifier("hot"),
+                  ),
+                  t.memberExpression(
+                    t.memberExpression(t.identifier("import"), t.identifier("meta")),
+                    t.identifier("url"),
+                  ),
+                  hotRegistry,
+                ]),
+              ),
+            );
+            path.unshiftContainer(
+              "body",
+              t.exportNamedDeclaration(
+                t.variableDeclaration("var", [
+                  t.variableDeclarator(hotRegistry, t.callExpression(createHotRegistry, [])),
+                ]),
+              ),
+            );
+          }
+
+          const runtimeImport = t.importDeclaration(
+            specifiers,
+            t.stringLiteral("eclipsa/client"),
           );
-          path.unshiftContainer(
-            "body",
-            t.exportNamedDeclaration(
-              t.variableDeclaration("var", [
-                t.variableDeclarator(hotRegistry, t.callExpression(createHotRegistry, [])),
-              ]),
-            ),
-          );
+          path.unshiftContainer("body", runtimeImport);
+          if (hmr) {
+            path.unshiftContainer(
+              "body",
+              t.importDeclaration(
+                [
+                  t.importSpecifier(initHot, t.identifier("initHot")),
+                  t.importSpecifier(defineHotComponent, t.identifier("defineHotComponent")),
+                  t.importSpecifier(createHotRegistry, t.identifier("createHotRegistry")),
+                ],
+                t.stringLiteral("eclipsa/dev-client"),
+              ),
+            );
+          }
         },
         exit(path) {
           for (const template of templates) {
@@ -148,6 +166,18 @@ export const pluginClientDevJSX = () => {
           return text;
         };
         const processJSXElement = (elem: t.JSXElement, path: Path) => {
+          const jsxType = getJSXType(elem.openingElement);
+          if (jsxType.type !== "element") {
+            const componentId = t.identifier(jsxType.name);
+            const { props } = transformProps(elem.openingElement);
+            components.push({
+              path,
+              id: componentId,
+              props,
+            });
+            return `<!-- ${path.join(",")} -->`;
+          }
+
           for (const attr of elem.openingElement.attributes) {
             if (attr.type === "JSXAttribute") {
               const name =
@@ -175,20 +205,7 @@ export const pluginClientDevJSX = () => {
             }
             throw new Error(`${attr.type} is not supported.`);
           }
-          const jsxType = getJSXType(elem.openingElement);
-          if (jsxType.type === "element") {
-            // Element
-            return `<${jsxType.name}>${processChildren(elem.children, path)}</${jsxType.name}>`;
-          }
-          // Component
-          const componentId = t.identifier(jsxType.name);
-          const { props } = transformProps(elem.openingElement);
-          components.push({
-            path,
-            id: componentId,
-            props,
-          });
-          return `<!-- ${path.join(",")} -->`;
+          return `<${jsxType.name}>${processChildren(elem.children, path)}</${jsxType.name}>`;
         };
         const tmplHTML = processJSXElement(path.node, []);
         const tmplID = path.scope.generateUidIdentifier("template");
@@ -286,6 +303,9 @@ export const pluginClientDevJSX = () => {
       },
       CallExpression: {
         exit(path) {
+          if (!hmr) {
+            return;
+          }
           if (t.isIdentifier(path.node.callee) && component$Id?.name === path.node.callee.name) {
             if (
               t.isCallExpression(path.parent) &&

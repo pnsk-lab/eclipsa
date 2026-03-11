@@ -1,13 +1,17 @@
-import { component$, For, useSignal } from "eclipsa";
+import { component$, For, useSignal, watch$ } from "eclipsa";
 import { Header } from "./Header.tsx";
 
 export default component$(() => {
   const todos = useSignal<string[]>(["ToDo1"]);
   const inputting = useSignal("");
 
+  watch$(() => {
+    console.log("todos changed", inputting.value);
+  });
+
   return (
     <div>
-      <Header a={0} />
+      <Header />
       <input
         onInput$={(e: InputEvent) => {
           inputting.value = (e.currentTarget as HTMLInputElement).value;
@@ -20,7 +24,7 @@ export default component$(() => {
           inputting.value = "";
         }}
       >
-        Addaaaa
+        Add
       </button>
       <ul>
         <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />

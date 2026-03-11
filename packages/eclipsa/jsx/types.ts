@@ -3,10 +3,10 @@ export namespace JSX {
   export type Type = string | ((props: unknown) => Element);
   export type Childable = Element;
   export type Element =
-    | {
+      | {
         type: Type;
         props: Record<string, unknown>;
-        key?: string | number | symbol;
+        key?: string | number | symbol | null;
         isStatic: boolean;
         metadata?: Metadata;
       }
@@ -21,9 +21,9 @@ export namespace JSX {
     fileid?: string;
   }
 
-  export interface IntrinsicAttributes {
-    key?: any;
-  }
+    export interface IntrinsicAttributes {
+      key?: any;
+    }
 
   export interface IntrinsicElements {
     [name: string]: any;

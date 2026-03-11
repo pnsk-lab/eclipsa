@@ -1,12 +1,11 @@
-import { type Context, Hono } from "hono";
+import type { Context } from "hono";
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from "vite";
 import type { ModuleRunner } from "vite/module-runner";
-import { renderToString } from "../../jsx/mod.ts";
 import type { SSRRootProps } from "../../core/types.ts";
-import { Fragment } from "../../jsx/jsx-dev-runtime.ts";
+import { Fragment, jsxDEV } from "../../jsx/jsx-dev-runtime.ts";
 import { createRoutes, type RouteEntry } from "../utils/routing.ts";
-import type { DevClientInfo } from "../../core/dev-client/types.ts";
 import * as path from "node:path";
+import { collectAppSymbols, createDevSymbolUrl } from "../compiler.ts";
 
 interface DevAppInit {
   resolvedConfig: ResolvedConfig;
@@ -15,18 +14,29 @@ interface DevAppInit {
   ssrEnv: DevEnvironment;
 }
 
+const injectResumeScript = (html: string, payloadScript: string) =>
+  html.includes("</head>") ? html.replace("</head>", `${payloadScript}</head>`) : `${payloadScript}${html}`;
+
 const createDevApp = async (init: DevAppInit) => {
-  const app = new Hono();
+  const { default: app } = await init.runner.import("/app/+server-entry.ts");
+  const allSymbols = await collectAppSymbols(init.resolvedConfig.root);
+  const symbolUrls = Object.fromEntries(
+    allSymbols.map((symbol) => [
+      symbol.id,
+      createDevSymbolUrl(init.resolvedConfig.root, symbol.filePath, symbol.id),
+    ]),
+  );
 
   const createHandler = (entry: RouteEntry) => async (c: Context) => {
-    const [{ default: Page }, { default: SSRRoot }] = await Promise.all([
-      await init.runner.import(entry.filePath),
-      await init.runner.import("/app/+ssr-root.tsx"),
-    ]);
+    const [{ default: Page }, { default: SSRRoot }, { renderSSR, serializeResumePayload }] =
+      await Promise.all([
+        init.runner.import(entry.filePath),
+        init.runner.import("/app/+ssr-root.tsx"),
+        init.runner.import("eclipsa"),
+      ]);
 
-    const page = Page();
-    const parent = SSRRoot({
-      children: page,
+    const document = SSRRoot({
+      children: jsxDEV(Page, {}, null, false, {}),
       head: {
         type: Fragment,
         isStatic: true,
@@ -42,24 +52,8 @@ const createDevApp = async (init: DevAppInit) => {
             {
               type: "script",
               props: {
-                type: "module",
                 src: "/app/+client.dev.tsx",
-              },
-            },
-            {
-              type: "script",
-              isStatic: true,
-              props: {
-                type: "text/eclipsa+devinfo",
-                id: "eclipsa-devinfo",
-                children: JSON.stringify({
-                  entry: {
-                    absolutePath: entry.filePath,
-                    url:
-                      "/" +
-                      path.relative(init.resolvedConfig.root, entry.filePath).replaceAll("\\", "/"),
-                  },
-                } satisfies DevClientInfo),
+                type: "module",
               },
             },
           ],
@@ -67,7 +61,14 @@ const createDevApp = async (init: DevAppInit) => {
       },
     } satisfies SSRRootProps);
 
-    return c.html(renderToString(parent));
+    const { html, payload } = renderSSR(() => document, {
+      symbols: symbolUrls,
+    });
+    const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${
+      serializeResumePayload(payload)
+    }</script>`;
+
+    return c.html(injectResumeScript(html, payloadScript));
   };
 
   for (const entry of await createRoutes(init.resolvedConfig.root)) {
@@ -76,6 +77,7 @@ const createDevApp = async (init: DevAppInit) => {
 
   return app;
 };
+
 export const createDevFetch = (
   init: DevAppInit,
 ): ((req: Request) => Promise<Response | undefined>) => {

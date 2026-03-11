@@ -56,7 +56,7 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
 };
 
 const UPPER_CASE_REGEX = /[A-Z]/;
-interface JSXType {
+export interface JSXType {
   type: "component" | "element";
   name: string;
 

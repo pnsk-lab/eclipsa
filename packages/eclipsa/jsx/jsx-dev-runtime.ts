@@ -4,7 +4,7 @@ import type { JSX } from "./types.ts";
 export const jsxDEV = (
   type: JSX.Type,
   props: Record<string, unknown>,
-  key: string | number | symbol,
+  key: string | number | symbol | null | undefined,
   isStatic: boolean,
   metadata: JSX.Metadata,
 ): JSX.Element => ({

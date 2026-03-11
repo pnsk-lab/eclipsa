@@ -1,0 +1,35 @@
+// ================= ENTRY (on_mount.jsx) ==
+import { component$, onMount } from 'eclipsa'
+
+export default component$(() => {
+  const value = 'mounted'
+
+  onMount(() => {
+    console.log(value)
+  })
+
+  return <button>{value}</button>
+})
+
+
+// ================= analyzed ==
+import { __eclipsaComponent } from "eclipsa/internal";
+import { component$, onMount } from "eclipsa";
+var analyze_input_default = component$(__eclipsaComponent(() => {
+  const value = "mounted";
+  onMount(() => {
+    console.log(value);
+  });
+  return <button>{value}</button>;
+}, "vslqlr", () => []));
+export { analyze_input_default as default };
+
+// ================= vslqlr (component) ==
+import { component$, onMount } from "eclipsa";
+export default __scope => {
+  const value = "mounted";
+  onMount(() => {
+    console.log(value);
+  });
+  return <button>{value}</button>;
+};

@@ -1,3 +1,3 @@
-import { initDevClient } from "eclipsa/dev-client";
+import { resumeContainer } from "eclipsa";
 
-initDevClient();
+resumeContainer(document);
