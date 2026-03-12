@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "commit-make-pr": {
+      "source": "/home/nakasyou/eclipsa/skills/commit-make-pr",
+      "sourceType": "local",
+      "computedHash": "3cccf9e21cae50bb33c30862c3c544977b610fea2c0114f56b12f4db187ee261"
+    }
+  }
+}
