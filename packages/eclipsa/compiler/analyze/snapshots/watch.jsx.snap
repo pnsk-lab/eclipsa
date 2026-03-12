@@ -28,11 +28,11 @@ var analyze_input_default = component$(__eclipsaComponent(() => {
   useWatch(__eclipsaWatch("1wpyu3h", () => {
     console.log(dynamic.value);
   }, () => [dynamic]));
-  useWatch(__eclipsaWatch("1v0uxh9", () => {
+  useWatch(__eclipsaWatch("ssc4fm", () => {
     console.log(explicit.value);
   }, () => [explicit, tracked]), [tracked, () => explicit.value]);
   return <button>{tracked.value}</button>;
-}, "xbfsvw", () => []));
+}, "8tojhg", () => []));
 export { analyze_input_default as default };
 
 // ================= 1wpyu3h (watch) ==
@@ -43,7 +43,7 @@ export default (__scope, __phase) => {
   console.log(__scope[0].value);
 };
 
-// ================= 1v0uxh9 (watch) ==
+// ================= ssc4fm (watch) ==
 import { getSignalMeta } from "eclipsa/internal";
 export default (__scope, __phase) => {
   if (__phase === "track") {
@@ -64,7 +64,7 @@ export default (__scope, __phase) => {
   console.log(__scope[0].value);
 };
 
-// ================= xbfsvw (component) ==
+// ================= 8tojhg (component) ==
 import { component$, useSignal, useWatch } from "eclipsa";
 import { __eclipsaWatch } from "eclipsa/internal";
 export default __scope => {
@@ -74,7 +74,7 @@ export default __scope => {
   useWatch(__eclipsaWatch("1wpyu3h", () => {
     console.log(dynamic.value);
   }, () => [dynamic]));
-  useWatch(__eclipsaWatch("1v0uxh9", () => {
+  useWatch(__eclipsaWatch("ssc4fm", () => {
     console.log(explicit.value);
   }, () => [explicit, tracked]), [tracked, () => explicit.value]);
   return <button>{tracked.value}</button>;

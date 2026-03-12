@@ -1,9 +1,10 @@
-import { component$, For, useSignal, useWatch } from "eclipsa";
+import { component$, For, Link, useNavigate, useSignal, useWatch } from "eclipsa";
 import { Header } from "./Header.tsx";
 
 export default component$(() => {
   const todos = useSignal<string[]>(["ToDo1"]);
   const inputting = useSignal("");
+  const navigate = useNavigate();
 
   useWatch(() => {
     console.log("todos changed", inputting.value);
@@ -12,6 +13,10 @@ export default component$(() => {
   return (
     <div>
       <Header />
+      <p>isNavigating: {String(navigate.isNavigating)}</p>
+      <p>
+        <Link href="/counter">Open counter with Link</Link>
+      </p>
       <input
         onInput$={(e: InputEvent) => {
           inputting.value = (e.currentTarget as HTMLInputElement).value;
@@ -25,6 +30,14 @@ export default component$(() => {
         }}
       >
         Add
+      </button>
+      <button
+        type="button"
+        onClick$={() => {
+          void navigate("/counter");
+        }}
+      >
+        Go to counter with navigate()
       </button>
       <ul>
         <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />

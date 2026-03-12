@@ -1,7 +1,9 @@
 export * from "./component.ts";
+export { Link, useNavigate, type LinkProps } from "./router.tsx";
 export * from "./resume.ts";
 export * from "./signal.ts";
 export * from "./snapshot.ts";
 export * from "./ssr.ts";
+export type { Navigate, NavigateOptions } from "./router-shared.ts";
 export * from "./types.ts";
 export * from "./flow/mod.ts";

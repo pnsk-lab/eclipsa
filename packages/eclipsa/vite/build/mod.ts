@@ -2,11 +2,17 @@ import type { UserConfig, ViteBuilder } from "vite";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { cwd } from "node:process";
-import { createRoutes } from "../utils/routing.ts";
+import { ROUTE_MANIFEST_ELEMENT_ID } from "../../core/router-shared.ts";
+import {
+  createBuildRouteUrl,
+  createRouteManifest,
+  createRoutes,
+} from "../utils/routing.ts";
 import { collectAppSymbols, createBuildSymbolUrl } from "../compiler.ts";
 
 const renderServer = (
   routes: Awaited<ReturnType<typeof createRoutes>>,
+  routeManifest: Record<string, string>,
   symbolUrls: Record<string, string>,
 ) => {
   const routeTable = routes
@@ -17,6 +23,7 @@ const renderServer = (
     .join("\n");
 
   const serializedSymbolUrls = JSON.stringify(symbolUrls);
+  const serializedRouteManifest = JSON.stringify(routeManifest);
 
   return `import userApp from "../ssr/entries/server_entry.mjs";
 import SSRRoot from "../ssr/entries/ssr_root.mjs";
@@ -30,6 +37,7 @@ const app = userApp;
 const routes = {
 ${routeTable}
 };
+const routeManifest = ${serializedRouteManifest};
 const symbolUrls = ${serializedSymbolUrls};
 
 const fileTypes = new Map([
@@ -104,8 +112,10 @@ const serveStatic = async (pathname) => {
   }
 };
 
-const injectResumeScript = (html, payloadScript) =>
-  html.includes("</head>") ? html.replace("</head>", payloadScript + "</head>") : payloadScript + html;
+const injectHeadScripts = (html, ...scripts) => {
+  const scriptMarkup = scripts.join("");
+  return html.includes("</head>") ? html.replace("</head>", scriptMarkup + "</head>") : scriptMarkup + html;
+};
 
 for (const [routePath, route] of Object.entries(routes)) {
   app.get(routePath, async (c) => {
@@ -134,7 +144,8 @@ for (const [routePath, route] of Object.entries(routes)) {
       symbols: symbolUrls,
     });
     const payloadScript = '<script type="application/eclipsa-resume+json" id="eclipsa-resume">' + serializeResumePayload(payload) + "</script>";
-    return c.html(injectResumeScript(html, payloadScript));
+    const routeManifestScript = '<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">' + JSON.stringify(routeManifest) + "</script>";
+    return c.html(injectHeadScripts(html, payloadScript, routeManifestScript));
   });
 }
 
@@ -159,6 +170,7 @@ createServer(async (req, res) => {
 export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
   const root = userConfig.root ?? cwd();
   const routes = await createRoutes(root);
+  const routeManifest = createRouteManifest(routes, createBuildRouteUrl);
   const symbols = await collectAppSymbols(root);
   const symbolUrls = Object.fromEntries(
     symbols.map((symbol) => [symbol.id, createBuildSymbolUrl(symbol.id)]),
@@ -169,5 +181,5 @@ export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
 
   const serverDir = path.join(root, "dist/server");
   await fs.mkdir(serverDir, { recursive: true });
-  await fs.writeFile(path.join(serverDir, "index.mjs"), renderServer(routes, symbolUrls));
+  await fs.writeFile(path.join(serverDir, "index.mjs"), renderServer(routes, routeManifest, symbolUrls));
 };

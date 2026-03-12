@@ -2,7 +2,7 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   test: {
-    include: ["core/**/*.test.ts", "compiler/**/*.test.ts", "vite/**/*.test.ts"],
+    include: ["core/**/*.test.ts", "core/**/*.test.tsx", "compiler/**/*.test.ts", "vite/**/*.test.ts"],
     environment: "node",
   },
   pack: {

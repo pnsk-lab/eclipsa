@@ -1,4 +1,5 @@
 import type { Component } from "../component.ts";
+import { __eclipsaComponent, getComponentMeta } from "../internal.ts";
 import { useSignal } from "../signal.ts";
 import type { JSX } from "../../jsx/jsx-runtime.ts";
 
@@ -50,6 +51,7 @@ interface ComponentMetaInput {
 }
 export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
   const comp = useSignal(Component);
+  const componentMeta = getComponentMeta(Component);
 
   meta.registry.components.set(meta.name, {
     update(newComponent) {
@@ -58,9 +60,13 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
     Component,
   });
 
-  return (props) => {
+  const HotComponent = (props: unknown) => {
     return () => comp.value(props);
   };
+  if (!componentMeta) {
+    return HotComponent;
+  }
+  return __eclipsaComponent(HotComponent, componentMeta.symbol, componentMeta.captures);
 };
 
 interface HotComponentData {

@@ -170,6 +170,14 @@ export const pluginClientJSX = (options?: {
           if (jsxType.type !== "element") {
             const componentId = t.identifier(jsxType.name);
             const { props } = transformProps(elem.openingElement);
+            if (elem.children.length > 0) {
+              props.properties.push(
+                t.objectProperty(
+                  t.identifier("children"),
+                  transformChildren(elem),
+                ),
+              );
+            }
             components.push({
               path,
               id: componentId,

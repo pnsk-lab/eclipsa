@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyHotUpdate, createHotRegistry, defineHotComponent } from "./hot.ts";
+import { component$ } from "../component.ts";
+import { __eclipsaComponent, getComponentMeta } from "../internal.ts";
 
 const makeComponent = (value: string) => ((_: unknown) => value) as any;
 
@@ -43,5 +45,19 @@ describe("core/dev-client hot", () => {
     });
 
     expect(applyHotUpdate(registry, newRegistry)).toBe("reload");
+  });
+
+  it("preserves component metadata on wrapped hot components", () => {
+    const registry = createHotRegistry();
+    const Component = component$(
+      __eclipsaComponent(() => "value", "page-symbol", () => []),
+    );
+
+    const wrapped = defineHotComponent(Component, {
+      registry,
+      name: "default",
+    });
+
+    expect(getComponentMeta(wrapped)?.symbol).toBe("page-symbol");
   });
 });

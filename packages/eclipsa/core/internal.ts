@@ -1,7 +1,9 @@
 import type { Component, EURL } from "./component.ts";
+import type { Navigate } from "./router-shared.ts";
 
 const COMPONENT_META_KEY = Symbol.for("eclipsa.component-meta");
 const LAZY_META_KEY = Symbol.for("eclipsa.lazy-meta");
+const NAVIGATE_META_KEY = Symbol.for("eclipsa.navigate-meta");
 const SIGNAL_META_KEY = Symbol.for("eclipsa.signal-meta");
 const WATCH_META_KEY = Symbol.for("eclipsa.watch-meta");
 
@@ -25,6 +27,10 @@ export interface SignalMeta<T = unknown> {
   get(): T;
   id: string;
   set(value: T): void;
+}
+
+export interface NavigateMeta {
+  readonly kind: "navigate";
 }
 
 export interface EventDescriptor {
@@ -124,6 +130,28 @@ export const getLazyMeta = (value: unknown): LazyMeta | null => {
   }
   return ((value as unknown as Record<PropertyKey, unknown>)[LAZY_META_KEY] as LazyMeta | undefined) ??
     null;
+};
+
+export const setNavigateMeta = <T extends Navigate>(target: T): T => {
+  Object.defineProperty(target, NAVIGATE_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      kind: "navigate",
+    } satisfies NavigateMeta,
+    writable: true,
+  });
+  return target;
+};
+
+export const getNavigateMeta = (value: unknown): NavigateMeta | null => {
+  if (typeof value !== "function") {
+    return null;
+  }
+  return (
+    ((value as unknown as Record<PropertyKey, unknown>)[NAVIGATE_META_KEY] as NavigateMeta | undefined) ??
+    null
+  );
 };
 
 export const getWatchMeta = (value: unknown): WatchMeta | null => {

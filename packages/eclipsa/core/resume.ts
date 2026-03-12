@@ -9,6 +9,10 @@ import {
   RESUME_HMR_EVENT,
   type ResumeHmrUpdatePayload,
 } from "./resume-hmr.ts";
+import {
+  ROUTE_MANIFEST_ELEMENT_ID,
+  type RouteManifest,
+} from "./router-shared.ts";
 
 const STATE_ELEMENT_ID = "eclipsa-resume";
 
@@ -23,6 +27,15 @@ const getResumePayload = (doc: Document): ResumePayload | null => {
   }
 
   return JSON.parse(elem.textContent) as ResumePayload;
+};
+
+const getRouteManifest = (doc: Document): RouteManifest => {
+  const elem = doc.getElementById(ROUTE_MANIFEST_ELEMENT_ID);
+  if (!elem?.textContent) {
+    return {};
+  }
+
+  return JSON.parse(elem.textContent) as RouteManifest;
 };
 
 const initResumeHmr = (hot: ViteHotContext | undefined) => {
@@ -49,7 +62,9 @@ export const resumeContainer = (source: Document | HTMLElement = document) => {
     return;
   }
 
-  const container = createResumeContainer(root, payload);
+  const container = createResumeContainer(root, payload, {
+    routeManifest: getRouteManifest(doc),
+  });
   registerResumeContainer(container);
   root.setAttribute("data-e-resume", "resumed");
   installResumeListeners(container);

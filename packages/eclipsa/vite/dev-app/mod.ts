@@ -1,9 +1,15 @@
 import { Hono, type Context } from "hono";
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from "vite";
 import type { ModuleRunner } from "vite/module-runner";
+import { ROUTE_MANIFEST_ELEMENT_ID } from "../../core/router-shared.ts";
 import type { SSRRootProps } from "../../core/types.ts";
 import { Fragment, jsxDEV } from "../../jsx/jsx-dev-runtime.ts";
-import { createRoutes, type RouteEntry } from "../utils/routing.ts";
+import {
+  createDevRouteUrl,
+  createRouteManifest,
+  createRoutes,
+  type RouteEntry,
+} from "../utils/routing.ts";
 import * as path from "node:path";
 import { collectAppSymbols, createDevSymbolUrl } from "../compiler.ts";
 
@@ -41,19 +47,26 @@ export const shouldInvalidateDevApp = (root: string, filePath: string, event: "a
   return false;
 };
 
-const injectResumeScript = (html: string, payloadScript: string) =>
-  html.includes("</head>") ? html.replace("</head>", `${payloadScript}</head>`) : `${payloadScript}${html}`;
+const injectHeadScripts = (html: string, ...scripts: string[]) => {
+  const scriptMarkup = scripts.join("");
+  return html.includes("</head>") ? html.replace("</head>", `${scriptMarkup}</head>`) : `${scriptMarkup}${html}`;
+};
 
 const createDevApp = async (init: DevAppInit) => {
   const { default: userApp } = await init.runner.import("/app/+server-entry.ts");
   const app = new Hono();
   app.route("/", userApp);
+  const routes = await createRoutes(init.resolvedConfig.root);
   const allSymbols = await collectAppSymbols(init.resolvedConfig.root);
   const symbolUrls = Object.fromEntries(
     allSymbols.map((symbol) => [
       symbol.id,
       createDevSymbolUrl(init.resolvedConfig.root, symbol.filePath, symbol.id),
     ]),
+  );
+  const routeManifest = createRouteManifest(
+    routes,
+    (route) => createDevRouteUrl(init.resolvedConfig.root, route),
   );
 
   const createHandler = (entry: RouteEntry) => async (c: Context) => {
@@ -96,11 +109,14 @@ const createDevApp = async (init: DevAppInit) => {
     const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${
       serializeResumePayload(payload)
     }</script>`;
+    const routeManifestScript = `<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">${
+      JSON.stringify(routeManifest)
+    }</script>`;
 
-    return c.html(injectResumeScript(html, payloadScript));
+    return c.html(injectHeadScripts(html, payloadScript, routeManifestScript));
   };
 
-  for (const entry of await createRoutes(init.resolvedConfig.root)) {
+  for (const entry of routes) {
     app.get(entry.honoPath, createHandler(entry));
   }
 

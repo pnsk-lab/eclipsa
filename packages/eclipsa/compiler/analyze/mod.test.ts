@@ -23,15 +23,17 @@ describe("analyzeModule()", () => {
         continue;
       }
 
-      let snapshot = `// ================= ENTRY (${entry.name}) ==\n${tsx}\n\n`;
-      snapshot += `// ================= analyzed ==\n${analyzed.code}\n\n`;
+      const sections = [
+        `// ================= ENTRY (${entry.name}) ==\n${tsx}`,
+        `// ================= analyzed ==\n${analyzed.code}`,
+      ];
 
       for (const [name, symbol] of analyzed.symbols) {
-        snapshot += `// ================= ${name} (${symbol.kind}) ==\n${symbol.code}\n\n`;
+        sections.push(`// ================= ${name} (${symbol.kind}) ==\n${symbol.code}`);
       }
 
       const snapshotPath = path.join(analyzeDir, "snapshots", `${entry.name}.snap`);
-      expect(snapshot.trimEnd()).toBe((await fs.readFile(snapshotPath, "utf8")).trimEnd());
+      await expect(`${sections.join("\n\n")}\n`).toMatchFileSnapshot(snapshotPath);
     }
   });
 });

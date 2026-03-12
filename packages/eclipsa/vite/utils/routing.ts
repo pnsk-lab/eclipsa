@@ -1,11 +1,20 @@
 import fg from "fast-glob";
 import path from "node:path";
+import type { RouteManifest } from "../../core/router-shared.ts";
 
-// WIP
+export const normalizeRoutePath = (pathname: string) => {
+  const normalizedPath = pathname.trim() || "/";
+  const withLeadingSlash = normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+  if (withLeadingSlash.length > 1 && withLeadingSlash.endsWith("/")) {
+    return withLeadingSlash.slice(0, -1);
+  }
+  return withLeadingSlash;
+};
+
 const filePathToHonoPath = (filePath: string) => {
   const segments = filePath.split("/").slice(0, -1);
 
-  return segments.join("/") || "/";
+  return normalizeRoutePath(segments.join("/") || "/");
 };
 
 export interface RouteEntry {
@@ -29,7 +38,7 @@ const toEntryName = (relativePath: string) => {
 };
 export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
   const appDir = path.join(root, "app");
-  const result = [];
+  const result: RouteEntry[] = [];
   for await (const entry of fg.stream(path.join(root, "/**/+page.tsx").replaceAll("\\", "/"))) {
     const relativePath = path.relative(appDir, entry.toString());
     result.push({
@@ -40,3 +49,14 @@ export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
   }
   return result;
 };
+
+export const createDevRouteUrl = (root: string, route: RouteEntry) =>
+  `/${path.relative(root, route.filePath).replaceAll("\\", "/")}`;
+
+export const createBuildRouteUrl = (route: RouteEntry) => `/entries/route__${route.entryName}.js`;
+
+export const createRouteManifest = (
+  routes: RouteEntry[],
+  resolveUrl: (route: RouteEntry) => string,
+): RouteManifest =>
+  Object.fromEntries(routes.map((route) => [normalizeRoutePath(route.honoPath), resolveUrl(route)]));

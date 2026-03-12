@@ -39,4 +39,17 @@ describe("compiler/client pluginClientJSX", () => {
     expect(resultCode).toContain("defineHotComponent");
     expect(resultCode).toContain("createHotRegistry");
   });
+
+  it("passes component children through props", () => {
+    const resultCode = transform(`<Link href="/">Home</Link>`, {
+      filename: "plugin.test.tsx",
+      parserOpts: {
+        plugins: ["jsx"],
+      },
+      plugins: [pluginClientJSX({ hmr: false })],
+    })?.code;
+
+    expect(resultCode).toContain("children");
+    expect(resultCode).toContain("Home");
+  });
 });

@@ -158,6 +158,31 @@ describe("resume HMR runtime helpers", () => {
     expect(collectResumeHmrBoundaryIds(container, ["header-symbol"])).toEqual(["c0"]);
   });
 
+  it("treats client-side route roots with the page component symbol as HMR boundaries", () => {
+    const container = createContainer({
+      components: new Map([
+        [
+          "c0",
+          {
+            active: true,
+            didMount: false,
+            end: {} as Comment,
+            id: "c0",
+            parentId: "$root",
+            props: {},
+            scopeId: "scope-root",
+            signalIds: [],
+            start: {} as Comment,
+            symbol: "page-symbol",
+            watchCount: 0,
+          },
+        ],
+      ]),
+    });
+
+    expect(collectResumeHmrBoundaryIds(container, ["page-symbol"])).toEqual(["c0"]);
+  });
+
   it("applies replacement-only payloads without requiring DOM rerender", async () => {
     const container = createContainer({
       imports: new Map([

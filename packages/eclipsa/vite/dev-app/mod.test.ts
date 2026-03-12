@@ -2,13 +2,19 @@ import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RouteEntry } from "../utils/routing.ts";
 
-const createRoutes = vi.fn<() => Promise<RouteEntry[]>>();
-const collectAppSymbols = vi.fn<() => Promise<{ id: string; filePath: string }[]>>();
-const createDevSymbolUrl = vi.fn<(root: string, filePath: string, symbolId: string) => string>();
-
-vi.mock("../utils/routing.ts", () => ({
-  createRoutes,
+const { createRoutes, collectAppSymbols, createDevSymbolUrl } = vi.hoisted(() => ({
+  createRoutes: vi.fn<() => Promise<RouteEntry[]>>(),
+  collectAppSymbols: vi.fn<() => Promise<{ id: string; filePath: string }[]>>(),
+  createDevSymbolUrl: vi.fn<(root: string, filePath: string, symbolId: string) => string>(),
 }));
+
+vi.mock("../utils/routing.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/routing.ts")>();
+  return {
+    ...actual,
+    createRoutes,
+  };
+});
 
 vi.mock("../compiler.ts", () => ({
   collectAppSymbols,

@@ -1,10 +1,29 @@
-import { component$, useSignal } from "eclipsa";
+import { component$, Link, useNavigate, useSignal } from "eclipsa";
+import { Header } from "../Header.tsx";
 
 export default component$(() => {
-  const count = useSignal(0)
+  const count = useSignal(0);
+  const navigate = useNavigate();
 
-  return <div>
-    Hello World!
-    <button type="button" onClick$={() => count.value++}>Count: {count.value}</button>
-  </div>
-})
+  return (
+    <div>
+      <Header />
+      <p>Counter page</p>
+      <p>isNavigating: {String(navigate.isNavigating)}</p>
+      <p>
+        <Link href="/">Back home with Link</Link>
+      </p>
+      <button type="button" onClick$={() => count.value++}>
+        Count: {count.value}
+      </button>
+      <button
+        type="button"
+        onClick$={() => {
+          void navigate("/");
+        }}
+      >
+        Back home with navigate()
+      </button>
+    </div>
+  );
+});

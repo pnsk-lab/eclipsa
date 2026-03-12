@@ -6,17 +6,30 @@ import {
   getComponentMeta,
   getEventMeta,
   getLazyMeta,
+  getNavigateMeta,
   getSignalMeta,
   getWatchMeta,
+  setNavigateMeta,
   setSignalMeta,
   type EventDescriptor,
   type LazyMeta,
   type SignalMeta,
 } from "./internal.ts";
+import {
+  ROUTE_LINK_ATTR,
+  ROUTE_REPLACE_ATTR,
+  type Navigate,
+  type NavigateOptions,
+  type RouteManifest,
+} from "./router-shared.ts";
 
 const CONTAINER_STACK_KEY = Symbol.for("eclipsa.container-stack");
 const FRAME_STACK_KEY = Symbol.for("eclipsa.frame-stack");
 const DIRTY_FLUSH_PROMISE_KEY = Symbol.for("eclipsa.dirty-flush-promise");
+const ROUTER_EVENT_STATE_KEY = Symbol.for("eclipsa.router-event-state");
+const ROUTER_CURRENT_PATH_SIGNAL_ID = "$router:path";
+const ROUTER_IS_NAVIGATING_SIGNAL_ID = "$router:isNavigating";
+const ROUTER_LINK_BOUND_KEY = Symbol.for("eclipsa.router-link-bound");
 const RESUME_CONTAINERS_KEY = Symbol.for("eclipsa.resume-containers");
 const ROOT_COMPONENT_ID = "$root";
 
@@ -51,7 +64,11 @@ export interface SymbolScopeSlot {
   scope: string;
 }
 
-export type ResumeScopeSlot = ScopeSlot | JSONScopeSlot | SymbolScopeSlot;
+export interface NavigateScopeSlot {
+  kind: "navigate";
+}
+
+export type ResumeScopeSlot = ScopeSlot | JSONScopeSlot | SymbolScopeSlot | NavigateScopeSlot;
 
 export interface ResumeComponentPayload {
   props: EncodedValue;
@@ -113,6 +130,21 @@ interface RenderFrame {
   watchCursor: number;
 }
 
+interface RouterEventState {
+  originalPreventDefault: () => void;
+  routerPrevented: boolean;
+  userPrevented: boolean;
+}
+
+interface RouterState {
+  currentPath: { value: string };
+  isNavigating: { value: boolean };
+  loadedRoutes: Map<string, RouteRenderer>;
+  manifest: Map<string, string>;
+  navigate: Navigate;
+  sequence: number;
+}
+
 export interface RuntimeContainer {
   components: Map<string, ComponentState>;
   dirty: Set<string>;
@@ -124,6 +156,7 @@ export interface RuntimeContainer {
   nextSignalId: number;
   rootChildCursor: number;
   rootElement?: HTMLElement;
+  router: RouterState | null;
   scopes: Map<string, ResumeScopeSlot[]>;
   signals: Map<string, SignalRecord>;
   symbols: Map<string, string>;
@@ -141,6 +174,7 @@ interface ReactiveEffect {
 
 type WatchDependency = { value: unknown } | (() => unknown);
 type WatchMode = "dynamic" | "explicit";
+type RouteRenderer = (props: unknown) => unknown;
 
 interface WatchState {
   componentId: string;
@@ -153,6 +187,14 @@ interface WatchState {
   symbol: string;
   track: (() => void) | null;
 }
+
+interface PendingLinkNavigation {
+  href: string;
+  replace: boolean;
+  state: RouterEventState;
+}
+
+type NavigationMode = "pop" | "push" | "replace";
 
 type RenderObject = Extract<
   JSX.Element,
@@ -204,6 +246,15 @@ const getCurrentContainer = (): RuntimeContainer | null => {
 const getCurrentFrame = (): RenderFrame | null => {
   const stack = getFrameStack();
   return stack.length > 0 ? stack[stack.length - 1] : null;
+};
+
+const normalizeRoutePath = (pathname: string) => {
+  const normalizedPath = pathname.trim() || "/";
+  const withLeadingSlash = normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+  if (withLeadingSlash.length > 1 && withLeadingSlash.endsWith("/")) {
+    return withLeadingSlash.slice(0, -1);
+  }
+  return withLeadingSlash;
 };
 
 let currentEffect: ReactiveEffect | null = null;
@@ -331,6 +382,7 @@ const createContainer = (symbols: Record<string, string>, doc?: Document): Runti
   nextSignalId: 0,
   rootChildCursor: 0,
   rootElement: doc?.body,
+  router: null,
   scopes: new Map(),
   signals: new Map(),
   symbols: new Map(Object.entries(symbols)),
@@ -402,6 +454,33 @@ const ensureSignalRecord = <T>(
   return record;
 };
 
+const isRouterSignalId = (id: string) =>
+  id === ROUTER_CURRENT_PATH_SIGNAL_ID || id === ROUTER_IS_NAVIGATING_SIGNAL_ID;
+
+const createStandaloneNavigate = (): Navigate => {
+  const navigate = (async (href: string, options?: NavigateOptions) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const url = new URL(href, window.location.href);
+    if (options?.replace) {
+      window.location.replace(url.href);
+      return;
+    }
+    window.location.assign(url.href);
+  }) as Navigate;
+
+  Object.defineProperty(navigate, "isNavigating", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return false;
+    },
+  });
+
+  return setNavigateMeta(navigate);
+};
+
 const recordSignalRead = (record: SignalRecord) => {
   if (currentEffect) {
     currentEffect.signals.add(record);
@@ -428,6 +507,60 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     }
     container.dirty.add(componentId);
   }
+};
+
+const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
+  if (container.router) {
+    if (manifest) {
+      for (const [pathname, url] of Object.entries(manifest)) {
+        container.router.manifest.set(normalizeRoutePath(pathname), url);
+      }
+    }
+    return container.router;
+  }
+
+  const currentPath = ensureSignalRecord(
+    container,
+    ROUTER_CURRENT_PATH_SIGNAL_ID,
+    normalizeRoutePath(container.doc?.location.pathname ?? "/"),
+  ).handle as { value: string };
+  const isNavigating = ensureSignalRecord(
+    container,
+    ROUTER_IS_NAVIGATING_SIGNAL_ID,
+    false,
+  ).handle as { value: boolean };
+
+  const router: RouterState = {
+    currentPath,
+    isNavigating,
+    loadedRoutes: new Map(),
+    manifest: new Map(),
+    navigate: undefined as unknown as Navigate,
+    sequence: 0,
+  };
+
+  container.router = router;
+  router.navigate = setNavigateMeta((async (href: string, options?: NavigateOptions) => {
+    await navigateContainer(container, href, {
+      mode: options?.replace ? "replace" : "push",
+    });
+  }) as Navigate);
+
+  Object.defineProperty(router.navigate, "isNavigating", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return ensureRouterState(container).isNavigating.value;
+    },
+  });
+
+  if (manifest) {
+    for (const [pathname, url] of Object.entries(manifest)) {
+      router.manifest.set(normalizeRoutePath(pathname), url);
+    }
+  }
+
+  return router;
 };
 
 const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
@@ -460,6 +593,12 @@ const serializeScopeValue = (container: RuntimeContainer, value: unknown): Resum
     return {
       kind: "signal",
       id: signalMeta.id,
+    };
+  }
+
+  if (getNavigateMeta(value)) {
+    return {
+      kind: "navigate",
     };
   }
 
@@ -515,6 +654,9 @@ const materializeScope = (container: RuntimeContainer, scopeId: string): unknown
     }
     if (slot.kind === "symbol") {
       return materializeSymbolReference(container, slot.id, slot.scope);
+    }
+    if (slot.kind === "navigate") {
+      return ensureRouterState(container).navigate;
     }
     return decodeValue(slot.value);
   });
@@ -1402,6 +1544,232 @@ const toMountedNodes = (
   return renderClientNodes(value as JSX.Element | JSX.Element[], container);
 };
 
+const resetContainerForRouteRender = (container: RuntimeContainer) => {
+  for (const watch of container.watches.values()) {
+    clearEffectSignals(watch.effect);
+  }
+
+  container.components.clear();
+  container.dirty.clear();
+  container.nextElementId = 0;
+  container.nextScopeId = 0;
+  container.nextSignalId = 0;
+  container.rootChildCursor = 0;
+  container.scopes.clear();
+  container.watches.clear();
+
+  for (const [id, record] of [...container.signals.entries()]) {
+    for (const effect of [...record.effects]) {
+      clearEffectSignals(effect);
+    }
+    record.effects.clear();
+    record.subscribers.clear();
+    if (!isRouterSignalId(id)) {
+      container.signals.delete(id);
+    }
+  }
+};
+
+const toClientRouteNodes = (value: unknown, container: RuntimeContainer): Node[] => {
+  if (!container.doc) {
+    throw new Error("Client route rendering requires a document.");
+  }
+
+  const nodes: Node[] = [];
+  const collectNodes = (input: unknown) => {
+    let resolved = input;
+    while (typeof resolved === "function") {
+      resolved = resolved();
+    }
+
+    if (Array.isArray(resolved)) {
+      for (const entry of resolved) {
+        collectNodes(entry);
+      }
+      return;
+    }
+
+    if (resolved === null || resolved === undefined || resolved === false) {
+      nodes.push(container.doc!.createComment("eclipsa-empty"));
+      return;
+    }
+    if (resolved instanceof Node) {
+      nodes.push(resolved);
+      return;
+    }
+    nodes.push(container.doc!.createTextNode(String(resolved)));
+  };
+
+  collectNodes(value);
+  return nodes;
+};
+
+const resolveRouteComponentSymbol = (Page: RouteRenderer, fallback: string) =>
+  getComponentMeta(Page)?.symbol ?? fallback;
+
+const renderRouteIntoRoot = (container: RuntimeContainer, Page: RouteRenderer, routeKey: string) => {
+  if (!container.doc || !container.rootElement) {
+    throw new Error("Client route rendering requires a document root.");
+  }
+
+  resetContainerForRouteRender(container);
+  const rootComponent = getOrCreateComponentState(
+    container,
+    "c0",
+    resolveRouteComponentSymbol(Page, routeKey),
+    ROOT_COMPONENT_ID,
+  );
+  rootComponent.active = true;
+  rootComponent.didMount = false;
+  rootComponent.end = undefined;
+  rootComponent.props = {};
+  rootComponent.scopeId = registerScope(container, getComponentMeta(Page)?.captures() ?? []);
+  rootComponent.signalIds = [];
+  rootComponent.start = undefined;
+  rootComponent.watchCount = 0;
+
+  clearComponentSubscriptions(container, rootComponent.id);
+  const frame = createFrame(container, rootComponent, "client");
+  const nodes = pushContainer(container, () =>
+    pushFrame(frame, () => {
+      const rendered = Page({});
+      return toClientRouteNodes(rendered, container);
+    })
+  );
+  pruneComponentWatches(container, rootComponent, frame.watchCursor);
+  scheduleMountCallbacks(container, rootComponent, frame.mountCallbacks);
+
+  const root = container.rootElement;
+  while (root.firstChild) {
+    root.firstChild.remove();
+  }
+  const start = container.doc.createComment("ec:c:c0:start");
+  const end = container.doc.createComment("ec:c:c0:end");
+  root.appendChild(start);
+  for (const node of nodes) {
+    root.appendChild(node);
+  }
+  root.appendChild(end);
+  rootComponent.start = start;
+  rootComponent.end = end;
+  bindRouterLinks(container, root);
+};
+
+const loadRouteComponent = async (container: RuntimeContainer, pathname: string) => {
+  const router = ensureRouterState(container);
+  const normalizedPath = normalizeRoutePath(pathname);
+  const existing = router.loadedRoutes.get(normalizedPath);
+  if (existing) {
+    return existing;
+  }
+
+  const url = router.manifest.get(normalizedPath);
+  if (!url) {
+    return null;
+  }
+
+  const module = await import(/* @vite-ignore */ url) as { default?: RouteRenderer };
+  if (typeof module.default !== "function") {
+    throw new TypeError(`Route module ${url} does not export a default component.`);
+  }
+
+  router.loadedRoutes.set(normalizedPath, module.default);
+  return module.default;
+};
+
+const commitBrowserNavigation = (
+  doc: Document,
+  url: URL,
+  mode: NavigationMode,
+) => {
+  if (!doc.defaultView || mode === "pop") {
+    return;
+  }
+  if (mode === "replace") {
+    doc.defaultView.history.replaceState(null, "", url.href);
+    return;
+  }
+  doc.defaultView.history.pushState(null, "", url.href);
+};
+
+const fallbackDocumentNavigation = (
+  doc: Document,
+  url: URL,
+  mode: NavigationMode,
+) => {
+  if (!doc.defaultView) {
+    return;
+  }
+  if (mode === "replace") {
+    doc.defaultView.location.replace(url.href);
+    return;
+  }
+  if (mode === "pop") {
+    doc.defaultView.location.assign(url.href);
+    return;
+  }
+  doc.defaultView.location.assign(url.href);
+};
+
+const navigateContainer = async (
+  container: RuntimeContainer,
+  href: string,
+  options?: {
+    mode?: NavigationMode;
+  },
+) => {
+  const doc = container.doc;
+  if (!doc) {
+    return;
+  }
+
+  const mode = options?.mode ?? "push";
+  const url = new URL(href, doc.location.href);
+  const pathname = normalizeRoutePath(url.pathname);
+  const router = ensureRouterState(container);
+  const routeUrl = url.origin === doc.location.origin ? router.manifest.get(pathname) : null;
+
+  if (!routeUrl) {
+    fallbackDocumentNavigation(doc, url, mode);
+    return;
+  }
+
+  const currentHref = `${doc.location.pathname}${doc.location.search}${doc.location.hash}`;
+  const nextHref = `${url.pathname}${url.search}${url.hash}`;
+  if (pathname === router.currentPath.value) {
+    if (nextHref !== currentHref) {
+      commitBrowserNavigation(doc, url, mode);
+    }
+    return;
+  }
+
+  const sequence = ++router.sequence;
+  router.isNavigating.value = true;
+
+  try {
+    const Page = await loadRouteComponent(container, pathname);
+    if (!Page) {
+      fallbackDocumentNavigation(doc, url, mode);
+      return;
+    }
+    if (sequence !== router.sequence) {
+      return;
+    }
+
+    renderRouteIntoRoot(container, Page, `route:${pathname}`);
+    commitBrowserNavigation(doc, url, mode);
+    router.currentPath.value = pathname;
+  } catch {
+    if (sequence === router.sequence) {
+      fallbackDocumentNavigation(doc, url, mode);
+    }
+  } finally {
+    if (sequence === router.sequence) {
+      router.isNavigating.value = false;
+    }
+  }
+};
+
 export const renderClientComponent = <T>(componentFn: Component<T>, props: T): unknown => {
   const container = getCurrentContainer();
   const parentFrame = getCurrentFrame();
@@ -1461,12 +1829,17 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const module = await loadSymbol(container, component.symbol);
   const frame = createFrame(container, component, "client");
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end);
-  const rendered = pushContainer(container, () =>
-    pushFrame(frame, () => module.default(scope, component.props))
+  const nodes = pushContainer(container, () =>
+    pushFrame(frame, () => {
+      const rendered = module.default(scope, component.props);
+      return toMountedNodes(rendered, container);
+    })
   );
   pruneComponentWatches(container, component, frame.watchCursor);
-  const nodes = toMountedNodes(rendered, container);
   replaceBoundaryContents(component.start, component.end, nodes);
+  if (component.start.parentNode && "querySelectorAll" in component.start.parentNode) {
+    bindRouterLinks(container, component.start.parentNode as ParentNode);
+  }
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot);
 
   component.active = true;
@@ -1734,11 +2107,18 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
   ),
 });
 
-export const createResumeContainer = (source: Document | HTMLElement, payload: ResumePayload) => {
+export const createResumeContainer = (
+  source: Document | HTMLElement,
+  payload: ResumePayload,
+  options?: {
+    routeManifest?: RouteManifest;
+  },
+) => {
   const doc = source instanceof Document ? source : source.ownerDocument;
   const root = source instanceof Document ? doc.body : source;
   const container = createContainer(payload.symbols, doc);
   container.rootElement = root as HTMLElement;
+  ensureRouterState(container, options?.routeManifest);
 
   for (const [id, encodedValue] of Object.entries(payload.signals)) {
     const decodedValue = decodeValue(encodedValue);
@@ -1799,11 +2179,47 @@ export const createResumeContainer = (source: Document | HTMLElement, payload: R
     component.end = boundary.end;
   }
 
+  const router = ensureRouterState(container);
+  router.currentPath.value = normalizeRoutePath(doc.location.pathname);
+  router.isNavigating.value = false;
+
   return container;
 };
 
+const getRouterEventState = (event: Event): RouterEventState => {
+  const eventRecord = event as Event & {
+    [ROUTER_EVENT_STATE_KEY]?: RouterEventState;
+    preventDefault: () => void;
+  };
+  const existing = eventRecord[ROUTER_EVENT_STATE_KEY];
+  if (existing) {
+    return existing;
+  }
+
+  const originalPreventDefault = event.preventDefault.bind(event);
+  const state: RouterEventState = {
+    originalPreventDefault,
+    routerPrevented: false,
+    userPrevented: false,
+  };
+
+  eventRecord.preventDefault = () => {
+    if (state.routerPrevented) {
+      state.userPrevented = true;
+    }
+    originalPreventDefault();
+  };
+  eventRecord[ROUTER_EVENT_STATE_KEY] = state;
+  return state;
+};
+
 const findInteractiveTarget = (target: EventTarget | null, eventName: string): Element | null => {
-  let element = target instanceof Element ? target : null;
+  let element =
+    target instanceof Element
+      ? target
+      : target instanceof Node
+        ? target.parentElement
+        : null;
   while (element) {
     if (element.hasAttribute(`data-e-on${eventName}`)) {
       return element;
@@ -1811,6 +2227,82 @@ const findInteractiveTarget = (target: EventTarget | null, eventName: string): E
     element = element.parentElement;
   }
   return null;
+};
+
+const getPendingLinkNavigationForLink = (
+  container: RuntimeContainer,
+  event: Event,
+  link: HTMLAnchorElement,
+): PendingLinkNavigation | null => {
+  if (!(event instanceof MouseEvent)) {
+    return null;
+  }
+  if (event.defaultPrevented) {
+    return null;
+  }
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return null;
+  }
+  if (link.hasAttribute("download")) {
+    return null;
+  }
+  if (link.target && link.target !== "_self") {
+    return null;
+  }
+
+  const href = link.getAttribute("href");
+  if (!href || !container.doc) {
+    return null;
+  }
+
+  const url = new URL(href, container.doc.location.href);
+  const pathname = normalizeRoutePath(url.pathname);
+  if (url.origin !== container.doc.location.origin) {
+    return null;
+  }
+  if (!ensureRouterState(container).manifest.has(pathname)) {
+    return null;
+  }
+
+  const state = getRouterEventState(event);
+  state.routerPrevented = true;
+  state.originalPreventDefault();
+
+  return {
+    href: url.href,
+    replace: link.getAttribute(ROUTE_REPLACE_ATTR) === "true",
+    state,
+  };
+};
+
+const bindRouterLink = (container: RuntimeContainer, link: HTMLAnchorElement) => {
+  const boundLink = link as HTMLAnchorElement & {
+    [ROUTER_LINK_BOUND_KEY]?: true;
+  };
+  if (boundLink[ROUTER_LINK_BOUND_KEY]) {
+    return;
+  }
+
+  boundLink[ROUTER_LINK_BOUND_KEY] = true;
+  link.addEventListener("click", (event) => {
+    const pendingLink = getPendingLinkNavigationForLink(container, event, link);
+    if (!pendingLink || pendingLink.state.userPrevented) {
+      return;
+    }
+    void navigateContainer(container, pendingLink.href, {
+      mode: pendingLink.replace ? "replace" : "push",
+    });
+  });
+};
+
+const bindRouterLinks = (container: RuntimeContainer, root: ParentNode) => {
+  const links = root.querySelectorAll(`a[${ROUTE_LINK_ATTR}]`);
+  for (const link of links) {
+    if (!(link instanceof HTMLAnchorElement)) {
+      continue;
+    }
+    bindRouterLink(container, link);
+  }
 };
 
 const parseBinding = (value: string): { scopeId: string; symbolId: string } => {
@@ -1873,24 +2365,36 @@ export const dispatchResumeEvent = async (
   restorePendingFocus(container, pendingFocus);
 };
 
+const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
+  await dispatchResumeEvent(container, event);
+};
+
 export const installResumeListeners = (container: RuntimeContainer) => {
   const doc = container.doc;
   if (!doc) {
     return () => {};
   }
+  bindRouterLinks(container, doc);
   const listeners = ["click", "input", "change", "submit"] as const;
   const onEvent = (event: Event) => {
-    void dispatchResumeEvent(container, event);
+    void dispatchDocumentEvent(container, event);
+  };
+  const onPopState = () => {
+    void navigateContainer(container, doc.location.href, {
+      mode: "pop",
+    });
   };
 
   for (const eventName of listeners) {
     doc.addEventListener(eventName, onEvent, true);
   }
+  doc.defaultView?.addEventListener("popstate", onPopState);
 
   return () => {
     for (const eventName of listeners) {
       doc.removeEventListener(eventName, onEvent, true);
     }
+    doc.defaultView?.removeEventListener("popstate", onPopState);
   };
 };
 
@@ -1915,6 +2419,14 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   const record = ensureSignalRecord(container, signalId, fallback);
   recordSignalRead(record);
   return record.handle;
+};
+
+export const useRuntimeNavigate = (): Navigate => {
+  const container = getCurrentContainer();
+  if (!container) {
+    return createStandaloneNavigate();
+  }
+  return ensureRouterState(container).navigate;
 };
 
 export const createEffect = (fn: () => void) => {

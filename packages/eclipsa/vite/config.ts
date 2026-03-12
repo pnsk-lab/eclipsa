@@ -13,6 +13,7 @@ export const createConfig: Plugin["config"] = async (userConfig) => {
   const clientInput = Object.fromEntries([
     ["client_boot", path.join(root, "app/+client.dev.tsx")],
     ...symbols.map((symbol) => [`symbol__${symbol.id}`, `${symbol.filePath}?eclipsa-symbol=${symbol.id}`]),
+    ...routes.map((route) => [`route__${route.entryName}`, route.filePath]),
   ]);
 
   const ssrInput = Object.fromEntries([
