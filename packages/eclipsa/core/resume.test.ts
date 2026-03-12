@@ -181,4 +181,19 @@ describe("resume HMR runtime helpers", () => {
     expect(result).toBe("updated");
     expect(container.symbols.get("next-symbol")).toBe("/app/+page.tsx?eclipsa-symbol=next-symbol");
   });
+
+  it("registers freshly added symbol URLs when the payload includes direct additions", () => {
+    const container = createContainer({
+      imports: new Map([
+        ["new-symbol", Promise.resolve({ default: () => null })],
+      ]),
+    });
+
+    applyResumeHmrSymbolReplacements(container, {
+      "new-symbol": "/app/+page.tsx?eclipsa-symbol=new-symbol",
+    });
+
+    expect(container.symbols.get("new-symbol")).toBe("/app/+page.tsx?eclipsa-symbol=new-symbol");
+    expect(container.imports.has("new-symbol")).toBe(false);
+  });
 });

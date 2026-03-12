@@ -4,7 +4,7 @@ import {
   type PluginOption,
   type ResolvedConfig,
 } from "vite";
-import { createDevFetch } from "./dev-app/mod.ts";
+import { createDevFetch, shouldInvalidateDevApp } from "./dev-app/mod.ts";
 import {
   incomingMessageToRequest,
   responseForServerResponse,
@@ -34,15 +34,31 @@ const eclipsaCore = (): Plugin => {
       const runner = createServerModuleRunner(ssrEnv, {
         hmr: false,
       });
-      const devFetch = createDevFetch({
+      const devApp = createDevFetch({
         resolvedConfig: config,
         devServer: server,
         runner,
         ssrEnv,
       });
+      const invalidateDevApp = (filePath: string, event: "add" | "change" | "unlink") => {
+        if (shouldInvalidateDevApp(config.root, filePath, event)) {
+          devApp.invalidate();
+        }
+      };
+
+      server.watcher.on("add", (filePath) => {
+        invalidateDevApp(filePath, "add");
+      });
+      server.watcher.on("change", (filePath) => {
+        invalidateDevApp(filePath, "change");
+      });
+      server.watcher.on("unlink", (filePath) => {
+        invalidateDevApp(filePath, "unlink");
+      });
+
       server.middlewares.use(async (req, res, next) => {
         const webReq = incomingMessageToRequest(req);
-        const webRes = await devFetch(webReq);
+        const webRes = await devApp.fetch(webReq);
         if (webRes) {
           responseForServerResponse(webRes, res);
           return;

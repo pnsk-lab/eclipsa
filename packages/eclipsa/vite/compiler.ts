@@ -218,6 +218,7 @@ export const createResumeHmrUpdate = (options: {
       fullReload = true;
       continue;
     }
+    symbolUrlReplacements[nextSymbol.id] = createDevSymbolUrl(root, filePath, nextSymbol.id);
     const owner = nextSymbol.ownerComponentKey
       ? previousManifest.components.get(nextSymbol.ownerComponentKey)
       : null;

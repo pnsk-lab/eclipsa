@@ -1,4 +1,4 @@
-import type { Context } from "hono";
+import { Hono, type Context } from "hono";
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from "vite";
 import type { ModuleRunner } from "vite/module-runner";
 import type { SSRRootProps } from "../../core/types.ts";
@@ -14,11 +14,40 @@ interface DevAppInit {
   ssrEnv: DevEnvironment;
 }
 
+export interface DevFetchController {
+  fetch(req: Request): Promise<Response | undefined>;
+  invalidate(): void;
+}
+
+const toAppRelativePath = (root: string, filePath: string) => {
+  const relativePath = path.relative(path.join(root, "app"), filePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return relativePath.replaceAll("\\", "/");
+};
+
+export const shouldInvalidateDevApp = (root: string, filePath: string, event: "add" | "change" | "unlink") => {
+  const relativePath = toAppRelativePath(root, filePath);
+  if (!relativePath) {
+    return false;
+  }
+  if (relativePath === "+server-entry.ts") {
+    return true;
+  }
+  if (relativePath.endsWith(".tsx")) {
+    return event === "add" || event === "change" || event === "unlink";
+  }
+  return false;
+};
+
 const injectResumeScript = (html: string, payloadScript: string) =>
   html.includes("</head>") ? html.replace("</head>", `${payloadScript}</head>`) : `${payloadScript}${html}`;
 
 const createDevApp = async (init: DevAppInit) => {
-  const { default: app } = await init.runner.import("/app/+server-entry.ts");
+  const { default: userApp } = await init.runner.import("/app/+server-entry.ts");
+  const app = new Hono();
+  app.route("/", userApp);
   const allSymbols = await collectAppSymbols(init.resolvedConfig.root);
   const symbolUrls = Object.fromEntries(
     allSymbols.map((symbol) => [
@@ -80,14 +109,23 @@ const createDevApp = async (init: DevAppInit) => {
 
 export const createDevFetch = (
   init: DevAppInit,
-): ((req: Request) => Promise<Response | undefined>) => {
-  let app = createDevApp(init);
+): DevFetchController => {
+  let app: ReturnType<typeof createDevApp> | null = null;
+  const getApp = () => {
+    app ??= createDevApp(init);
+    return app;
+  };
 
-  return async (req) => {
-    const fetched = await (await app).fetch(req);
-    if (fetched.status === 404) {
-      return;
-    }
-    return fetched;
+  return {
+    invalidate() {
+      app = null;
+    },
+    async fetch(req) {
+      const fetched = await (await getApp()).fetch(req);
+      if (fetched.status === 404) {
+        return;
+      }
+      return fetched;
+    },
   };
 };

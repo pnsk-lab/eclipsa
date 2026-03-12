@@ -166,6 +166,38 @@ describe("createResumeHmrUpdate", () => {
     expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : []);
   });
 
+  it("registers URLs for newly added event symbols while rerendering the owner", async () => {
+    const previous = await analyze(`
+      import { component$, useSignal } from "eclipsa";
+      export default component$(() => {
+        const count = useSignal(0);
+        return <button>{count.value}</button>;
+      });
+    `, "/tmp/new-event.tsx");
+    const next = await analyze(`
+      import { component$, useSignal } from "eclipsa";
+      export default component$(() => {
+        const count = useSignal(0);
+        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+      });
+    `, "/tmp/new-event.tsx");
+
+    const update = createResumeHmrUpdate({
+      filePath: "/tmp/new-event.tsx",
+      next,
+      previous,
+      root: "/tmp",
+    });
+    const componentId = findComponentId(previous);
+    const [nextComponent] = getComponentEntries(next);
+    const nextEventId = nextComponent ? findSymbolId(next, `${nextComponent.hmrKey}:event:click`) : undefined;
+
+    expect(update?.fullReload).toBe(false);
+    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : []);
+    expect(nextEventId).toBeTruthy();
+    expect(nextEventId ? update?.symbolUrlReplacements[nextEventId] : undefined).toMatch(/\?eclipsa-symbol=/);
+  });
+
   it("falls back to full reload when top-level component membership changes", async () => {
     const previous = await analyze(`
       import { component$ } from "eclipsa";
