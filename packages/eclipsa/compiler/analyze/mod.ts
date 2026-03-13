@@ -892,7 +892,7 @@ export const analyzeModule = async (
         if (signalIdentifier && calleeName === signalIdentifier) {
           if (!isDirectlyInsideComponent(path as NodePath<t.Node>, hmrMetadata.componentInfoByFunction)) {
             throw path.buildCodeFrameError(
-              'useSignal() can only be called directly inside component$().',
+              'useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).',
             )
           }
           return
