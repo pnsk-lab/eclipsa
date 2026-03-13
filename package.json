@@ -12,6 +12,7 @@
     "pack": "turbo run pack --filter=eclipsa",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:e2e": "turbo run e2e --filter=@eclipsa/e2e",
     "fmt": "vp fmt"
   },
   "devDependencies": {

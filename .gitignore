@@ -4,3 +4,7 @@ node_modules
 .env
 dist
 .contexts
+playwright-report
+test-results
+packages/e2e/playwright-report
+packages/e2e/test-results

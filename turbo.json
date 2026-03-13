@@ -20,6 +20,10 @@
     "test": {
       "dependsOn": ["^test"],
       "outputs": []
+    },
+    "e2e": {
+      "cache": false,
+      "outputs": []
     }
   }
 }
