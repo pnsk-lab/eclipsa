@@ -6,7 +6,7 @@ export const fetchEurl = async (id: string): Promise<unknown> => {
   if (got) {
     return got
   }
-  const imported = await import(/* @vite-ignore */url)
+  const imported = await import(/* @vite-ignore */ url)
   eurlMaps.set(id, imported)
   return imported
 }
@@ -20,7 +20,7 @@ export const getEurl = (id: string): unknown => {
 }
 
 export const eurlFn = async (id: string): Promise<unknown> => {
-  const imported = await fetchEurl(id) as {
+  const imported = (await fetchEurl(id)) as {
     default: (vars: Record<string, unknown>) => () => unknown
     parentEurl: string
     depEurls: string[]

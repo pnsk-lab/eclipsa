@@ -26,7 +26,7 @@ export const createComponentEurl = (
   elem: HTMLElement,
   signalI: number,
   componentEurl: string,
-  props: string
+  props: string,
 ) => {
   console.log(elem, signalI, componentEurl, props)
 }

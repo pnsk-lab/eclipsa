@@ -1,1 +1,1 @@
-export type { JSX } from "./types.ts";
+export type { JSX } from './types.ts'

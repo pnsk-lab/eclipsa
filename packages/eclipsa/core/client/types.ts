@@ -1,7 +1,7 @@
 interface ElemWithKey {
-  (): Insertable;
-  key?: string | symbol | number;
-  returnFn?: boolean;
+  (): Insertable
+  key?: string | symbol | number
+  returnFn?: boolean
 }
 
 export type Insertable =
@@ -12,6 +12,6 @@ export type Insertable =
   | null
   | Node
   | Insertable[]
-  | ElemWithKey;
+  | ElemWithKey
 
-export type ClientElementLike = Insertable | Insertable[];
+export type ClientElementLike = Insertable | Insertable[]

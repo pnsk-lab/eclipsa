@@ -1,6 +1,6 @@
 export interface DevClientInfo {
   entry: {
-    absolutePath: string;
-    url: string;
-  };
+    absolutePath: string
+    url: string
+  }
 }

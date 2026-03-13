@@ -5,7 +5,5 @@ export default component$(() => {
     console.log(a)
   })
 
-  return <button onClick$={() => add()}>
-    Add
-  </button>
+  return <button onClick$={() => add()}>Add</button>
 })

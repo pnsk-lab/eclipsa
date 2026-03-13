@@ -1,53 +1,53 @@
 export interface Signal<T> {
-  get(): T;
-  set(newValue: T): T;
-  effects: Set<Effect>;
+  get(): T
+  set(newValue: T): T
+  effects: Set<Effect>
 }
 
 interface Effect {
-  fn: () => void;
-  signals: Set<Signal<unknown>>;
+  fn: () => void
+  signals: Set<Signal<unknown>>
 }
-let currentEffect: Effect | null = null;
+let currentEffect: Effect | null = null
 
 export const signal = <T>(init: T): Signal<T> => {
-  let value = init;
+  let value = init
   const signal: Signal<T> = {
     get() {
       if (currentEffect) {
-        this.effects.add(currentEffect);
+        this.effects.add(currentEffect)
       }
-      return value;
+      return value
     },
     set(newValue) {
-      value = newValue;
+      value = newValue
       for (const effect of this.effects) {
-        effect.fn();
+        effect.fn()
       }
-      return value;
+      return value
     },
     effects: new Set(),
-  };
-  return signal;
-};
+  }
+  return signal
+}
 
 const registry = new FinalizationRegistry<Effect>((effect) => {
   for (const signal of effect.signals) {
-    signal.effects.delete(effect);
+    signal.effects.delete(effect)
   }
-});
+})
 
 export const effect = (fn: () => void) => {
   const newEffect: Effect = {
     fn() {
-      fn();
+      fn()
     },
     signals: new Set(),
-  };
+  }
 
-  currentEffect = newEffect;
-  newEffect.fn();
-  currentEffect = null;
+  currentEffect = newEffect
+  newEffect.fn()
+  currentEffect = null
 
-  registry.register(fn, newEffect);
-};
+  registry.register(fn, newEffect)
+}

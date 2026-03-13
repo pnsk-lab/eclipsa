@@ -8,7 +8,8 @@ var createDevSymbolUrl = vi.fn<(root: string, filePath: string, symbolId: string
 
 import { createDevFetch, shouldInvalidateDevApp } from './mod.ts'
 
-const createDevModuleUrl = (root: string, entry: { filePath: string }) => entry.filePath.replace(root, '')
+const createDevModuleUrl = (root: string, entry: { filePath: string }) =>
+  entry.filePath.replace(root, '')
 
 describe('createDevFetch', () => {
   let routes: RouteEntry[]

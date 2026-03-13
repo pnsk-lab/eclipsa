@@ -23,9 +23,9 @@ export const processElement = (
   nodeAccessPath: NodeAccessPath,
   elemId: t.Identifier,
   init: Init,
-  insertStatements: t.Statement[] = []
+  insertStatements: t.Statement[] = [],
 ): {
-  template: string,
+  template: string
   insertStatements: t.Statement[]
 } => {
   const childPaths = Array.from(path.get('children'))
@@ -35,7 +35,7 @@ export const processElement = (
     JSXElement(path) {
       hasOtherElement = true
       path.stop()
-    }
+    },
   })
 
   let jsxType: JSXType | null = null
@@ -67,16 +67,19 @@ export const processElement = (
         value = attr.value.expression as t.Expression
       }
       if (value) {
-        insertStatements.push(t.expressionStatement(
-          t.callExpression(
-            init.prodClientIdenifiers.effect,
-            [t.arrowFunctionExpression([], t.assignmentExpression('=', t.memberExpression(elemId, t.identifier(name)), value))]
-          )
-        ))
+        insertStatements.push(
+          t.expressionStatement(
+            t.callExpression(init.prodClientIdenifiers.effect, [
+              t.arrowFunctionExpression(
+                [],
+                t.assignmentExpression('=', t.memberExpression(elemId, t.identifier(name)), value),
+              ),
+            ]),
+          ),
+        )
       }
     }
   }
-
 
   if (!hasOtherElement) {
     // Just use textContent
@@ -95,14 +98,22 @@ export const processElement = (
       }
     }
     insertStatements.push(
-      t.expressionStatement(t.callExpression(
-        init.prodClientIdenifiers.effect,
-        [t.arrowFunctionExpression([], t.assignmentExpression('=', t.memberExpression(elemId, t.identifier('textContent')), t.templateLiteral(quasis, expressions)))]
-      )),
+      t.expressionStatement(
+        t.callExpression(init.prodClientIdenifiers.effect, [
+          t.arrowFunctionExpression(
+            [],
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(elemId, t.identifier('textContent')),
+              t.templateLiteral(quasis, expressions),
+            ),
+          ),
+        ]),
+      ),
     )
     return {
       template,
-      insertStatements
+      insertStatements,
     }
   }
 
@@ -114,7 +125,15 @@ export const processElement = (
       throw new TypeError('JSXSpreadChild is not supported.')
     } else if (child.isJSXExpressionContainer()) {
       children += `<ec:s sig="${commentSignalI}" />`
-      insertStatements.push(t.expressionStatement(t.callExpression(init.prodClientIdenifiers.insert, [elemId, t.numericLiteral(commentSignalI), t.arrowFunctionExpression([], child.node.expression as t.Expression)])))
+      insertStatements.push(
+        t.expressionStatement(
+          t.callExpression(init.prodClientIdenifiers.insert, [
+            elemId,
+            t.numericLiteral(commentSignalI),
+            t.arrowFunctionExpression([], child.node.expression as t.Expression),
+          ]),
+        ),
+      )
       commentSignalI++
     } else if (child.isJSXText()) {
       children += child.node.value
@@ -130,7 +149,7 @@ export const processElement = (
           nodeAccessPath,
           elemId,
           init,
-          insertStatements
+          insertStatements,
         ).template
         continue
       }
@@ -138,11 +157,13 @@ export const processElement = (
       children += `<ec:s sig="${commentSignalI}" is:cmp />`
       insertStatements.push(
         t.expressionStatement(
-          t.callExpression(
-            init.prodClientIdenifiers.createComponentEurl,
-            [elemId, t.numericLiteral(commentSignalI), t.identifier(jsxType.name), transformProps(child.node.openingElement).props]
-          )
-        )
+          t.callExpression(init.prodClientIdenifiers.createComponentEurl, [
+            elemId,
+            t.numericLiteral(commentSignalI),
+            t.identifier(jsxType.name),
+            transformProps(child.node.openingElement).props,
+          ]),
+        ),
       )
       commentSignalI++
     }
@@ -158,7 +179,7 @@ export const processElement = (
 
   return {
     template,
-    insertStatements
+    insertStatements,
   }
 }
 
@@ -194,14 +215,16 @@ export const transformJSXElement = (path: NodePath<t.JSXElement>, init: Init): R
         ),
       ]),
       ...processedElement.insertStatements,
-      t.returnStatement(elemId)
+      t.returnStatement(elemId),
     ]),
   )
 
-  path.replaceWith(t.callExpression(init.prodClientIdenifiers.createComponentResult, [
-    init.componentVariableObjectIdentifier,
-    functionExpr
-  ]))
+  path.replaceWith(
+    t.callExpression(init.prodClientIdenifiers.createComponentResult, [
+      init.componentVariableObjectIdentifier,
+      functionExpr,
+    ]),
+  )
 
   return {
     toInsertBody,
