@@ -243,6 +243,7 @@ const buildResumeHmrMetadata = (
   identifiers: {
     componentIdentifier?: string
     lazyIdentifier?: string
+    visibleIdentifier?: string
     watchIdentifier?: string
   },
 ) => {
@@ -276,7 +277,8 @@ const buildResumeHmrMetadata = (
         }
 
         const kind =
-          identifiers.lazyIdentifier && calleeName === identifiers.lazyIdentifier
+          (identifiers.lazyIdentifier && calleeName === identifiers.lazyIdentifier) ||
+          (identifiers.visibleIdentifier && calleeName === identifiers.visibleIdentifier)
             ? 'lazy'
             : identifiers.watchIdentifier && calleeName === identifiers.watchIdentifier
               ? 'watch'
@@ -794,11 +796,13 @@ export const analyzeModule = async (
   const eclipsaImports = imports.get('eclipsa')
   const componentIdentifier = eclipsaImports?.get('component$')
   const lazyIdentifier = eclipsaImports?.get('$')
+  const visibleIdentifier = eclipsaImports?.get('onVisible')
   const signalIdentifier = eclipsaImports?.get('useSignal')
   const watchIdentifier = eclipsaImports?.get('useWatch')
   const hmrMetadata = buildResumeHmrMetadata(parsed, {
     componentIdentifier,
     lazyIdentifier,
+    visibleIdentifier,
     watchIdentifier,
   })
 
@@ -932,6 +936,43 @@ export const analyzeModule = async (
               buildCaptureGetter(extracted.captures),
             ]),
           )
+          return
+        }
+
+        if (visibleIdentifier && calleeName === visibleIdentifier) {
+          const argPath = path.get('arguments')[0]
+          if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
+            throw path.buildCodeFrameError(
+              'onVisible() expects a function expression as the first argument.',
+            )
+          }
+
+          const extracted = extractSymbol(argPath as FunctionPath, 'lazy', id)
+          const symbolInfo = hmrMetadata.symbolInfoByFunction.get(argPath.node)
+          builtSymbols.set(extracted.id, {
+            captures: extracted.captures,
+            code: extracted.code,
+            filePath: id,
+            id: extracted.id,
+            kind: extracted.kind,
+          })
+          const hmrKey = symbolInfo?.hmrKey ?? `file:lazy:${extracted.id}`
+          hmrSymbols.set(hmrKey, {
+            captures: extracted.captures,
+            hmrKey,
+            id: extracted.id,
+            kind: extracted.kind,
+            ownerComponentKey: symbolInfo?.ownerComponentKey ?? null,
+            signature: extracted.signature,
+          })
+          hmrKeyBySymbolId.set(extracted.id, hmrKey)
+          usedHelpers.add('__eclipsaLazy')
+
+          path.node.arguments[0] = t.callExpression(t.identifier('__eclipsaLazy'), [
+            t.stringLiteral(extracted.id),
+            t.cloneNode(argPath.node, true),
+            buildCaptureGetter(extracted.captures),
+          ])
           return
         }
 

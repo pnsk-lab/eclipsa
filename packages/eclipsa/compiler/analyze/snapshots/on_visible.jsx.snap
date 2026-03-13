@@ -1,0 +1,41 @@
+// ================= ENTRY (on_visible.jsx) ==
+import { component$, onVisible } from 'eclipsa'
+
+export default component$(() => {
+  const value = 'visible'
+
+  onVisible(() => {
+    console.log(value)
+  })
+
+  return <button>{value}</button>
+})
+
+
+// ================= analyzed ==
+import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
+import { component$, onVisible } from "eclipsa";
+var analyze_input_default = component$(__eclipsaComponent(() => {
+  const value = "visible";
+  onVisible(__eclipsaLazy("tnnrgm", () => {
+    console.log(value);
+  }, () => [value]));
+  return <button>{value}</button>;
+}, "ezn7f1", () => []));
+export { analyze_input_default as default };
+
+// ================= tnnrgm (lazy) ==
+export default __scope => {
+  console.log(__scope[0]);
+};
+
+// ================= ezn7f1 (component) ==
+import { component$, onVisible } from "eclipsa";
+import { __eclipsaLazy } from "eclipsa/internal";
+export default __scope => {
+  const value = "visible";
+  onVisible(__eclipsaLazy("tnnrgm", () => {
+    console.log(value);
+  }, () => [value]));
+  return <button>{value}</button>;
+};

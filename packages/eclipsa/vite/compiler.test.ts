@@ -241,6 +241,52 @@ describe('createResumeHmrUpdate', () => {
     )
   })
 
+  it('treats onVisible callbacks as lazy symbol URL replacements', async () => {
+    const previous = await analyze(
+      `
+      import { component$, onVisible } from "eclipsa";
+      export default component$(() => {
+        const label = "ready";
+        onVisible(() => {
+          console.log(label);
+        });
+        return <div>{label}</div>;
+      });
+    `,
+      '/tmp/on-visible.tsx',
+    )
+    const next = await analyze(
+      `
+      import { component$, onVisible } from "eclipsa";
+      export default component$(() => {
+        const label = "ready";
+        onVisible(() => {
+          console.log(label.toUpperCase());
+        });
+        return <div>{label}</div>;
+      });
+    `,
+      '/tmp/on-visible.tsx',
+    )
+
+    const update = createResumeHmrUpdate({
+      filePath: '/tmp/on-visible.tsx',
+      next,
+      previous,
+      root: '/tmp',
+    })
+    const previousSymbolId = [...previous.hmrManifest.symbols.values()].find(
+      (entry) => entry.kind === 'lazy',
+    )?.id
+
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderOwnerSymbols).toEqual([])
+    expect(previousSymbolId).toBeTruthy()
+    expect(
+      previousSymbolId ? update?.symbolUrlReplacements[previousSymbolId] : undefined,
+    ).toMatch(/\?eclipsa-symbol=/)
+  })
+
   it('falls back to full reload when top-level component membership changes', async () => {
     const previous = await analyze(
       `

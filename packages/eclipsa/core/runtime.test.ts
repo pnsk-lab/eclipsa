@@ -67,6 +67,9 @@ const createContainer = () =>
     scopes: new Map(),
     signals: new Map(),
     symbols: new Map(),
+    visibilityCheckQueued: false,
+    visibilityListenersCleanup: null,
+    visibles: new Map(),
     watches: new Map(),
   }) as RuntimeContainer
 

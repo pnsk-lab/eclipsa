@@ -80,6 +80,7 @@ export interface ResumeComponentPayload {
   scope: string
   signalIds: string[]
   symbol: string
+  visibleCount: number
   watchCount: number
 }
 
@@ -91,12 +92,19 @@ interface ResumeWatchPayload {
   symbol: string
 }
 
+interface ResumeVisiblePayload {
+  componentId: string
+  scope: string
+  symbol: string
+}
+
 export interface ResumePayload {
   components: Record<string, ResumeComponentPayload>
   scopes: Record<string, ResumeScopeSlot[]>
   signals: Record<string, EncodedValue>
   subscriptions: Record<string, string[]>
   symbols: Record<string, string>
+  visibles: Record<string, ResumeVisiblePayload>
   watches: Record<string, ResumeWatchPayload>
 }
 
@@ -121,6 +129,7 @@ interface ComponentState {
   signalIds: string[]
   start?: Comment
   symbol: string
+  visibleCount: number
   watchCount: number
 }
 
@@ -132,6 +141,7 @@ interface RenderFrame {
   visitedDescendants: Set<string>
   mode: 'client' | 'ssr'
   signalCursor: number
+  visibleCursor: number
   watchCursor: number
 }
 
@@ -166,6 +176,9 @@ export interface RuntimeContainer {
   scopes: Map<string, ResumeScopeSlot[]>
   signals: Map<string, SignalRecord>
   symbols: Map<string, string>
+  visibilityListenersCleanup: (() => void) | null
+  visibilityCheckQueued: boolean
+  visibles: Map<string, VisibleState>
   watches: Map<string, WatchState>
 }
 
@@ -215,6 +228,16 @@ interface WatchState {
   scopeId: string
   symbol: string
   track: (() => void) | null
+}
+
+interface VisibleState {
+  componentId: string
+  done: boolean
+  id: string
+  pending: Promise<void> | null
+  run: (() => void | Promise<void>) | null
+  scopeId: string
+  symbol: string
 }
 
 interface PendingLinkNavigation {
@@ -442,6 +465,9 @@ const createContainer = (symbols: Record<string, string>, doc?: Document): Runti
   scopes: new Map(),
   signals: new Map(),
   symbols: new Map(Object.entries(symbols)),
+  visibilityCheckQueued: false,
+  visibilityListenersCleanup: null,
+  visibles: new Map(),
   watches: new Map(),
 })
 
@@ -731,6 +757,7 @@ const createFrame = (
   mountCallbacks: [],
   mode,
   signalCursor: 0,
+  visibleCursor: 0,
   visitedDescendants: new Set(),
   watchCursor: 0,
 })
@@ -767,6 +794,7 @@ const getOrCreateComponentState = (
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol,
+    visibleCount: 0,
     watchCount: 0,
   }
   container.components.set(id, component)
@@ -781,10 +809,12 @@ const resetComponentForSymbolChange = (
   component.didMount = false
   component.scopeId = registerScope(container, meta.captures())
   component.signalIds = []
+  pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
 }
 
 const createWatchId = (componentId: string, watchIndex: number) => `${componentId}:w${watchIndex}`
+const createVisibleId = (componentId: string, visibleIndex: number) => `${componentId}:v${visibleIndex}`
 
 const getOrCreateWatchState = (
   container: RuntimeContainer,
@@ -847,6 +877,30 @@ const getOrCreateWatchState = (
   return watch
 }
 
+const getOrCreateVisibleState = (
+  container: RuntimeContainer,
+  id: string,
+  componentId: string,
+): VisibleState => {
+  const existing = container.visibles.get(id)
+  if (existing) {
+    existing.componentId = componentId
+    return existing
+  }
+
+  const visible: VisibleState = {
+    componentId,
+    done: false,
+    id,
+    pending: null,
+    run: null,
+    scopeId: registerScope(container, []),
+    symbol: '',
+  }
+  container.visibles.set(id, visible)
+  return visible
+}
+
 const clearComponentSubscriptions = (container: RuntimeContainer, componentId: string) => {
   for (const record of container.signals.values()) {
     record.subscribers.delete(componentId)
@@ -862,6 +916,10 @@ const removeWatchState = (container: RuntimeContainer, watchId: string) => {
   container.watches.delete(watchId)
 }
 
+const removeVisibleState = (container: RuntimeContainer, visibleId: string) => {
+  container.visibles.delete(visibleId)
+}
+
 const pruneComponentWatches = (
   container: RuntimeContainer,
   component: ComponentState,
@@ -871,6 +929,17 @@ const pruneComponentWatches = (
     removeWatchState(container, createWatchId(component.id, index))
   }
   component.watchCount = nextCount
+}
+
+const pruneComponentVisibles = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  nextCount: number,
+) => {
+  for (let index = nextCount; index < component.visibleCount; index++) {
+    removeVisibleState(container, createVisibleId(component.id, index))
+  }
+  component.visibleCount = nextCount
 }
 
 const isDescendantOf = (parentId: string, candidateId: string) =>
@@ -891,6 +960,7 @@ const pruneRemovedComponents = (
     clearComponentSubscriptions(container, descendantId)
     const descendant = container.components.get(descendantId)
     if (descendant) {
+      pruneComponentVisibles(container, descendant, 0)
       pruneComponentWatches(container, descendant, 0)
     }
     container.components.delete(descendantId)
@@ -903,6 +973,134 @@ const scheduleMicrotask = (fn: () => void) => {
     return
   }
   Promise.resolve().then(fn)
+}
+
+const scheduleVisibleCallbacksCheck = (container: RuntimeContainer) => {
+  if (container.visibilityCheckQueued || container.visibles.size === 0 || !container.doc) {
+    return
+  }
+
+  ensureVisibilityListeners(container)
+  container.visibilityCheckQueued = true
+  const run = () => {
+    container.visibilityCheckQueued = false
+    void flushVisibleCallbacks(container)
+  }
+
+  const view = container.doc.defaultView
+  if (view && typeof view.requestAnimationFrame === 'function') {
+    view.requestAnimationFrame(() => run())
+    return
+  }
+
+  scheduleMicrotask(run)
+}
+
+const rectIntersectsViewport = (
+  view: { innerHeight?: number; innerWidth?: number },
+  rect: { bottom: number; left: number; right: number; top: number },
+) => {
+  const viewportHeight = view.innerHeight ?? 0
+  const viewportWidth = view.innerWidth ?? 0
+  return rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth
+}
+
+const isBoundaryVisible = (doc: Document, start: Comment, end: Comment) => {
+  const view = doc.defaultView
+  if (typeof doc.createRange !== 'function' || !view) {
+    return false
+  }
+
+  const range = doc.createRange()
+  range.setStartAfter(start)
+  range.setEndBefore(end)
+
+  const rects = range.getClientRects()
+  if (rects.length === 0) {
+    return rectIntersectsViewport(view, range.getBoundingClientRect())
+  }
+
+  for (let index = 0; index < rects.length; index++) {
+    const rect = rects[index]
+    if (rectIntersectsViewport(view, rect)) {
+      return true
+    }
+  }
+  return false
+}
+
+const runVisibleCallback = async (container: RuntimeContainer, visible: VisibleState) => {
+  if (visible.done) {
+    return
+  }
+
+  visible.done = true
+  const pending = Promise.resolve()
+    .then(async () => {
+      if (visible.run) {
+        await withClientContainer(container, async () => {
+          await visible.run?.()
+        })
+      } else {
+        const module = await loadSymbol(container, visible.symbol)
+        await withClientContainer(container, async () => {
+          await module.default(materializeScope(container, visible.scopeId))
+        })
+      }
+      await flushDirtyComponents(container)
+      scheduleVisibleCallbacksCheck(container)
+    })
+    .finally(() => {
+      if (visible.pending === pending) {
+        visible.pending = null
+      }
+    })
+
+  visible.pending = pending
+  await pending
+}
+
+const flushVisibleCallbacks = async (container: RuntimeContainer) => {
+  if (!container.doc || container.visibles.size === 0) {
+    return
+  }
+
+  for (const visible of [...container.visibles.values()]) {
+    if (visible.done || visible.pending) {
+      continue
+    }
+
+    const component = container.components.get(visible.componentId)
+    if (!component?.start || !component.end) {
+      continue
+    }
+
+    if (!isBoundaryVisible(container.doc, component.start, component.end)) {
+      continue
+    }
+
+    await runVisibleCallback(container, visible)
+  }
+}
+
+const ensureVisibilityListeners = (container: RuntimeContainer) => {
+  if (container.visibilityListenersCleanup || !container.doc) {
+    return
+  }
+
+  const doc = container.doc
+  const onVisibilityChange = () => {
+    scheduleVisibleCallbacksCheck(container)
+  }
+
+  doc.addEventListener('scroll', onVisibilityChange, true)
+  doc.defaultView?.addEventListener('resize', onVisibilityChange)
+
+  container.visibilityListenersCleanup = () => {
+    doc.removeEventListener('scroll', onVisibilityChange, true)
+    doc.defaultView?.removeEventListener('resize', onVisibilityChange)
+    container.visibilityListenersCleanup = null
+  }
 }
 
 const scheduleMountCallbacks = (
@@ -919,7 +1117,11 @@ const scheduleMountCallbacks = (
       for (const callback of callbacks) {
         callback()
       }
-    }).then(() => flushDirtyComponents(container))
+    })
+      .then(() => flushDirtyComponents(container))
+      .then(() => {
+        scheduleVisibleCallbacksCheck(container)
+      })
   })
 }
 
@@ -1333,6 +1535,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
 
     const componentFn = resolved.type as Component
     const body = pushFrame(frame, () => renderStringNode(componentFn(evaluatedProps)))
+    pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
   }
@@ -1439,6 +1642,7 @@ const renderComponentToNodes = (
   component.start = start
   component.end = end
   const rendered = pushFrame(frame, () => toMountedNodes(componentFn(props), container))
+  pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
 
@@ -1458,6 +1662,7 @@ const renderComponentToNodes = (
   }
 
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleVisibleCallbacksCheck(container)
 
   return [start, ...rendered, end]
 }
@@ -1724,6 +1929,7 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
   container.nextSignalId = 0
   container.rootChildCursor = 0
   container.scopes.clear()
+  container.visibles.clear()
   container.watches.clear()
 
   for (const [id, record] of [...container.signals.entries()]) {
@@ -1812,6 +2018,7 @@ const renderRouteIntoRoot = (
   rootComponent.signalIds = []
   rootComponent.start = undefined
   rootComponent.watchCount = 0
+  rootComponent.visibleCount = 0
 
   clearComponentSubscriptions(container, rootComponent.id)
   const frame = createFrame(container, rootComponent, 'client')
@@ -1821,6 +2028,7 @@ const renderRouteIntoRoot = (
       return toMountedNodes(rendered, container)
     }),
   )
+  pruneComponentVisibles(container, rootComponent, frame.visibleCursor)
   pruneComponentWatches(container, rootComponent, frame.watchCursor)
   scheduleMountCallbacks(container, rootComponent, frame.mountCallbacks)
 
@@ -1838,6 +2046,7 @@ const renderRouteIntoRoot = (
   rootComponent.start = start
   rootComponent.end = end
   bindRouterLinks(container, root)
+  scheduleVisibleCallbacksCheck(container)
 }
 
 const loadRouteModule = async (url: string): Promise<LoadedRouteModule> => {
@@ -2105,6 +2314,7 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   const oldDescendants = collectDescendantIds(container, componentId)
   clearComponentSubscriptions(container, componentId)
   const rendered = pushFrame(frame, () => componentFn(props))
+  pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
 
@@ -2121,6 +2331,7 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   }
 
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleVisibleCallbacksCheck(container)
 
   return rendered
 }
@@ -2143,6 +2354,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       return toMountedNodes(rendered, container)
     }),
   )
+  pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   replaceBoundaryContents(component.start, component.end, nodes)
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
@@ -2171,6 +2383,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   }
   clearComponentSubscriptions(container, componentId)
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleVisibleCallbacksCheck(container)
 }
 
 const sortDirtyComponents = (ids: Iterable<string>) =>
@@ -2264,6 +2477,12 @@ export const applyResumeHmrSymbolReplacements = (
     for (const watch of container.watches.values()) {
       if (affectedIds.has(watch.symbol)) {
         watch.symbol = nextSymbolId
+      }
+    }
+
+    for (const visible of container.visibles.values()) {
+      if (affectedIds.has(visible.symbol)) {
+        visible.symbol = nextSymbolId
       }
     }
 
@@ -2375,6 +2594,7 @@ export const beginSSRContainer = <T>(
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    visibleCount: 0,
     watchCount: 0,
   }
 
@@ -2395,6 +2615,7 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
         scope: component.scopeId,
         signalIds: [...component.signalIds],
         symbol: component.symbol,
+        visibleCount: component.visibleCount,
         watchCount: component.watchCount,
       } satisfies ResumeComponentPayload,
     ]),
@@ -2407,6 +2628,16 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
     [...container.signals.entries()].map(([id, record]) => [id, [...record.subscribers]]),
   ),
   symbols: Object.fromEntries(container.symbols.entries()),
+  visibles: Object.fromEntries(
+    [...container.visibles.entries()].map(([id, visible]) => [
+      id,
+      {
+        componentId: visible.componentId,
+        scope: visible.scopeId,
+        symbol: visible.symbol,
+      } satisfies ResumeVisiblePayload,
+    ]),
+  ),
   watches: Object.fromEntries(
     [...container.watches.entries()].map(([id, watch]) => [
       id,
@@ -2455,6 +2686,7 @@ export const createResumeContainer = (
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
+      visibleCount: componentPayload.visibleCount ?? 0,
       watchCount: componentPayload.watchCount,
     })
   }
@@ -2486,6 +2718,15 @@ export const createResumeContainer = (
     }
   }
 
+  for (const [id, visiblePayload] of Object.entries(payload.visibles ?? {})) {
+    const visible = getOrCreateVisibleState(container, id, visiblePayload.componentId)
+    visible.done = false
+    visible.pending = null
+    visible.run = null
+    visible.scopeId = visiblePayload.scope
+    visible.symbol = visiblePayload.symbol
+  }
+
   for (const [id, boundary] of scanComponentBoundaries(root as HTMLElement)) {
     const component = container.components.get(id)
     if (!component) {
@@ -2498,6 +2739,7 @@ export const createResumeContainer = (
   const router = ensureRouterState(container)
   router.currentPath.value = normalizeRoutePath(doc.location.pathname)
   router.isNavigating.value = false
+  scheduleVisibleCallbacksCheck(container)
 
   return container
 }
@@ -2698,6 +2940,8 @@ export const installResumeListeners = (container: RuntimeContainer) => {
     return () => {}
   }
   bindRouterLinks(container, doc)
+  ensureVisibilityListeners(container)
+  scheduleVisibleCallbacksCheck(container)
   const listeners = ['click', 'input', 'change', 'submit'] as const
   const onEvent = (event: Event) => {
     void dispatchDocumentEvent(container, event)
@@ -2718,6 +2962,7 @@ export const installResumeListeners = (container: RuntimeContainer) => {
       doc.removeEventListener(eventName, onEvent, true)
     }
     doc.defaultView?.removeEventListener('popstate', onPopState)
+    container.visibilityListenersCleanup?.()
   }
 }
 
@@ -2768,6 +3013,29 @@ export const createOnMount = (fn: () => void) => {
     return
   }
   frame.mountCallbacks.push(fn)
+}
+
+export const createOnVisible = (fn: () => void) => {
+  const container = getCurrentContainer()
+  const frame = getCurrentFrame()
+  const lazyMeta = getLazyMeta(fn)
+
+  if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID) {
+    return
+  }
+
+  if (!lazyMeta && frame.mode === 'ssr') {
+    return
+  }
+
+  const visibleIndex = frame.visibleCursor++
+  const visibleId = createVisibleId(frame.component.id, visibleIndex)
+  const visible = getOrCreateVisibleState(container, visibleId, frame.component.id)
+  visible.scopeId = lazyMeta ? registerScope(container, lazyMeta.captures()) : registerScope(container, [])
+  visible.symbol = lazyMeta?.symbol ?? ''
+  visible.run = lazyMeta ? null : fn
+
+  scheduleVisibleCallbacksCheck(container)
 }
 
 export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) => {
