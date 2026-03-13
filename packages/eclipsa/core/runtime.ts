@@ -2,11 +2,25 @@ import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
+import {
+  deserializeValue,
+  escapeJSONScriptText,
+  serializeValue,
+  type SerializedValue,
+} from './serialize.ts'
 import type { Component } from './component.ts'
 import {
+  getActionHandleMeta,
+  getActionHookMeta,
   getComponentMeta,
   getEventMeta,
+  getRegisteredActionHookIds,
+  getRegisteredActionHook,
+  getRegisteredLoaderHookIds,
+  getRegisteredLoaderHook,
   getLazyMeta,
+  getLoaderHandleMeta,
+  getLoaderHookMeta,
   getNavigateMeta,
   getSignalMeta,
   getWatchMeta,
@@ -37,46 +51,10 @@ const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 const ROOT_COMPONENT_ID = '$root'
 const ROUTE_SLOT_TYPE = 'route-slot'
-
-interface EncodedUndefined {
-  __eclipsa_type: 'undefined'
-}
-
-export type EncodedValue =
-  | EncodedUndefined
-  | null
-  | boolean
-  | number
-  | string
-  | EncodedValue[]
-  | {
-      [key: string]: EncodedValue
-    }
-
-export interface ScopeSlot {
-  kind: 'signal'
-  id: string
-}
-
-export interface JSONScopeSlot {
-  kind: 'json'
-  value: EncodedValue
-}
-
-export interface SymbolScopeSlot {
-  kind: 'symbol'
-  id: string
-  scope: string
-}
-
-export interface NavigateScopeSlot {
-  kind: 'navigate'
-}
-
-export type ResumeScopeSlot = ScopeSlot | JSONScopeSlot | SymbolScopeSlot | NavigateScopeSlot
+const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
 
 export interface ResumeComponentPayload {
-  props: EncodedValue
+  props: SerializedValue
   scope: string
   signalIds: string[]
   symbol: string
@@ -98,10 +76,17 @@ interface ResumeVisiblePayload {
   symbol: string
 }
 
+interface ResumeLoaderPayload {
+  data: SerializedValue
+  error: SerializedValue
+  loaded: boolean
+}
+
 export interface ResumePayload {
   components: Record<string, ResumeComponentPayload>
-  scopes: Record<string, ResumeScopeSlot[]>
-  signals: Record<string, EncodedValue>
+  loaders: Record<string, ResumeLoaderPayload>
+  scopes: Record<string, SerializedValue[]>
+  signals: Record<string, SerializedValue>
   subscriptions: Record<string, string[]>
   symbols: Record<string, string>
   visibles: Record<string, ResumeVisiblePayload>
@@ -162,10 +147,21 @@ interface RouterState {
 }
 
 export interface RuntimeContainer {
+  actions: Map<string, unknown>
   components: Map<string, ComponentState>
   dirty: Set<string>
   doc?: Document
+  id: string
   imports: Map<string, Promise<RuntimeSymbolModule>>
+  loaderStates: Map<
+    string,
+    {
+      data: unknown
+      error: unknown
+      loaded: boolean
+    }
+  >
+  loaders: Map<string, unknown>
   nextComponentId: number
   nextElementId: number
   nextScopeId: number
@@ -173,7 +169,7 @@ export interface RuntimeContainer {
   rootChildCursor: number
   rootElement?: HTMLElement
   router: RouterState | null
-  scopes: Map<string, ResumeScopeSlot[]>
+  scopes: Map<string, SerializedValue[]>
   signals: Map<string, SignalRecord>
   symbols: Map<string, string>
   visibilityListenersCleanup: (() => void) | null
@@ -372,56 +368,154 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return proto === Object.prototype || proto === null
 }
 
-const encodeValue = (value: unknown): EncodedValue => {
-  if (value === undefined) {
-    return { __eclipsa_type: 'undefined' }
-  }
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return value
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new TypeError('Non-finite numbers cannot be serialized for resume.')
-    }
-    return value
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => encodeValue(entry))
-  }
-  if (isPlainObject(value)) {
-    const result: Record<string, EncodedValue> = {}
-    for (const [key, entry] of Object.entries(value)) {
-      result[key] = encodeValue(entry)
-    }
-    return result
-  }
-  throw new TypeError(`Unsupported resumable value: ${Object.prototype.toString.call(value)}`)
-}
+const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): SerializedValue =>
+  serializeValue(value, {
+    serializeReference(candidate) {
+      const signalMeta = getSignalMeta(candidate)
+      if (signalMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'signal',
+          token: signalMeta.id,
+        }
+      }
+      if (getNavigateMeta(candidate)) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'navigate',
+          token: 'navigate',
+        }
+      }
+      const actionMeta = getActionHandleMeta(candidate)
+      if (actionMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'action',
+          token: actionMeta.id,
+        }
+      }
+      const actionHookMeta = getActionHookMeta(candidate)
+      if (actionHookMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'action-hook',
+          token: actionHookMeta.id,
+        }
+      }
+      const loaderMeta = getLoaderHandleMeta(candidate)
+      if (loaderMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'loader',
+          token: loaderMeta.id,
+        }
+      }
+      const loaderHookMeta = getLoaderHookMeta(candidate)
+      if (loaderHookMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'loader-hook',
+          token: loaderHookMeta.id,
+        }
+      }
+      if (isRouteSlot(candidate)) {
+        return {
+          __eclipsa_type: 'ref',
+          data: serializeValue(candidate.startLayoutIndex),
+          kind: 'route-slot',
+          token: candidate.pathname,
+        }
+      }
+      const lazyMeta = getLazyMeta(candidate)
+      if (lazyMeta) {
+        return {
+          __eclipsa_type: 'ref',
+          data: lazyMeta.captures().map((entry) => serializeRuntimeValue(container, entry)),
+          kind: 'symbol',
+          token: lazyMeta.symbol,
+        }
+      }
+      if (typeof Element !== 'undefined' && candidate instanceof Element) {
+        return {
+          __eclipsa_type: 'ref',
+          kind: 'dom',
+          token: ensureRuntimeElementId(container, candidate),
+        }
+      }
+      return null
+    },
+  })
 
-const decodeValue = (value: EncodedValue): unknown => {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    typeof value === 'number'
-  ) {
-    return value
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => decodeValue(entry))
-  }
-  if (isPlainObject(value) && value.__eclipsa_type === 'undefined') {
-    return undefined
-  }
-  if (isPlainObject(value)) {
-    const result: Record<string, unknown> = {}
-    for (const [key, entry] of Object.entries(value)) {
-      result[key] = decodeValue(entry)
-    }
-    return result
-  }
-  return value
-}
+const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedValue): unknown =>
+  deserializeValue(value, {
+    deserializeReference(reference) {
+      if (reference.kind === 'navigate') {
+        return ensureRouterState(container).navigate
+      }
+      if (reference.kind === 'action') {
+        const action = container.actions.get(reference.token)
+        if (!action) {
+          throw new Error(`Missing action handle ${reference.token}.`)
+        }
+        return action
+      }
+      if (reference.kind === 'action-hook') {
+        const actionHook = getRegisteredActionHook(reference.token)
+        if (!actionHook) {
+          throw new Error(`Missing action hook ${reference.token}.`)
+        }
+        return actionHook
+      }
+      if (reference.kind === 'loader') {
+        const loader = container.loaders.get(reference.token)
+        if (!loader) {
+          throw new Error(`Missing loader handle ${reference.token}.`)
+        }
+        return loader
+      }
+      if (reference.kind === 'loader-hook') {
+        const loaderHook = getRegisteredLoaderHook(reference.token)
+        if (!loaderHook) {
+          throw new Error(`Missing loader hook ${reference.token}.`)
+        }
+        return loaderHook
+      }
+      if (reference.kind === 'route-slot') {
+        const startLayoutIndex =
+          reference.data === undefined ? 0 : deserializeValue(reference.data)
+        if (typeof startLayoutIndex !== 'number' || !Number.isInteger(startLayoutIndex)) {
+          throw new TypeError('Route slot references require an integer start layout index.')
+        }
+        return {
+          __eclipsa_type: ROUTE_SLOT_TYPE,
+          pathname: reference.token,
+          startLayoutIndex,
+        } satisfies RouteSlotValue
+      }
+      if (reference.kind === 'signal') {
+        const record = container.signals.get(reference.token)
+        if (!record) {
+          throw new Error(`Missing signal ${reference.token}.`)
+        }
+        return record.handle
+      }
+      if (reference.kind === 'symbol') {
+        if (!reference.data || !Array.isArray(reference.data)) {
+          throw new TypeError('Symbol references require an encoded scope array.')
+        }
+        const scopeId = registerSerializedScope(container, reference.data)
+        return materializeSymbolReference(container, reference.token, scopeId)
+      }
+      if (reference.kind === 'dom') {
+        const element = findRuntimeElement(container, reference.token)
+        if (!element) {
+          throw new Error(`Missing DOM reference ${reference.token}.`)
+        }
+        return element
+      }
+      throw new TypeError(`Unsupported runtime reference kind "${reference.kind}".`)
+    },
+  })
 
 const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
   let nextId = 0
@@ -451,10 +545,16 @@ const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> 
 }
 
 const createContainer = (symbols: Record<string, string>, doc?: Document): RuntimeContainer => ({
+  actions: new Map(),
   components: new Map(),
   dirty: new Set(),
   doc,
+  id: `rt${((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] =
+    (((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] as number | undefined) ?? 0) +
+    1)}`,
   imports: new Map(),
+  loaderStates: new Map(),
+  loaders: new Map(),
   nextComponentId: 0,
   nextElementId: 0,
   nextScopeId: 0,
@@ -667,42 +767,36 @@ const pushFrame = <T>(frame: RenderFrame, fn: () => T): T => {
 
 const allocateScopeId = (container: RuntimeContainer) => `sc${container.nextScopeId++}`
 
-const serializeScopeValue = (container: RuntimeContainer, value: unknown): ResumeScopeSlot => {
-  const signalMeta = getSignalMeta(value)
-  if (signalMeta) {
-    return {
-      kind: 'signal',
-      id: signalMeta.id,
-    }
+export const ensureRuntimeElementId = (container: RuntimeContainer, element: Element) => {
+  const existingId = element.getAttribute('data-eid')
+  if (existingId) {
+    return existingId
   }
+  const nextId = `e${container.nextElementId++}`
+  element.setAttribute('data-eid', nextId)
+  return nextId
+}
 
-  if (getNavigateMeta(value)) {
-    return {
-      kind: 'navigate',
-    }
+export const findRuntimeElement = (container: RuntimeContainer, elementId: string): Element | null => {
+  const root = container.rootElement ?? container.doc?.body
+  if (!root) {
+    return null
   }
-
-  const lazyMeta = getLazyMeta(value)
-  if (lazyMeta) {
-    return {
-      kind: 'symbol',
-      id: lazyMeta.symbol,
-      scope: registerScope(container, lazyMeta.captures()),
-    }
+  if (root.getAttribute('data-eid') === elementId) {
+    return root
   }
-
-  return {
-    kind: 'json',
-    value: encodeValue(value),
-  }
+  return root.querySelector(`[data-eid="${elementId}"]`)
 }
 
 const registerScope = (container: RuntimeContainer, values: unknown[]): string => {
   const id = allocateScopeId(container)
-  container.scopes.set(
-    id,
-    values.map((value) => serializeScopeValue(container, value)),
-  )
+  container.scopes.set(id, values.map((value) => serializeRuntimeValue(container, value)))
+  return id
+}
+
+const registerSerializedScope = (container: RuntimeContainer, values: SerializedValue[]) => {
+  const id = allocateScopeId(container)
+  container.scopes.set(id, [...values])
   return id
 }
 
@@ -728,22 +822,7 @@ const materializeScope = (container: RuntimeContainer, scopeId: string): unknown
   if (!slots) {
     throw new Error(`Missing scope ${scopeId}.`)
   }
-  return slots.map((slot) => {
-    if (slot.kind === 'signal') {
-      const record = container.signals.get(slot.id)
-      if (!record) {
-        throw new Error(`Missing signal ${slot.id}.`)
-      }
-      return record.handle
-    }
-    if (slot.kind === 'symbol') {
-      return materializeSymbolReference(container, slot.id, slot.scope)
-    }
-    if (slot.kind === 'navigate') {
-      return ensureRouterState(container).navigate
-    }
-    return decodeValue(slot.value)
-  })
+  return slots.map((slot) => deserializeRuntimeValue(container, slot))
 }
 
 const createFrame = (
@@ -1875,6 +1954,16 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
 
 export const getRuntimeContainer = () => getCurrentContainer()
 
+export const serializeContainerValue = (
+  container: RuntimeContainer | null,
+  value: unknown,
+): SerializedValue => (container ? serializeRuntimeValue(container, value) : serializeValue(value))
+
+export const deserializeContainerValue = (
+  container: RuntimeContainer | null,
+  value: SerializedValue,
+): unknown => (container ? deserializeRuntimeValue(container, value) : deserializeValue(value))
+
 export const renderClientInsertable = (
   value: unknown,
   container: RuntimeContainer | null = getCurrentContainer(),
@@ -2606,12 +2695,43 @@ export const beginSSRContainer = <T>(
   }
 }
 
+export const beginAsyncSSRContainer = async <T>(
+  symbols: Record<string, string>,
+  render: () => T,
+  prepare?: (container: RuntimeContainer) => void | Promise<void>,
+): Promise<{
+  container: RuntimeContainer
+  result: T
+}> => {
+  const container = createContainer(symbols)
+  const rootComponent: ComponentState = {
+    active: false,
+    didMount: false,
+    id: ROOT_COMPONENT_ID,
+    parentId: null,
+    props: {},
+    scopeId: registerScope(container, []),
+    signalIds: [],
+    symbol: ROOT_COMPONENT_ID,
+    visibleCount: 0,
+    watchCount: 0,
+  }
+
+  const rootFrame = createFrame(container, rootComponent, 'ssr')
+  await prepare?.(container)
+  const result = pushContainer(container, () => pushFrame(rootFrame, render))
+  return {
+    container,
+    result,
+  }
+}
+
 export const toResumePayload = (container: RuntimeContainer): ResumePayload => ({
   components: Object.fromEntries(
     [...container.components.entries()].map(([id, component]) => [
       id,
       {
-        props: encodeValue(component.props),
+        props: serializeRuntimeValue(container, component.props),
         scope: component.scopeId,
         signalIds: [...component.signalIds],
         symbol: component.symbol,
@@ -2620,9 +2740,22 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
       } satisfies ResumeComponentPayload,
     ]),
   ),
+  loaders: Object.fromEntries(
+    [...container.loaderStates.entries()].map(([id, loader]) => [
+      id,
+      {
+        data: serializeRuntimeValue(container, loader.data),
+        error: serializeRuntimeValue(container, loader.error),
+        loaded: loader.loaded,
+      } satisfies ResumeLoaderPayload,
+    ]),
+  ),
   scopes: Object.fromEntries(container.scopes.entries()),
   signals: Object.fromEntries(
-    [...container.signals.entries()].map(([id, record]) => [id, encodeValue(record.value)]),
+    [...container.signals.entries()].map(([id, record]) => [
+      id,
+      serializeRuntimeValue(container, record.value),
+    ]),
   ),
   subscriptions: Object.fromEntries(
     [...container.signals.entries()].map(([id, record]) => [id, [...record.subscribers]]),
@@ -2666,9 +2799,17 @@ export const createResumeContainer = (
   ensureRouterState(container, options?.routeManifest)
 
   for (const [id, encodedValue] of Object.entries(payload.signals)) {
-    const decodedValue = decodeValue(encodedValue)
+    const decodedValue = deserializeRuntimeValue(container, encodedValue)
     const record = ensureSignalRecord(container, id, decodedValue)
     record.value = decodedValue
+  }
+
+  for (const [id, loaderPayload] of Object.entries(payload.loaders ?? {})) {
+    container.loaderStates.set(id, {
+      data: deserializeRuntimeValue(container, loaderPayload.data),
+      error: deserializeRuntimeValue(container, loaderPayload.error),
+      loaded: loaderPayload.loaded,
+    })
   }
 
   for (const [id, slots] of Object.entries(payload.scopes)) {
@@ -2682,7 +2823,7 @@ export const createResumeContainer = (
       didMount: false,
       id,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
-      props: decodeValue(componentPayload.props),
+      props: deserializeRuntimeValue(container, componentPayload.props),
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
@@ -2736,12 +2877,25 @@ export const createResumeContainer = (
     component.end = boundary.end
   }
 
+  restoreRegisteredRpcHandles(container)
+
   const router = ensureRouterState(container)
   router.currentPath.value = normalizeRoutePath(doc.location.pathname)
   router.isNavigating.value = false
   scheduleVisibleCallbacksCheck(container)
 
   return container
+}
+
+export const restoreRegisteredRpcHandles = (container: RuntimeContainer) => {
+  withRuntimeContainer(container, () => {
+    for (const id of getRegisteredActionHookIds()) {
+      getRegisteredActionHook<() => unknown>(id)?.()
+    }
+    for (const id of getRegisteredLoaderHookIds()) {
+      getRegisteredLoaderHook<() => unknown>(id)?.()
+    }
+  })
 }
 
 export const primeRouteModules = async (container: RuntimeContainer) => {
@@ -2988,6 +3142,14 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   return record.handle
 }
 
+export const createDetachedRuntimeSignal = <T>(
+  container: RuntimeContainer,
+  id: string,
+  fallback: T,
+): { value: T } => ensureSignalRecord(container, id, fallback).handle
+
+export const getRuntimeSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+
 export const useRuntimeNavigate = (): Navigate => {
   const container = getCurrentContainer()
   if (!container) {
@@ -3065,4 +3227,5 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   watch.effect.fn()
 }
 
-export const getResumePayloadScriptContent = (payload: ResumePayload) => JSON.stringify(payload)
+export const getResumePayloadScriptContent = (payload: ResumePayload) =>
+  escapeJSONScriptText(JSON.stringify(payload))

@@ -3,12 +3,14 @@ import { cwd } from 'node:process'
 import path from 'node:path'
 import { collectRouteModules, createRoutes } from './utils/routing.ts'
 import { build } from './build/mod.ts'
-import { collectAppSymbols } from './compiler.ts'
+import { collectAppActions, collectAppLoaders, collectAppSymbols } from './compiler.ts'
 
 export const createConfig: Plugin['config'] = async (userConfig) => {
   const root = userConfig.root ?? cwd()
   const routes = await createRoutes(root)
   const routeModules = collectRouteModules(routes)
+  const actions = await collectAppActions(root)
+  const loaders = await collectAppLoaders(root)
   const symbols = await collectAppSymbols(root)
 
   const clientInput = Object.fromEntries([
@@ -24,6 +26,8 @@ export const createConfig: Plugin['config'] = async (userConfig) => {
     ['server_entry', path.join(root, 'app/+server-entry.ts')],
     ['ssr_root', path.join(root, 'app/+ssr-root.tsx')],
     ['eclipsa_runtime', path.join(root, '../packages/eclipsa/vite/build/runtime.ts')],
+    ...actions.map((action) => [`action__${action.id}`, action.filePath]),
+    ...loaders.map((loader) => [`loader__${loader.id}`, loader.filePath]),
     ...routeModules.map((entry) => [entry.entryName, entry.filePath]),
   ])
 

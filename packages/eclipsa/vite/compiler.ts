@@ -344,6 +344,10 @@ export const createDevSymbolUrl = (root: string, filePath: string, symbolId: str
 
 export const createBuildSymbolUrl = (symbolId: string) => `/entries/symbol__${symbolId}.js`
 
+export const createBuildServerActionUrl = (actionId: string) => `../ssr/entries/action__${actionId}.mjs`
+
+export const createBuildServerLoaderUrl = (loaderId: string) => `../ssr/entries/loader__${loaderId}.mjs`
+
 export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
   const appDir = path.join(root, 'app')
   const files = await fg(path.join(appDir, '**/*.tsx').replaceAll('\\', '/'))
@@ -352,6 +356,36 @@ export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> =
   for (const filePath of files) {
     const analyzed = await loadAnalyzedModule(filePath)
     result.push(...analyzed.symbols.values())
+  }
+
+  return result
+}
+
+export const collectAppActions = async (
+  root: string,
+): Promise<Array<{ filePath: string; id: string }>> => {
+  const appDir = path.join(root, 'app')
+  const files = await fg(path.join(appDir, '**/*.{ts,tsx}').replaceAll('\\', '/'))
+  const result: Array<{ filePath: string; id: string }> = []
+
+  for (const filePath of files) {
+    const analyzed = await loadAnalyzedModule(filePath)
+    result.push(...analyzed.actions.values())
+  }
+
+  return result
+}
+
+export const collectAppLoaders = async (
+  root: string,
+): Promise<Array<{ filePath: string; id: string }>> => {
+  const appDir = path.join(root, 'app')
+  const files = await fg(path.join(appDir, '**/*.{ts,tsx}').replaceAll('\\', '/'))
+  const result: Array<{ filePath: string; id: string }> = []
+
+  for (const filePath of files) {
+    const analyzed = await loadAnalyzedModule(filePath)
+    result.push(...analyzed.loaders.values())
   }
 
   return result

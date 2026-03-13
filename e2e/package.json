@@ -12,7 +12,8 @@
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "eclipsa": "workspace:*"
+    "eclipsa": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

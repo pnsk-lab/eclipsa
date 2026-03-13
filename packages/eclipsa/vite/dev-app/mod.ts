@@ -11,9 +11,16 @@ import {
   type RouteEntry,
 } from '../utils/routing.ts'
 import * as path from 'node:path'
-import { collectAppSymbols, createDevSymbolUrl } from '../compiler.ts'
+import {
+  collectAppActions,
+  collectAppLoaders,
+  collectAppSymbols,
+  createDevSymbolUrl,
+} from '../compiler.ts'
 
 interface DevAppDeps {
+  collectAppActions(root: string): Promise<{ id: string; filePath: string }[]>
+  collectAppLoaders(root: string): Promise<{ id: string; filePath: string }[]>
   collectAppSymbols(root: string): Promise<{ id: string; filePath: string }[]>
   createDevModuleUrl(root: string, entry: { filePath: string }): string
   createDevSymbolUrl(root: string, filePath: string, symbolId: string): string
@@ -53,7 +60,7 @@ export const shouldInvalidateDevApp = (
   if (relativePath === '+server-entry.ts') {
     return true
   }
-  if (relativePath.endsWith('.tsx')) {
+  if (relativePath.endsWith('.ts') || relativePath.endsWith('.tsx')) {
     return event === 'add' || event === 'change' || event === 'unlink'
   }
   return false
@@ -126,6 +133,8 @@ const createRouteElement = (
 
 const createDevApp = async (init: DevAppInit) => {
   const deps = init.deps ?? {
+    collectAppActions,
+    collectAppLoaders,
     collectAppSymbols,
     createDevModuleUrl,
     createDevSymbolUrl,
@@ -134,8 +143,18 @@ const createDevApp = async (init: DevAppInit) => {
   const { default: userApp } = await init.runner.import('/app/+server-entry.ts')
   const app = new Hono()
   app.route('/', userApp)
+  const actions = await deps.collectAppActions(init.resolvedConfig.root)
+  const loaders = await deps.collectAppLoaders(init.resolvedConfig.root)
   const routes = await deps.createRoutes(init.resolvedConfig.root)
   const allSymbols = await deps.collectAppSymbols(init.resolvedConfig.root)
+  const actionModules = new Map(actions.map((action) => [action.id, action.filePath]))
+  const loaderModules = new Map(loaders.map((loader) => [loader.id, loader.filePath]))
+  const loaderIdsByFilePath = new Map<string, string[]>()
+  for (const loader of loaders) {
+    const ids = loaderIdsByFilePath.get(loader.filePath) ?? []
+    ids.push(loader.id)
+    loaderIdsByFilePath.set(loader.filePath, ids)
+  }
   const symbolUrls = Object.fromEntries(
     allSymbols.map((symbol) => [
       symbol.id,
@@ -146,8 +165,38 @@ const createDevApp = async (init: DevAppInit) => {
     deps.createDevModuleUrl(init.resolvedConfig.root, entry),
   )
 
+  app.post('/__eclipsa/action/:id', async (c) => {
+    const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
+    const id = c.req.param('id')
+    const modulePath = actionModules.get(id)
+    if (!modulePath) {
+      return c.text('Not Found', 404)
+    }
+    if (!hasAction(id)) {
+      await init.runner.import(modulePath)
+    }
+    return executeAction(id, c)
+  })
+
+  app.get('/__eclipsa/loader/:id', async (c) => {
+    const [{ executeLoader, hasLoader }] = await Promise.all([init.runner.import('eclipsa')])
+    const id = c.req.param('id')
+    const modulePath = loaderModules.get(id)
+    if (!modulePath) {
+      return c.text('Not Found', 404)
+    }
+    if (!hasLoader(id)) {
+      await init.runner.import(modulePath)
+    }
+    return executeLoader(id, c)
+  })
+
   const createHandler = (entry: RouteEntry) => async (c: Context) => {
-    const [modules, { default: SSRRoot }, { renderSSR, serializeResumePayload }] =
+    const [
+      modules,
+      { default: SSRRoot },
+      { primeLoaderState, renderSSRAsync, serializeResumePayload },
+    ] =
       await Promise.all([
         Promise.all([
           init.runner.import(entry.page.filePath),
@@ -158,6 +207,9 @@ const createDevApp = async (init: DevAppInit) => {
       ])
     const [{ default: Page }, ...layoutModules] = modules
     const Layouts = layoutModules.map((module) => module.default)
+    const loaderIds = [entry.page.filePath, ...entry.layouts.map((layout) => layout.filePath)].flatMap(
+      (filePath) => loaderIdsByFilePath.get(filePath) ?? [],
+    )
 
     const document = SSRRoot({
       children: createRouteElement(entry.honoPath, Page, Layouts) as SSRRootProps['children'],
@@ -185,7 +237,10 @@ const createDevApp = async (init: DevAppInit) => {
       },
     } satisfies SSRRootProps)
 
-    const { html, payload } = renderSSR(() => document, {
+    const { html, payload } = await renderSSRAsync(() => document, {
+      prepare: async (container: any) => {
+        await Promise.all(loaderIds.map((id) => primeLoaderState(container, id, c)))
+      },
       symbols: symbolUrls,
     })
     const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${serializeResumePayload(

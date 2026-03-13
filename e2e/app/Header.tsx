@@ -7,6 +7,8 @@ export const Header = component$(() => (
       <Link href="/">Home</Link>
       {' | '}
       <Link href="/counter">Counter</Link>
+      {' | '}
+      <Link href="/actions">Actions</Link>
     </nav>
   </div>
 ))

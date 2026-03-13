@@ -1,11 +1,20 @@
 import type { Component, EURL } from './component.ts'
 import type { Navigate } from './router-shared.ts'
 
+export { __eclipsaAction } from './action.ts'
+export { __eclipsaLoader } from './loader.ts'
+
 const COMPONENT_META_KEY = Symbol.for('eclipsa.component-meta')
 const LAZY_META_KEY = Symbol.for('eclipsa.lazy-meta')
 const NAVIGATE_META_KEY = Symbol.for('eclipsa.navigate-meta')
 const SIGNAL_META_KEY = Symbol.for('eclipsa.signal-meta')
+const ACTION_HOOK_META_KEY = Symbol.for('eclipsa.action-hook-meta')
+const ACTION_HANDLE_META_KEY = Symbol.for('eclipsa.action-handle-meta')
+const LOADER_HOOK_META_KEY = Symbol.for('eclipsa.loader-hook-meta')
+const LOADER_HANDLE_META_KEY = Symbol.for('eclipsa.loader-handle-meta')
 const WATCH_META_KEY = Symbol.for('eclipsa.watch-meta')
+const ACTION_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.action-hook-registry')
+const LOADER_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.loader-hook-registry')
 
 export interface ComponentMeta {
   captures: () => unknown[]
@@ -31,6 +40,26 @@ export interface SignalMeta<T = unknown> {
 
 export interface NavigateMeta {
   readonly kind: 'navigate'
+}
+
+export interface ActionHandleMeta {
+  readonly id: string
+  readonly kind: 'action'
+}
+
+export interface ActionHookMeta {
+  readonly id: string
+  readonly kind: 'action-hook'
+}
+
+export interface LoaderHandleMeta {
+  readonly id: string
+  readonly kind: 'loader'
+}
+
+export interface LoaderHookMeta {
+  readonly id: string
+  readonly kind: 'loader-hook'
 }
 
 export interface EventDescriptor {
@@ -159,6 +188,144 @@ export const getNavigateMeta = (value: unknown): NavigateMeta | null => {
       | undefined) ?? null
   )
 }
+
+export const setActionHookMeta = <T extends Function>(target: T, id: string): T => {
+  Object.defineProperty(target, ACTION_HOOK_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      id,
+      kind: 'action-hook',
+    } satisfies ActionHookMeta,
+    writable: true,
+  })
+  return target
+}
+
+export const getActionHookMeta = (value: unknown): ActionHookMeta | null => {
+  if (typeof value !== 'function') {
+    return null
+  }
+  return (
+    ((value as unknown as Record<PropertyKey, unknown>)[ACTION_HOOK_META_KEY] as
+      | ActionHookMeta
+      | undefined) ?? null
+  )
+}
+
+export const setActionHandleMeta = <T extends object>(target: T, id: string): T => {
+  Object.defineProperty(target, ACTION_HANDLE_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      id,
+      kind: 'action',
+    } satisfies ActionHandleMeta,
+    writable: true,
+  })
+  return target
+}
+
+export const getActionHandleMeta = (value: unknown): ActionHandleMeta | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  return (
+    ((value as Record<PropertyKey, unknown>)[ACTION_HANDLE_META_KEY] as
+      | ActionHandleMeta
+      | undefined) ?? null
+  )
+}
+
+export const setLoaderHookMeta = <T extends Function>(target: T, id: string): T => {
+  Object.defineProperty(target, LOADER_HOOK_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      id,
+      kind: 'loader-hook',
+    } satisfies LoaderHookMeta,
+    writable: true,
+  })
+  return target
+}
+
+export const getLoaderHookMeta = (value: unknown): LoaderHookMeta | null => {
+  if (typeof value !== 'function') {
+    return null
+  }
+  return (
+    ((value as unknown as Record<PropertyKey, unknown>)[LOADER_HOOK_META_KEY] as
+      | LoaderHookMeta
+      | undefined) ?? null
+  )
+}
+
+export const setLoaderHandleMeta = <T extends object>(target: T, id: string): T => {
+  Object.defineProperty(target, LOADER_HANDLE_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      id,
+      kind: 'loader',
+    } satisfies LoaderHandleMeta,
+    writable: true,
+  })
+  return target
+}
+
+export const getLoaderHandleMeta = (value: unknown): LoaderHandleMeta | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  return (
+    ((value as Record<PropertyKey, unknown>)[LOADER_HANDLE_META_KEY] as
+      | LoaderHandleMeta
+      | undefined) ?? null
+  )
+}
+
+const getActionHookRegistry = () => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[ACTION_HOOK_REGISTRY_KEY]
+  if (existing instanceof Map) {
+    return existing as Map<string, Function>
+  }
+  const created = new Map<string, Function>()
+  globalRecord[ACTION_HOOK_REGISTRY_KEY] = created
+  return created
+}
+
+export const registerActionHook = <T extends Function>(id: string, hook: T): T => {
+  getActionHookRegistry().set(id, hook)
+  return hook
+}
+
+export const getRegisteredActionHook = <T extends Function>(id: string): T | null =>
+  (getActionHookRegistry().get(id) as T | undefined) ?? null
+
+export const getRegisteredActionHookIds = () => [...getActionHookRegistry().keys()]
+
+const getLoaderHookRegistry = () => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[LOADER_HOOK_REGISTRY_KEY]
+  if (existing instanceof Map) {
+    return existing as Map<string, Function>
+  }
+  const created = new Map<string, Function>()
+  globalRecord[LOADER_HOOK_REGISTRY_KEY] = created
+  return created
+}
+
+export const registerLoaderHook = <T extends Function>(id: string, hook: T): T => {
+  getLoaderHookRegistry().set(id, hook)
+  return hook
+}
+
+export const getRegisteredLoaderHook = <T extends Function>(id: string): T | null =>
+  (getLoaderHookRegistry().get(id) as T | undefined) ?? null
+
+export const getRegisteredLoaderHookIds = () => [...getLoaderHookRegistry().keys()]
 
 export const getWatchMeta = (value: unknown): WatchMeta | null => {
   if (typeof value !== 'function') {

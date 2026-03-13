@@ -297,6 +297,7 @@ describe('resume HMR runtime helpers', () => {
     withFakeResumeDocument({}, (doc) => {
       const container = createResumeContainer(doc, {
         components: {},
+        loaders: {},
         scopes: {
           sc0: [],
           sc3: [],
@@ -327,7 +328,10 @@ describe('resume HMR runtime helpers', () => {
         const container = createResumeContainer(doc, {
           components: {
             c0: {
-              props: {},
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
               scope: 'sc0',
               signalIds: ['s0'],
               symbol: 'page-symbol',
@@ -335,6 +339,7 @@ describe('resume HMR runtime helpers', () => {
               watchCount: 0,
             },
           },
+          loaders: {},
           scopes: {
             sc0: [],
           },

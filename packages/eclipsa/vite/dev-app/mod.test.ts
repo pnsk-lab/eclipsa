@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
 
 var createRoutes = vi.fn<() => Promise<RouteEntry[]>>()
+var collectAppActions = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
+var collectAppLoaders = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
 var collectAppSymbols = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
 var createDevSymbolUrl = vi.fn<(root: string, filePath: string, symbolId: string) => string>()
 
@@ -31,6 +33,8 @@ describe('createDevFetch', () => {
     userApp = new Hono()
     userApp.get('/api', (c) => c.text('api'))
     createRoutes.mockImplementation(async () => routes)
+    collectAppActions.mockResolvedValue([])
+    collectAppLoaders.mockResolvedValue([])
     collectAppSymbols.mockResolvedValue([])
     createDevSymbolUrl.mockReturnValue('/symbol.js')
   })
@@ -42,6 +46,8 @@ describe('createDevFetch', () => {
       } as any,
       devServer: {} as any,
       deps: {
+        collectAppActions,
+        collectAppLoaders,
         collectAppSymbols,
         createDevModuleUrl,
         createDevSymbolUrl,
@@ -62,12 +68,13 @@ describe('createDevFetch', () => {
           }
           if (id === 'eclipsa') {
             return {
-              renderSSR() {
+              renderSSRAsync() {
                 return {
                   html: '<html><head></head><body></body></html>',
                   payload: {},
                 }
               },
+              primeLoaderState: vi.fn(),
               serializeResumePayload() {
                 return '{}'
               },
@@ -132,6 +139,8 @@ describe('createDevFetch', () => {
       } as any,
       devServer: {} as any,
       deps: {
+        collectAppActions,
+        collectAppLoaders,
         collectAppSymbols,
         createDevModuleUrl,
         createDevSymbolUrl,
@@ -151,7 +160,7 @@ describe('createDevFetch', () => {
           }
           if (id === 'eclipsa') {
             return {
-              renderSSR(renderDocument: () => any) {
+              renderSSRAsync(renderDocument: () => any) {
                 const resolveNode = (value: any): any => {
                   if (!value || typeof value !== 'object') {
                     return value
@@ -168,6 +177,7 @@ describe('createDevFetch', () => {
                   payload: {},
                 }
               },
+              primeLoaderState: vi.fn(),
               serializeResumePayload() {
                 return '{}'
               },

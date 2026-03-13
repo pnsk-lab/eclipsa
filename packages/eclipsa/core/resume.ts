@@ -3,6 +3,7 @@ import {
   createResumeContainer,
   installResumeListeners,
   primeRouteModules,
+  restoreRegisteredRpcHandles,
   registerResumeContainer,
   type ResumePayload,
 } from './runtime.ts'
@@ -61,6 +62,7 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
     routeManifest: getRouteManifest(doc),
   })
   await primeRouteModules(container)
+  restoreRegisteredRpcHandles(container)
   registerResumeContainer(container)
   root.setAttribute('data-e-resume', 'resumed')
   installResumeListeners(container)

@@ -5,7 +5,7 @@ import { babel, generate, t, traverse } from './babel.ts'
 import type { Binding, NodePath } from './babel.ts'
 
 type FunctionPath = NodePath<t.ArrowFunctionExpression | t.FunctionExpression>
-type SymbolKind = 'component' | 'event' | 'lazy' | 'watch'
+type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
 
 export interface ResumeSymbol {
   captures: string[]
@@ -38,16 +38,20 @@ export interface ResumeHmrManifest {
 }
 
 export interface AnalyzedModule {
+  actions: Map<string, { filePath: string; id: string }>
   code: string
   hmrManifest: ResumeHmrManifest
+  loaders: Map<string, { filePath: string; id: string }>
   symbols: Map<string, ResumeSymbol>
 }
 
 const INTERNAL_IMPORT = 'eclipsa/internal'
 const INTERNAL_HELPERS = new Set([
+  '__eclipsaAction',
   '__eclipsaComponent',
   '__eclipsaEvent',
   '__eclipsaLazy',
+  '__eclipsaLoader',
   '__eclipsaWatch',
   'getSignalMeta',
 ])
@@ -796,6 +800,8 @@ export const analyzeModule = async (
   const eclipsaImports = imports.get('eclipsa')
   const componentIdentifier = eclipsaImports?.get('component$')
   const lazyIdentifier = eclipsaImports?.get('$')
+  const actionIdentifier = eclipsaImports?.get('action$')
+  const loaderIdentifier = eclipsaImports?.get('loader$')
   const visibleIdentifier = eclipsaImports?.get('onVisible')
   const signalIdentifier = eclipsaImports?.get('useSignal')
   const watchIdentifier = eclipsaImports?.get('useWatch')
@@ -807,6 +813,8 @@ export const analyzeModule = async (
   })
 
   const builtSymbols = new Map<string, ResumeSymbol>()
+  const builtActions = new Map<string, { filePath: string; id: string }>()
+  const builtLoaders = new Map<string, { filePath: string; id: string }>()
   const hmrComponents = new Map<string, ResumeHmrComponentEntry>()
   const hmrSymbols = new Map<string, ResumeHmrSymbolEntry>()
   const hmrKeyBySymbolId = new Map<string, string>()
@@ -1020,6 +1028,70 @@ export const analyzeModule = async (
           return
         }
 
+        if (actionIdentifier && calleeName === actionIdentifier) {
+          if (path.getFunctionParent()) {
+            throw path.buildCodeFrameError(
+              'action$() must be declared at module scope so the server can register it exactly once.',
+            )
+          }
+
+          const args = path.get('arguments')
+          const handlerPath = args[args.length - 1]
+          if (!handlerPath?.isArrowFunctionExpression() && !handlerPath?.isFunctionExpression()) {
+            throw path.buildCodeFrameError('action$() expects the last argument to be a function.')
+          }
+
+          const extracted = extractSymbol(handlerPath as FunctionPath, 'action', id)
+          builtActions.set(extracted.id, {
+            filePath: id,
+            id: extracted.id,
+          })
+          usedHelpers.add('__eclipsaAction')
+
+          path.replaceWith(
+            t.callExpression(t.identifier('__eclipsaAction'), [
+              t.stringLiteral(extracted.id),
+              t.arrayExpression(
+                args.slice(0, -1).map((arg: NodePath<t.Node>) => t.cloneNode(arg.node, true)),
+              ),
+              t.cloneNode(handlerPath.node, true),
+            ]),
+          )
+          return
+        }
+
+        if (loaderIdentifier && calleeName === loaderIdentifier) {
+          if (path.getFunctionParent()) {
+            throw path.buildCodeFrameError(
+              'loader$() must be declared at module scope so the server can register it exactly once.',
+            )
+          }
+
+          const args = path.get('arguments')
+          const handlerPath = args[args.length - 1]
+          if (!handlerPath?.isArrowFunctionExpression() && !handlerPath?.isFunctionExpression()) {
+            throw path.buildCodeFrameError('loader$() expects the last argument to be a function.')
+          }
+
+          const extracted = extractSymbol(handlerPath as FunctionPath, 'loader', id)
+          builtLoaders.set(extracted.id, {
+            filePath: id,
+            id: extracted.id,
+          })
+          usedHelpers.add('__eclipsaLoader')
+
+          path.replaceWith(
+            t.callExpression(t.identifier('__eclipsaLoader'), [
+              t.stringLiteral(extracted.id),
+              t.arrayExpression(
+                args.slice(0, -1).map((arg: NodePath<t.Node>) => t.cloneNode(arg.node, true)),
+              ),
+              t.cloneNode(handlerPath.node, true),
+            ]),
+          )
+          return
+        }
+
         if (componentIdentifier && calleeName === componentIdentifier) {
           const argPath = path.get('arguments')[0]
           if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
@@ -1069,11 +1141,13 @@ export const analyzeModule = async (
   })
 
   return {
+    actions: builtActions,
     code: generate(programPath.node as any).code,
     hmrManifest: {
       components: hmrComponents,
       symbols: hmrSymbols,
     },
+    loaders: builtLoaders,
     symbols: builtSymbols,
   }
 }

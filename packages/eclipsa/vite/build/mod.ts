@@ -10,9 +10,18 @@ import {
   createRouteManifest,
   createRoutes,
 } from '../utils/routing.ts'
-import { collectAppSymbols, createBuildSymbolUrl } from '../compiler.ts'
+import {
+  collectAppActions,
+  collectAppLoaders,
+  collectAppSymbols,
+  createBuildServerActionUrl,
+  createBuildServerLoaderUrl,
+  createBuildSymbolUrl,
+} from '../compiler.ts'
 
 const renderServer = (
+  actions: Array<{ filePath: string; id: string }>,
+  loaders: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
   routeManifest: RouteManifest,
   symbolUrls: Record<string, string>,
@@ -22,22 +31,47 @@ const renderServer = (
       (route) =>
         `  ${JSON.stringify(route.honoPath)}: { page: ${JSON.stringify(createBuildServerModuleUrl(route.page))}, layouts: [${route.layouts
           .map((layout) => JSON.stringify(createBuildServerModuleUrl(layout)))
-          .join(', ')}] },`,
+          .join(', ')}], loaderIds: ${JSON.stringify(
+          loaders
+            .filter(
+              (loader) =>
+                loader.filePath === route.page.filePath ||
+                route.layouts.some((layout) => layout.filePath === loader.filePath),
+            )
+            .map((loader) => loader.id),
+        )} },`,
     )
     .join('\n')
-
+  const actionTable = actions
+    .map(
+      (action) =>
+        `  ${JSON.stringify(action.id)}: ${JSON.stringify(createBuildServerActionUrl(action.id))},`,
+    )
+    .join('\n')
+  const loaderTable = loaders
+    .map(
+      (loader) =>
+        `  ${JSON.stringify(loader.id)}: ${JSON.stringify(createBuildServerLoaderUrl(loader.id))},`,
+    )
+    .join('\n')
   const serializedSymbolUrls = JSON.stringify(symbolUrls)
   const serializedRouteManifest = JSON.stringify(routeManifest)
 
   return `import userApp from "../ssr/entries/server_entry.mjs";
 import SSRRoot from "../ssr/entries/ssr_root.mjs";
-import { Fragment, jsxDEV, renderSSR, serializeResumePayload } from "../ssr/entries/eclipsa_runtime.mjs";
+import { Fragment, executeAction, executeLoader, hasAction, hasLoader, jsxDEV, primeLoaderState, renderSSRAsync, serializeResumePayload } from "../ssr/entries/eclipsa_runtime.mjs";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const app = userApp;
+const actions = {
+${actionTable}
+};
+const loaders = {
+${loaderTable}
+};
 const routes = {
 ${routeTable}
 };
@@ -183,7 +217,11 @@ for (const [routePath, route] of Object.entries(routes)) {
       },
     });
 
-    const { html, payload } = renderSSR(() => document, {
+    const loaderIds = route.loaderIds ?? [];
+    const { html, payload } = await renderSSRAsync(() => document, {
+      prepare: async (container) => {
+        await Promise.all(loaderIds.map((id) => primeLoaderState(container, id, c)));
+      },
       symbols: symbolUrls,
     });
     const payloadScript = '<script type="application/eclipsa-resume+json" id="eclipsa-resume">' + serializeResumePayload(payload) + "</script>";
@@ -191,6 +229,30 @@ for (const [routePath, route] of Object.entries(routes)) {
     return c.html(injectHeadScripts(html, payloadScript, routeManifestScript));
   });
 }
+
+app.post("/__eclipsa/action/:id", async (c) => {
+  const id = c.req.param("id");
+  const moduleUrl = actions[id];
+  if (!moduleUrl) {
+    return c.text("Not Found", 404);
+  }
+  if (!hasAction(id)) {
+    await import(moduleUrl);
+  }
+  return executeAction(id, c);
+});
+
+app.get("/__eclipsa/loader/:id", async (c) => {
+  const id = c.req.param("id");
+  const moduleUrl = loaders[id];
+  if (!moduleUrl) {
+    return c.text("Not Found", 404);
+  }
+  if (!hasLoader(id)) {
+    await import(moduleUrl);
+  }
+  return executeLoader(id, c);
+});
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 
@@ -212,6 +274,8 @@ createServer(async (req, res) => {
 
 export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
   const root = userConfig.root ?? cwd()
+  const actions = await collectAppActions(root)
+  const loaders = await collectAppLoaders(root)
   const routes = await createRoutes(root)
   const routeManifest = createRouteManifest(routes, createBuildModuleUrl)
   const symbols = await collectAppSymbols(root)
@@ -226,6 +290,6 @@ export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
   await fs.mkdir(serverDir, { recursive: true })
   await fs.writeFile(
     path.join(serverDir, 'index.mjs'),
-    renderServer(routes, routeManifest, symbolUrls),
+    renderServer(actions, loaders, routes, routeManifest, symbolUrls),
   )
 }

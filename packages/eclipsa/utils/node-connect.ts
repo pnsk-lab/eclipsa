@@ -24,11 +24,15 @@ export const incomingMessageToRequest = (incomingMessage: IncomingMessage): Requ
       headers.append(k, v)
     }
   }
-  return new Request(new URL(incomingMessage.url ?? '', 'http://localhost'), {
-    method: incomingMessage.method,
-    body,
+  const init: RequestInit & { duplex?: 'half' } = {
     headers,
-  })
+    method: incomingMessage.method,
+  }
+  if (body) {
+    init.body = body
+    init.duplex = 'half'
+  }
+  return new Request(new URL(incomingMessage.url ?? '', 'http://localhost'), init)
 }
 
 export const responseForServerResponse = async (res: Response, serverRes: ServerResponse) => {

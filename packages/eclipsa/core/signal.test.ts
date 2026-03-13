@@ -53,10 +53,14 @@ class FakeDocument {
 
 const createContainer = () =>
   ({
+    actions: new Map(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
     imports: new Map(),
+    loaderStates: new Map(),
+    loaders: new Map(),
+    id: 'rt-test',
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,

@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('example app in dev mode', () => {
+  test.describe.configure({ mode: 'serial' })
+
   test('renders the SSR shell and adds todos after resume', async ({ page }) => {
     await page.goto('/')
 
@@ -52,5 +54,51 @@ test.describe('example app in dev mode', () => {
 
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('button', { name: 'Go to counter with navigate()' })).toBeVisible()
+  })
+
+  test('runs action$ with middleware and validator on the actions page', async ({ page }) => {
+    await page.goto('/actions')
+
+    await expect(page.getByRole('heading', { name: 'Action Playground' })).toBeVisible()
+    await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
+    await expect(page.getByText(/loader loading:\s*false/)).toBeVisible()
+    await expect(page.getByText(/loader error:\s*no error/)).toBeVisible()
+    await expect(page.getByText(/action pending:\s*false/)).toBeVisible()
+    await expect(page.getByText(/action result:\s*none/)).toBeVisible()
+
+    await page.getByRole('textbox', { name: 'Left' }).fill('20')
+    await page.getByRole('textbox', { name: 'Right' }).fill('22')
+    await page.getByRole('button', { name: 'Run action' }).click()
+
+    await expect(page.getByText(/action result:\s*42/)).toBeVisible()
+    await expect(page.getByText(/action last:\s*20 \+ 22 = 42 \(trace-e2e\)/)).toBeVisible()
+    await expect(page.getByText(/action error:\s*no error/)).toBeVisible()
+    await expect(page.getByText(/action pending:\s*false/)).toBeVisible()
+  })
+
+  test('hydrates loader$ from SSR payload and reloads it over RPC', async ({ page }) => {
+    await page.goto('/actions')
+
+    await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
+    await expect(page.getByText(/loader last:\s*No manual load yet/)).toBeVisible()
+
+    await page.getByRole('button', { name: 'Reload loader' }).click()
+
+    await expect(page.getByText(/loader last:\s*loader-ready \(trace-loader\)/)).toBeVisible()
+    await expect(page.getByText(/loader loading:\s*false/)).toBeVisible()
+  })
+
+  test('shows structured validation failures from action$', async ({ page }) => {
+    await page.goto('/actions')
+
+    await page.getByRole('textbox', { name: 'Left' }).fill('abc')
+    await page.getByRole('textbox', { name: 'Right' }).fill('22')
+    await page.getByRole('button', { name: 'Run action' }).click()
+
+    await expect(page.getByText(/action result:\s*none/)).toBeVisible()
+    await expect(page.getByText(/action last:\s*No result yet/)).toBeVisible()
+    await expect(page.getByText(/action error:\s*\{"issues":\[/)).toContainText(
+      'left and right must be numeric strings',
+    )
   })
 })

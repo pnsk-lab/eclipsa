@@ -292,7 +292,10 @@ describe('onVisible', () => {
       const container = createResumeContainer(doc, {
         components: {
           c0: {
-            props: {},
+            props: {
+              __eclipsa_type: 'object',
+              entries: [],
+            },
             scope: 'sc0',
             signalIds: [],
             symbol: 'page-symbol',
@@ -300,6 +303,7 @@ describe('onVisible', () => {
             watchCount: 0,
           },
         },
+        loaders: {},
         scopes: {
           sc0: [],
           sc1: [],

@@ -80,13 +80,45 @@ export const getJSXTypeNode = (source: t.JSXOpeningElement | JSXType) => {
   return t.stringLiteral(name)
 }
 
+const normalizeJSXText = (value: string) => {
+  if (value.replaceAll(/[\t\r\n ]/g, '') === '') {
+    return null
+  }
+
+  if (!/[\r\n]/.test(value)) {
+    return value
+  }
+
+  const lines = value.split(/\r\n|\n|\r/)
+  let result = ''
+
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index]!.replaceAll('\t', ' ')
+    if (index > 0) {
+      line = line.replace(/^[ ]+/, '')
+    }
+    if (index < lines.length - 1) {
+      line = line.replace(/[ ]+$/, '')
+    }
+    if (line === '') {
+      continue
+    }
+    if (result !== '') {
+      result += ' '
+    }
+    result += line
+  }
+
+  return result === '' ? null : result
+}
+
 export const transformChildren = (elem: t.JSXElement) =>
   t.arrayExpression(
     elem.children
       .map((child) => {
         if (t.isJSXText(child)) {
-          const str = child.value.trim()
-          if (str === '') {
+          const str = normalizeJSXText(child.value)
+          if (str === null) {
             return null
           }
           return t.stringLiteral(str)
