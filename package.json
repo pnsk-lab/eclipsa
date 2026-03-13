@@ -3,11 +3,11 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "example"
+    "e2e"
   ],
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev --filter=example",
+    "dev": "turbo run dev --filter=e2e",
     "build": "turbo run build",
     "pack": "turbo run pack --filter=eclipsa",
     "typecheck": "turbo run typecheck",
@@ -19,7 +19,7 @@
     "@types/node": "^24.5.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
-    "turbo": "^2.5.8",
+    "turbo": "^2.8.16",
     "typescript": "^5.9.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
     "vite-plus": "^0.1.4",
