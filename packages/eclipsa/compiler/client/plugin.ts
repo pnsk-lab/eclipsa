@@ -1,7 +1,7 @@
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-import { getJSXType, transformChildren, transformProps } from '../shared/jsx.ts'
+import { getJSXType, normalizeJSXText, transformChildren, transformProps } from '../shared/jsx.ts'
 import * as t from '@babel/types'
 
 export const pluginClientJSX = (options?: { hmr?: boolean }) => {
@@ -143,10 +143,11 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
             const child = children[i]
             const childPath = [...path, pathIndex]
             if (t.isJSXText(child)) {
-              if (child.value.replaceAll(/[\n ]/g, '') === '') {
+              const normalized = normalizeJSXText(child.value)
+              if (normalized === null) {
                 continue
               }
-              text += child.value
+              text += normalized
             } else if (t.isJSXExpressionContainer(child)) {
               text += `<!-- ${childPath.join(',')} -->`
               inserts.push({

@@ -1,5 +1,4 @@
-import { transformProps } from '../../shared/jsx.ts'
-import { getJSXType, type JSXType } from '../../shared/jsx.ts'
+import { getJSXType, normalizeJSXText, transformProps, type JSXType } from '../../shared/jsx.ts'
 import { type NodePath, t } from '../babel.ts'
 
 interface Init {
@@ -91,7 +90,10 @@ export const processElement = (
     const expressions: t.Expression[] = []
     for (const child of path.node.children) {
       if (child.type === 'JSXText') {
-        quasis[quasis.length - 1].value.raw += child.value
+        const normalized = normalizeJSXText(child.value)
+        if (normalized !== null) {
+          quasis[quasis.length - 1].value.raw += normalized
+        }
       } else if (child.type === 'JSXExpressionContainer') {
         expressions.push(child.expression as t.Expression)
         quasis.push(t.templateElement({ raw: '' }))
@@ -136,7 +138,11 @@ export const processElement = (
       )
       commentSignalI++
     } else if (child.isJSXText()) {
-      children += child.node.value
+      const normalized = normalizeJSXText(child.node.value)
+      if (normalized === null) {
+        continue
+      }
+      children += normalized
     } else if (child.isJSXFragment()) {
       children += processElement(child, nodeAccessPath, elemId, init, insertStatements).template
     } else if (child.isJSXElement()) {

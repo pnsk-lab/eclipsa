@@ -101,4 +101,23 @@ test.describe('example app in dev mode', () => {
       'left and right must be numeric strings',
     )
   })
+
+  test('keeps JSX text whitespace stable between SSR and client navigation', async ({ page }) => {
+    await page.goto('/actions')
+
+    const getRightLabelText = () =>
+      page.locator('label').nth(1).evaluate((element) => {
+        const label = element as HTMLLabelElement
+        return label.textContent
+      })
+
+    await expect.poll(getRightLabelText).toBe('Right')
+
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await page.getByRole('link', { name: 'Actions' }).click()
+    await expect(page).toHaveURL(/\/actions$/)
+
+    await expect.poll(getRightLabelText).toBe('Right')
+  })
 })

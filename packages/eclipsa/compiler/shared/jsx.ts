@@ -80,7 +80,7 @@ export const getJSXTypeNode = (source: t.JSXOpeningElement | JSXType) => {
   return t.stringLiteral(name)
 }
 
-const normalizeJSXText = (value: string) => {
+export const normalizeJSXText = (value: string) => {
   if (value.replaceAll(/[\t\r\n ]/g, '') === '') {
     return null
   }

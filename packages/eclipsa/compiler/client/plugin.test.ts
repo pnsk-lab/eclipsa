@@ -69,4 +69,22 @@ describe('compiler/client pluginClientJSX', () => {
     expect(childrenInsertIndex).toBeGreaterThanOrEqual(0)
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
   })
+
+  it('normalizes multiline JSX text to match SSR output', () => {
+    const resultCode = transform(
+      `<label>
+        Right
+        <input />
+      </label>`,
+      {
+        filename: 'plugin.test.tsx',
+        parserOpts: {
+          plugins: ['jsx'],
+        },
+        plugins: [pluginClientJSX({ hmr: false })],
+      },
+    )?.code
+
+    expect(resultCode).toContain('<label>Right<input></input></label>')
+  })
 })
