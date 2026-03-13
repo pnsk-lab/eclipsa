@@ -36,4 +36,14 @@ describe('analyzeModule()', () => {
       await expect(`${sections.join('\n\n')}\n`).toMatchFileSnapshot(snapshotPath)
     }
   })
+
+  it('rejects useSignal() outside component$()', async () => {
+    await expect(
+      analyzeModule(`
+        import { useSignal } from "eclipsa";
+        const count = useSignal(0);
+        export default count;
+      `),
+    ).rejects.toThrowError('useSignal() can only be called directly inside component$().')
+  })
 })
