@@ -22,6 +22,9 @@ const createContainer = (overrides?: Partial<RuntimeContainer>) =>
     scopes: new Map(),
     signals: new Map(),
     symbols: new Map(),
+    visibilityCheckQueued: false,
+    visibilityListenersCleanup: null,
+    visibles: new Map(),
     watches: new Map(),
     ...overrides,
   }) as RuntimeContainer
@@ -119,6 +122,7 @@ describe('resume HMR runtime helpers', () => {
             signalIds: [],
             start: {} as Comment,
             symbol: 'old-symbol',
+            visibleCount: 0,
             watchCount: 0,
           },
         ],
@@ -128,6 +132,20 @@ describe('resume HMR runtime helpers', () => {
         ['mid-symbol', Promise.resolve({ default: () => null })],
       ]),
       symbols: new Map([['old-symbol', '/app/+page.tsx?eclipsa-symbol=old-symbol']]),
+      visibles: new Map([
+        [
+          'v0',
+          {
+            componentId: 'c0',
+            done: false,
+            id: 'v0',
+            pending: null,
+            run: null,
+            scopeId: 'scope-root',
+            symbol: 'old-symbol',
+          },
+        ],
+      ]),
       watches: new Map([
         [
           'w0',
@@ -155,6 +173,7 @@ describe('resume HMR runtime helpers', () => {
       'old-symbol': '/app/+page.tsx?eclipsa-symbol=mid-symbol',
     })
     expect(container.components.get('c0')?.symbol).toBe('mid-symbol')
+    expect(container.visibles.get('v0')?.symbol).toBe('mid-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('mid-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['mid-symbol'])).toEqual(['c0'])
 
@@ -166,6 +185,7 @@ describe('resume HMR runtime helpers', () => {
     expect(container.symbols.get('mid-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.symbols.get('next-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.components.get('c0')?.symbol).toBe('next-symbol')
+    expect(container.visibles.get('v0')?.symbol).toBe('next-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('next-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['next-symbol'])).toEqual(['c0'])
     expect(container.imports.has('old-symbol')).toBe(false)
@@ -189,6 +209,7 @@ describe('resume HMR runtime helpers', () => {
             signalIds: [],
             start: {} as Comment,
             symbol: 'page-symbol',
+            visibleCount: 0,
             watchCount: 0,
           },
         ],
@@ -203,6 +224,7 @@ describe('resume HMR runtime helpers', () => {
             scopeId: 'scope-header',
             signalIds: [],
             symbol: 'header-symbol',
+            visibleCount: 0,
             watchCount: 0,
           },
         ],
@@ -228,6 +250,7 @@ describe('resume HMR runtime helpers', () => {
             signalIds: [],
             start: {} as Comment,
             symbol: 'page-symbol',
+            visibleCount: 0,
             watchCount: 0,
           },
         ],
@@ -286,6 +309,7 @@ describe('resume HMR runtime helpers', () => {
         },
         subscriptions: {},
         symbols: {},
+        visibles: {},
         watches: {},
       })
 
@@ -307,6 +331,7 @@ describe('resume HMR runtime helpers', () => {
               scope: 'sc0',
               signalIds: ['s0'],
               symbol: 'page-symbol',
+              visibleCount: 0,
               watchCount: 0,
             },
           },
@@ -324,6 +349,7 @@ describe('resume HMR runtime helpers', () => {
             '$router:path': [],
           },
           symbols: {},
+          visibles: {},
           watches: {},
         })
 

@@ -1,4 +1,10 @@
-import { createEffect, createOnMount, createWatch, useRuntimeSignal } from './runtime.ts'
+import {
+  createEffect,
+  createOnMount,
+  createOnVisible,
+  createWatch,
+  useRuntimeSignal,
+} from './runtime.ts'
 
 export interface Signal<T> {
   value: T
@@ -15,6 +21,7 @@ export const useSignal: UseSignal = (value) => useRuntimeSignal(value)
 
 export const effect = createEffect
 export const onMount = createOnMount
+export const onVisible = createOnVisible as (fn: () => void) => void
 export const useWatch = createWatch as (fn: () => void, dependencies?: WatchDependency[]) => void
 
 export const useComputed$ = <T>(fn: () => T) => {

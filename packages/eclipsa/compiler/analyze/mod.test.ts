@@ -44,6 +44,8 @@ describe('analyzeModule()', () => {
         const count = useSignal(0);
         export default count;
       `),
-    ).rejects.toThrowError('useSignal() can only be called directly inside component$().')
+    ).rejects.toThrowError(
+      'useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).',
+    )
   })
 })
