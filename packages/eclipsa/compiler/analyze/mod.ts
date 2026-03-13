@@ -224,6 +224,20 @@ const findOwnerComponentInfo = (
   return null
 }
 
+const isDirectlyInsideComponent = (
+  path: NodePath<t.Node>,
+  componentInfoByFunction: WeakMap<t.Node, PrecomputedComponentInfo>,
+) => {
+  let current = path.parentPath
+  while (current) {
+    if (current.isArrowFunctionExpression() || current.isFunctionExpression()) {
+      return componentInfoByFunction.has(current.node)
+    }
+    current = current.parentPath
+  }
+  return false
+}
+
 const buildResumeHmrMetadata = (
   parsed: t.File,
   identifiers: {
@@ -780,6 +794,7 @@ export const analyzeModule = async (
   const eclipsaImports = imports.get('eclipsa')
   const componentIdentifier = eclipsaImports?.get('component$')
   const lazyIdentifier = eclipsaImports?.get('$')
+  const signalIdentifier = eclipsaImports?.get('useSignal')
   const watchIdentifier = eclipsaImports?.get('useWatch')
   const hmrMetadata = buildResumeHmrMetadata(parsed, {
     componentIdentifier,
@@ -874,6 +889,15 @@ export const analyzeModule = async (
         }
 
         const calleeName = path.node.callee.name
+        if (signalIdentifier && calleeName === signalIdentifier) {
+          if (!isDirectlyInsideComponent(path as NodePath<t.Node>, hmrMetadata.componentInfoByFunction)) {
+            throw path.buildCodeFrameError(
+              'useSignal() can only be called directly inside component$().',
+            )
+          }
+          return
+        }
+
         if (lazyIdentifier && calleeName === lazyIdentifier) {
           const argPath = path.get('arguments')[0]
           if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {

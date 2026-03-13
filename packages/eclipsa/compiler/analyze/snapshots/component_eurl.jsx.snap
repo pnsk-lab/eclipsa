@@ -6,9 +6,7 @@ export default component$(() => {
     console.log(a)
   })
 
-  return <button onClick$={() => add()}>
-    Add
-  </button>
+  return <button onClick$={() => add()}>Add</button>
 })
 
 
@@ -20,10 +18,8 @@ var analyze_input_default = component$(__eclipsaComponent(() => {
   const add = __eclipsaLazy("3poia1", () => {
     console.log(a);
   }, () => [a]);
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>
-    Add
-  </button>;
-}, "1ugpm1l", () => []));
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>Add</button>;
+}, "rrw1ii", () => []));
 export { analyze_input_default as default };
 
 // ================= 3poia1 (lazy) ==
@@ -34,14 +30,12 @@ export default __scope => {
 // ================= 1r40ykv (event) ==
 export default __scope => __scope[0]();
 
-// ================= 1ugpm1l (component) ==
+// ================= rrw1ii (component) ==
 import { __eclipsaLazy, __eclipsaEvent } from "eclipsa/internal";
 export default __scope => {
   const a = 0;
   const add = __eclipsaLazy("3poia1", () => {
     console.log(a);
   }, () => [a]);
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>
-    Add
-  </button>;
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>Add</button>;
 };

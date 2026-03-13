@@ -2729,9 +2729,7 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   const frame = getCurrentFrame()
 
   if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID) {
-    const standaloneId = `standalone:${Math.random().toString(36).slice(2)}`
-    const record = ensureSignalRecord(null, standaloneId, fallback)
-    return record.handle
+    throw new Error('useSignal() can only be used while rendering a component.')
   }
 
   const signalIndex = frame.signalCursor++

@@ -1,6 +1,5 @@
 import type { Component } from '../component.ts'
 import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
-import { useSignal } from '../signal.ts'
 import type { JSX } from '../../jsx/jsx-runtime.ts'
 
 interface ViteHotContext {
@@ -50,18 +49,18 @@ interface ComponentMetaInput {
   name: string
 }
 export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
-  const comp = useSignal(Component)
+  const current = { value: Component }
   const componentMeta = getComponentMeta(Component)
 
   meta.registry.components.set(meta.name, {
     update(newComponent) {
-      comp.value = newComponent
+      current.value = newComponent
     },
     Component,
   })
 
   const HotComponent = (props: unknown) => {
-    return () => comp.value(props)
+    return () => current.value(props)
   }
   if (!componentMeta) {
     return HotComponent
