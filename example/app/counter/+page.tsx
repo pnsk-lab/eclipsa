@@ -1,13 +1,11 @@
-import { component$, Link, useNavigate, useSignal } from "eclipsa";
-import { Header } from "../Header.tsx";
+import { component$, Link, useNavigate, useSignal } from 'eclipsa'
 
 export default component$(() => {
-  const count = useSignal(0);
-  const navigate = useNavigate();
+  const count = useSignal(0)
+  const navigate = useNavigate()
 
   return (
     <div>
-      <Header />
       <p>Counter page</p>
       <p>isNavigating: {String(navigate.isNavigating)}</p>
       <p>
@@ -19,11 +17,11 @@ export default component$(() => {
       <button
         type="button"
         onClick$={() => {
-          void navigate("/");
+          void navigate('/')
         }}
       >
         Back home with navigate()
       </button>
     </div>
-  );
-});
+  )
+})

@@ -1,29 +1,33 @@
-import type { UserConfig, ViteBuilder } from "vite";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { cwd } from "node:process";
-import { ROUTE_MANIFEST_ELEMENT_ID } from "../../core/router-shared.ts";
+import type { UserConfig, ViteBuilder } from 'vite'
+import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
+import { cwd } from 'node:process'
+import type { RouteManifest } from '../../core/router-shared.ts'
+import { ROUTE_MANIFEST_ELEMENT_ID } from '../../core/router-shared.ts'
 import {
-  createBuildRouteUrl,
+  createBuildModuleUrl,
+  createBuildServerModuleUrl,
   createRouteManifest,
   createRoutes,
-} from "../utils/routing.ts";
-import { collectAppSymbols, createBuildSymbolUrl } from "../compiler.ts";
+} from '../utils/routing.ts'
+import { collectAppSymbols, createBuildSymbolUrl } from '../compiler.ts'
 
 const renderServer = (
   routes: Awaited<ReturnType<typeof createRoutes>>,
-  routeManifest: Record<string, string>,
+  routeManifest: RouteManifest,
   symbolUrls: Record<string, string>,
 ) => {
   const routeTable = routes
     .map(
       (route) =>
-        `  ${JSON.stringify(route.honoPath)}: { load: () => import("../ssr/entries/route__${route.entryName}.mjs") },`,
+        `  ${JSON.stringify(route.honoPath)}: { page: ${JSON.stringify(createBuildServerModuleUrl(route.page))}, layouts: [${route.layouts
+          .map((layout) => JSON.stringify(createBuildServerModuleUrl(layout)))
+          .join(', ')}] },`,
     )
-    .join("\n");
+    .join('\n')
 
-  const serializedSymbolUrls = JSON.stringify(symbolUrls);
-  const serializedRouteManifest = JSON.stringify(routeManifest);
+  const serializedSymbolUrls = JSON.stringify(symbolUrls)
+  const serializedRouteManifest = JSON.stringify(routeManifest)
 
   return `import userApp from "../ssr/entries/server_entry.mjs";
 import SSRRoot from "../ssr/entries/ssr_root.mjs";
@@ -117,11 +121,50 @@ const injectHeadScripts = (html, ...scripts) => {
   return html.includes("</head>") ? html.replace("</head>", scriptMarkup + "</head>") : scriptMarkup + html;
 };
 
+const ROUTE_SLOT_ROUTE_KEY = Symbol.for("eclipsa.route-slot-route");
+
+const createRouteSlot = (route, startLayoutIndex) => {
+  const slot = {
+    __eclipsa_type: "route-slot",
+    pathname: route.pathname,
+    startLayoutIndex,
+  };
+  Object.defineProperty(slot, ROUTE_SLOT_ROUTE_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: route,
+    writable: true,
+  });
+  return slot;
+};
+
+const createRouteElement = (pathname, Page, Layouts) => {
+  if (Layouts.length === 0) {
+    return jsxDEV(Page, {}, null, false, {});
+  }
+
+  const route = {
+    layouts: Layouts.map((renderer) => ({ renderer })),
+    page: { renderer: Page },
+    pathname,
+  };
+  let children = null;
+  for (let index = Layouts.length - 1; index >= 0; index -= 1) {
+    const Layout = Layouts[index];
+    children = jsxDEV(Layout, { children: createRouteSlot(route, index + 1) }, null, false, {});
+  }
+  return children;
+};
+
 for (const [routePath, route] of Object.entries(routes)) {
   app.get(routePath, async (c) => {
-    const { default: Page } = await route.load();
+    const [{ default: Page }, ...layoutModules] = await Promise.all([
+      import(route.page),
+      ...route.layouts.map((layout) => import(layout)),
+    ]);
+    const Layouts = layoutModules.map((module) => module.default);
     const document = SSRRoot({
-      children: jsxDEV(Page, {}, null, false, {}),
+      children: createRouteElement(routePath, Page, Layouts),
       head: {
         type: Fragment,
         isStatic: true,
@@ -164,22 +207,25 @@ createServer(async (req, res) => {
 }).listen(port, () => {
   console.log("Eclipsa server listening on http://localhost:" + port);
 });
-`;
-};
+`
+}
 
 export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
-  const root = userConfig.root ?? cwd();
-  const routes = await createRoutes(root);
-  const routeManifest = createRouteManifest(routes, createBuildRouteUrl);
-  const symbols = await collectAppSymbols(root);
+  const root = userConfig.root ?? cwd()
+  const routes = await createRoutes(root)
+  const routeManifest = createRouteManifest(routes, createBuildModuleUrl)
+  const symbols = await collectAppSymbols(root)
   const symbolUrls = Object.fromEntries(
     symbols.map((symbol) => [symbol.id, createBuildSymbolUrl(symbol.id)]),
-  );
+  )
 
-  await builder.build(builder.environments.client);
-  await builder.build(builder.environments.ssr);
+  await builder.build(builder.environments.client)
+  await builder.build(builder.environments.ssr)
 
-  const serverDir = path.join(root, "dist/server");
-  await fs.mkdir(serverDir, { recursive: true });
-  await fs.writeFile(path.join(serverDir, "index.mjs"), renderServer(routes, routeManifest, symbolUrls));
-};
+  const serverDir = path.join(root, 'dist/server')
+  await fs.mkdir(serverDir, { recursive: true })
+  await fs.writeFile(
+    path.join(serverDir, 'index.mjs'),
+    renderServer(routes, routeManifest, symbolUrls),
+  )
+}
