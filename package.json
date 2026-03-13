@@ -7,7 +7,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev --filter=e2e",
+    "dev": "turbo run dev --filter=./e2e",
     "build": "turbo run build",
     "pack": "turbo run pack --filter=eclipsa",
     "typecheck": "turbo run typecheck",
