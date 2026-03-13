@@ -20,5 +20,5 @@
     "example/**/*.ts",
     "example/**/*.tsx",
     "example/**/*.d.ts"
-  ]
+, "e2e/playwright.config.ts"  ]
 }

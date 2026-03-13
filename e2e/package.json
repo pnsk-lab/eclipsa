@@ -1,8 +1,11 @@
 {
-  "name": "example",
+  "name": "@eclipsa/e2e",
   "private": true,
   "type": "module",
   "scripts": {
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:ui": "playwright test --ui",
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",
@@ -12,6 +15,7 @@
     "eclipsa": "workspace:*"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1"
   }
 }
