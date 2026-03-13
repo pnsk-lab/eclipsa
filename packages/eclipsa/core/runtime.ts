@@ -12,6 +12,7 @@ import {
   getWatchMeta,
   setNavigateMeta,
   setSignalMeta,
+  type ComponentMeta,
   type EventDescriptor,
   type LazyMeta,
   type SignalMeta,
@@ -287,6 +288,16 @@ const normalizeRoutePath = (pathname: string) => {
 
 let currentEffect: ReactiveEffect | null = null
 
+const withoutTrackedEffect = <T>(fn: () => T): T => {
+  const previous = currentEffect
+  currentEffect = null
+  try {
+    return fn()
+  } finally {
+    currentEffect = previous
+  }
+}
+
 const clearEffectSignals = (effect: ReactiveEffect) => {
   for (const signal of effect.signals) {
     signal.effects.delete(effect)
@@ -387,6 +398,21 @@ const decodeValue = (value: EncodedValue): unknown => {
     return result
   }
   return value
+}
+
+const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
+  let nextId = 0
+  for (const id of ids) {
+    if (!id.startsWith(prefix)) {
+      continue
+    }
+    const suffix = id.slice(prefix.length)
+    if (!/^\d+$/.test(suffix)) {
+      continue
+    }
+    nextId = Math.max(nextId, Number(suffix) + 1)
+  }
+  return nextId
 }
 
 const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> => {
@@ -745,6 +771,17 @@ const getOrCreateComponentState = (
   }
   container.components.set(id, component)
   return component
+}
+
+const resetComponentForSymbolChange = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  meta: ComponentMeta,
+) => {
+  component.didMount = false
+  component.scopeId = registerScope(container, meta.captures())
+  component.signalIds = []
+  pruneComponentWatches(container, component, 0)
 }
 
 const createWatchId = (componentId: string, watchIndex: number) => `${componentId}:w${watchIndex}`
@@ -1381,13 +1418,18 @@ const renderComponentToNodes = (
 
   const position = nextComponentPosition(container)
   const componentId = createComponentId(container, position.parentId, position.childIndex)
+  const existing = container.components.get(componentId)
+  const symbolChanged = !!existing && existing.symbol !== meta.symbol
   const component = getOrCreateComponentState(
     container,
     componentId,
     meta.symbol,
     position.parentId,
   )
-  component.scopeId = registerScope(container, meta.captures())
+  component.active = mode === 'client'
+  if (!existing || symbolChanged) {
+    resetComponentForSymbolChange(container, component, meta)
+  }
   component.props = props
   const frame = createFrame(container, component, mode)
   clearComponentSubscriptions(container, componentId)
@@ -1496,6 +1538,9 @@ export const renderClientNodes = (
   ) {
     return [container.doc.createTextNode(String(resolved))]
   }
+  if (typeof Node !== 'undefined' && resolved instanceof Node) {
+    return [resolved]
+  }
   if (isRouteSlot(resolved)) {
     const routeElement = resolveRouteSlot(container, resolved)
     return routeElement ? renderClientNodes(routeElement as JSX.Element, container) : []
@@ -1506,7 +1551,13 @@ export const renderClientNodes = (
 
   if (typeof resolved.type === 'function') {
     const evaluatedProps = evaluateProps(resolved.props)
-    return renderComponentToNodes(resolved.type, evaluatedProps, container, 'client')
+    const componentFn = resolved.type as Component
+    if (getComponentMeta(resolved.type)) {
+      return withoutTrackedEffect(() =>
+        renderComponentToNodes(componentFn, evaluatedProps, container, 'client'),
+      )
+    }
+    return renderComponentToNodes(componentFn, evaluatedProps, container, 'client')
   }
 
   if (resolved.type === FRAGMENT) {
@@ -1651,7 +1702,9 @@ export const renderClientInsertable = (
   }
   if (isRouteSlot(resolved)) {
     const routeElement = resolveRouteSlot(container, resolved)
-    return routeElement ? renderClientInsertable(routeElement, container) : [doc.createComment('eclipsa-empty')]
+    return routeElement
+      ? renderClientInsertable(routeElement, container)
+      : [doc.createComment('eclipsa-empty')]
   }
   if (container) {
     return renderClientNodes(resolved as JSX.Element | JSX.Element[], container)
@@ -2042,7 +2095,7 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
       ? evaluateProps(props as Record<string, unknown>)
       : (props as unknown)
   if (!existing || symbolChanged) {
-    component.scopeId = registerScope(container, meta.captures())
+    resetComponentForSymbolChange(container, component, meta)
   }
   component.active = true
   component.start = undefined
@@ -2390,6 +2443,7 @@ export const createResumeContainer = (
   for (const [id, slots] of Object.entries(payload.scopes)) {
     container.scopes.set(id, slots)
   }
+  container.nextScopeId = findNextNumericId(container.scopes.keys(), 'sc')
 
   for (const [id, componentPayload] of Object.entries(payload.components)) {
     container.components.set(id, {
@@ -2412,6 +2466,7 @@ export const createResumeContainer = (
     }
     record.subscribers = new Set(subscribers)
   }
+  container.nextSignalId = findNextNumericId(container.signals.keys(), 's')
 
   for (const [id, watchPayload] of Object.entries(payload.watches)) {
     const watch = getOrCreateWatchState(container, id, watchPayload.componentId)
