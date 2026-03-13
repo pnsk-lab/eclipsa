@@ -1,6 +1,9 @@
-import { defineConfig } from "vite-plus";
+import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   lint: {},
-  fmt: {},
-});
+  fmt: {
+    semi: false,
+    singleQuote: true,
+  },
+})

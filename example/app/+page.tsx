@@ -1,32 +1,30 @@
-import { component$, For, Link, useNavigate, useSignal, useWatch } from "eclipsa";
-import { Header } from "./Header.tsx";
+import { component$, For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
 
 export default component$(() => {
-  const todos = useSignal<string[]>(["ToDo1"]);
-  const inputting = useSignal("");
-  const navigate = useNavigate();
+  const todos = useSignal<string[]>(['ToDo1'])
+  const inputting = useSignal('')
+  const navigate = useNavigate()
 
   useWatch(() => {
-    console.log("todos changed", inputting.value);
-  });
+    console.log('todos changed', inputting.value)
+  })
 
   return (
     <div>
-      <Header />
       <p>isNavigating: {String(navigate.isNavigating)}</p>
       <p>
         <Link href="/counter">Open counter with Link</Link>
       </p>
       <input
         onInput$={(e: InputEvent) => {
-          inputting.value = (e.currentTarget as HTMLInputElement).value;
+          inputting.value = (e.currentTarget as HTMLInputElement).value
         }}
         value={inputting.value}
       />
       <button
         onClick$={() => {
-          todos.value = [...todos.value, inputting.value];
-          inputting.value = "";
+          todos.value = [...todos.value, inputting.value]
+          inputting.value = ''
         }}
       >
         Add
@@ -34,7 +32,7 @@ export default component$(() => {
       <button
         type="button"
         onClick$={() => {
-          void navigate("/counter");
+          void navigate('/counter')
         }}
       >
         Go to counter with navigate()
@@ -43,5 +41,5 @@ export default component$(() => {
         <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />
       </ul>
     </div>
-  );
-});
+  )
+})

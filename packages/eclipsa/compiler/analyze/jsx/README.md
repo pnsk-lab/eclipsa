@@ -8,12 +8,12 @@ Inspired from dom-expressions.
 ```jsx
 export const Component = () => {
   const count = useSignal(0)
-  return <div>
-    Count: {count.value}
-  </div>
+  return <div>Count: {count.value}</div>
 }
 ```
-is optimized to 
+
+is optimized to
+
 ```ts
 // SSR: <div>Count: <!-- e -->0<!-- /e --></div>
 const template = createTemplate('<div>Count</div>')

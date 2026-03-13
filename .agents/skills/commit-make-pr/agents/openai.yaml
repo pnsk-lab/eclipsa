@@ -1,4 +1,4 @@
 interface:
-  display_name: "Commit and Make PR"
-  short_description: "Standardize commit and PR creation workflows"
-  default_prompt: "Use $commit-make-pr to prepare the commit and open the PR with gh."
+  display_name: 'Commit and Make PR'
+  short_description: 'Standardize commit and PR creation workflows'
+  default_prompt: 'Use $commit-make-pr to prepare the commit and open the PR with gh.'

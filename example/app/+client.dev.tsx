@@ -1,3 +1,3 @@
-import { resumeContainer } from "eclipsa";
+import { resumeContainer } from 'eclipsa'
 
-resumeContainer(document);
+resumeContainer(document)

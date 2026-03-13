@@ -5,7 +5,7 @@ export type AnalyzedImports = Map<string, Map<string, string>>
 /**
  * Analyze imports from AST.
  */
-export const analyzeImports = (ast: babel.ParseResult): AnalyzedImports=> {
+export const analyzeImports = (ast: babel.ParseResult): AnalyzedImports => {
   const result: AnalyzedImports = new Map()
   traverse(ast, {
     ImportDeclaration: {

@@ -5,9 +5,12 @@ import { transformJSXElement } from './transform-jsxelement.ts'
 /**
  * JSX Transpiler (Output maybe optimized)
  */
-export const transformJSX = (path: NodePath, init: {
-  componentVariableObjectIdentifier: t.Identifier
-}) => {
+export const transformJSX = (
+  path: NodePath,
+  init: {
+    componentVariableObjectIdentifier: t.Identifier
+  },
+) => {
   const createTemplateID = path.scope.generateUidIdentifier('createTemplate')
   const createComponentResultID = path.scope.generateUidIdentifier('createComponentResult')
   const effectID = path.scope.generateUidIdentifier('effect')
@@ -16,14 +19,17 @@ export const transformJSX = (path: NodePath, init: {
 
   const applyID = path.scope.generateUidIdentifier('apply')
   let toInsertBody: t.Statement[] = [
-    t.importDeclaration([
-      t.importSpecifier(createTemplateID, t.identifier('createTemplate')),
-      t.importSpecifier(createComponentResultID, t.identifier('createComponentResult')),
-      t.importSpecifier(applyID, t.identifier('apply')),
-      t.importSpecifier(effectID, t.identifier('effect')),
-      t.importSpecifier(insertID, t.identifier('insert')),
-      t.importSpecifier(createComponentEurlID, t.identifier('createComponentEurl')),
-    ], t.stringLiteral('eclipsa/prod-client'))
+    t.importDeclaration(
+      [
+        t.importSpecifier(createTemplateID, t.identifier('createTemplate')),
+        t.importSpecifier(createComponentResultID, t.identifier('createComponentResult')),
+        t.importSpecifier(applyID, t.identifier('apply')),
+        t.importSpecifier(effectID, t.identifier('effect')),
+        t.importSpecifier(insertID, t.identifier('insert')),
+        t.importSpecifier(createComponentEurlID, t.identifier('createComponentEurl')),
+      ],
+      t.stringLiteral('eclipsa/prod-client'),
+    ),
   ]
 
   path.traverse({
@@ -34,15 +40,15 @@ export const transformJSX = (path: NodePath, init: {
           createComponentResult: createComponentResultID,
           effect: effectID,
           insert: insertID,
-          createComponentEurl: createComponentEurlID
+          createComponentEurl: createComponentEurlID,
         },
-        componentVariableObjectIdentifier: init.componentVariableObjectIdentifier
+        componentVariableObjectIdentifier: init.componentVariableObjectIdentifier,
       })
       toInsertBody = toInsertBody.concat(result.toInsertBody)
     },
   })
 
   return {
-    toInsertBody
+    toInsertBody,
   }
 }

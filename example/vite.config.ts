@@ -1,12 +1,12 @@
-import { defineConfig } from "vite-plus";
-import { eclipsa } from "eclipsa/vite";
+import { defineConfig } from 'vite-plus'
+import { eclipsa } from 'eclipsa/vite'
 
 export default defineConfig({
-  appType: "custom",
+  appType: 'custom',
   plugins: [eclipsa()],
   server: {
     fs: {
-      allow: [".."],
+      allow: ['..'],
     },
   },
-});
+})

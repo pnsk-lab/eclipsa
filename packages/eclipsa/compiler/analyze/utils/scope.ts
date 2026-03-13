@@ -3,10 +3,7 @@ import type { Binding, Scope } from '../babel.ts'
 /**
  * Get whether the variable can be referenced only in the given scope.
  */
-export const canBeReferedWithOnlyScope = (
-  binding?: Binding,
-  scope?: Scope
-) => {
+export const canBeReferedWithOnlyScope = (binding?: Binding, scope?: Scope) => {
   if (!binding || !scope) {
     return false
   }

@@ -1,150 +1,181 @@
-import { describe, expect, it } from "vitest";
-import { analyzeModule } from "../compiler/mod.ts";
-import { createResumeHmrUpdate } from "./compiler.ts";
+import { describe, expect, it } from 'vitest'
+import { analyzeModule } from '../compiler/mod.ts'
+import { createResumeHmrUpdate } from './compiler.ts'
 
-const analyze = async (source: string, filePath = "/tmp/example.tsx") => {
-  const analyzed = await analyzeModule(source, filePath);
+const analyze = async (source: string, filePath = '/tmp/example.tsx') => {
+  const analyzed = await analyzeModule(source, filePath)
   if (!analyzed) {
-    throw new Error("Expected analyzeModule() to return a module");
+    throw new Error('Expected analyzeModule() to return a module')
   }
-  return analyzed;
-};
+  return analyzed
+}
 
-const getComponentEntries = (source: Awaited<ReturnType<typeof analyze>>) =>
-  [...source.hmrManifest.components.values()];
+const getComponentEntries = (source: Awaited<ReturnType<typeof analyze>>) => [
+  ...source.hmrManifest.components.values(),
+]
 
 const findComponentId = (source: Awaited<ReturnType<typeof analyze>>, prefix?: string) =>
-  getComponentEntries(source).find((entry) => (prefix ? entry.hmrKey.startsWith(prefix) : true))?.id;
+  getComponentEntries(source).find((entry) => (prefix ? entry.hmrKey.startsWith(prefix) : true))?.id
 
 const findSymbolId = (source: Awaited<ReturnType<typeof analyze>>, prefix: string) =>
-  [...source.hmrManifest.symbols.values()].find((entry) => entry.hmrKey.startsWith(prefix))?.id;
+  [...source.hmrManifest.symbols.values()].find((entry) => entry.hmrKey.startsWith(prefix))?.id
 
-describe("createResumeHmrUpdate", () => {
-  it("keeps stable HMR keys for default and named components", async () => {
+describe('createResumeHmrUpdate', () => {
+  it('keeps stable HMR keys for default and named components', async () => {
     const previous = await analyze(`
       import { component$ } from "eclipsa";
       export const Header = component$(() => <h1>old</h1>);
       export default component$(() => <div>page</div>);
-    `);
+    `)
     const next = await analyze(`
       import { component$ } from "eclipsa";
       export const Header = component$(() => <h1>new</h1>);
       export default component$(() => <div>page</div>);
-    `);
+    `)
 
-    const previousKeys = [...previous.hmrManifest.components.keys()];
-    const nextKeys = [...next.hmrManifest.components.keys()];
+    const previousKeys = [...previous.hmrManifest.components.keys()]
+    const nextKeys = [...next.hmrManifest.components.keys()]
 
-    expect(previousKeys).toEqual(nextKeys);
-    expect(previousKeys).toContain("component:Header");
-    expect(previousKeys.some((key) => key !== "component:Header" && key.startsWith("component:"))).toBe(true);
-  });
+    expect(previousKeys).toEqual(nextKeys)
+    expect(previousKeys).toContain('component:Header')
+    expect(
+      previousKeys.some((key) => key !== 'component:Header' && key.startsWith('component:')),
+    ).toBe(true)
+  })
 
-  it("treats event body edits as symbol URL replacements without forcing rerender", async () => {
-    const previous = await analyze(`
+  it('treats event body edits as symbol URL replacements without forcing rerender', async () => {
+    const previous = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
       });
-    `, "/tmp/event-change.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/event-change.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
       });
-    `, "/tmp/event-change.tsx");
+    `,
+      '/tmp/event-change.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/event-change.tsx",
+      filePath: '/tmp/event-change.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
-    const [componentEntry] = getComponentEntries(previous);
-    const componentId = componentEntry?.id;
-    const eventId = componentEntry ? findSymbolId(previous, `${componentEntry.hmrKey}:event:click`) : undefined;
+      root: '/tmp',
+    })
+    const [componentEntry] = getComponentEntries(previous)
+    const componentId = componentEntry?.id
+    const eventId = componentEntry
+      ? findSymbolId(previous, `${componentEntry.hmrKey}:event:click`)
+      : undefined
 
-    expect(update).toBeTruthy();
-    expect(update?.fullReload).toBe(false);
-    expect(update?.rerenderComponentSymbols).toEqual([]);
-    expect(update?.rerenderOwnerSymbols).toEqual([]);
-    expect(componentId).toBeTruthy();
-    expect(eventId).toBeTruthy();
-    expect(componentId ? update?.symbolUrlReplacements[componentId] : undefined).toMatch(/\?eclipsa-symbol=/);
-    expect(eventId ? update?.symbolUrlReplacements[eventId] : undefined).toMatch(/\?eclipsa-symbol=/);
-  });
+    expect(update).toBeTruthy()
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderComponentSymbols).toEqual([])
+    expect(update?.rerenderOwnerSymbols).toEqual([])
+    expect(componentId).toBeTruthy()
+    expect(eventId).toBeTruthy()
+    expect(componentId ? update?.symbolUrlReplacements[componentId] : undefined).toMatch(
+      /\?eclipsa-symbol=/,
+    )
+    expect(eventId ? update?.symbolUrlReplacements[eventId] : undefined).toMatch(
+      /\?eclipsa-symbol=/,
+    )
+  })
 
-  it("rerenders the changed component when its JSX changes", async () => {
-    const previous = await analyze(`
+  it('rerenders the changed component when its JSX changes', async () => {
+    const previous = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button>{count.value}</button>;
       });
-    `, "/tmp/component-change.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/component-change.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button><span>{count.value}</span></button>;
       });
-    `, "/tmp/component-change.tsx");
+    `,
+      '/tmp/component-change.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/component-change.tsx",
+      filePath: '/tmp/component-change.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
-    const componentId = findComponentId(previous);
+      root: '/tmp',
+    })
+    const componentId = findComponentId(previous)
 
-    expect(update?.fullReload).toBe(false);
-    expect(update?.rerenderComponentSymbols).toEqual(componentId ? [componentId] : []);
-    expect(update?.rerenderOwnerSymbols).toEqual([]);
-  });
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderComponentSymbols).toEqual(componentId ? [componentId] : [])
+    expect(update?.rerenderOwnerSymbols).toEqual([])
+  })
 
-  it("escalates capture changes to owner rerender", async () => {
-    const previous = await analyze(`
+  it('escalates capture changes to owner rerender', async () => {
+    const previous = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         const label = useSignal("a");
         return <button onClick$={() => { count.value += 1; }}>{label.value}</button>;
       });
-    `, "/tmp/capture-change.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/capture-change.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         const label = useSignal("a");
         return <button onClick$={() => { count.value += label.value.length; }}>{label.value}</button>;
       });
-    `, "/tmp/capture-change.tsx");
+    `,
+      '/tmp/capture-change.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/capture-change.tsx",
+      filePath: '/tmp/capture-change.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
-    const componentId = findComponentId(previous);
+      root: '/tmp',
+    })
+    const componentId = findComponentId(previous)
 
-    expect(update?.fullReload).toBe(false);
-    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : []);
-  });
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : [])
+  })
 
-  it("marks local symbol graph changes for owner rerender", async () => {
-    const previous = await analyze(`
+  it('marks local symbol graph changes for owner rerender', async () => {
+    const previous = await analyze(
+      `
       import { component$, useSignal, useWatch } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         useWatch(() => { count.value; });
         return <button>{count.value}</button>;
       });
-    `, "/tmp/watch-change.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/watch-change.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$, useSignal, useWatch } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
@@ -152,76 +183,94 @@ describe("createResumeHmrUpdate", () => {
         useWatch(() => { console.log(count.value); });
         return <button>{count.value}</button>;
       });
-    `, "/tmp/watch-change.tsx");
+    `,
+      '/tmp/watch-change.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/watch-change.tsx",
+      filePath: '/tmp/watch-change.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
-    const componentId = findComponentId(previous);
+      root: '/tmp',
+    })
+    const componentId = findComponentId(previous)
 
-    expect(update?.fullReload).toBe(false);
-    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : []);
-  });
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : [])
+  })
 
-  it("registers URLs for newly added event symbols while rerendering the owner", async () => {
-    const previous = await analyze(`
+  it('registers URLs for newly added event symbols while rerendering the owner', async () => {
+    const previous = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button>{count.value}</button>;
       });
-    `, "/tmp/new-event.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/new-event.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$, useSignal } from "eclipsa";
       export default component$(() => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
       });
-    `, "/tmp/new-event.tsx");
+    `,
+      '/tmp/new-event.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/new-event.tsx",
+      filePath: '/tmp/new-event.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
-    const componentId = findComponentId(previous);
-    const [nextComponent] = getComponentEntries(next);
-    const nextEventId = nextComponent ? findSymbolId(next, `${nextComponent.hmrKey}:event:click`) : undefined;
+      root: '/tmp',
+    })
+    const componentId = findComponentId(previous)
+    const [nextComponent] = getComponentEntries(next)
+    const nextEventId = nextComponent
+      ? findSymbolId(next, `${nextComponent.hmrKey}:event:click`)
+      : undefined
 
-    expect(update?.fullReload).toBe(false);
-    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : []);
-    expect(nextEventId).toBeTruthy();
-    expect(nextEventId ? update?.symbolUrlReplacements[nextEventId] : undefined).toMatch(/\?eclipsa-symbol=/);
-  });
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderOwnerSymbols).toEqual(componentId ? [componentId] : [])
+    expect(nextEventId).toBeTruthy()
+    expect(nextEventId ? update?.symbolUrlReplacements[nextEventId] : undefined).toMatch(
+      /\?eclipsa-symbol=/,
+    )
+  })
 
-  it("falls back to full reload when top-level component membership changes", async () => {
-    const previous = await analyze(`
+  it('falls back to full reload when top-level component membership changes', async () => {
+    const previous = await analyze(
+      `
       import { component$ } from "eclipsa";
       export default component$(() => <div>ready</div>);
-    `, "/tmp/full-reload.tsx");
-    const next = await analyze(`
+    `,
+      '/tmp/full-reload.tsx',
+    )
+    const next = await analyze(
+      `
       import { component$ } from "eclipsa";
       export const Header = component$(() => <h1>new</h1>);
       export default component$(() => <div>ready</div>);
-    `, "/tmp/full-reload.tsx");
+    `,
+      '/tmp/full-reload.tsx',
+    )
 
     const update = createResumeHmrUpdate({
-      filePath: "/tmp/full-reload.tsx",
+      filePath: '/tmp/full-reload.tsx',
       next,
       previous,
-      root: "/tmp",
-    });
+      root: '/tmp',
+    })
 
     expect(update).toEqual({
-      fileUrl: "/full-reload.tsx",
+      fileUrl: '/full-reload.tsx',
       fullReload: true,
       rerenderComponentSymbols: [],
       rerenderOwnerSymbols: [],
       symbolUrlReplacements: {},
-    });
-  });
-});
+    })
+  })
+})

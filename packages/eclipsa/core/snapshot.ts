@@ -11,11 +11,13 @@ interface SnapshotState {
 const SNAPSHOT_STATE_KEY = Symbol.for('eclipsa.snapshot-state')
 
 const getCurrentSnapshotState = (): SnapshotState | null => {
-  return ((globalThis as unknown) as Record<PropertyKey, SnapshotState | null>)[SNAPSHOT_STATE_KEY] ?? null
+  return (
+    (globalThis as unknown as Record<PropertyKey, SnapshotState | null>)[SNAPSHOT_STATE_KEY] ?? null
+  )
 }
 
 const setCurrentSnapshotState = (state: SnapshotState | null) => {
-  ;((globalThis as unknown) as Record<PropertyKey, SnapshotState | null>)[SNAPSHOT_STATE_KEY] = state
+  ;(globalThis as unknown as Record<PropertyKey, SnapshotState | null>)[SNAPSHOT_STATE_KEY] = state
 }
 
 export const withSignalSnapshot = <T>(

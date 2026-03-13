@@ -1,5 +1,5 @@
-import type { SSRRootProps } from "eclipsa";
-import "./vite-env.d.ts";
+import type { SSRRootProps } from 'eclipsa'
+import './vite-env.d.ts'
 
 export default function Root(props: SSRRootProps) {
   return (
@@ -18,5 +18,5 @@ export default function Root(props: SSRRootProps) {
       </head>
       <body>{props.children}</body>
     </html>
-  );
+  )
 }
