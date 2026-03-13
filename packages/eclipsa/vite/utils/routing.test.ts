@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   collectRouteModules,
+  collectRouteServerModules,
   createBuildModuleUrl,
   createDevModuleUrl,
   createRouteManifest,
   createRoutes,
+  matchRoute,
   normalizeRoutePath,
   type RouteEntry,
 } from './routing.ts'
@@ -29,9 +31,7 @@ afterEach(async () => {
 const createTempApp = async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-routing-'))
   tempDirs.push(root)
-  await fs.mkdir(path.join(root, 'app', 'counter'), {
-    recursive: true,
-  })
+  await fs.mkdir(path.join(root, 'app'), { recursive: true })
   return root
 }
 
@@ -42,91 +42,183 @@ describe('routing helpers', () => {
     expect(normalizeRoutePath('/')).toBe('/')
   })
 
-  it('collects ancestor layouts for each page', async () => {
+  it('collects ancestor layouts and special files for grouped and dynamic routes', async () => {
     const root = await createTempApp()
     await Promise.all([
+      fs.mkdir(path.join(root, 'app', '(app)', 'blog', '[slug]'), { recursive: true }),
+      fs.mkdir(path.join(root, 'app', '(app)'), { recursive: true }),
+    ])
+    await Promise.all([
       fs.writeFile(path.join(root, 'app', '+layout.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', '+page.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', 'counter', '+layout.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', 'counter', '+page.tsx'), 'export default () => null;'),
+      fs.writeFile(path.join(root, 'app', '+not-found.tsx'), 'export default () => null;'),
+      fs.writeFile(path.join(root, 'app', '(app)', '+layout.tsx'), 'export default () => null;'),
+      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '+loading.tsx'), 'export default () => null;'),
+      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '[slug]', '+page.tsx'), 'export default () => null;'),
+      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '[slug]', '+server.ts'), 'export default { fetch() {} };'),
     ])
 
     const routes = await createRoutes(root)
-    const counterRoute = routes.find((route) => route.honoPath === '/counter')
+    const blogRoute = routes.find((route) => route.routePath === '/blog/[slug]')
 
-    expect(counterRoute).toMatchObject({
-      honoPath: '/counter',
+    expect(blogRoute).toMatchObject({
+      error: null,
       layouts: [
         {
-          entryName: 'layout__layout',
+          entryName: 'layout___layout',
           filePath: path.join(root, 'app', '+layout.tsx'),
         },
         {
-          entryName: 'layout__counter__layout',
-          filePath: path.join(root, 'app', 'counter', '+layout.tsx'),
+          entryName: 'layout___app____layout',
+          filePath: path.join(root, 'app', '(app)', '+layout.tsx'),
         },
       ],
-      page: {
-        entryName: 'route__counter__page',
-        filePath: path.join(root, 'app', 'counter', '+page.tsx'),
+      loading: {
+        entryName: 'special___app___blog___loading',
+        filePath: path.join(root, 'app', '(app)', 'blog', '+loading.tsx'),
       },
+      notFound: {
+        entryName: 'special___not_found',
+        filePath: path.join(root, 'app', '+not-found.tsx'),
+      },
+      page: {
+        entryName: 'route___app___blog___slug____page',
+        filePath: path.join(root, 'app', '(app)', 'blog', '[slug]', '+page.tsx'),
+      },
+      routePath: '/blog/[slug]',
+      server: {
+        entryName: 'server___app___blog___slug____server',
+        filePath: path.join(root, 'app', '(app)', 'blog', '[slug]', '+server.ts'),
+      },
+    })
+  })
+
+  it('supports dynamic, optional, and catch-all params with route groups removed from the path', () => {
+    const routes: RouteEntry[] = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        notFound: null,
+        page: null,
+        routePath: '/blog/[slug]',
+        segments: [
+          { kind: 'static', value: 'blog' },
+          { kind: 'required', value: 'slug' },
+        ],
+        server: null,
+      },
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        notFound: null,
+        page: null,
+        routePath: '/docs/[...rest]',
+        segments: [
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'rest' },
+        ],
+        server: null,
+      },
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        notFound: null,
+        page: null,
+        routePath: '/[[lang]]/about',
+        segments: [
+          { kind: 'optional', value: 'lang' },
+          { kind: 'static', value: 'about' },
+        ],
+        server: null,
+      },
+    ]
+
+    expect(matchRoute(routes, '/blog/hello')).toMatchObject({
+      params: { slug: 'hello' },
+      route: routes[0],
+    })
+    expect(matchRoute(routes, '/docs/a/b')).toMatchObject({
+      params: { rest: ['a', 'b'] },
+      route: routes[1],
+    })
+    expect(matchRoute(routes, '/about')).toMatchObject({
+      params: { lang: undefined },
+      route: routes[2],
+    })
+    expect(matchRoute(routes, '/ja/about')).toMatchObject({
+      params: { lang: 'ja' },
+      route: routes[2],
     })
   })
 
   it('creates module manifests for dev and build route loading', () => {
     const routes: RouteEntry[] = [
       {
-        honoPath: '/',
+        error: null,
         layouts: [
           {
-            entryName: 'layout__layout',
+            entryName: 'layout___layout',
             filePath: '/tmp/app/+layout.tsx',
           },
         ],
-        page: {
-          entryName: 'route__page',
-          filePath: '/tmp/app/+page.tsx',
+        loading: {
+          entryName: 'special__counter__loading',
+          filePath: '/tmp/app/counter/+loading.tsx',
         },
-      },
-      {
-        honoPath: '/counter',
-        layouts: [
-          {
-            entryName: 'layout__layout',
-            filePath: '/tmp/app/+layout.tsx',
-          },
-        ],
+        notFound: null,
         page: {
           entryName: 'route__counter__page',
           filePath: '/tmp/app/counter/+page.tsx',
         },
+        routePath: '/counter/[id]',
+        segments: [
+          { kind: 'static', value: 'counter' },
+          { kind: 'required', value: 'id' },
+        ],
+        server: {
+          entryName: 'server__counter__server',
+          filePath: '/tmp/app/counter/+server.ts',
+        },
       },
     ]
 
-    expect(createDevModuleUrl('/tmp', routes[1]!.page)).toBe('/app/counter/+page.tsx')
-    expect(createBuildModuleUrl(routes[1]!.page)).toBe('/entries/route__counter__page.js')
-    expect(createRouteManifest(routes, createBuildModuleUrl)).toEqual({
-      '/': {
-        layouts: ['/entries/layout__layout.js'],
-        page: '/entries/route__page.js',
-      },
-      '/counter': {
-        layouts: ['/entries/layout__layout.js'],
+    expect(createDevModuleUrl('/tmp', routes[0]!.page!)).toBe('/app/counter/+page.tsx')
+    expect(createBuildModuleUrl(routes[0]!.page!)).toBe('/entries/route__counter__page.js')
+    expect(createRouteManifest(routes, createBuildModuleUrl)).toEqual([
+      {
+        error: null,
+        layouts: ['/entries/layout___layout.js'],
+        loading: '/entries/special__counter__loading.js',
+        notFound: null,
         page: '/entries/route__counter__page.js',
+        routePath: '/counter/[id]',
+        segments: [
+          { kind: 'static', value: 'counter' },
+          { kind: 'required', value: 'id' },
+        ],
+        server: '/entries/server__counter__server.js',
       },
-    })
+    ])
     expect(collectRouteModules(routes)).toEqual([
-      {
-        entryName: 'route__page',
-        filePath: '/tmp/app/+page.tsx',
-      },
-      {
-        entryName: 'layout__layout',
-        filePath: '/tmp/app/+layout.tsx',
-      },
       {
         entryName: 'route__counter__page',
         filePath: '/tmp/app/counter/+page.tsx',
+      },
+      {
+        entryName: 'layout___layout',
+        filePath: '/tmp/app/+layout.tsx',
+      },
+      {
+        entryName: 'special__counter__loading',
+        filePath: '/tmp/app/counter/+loading.tsx',
+      },
+    ])
+    expect(collectRouteServerModules(routes)).toEqual([
+      {
+        entryName: 'server__counter__server',
+        filePath: '/tmp/app/counter/+server.ts',
       },
     ])
   })

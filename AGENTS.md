@@ -20,7 +20,7 @@ This file applies to the whole repository.
 - `bun run dev`
 - `bun run build`
 - `bun run test`
-- `bunx tsc -p tsconfig.json --noEmit`
+- `bun typecheck`
 
 ## Directory Guide
 

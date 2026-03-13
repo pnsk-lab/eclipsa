@@ -1,7 +1,7 @@
 import type { JSX } from '../jsx/types.ts'
 import { component$ } from './component.ts'
-import { ROUTE_LINK_ATTR, ROUTE_REPLACE_ATTR, type Navigate } from './router-shared.ts'
-import { useRuntimeNavigate } from './runtime.ts'
+import { ROUTE_LINK_ATTR, ROUTE_REPLACE_ATTR, type Navigate, type RouteParams } from './router-shared.ts'
+import { notFound as throwRouteNotFound, useRuntimeNavigate, useRuntimeRouteParams } from './runtime.ts'
 
 export interface LinkProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
@@ -97,3 +97,7 @@ export const Link = component$((props: LinkProps) => {
 })
 
 export const useNavigate = (): Navigate => useRuntimeNavigate()
+
+export const useRouteParams = (): RouteParams => useRuntimeRouteParams()
+
+export const notFound = (): never => throwRouteNotFound()

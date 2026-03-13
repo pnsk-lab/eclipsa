@@ -1,13 +1,15 @@
 import { Hono, type Context } from 'hono'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
-import { ROUTE_MANIFEST_ELEMENT_ID } from '../../core/router-shared.ts'
+import { ROUTE_MANIFEST_ELEMENT_ID, type RouteParams } from '../../core/router-shared.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import { Fragment, jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
 import {
   createDevModuleUrl,
   createRouteManifest,
   createRoutes,
+  matchRoute,
+  normalizeRoutePath,
   type RouteEntry,
 } from '../utils/routing.ts'
 import * as path from 'node:path'
@@ -17,6 +19,8 @@ import {
   collectAppSymbols,
   createDevSymbolUrl,
 } from '../compiler.ts'
+
+const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
 
 interface DevAppDeps {
   collectAppActions(root: string): Promise<{ id: string; filePath: string }[]>
@@ -79,6 +83,7 @@ const createRouteSlot = (
   route: {
     layouts: Array<{ renderer: (props: unknown) => unknown }>
     page: { renderer: (props: unknown) => unknown }
+    params: RouteParams
     pathname: string
   },
   startLayoutIndex: number,
@@ -97,13 +102,27 @@ const createRouteSlot = (
   return slot
 }
 
+const createRouteProps = (params: RouteParams, props: Record<string, unknown>) => {
+  const nextProps = {
+    ...props,
+  }
+  Object.defineProperty(nextProps, ROUTE_PARAMS_PROP, {
+    configurable: true,
+    enumerable: false,
+    value: params,
+    writable: true,
+  })
+  return nextProps
+}
+
 const createRouteElement = (
   pathname: string,
+  params: RouteParams,
   Page: (props: unknown) => unknown,
   Layouts: Array<(props: unknown) => unknown>,
 ): any => {
   if (Layouts.length === 0) {
-    return jsxDEV(Page as any, {}, null, false, {})
+    return jsxDEV(Page as any, createRouteProps(params, {}), null, false, {})
   }
 
   const route = {
@@ -113,6 +132,7 @@ const createRouteElement = (
     page: {
       renderer: Page,
     },
+    params,
     pathname,
   }
   let children: unknown = null
@@ -120,9 +140,9 @@ const createRouteElement = (
     const Layout = Layouts[index]!
     children = jsxDEV(
       Layout as any,
-      {
+      createRouteProps(params, {
         children: createRouteSlot(route, index + 1),
-      },
+      }),
       null,
       false,
       {},
@@ -130,6 +150,68 @@ const createRouteElement = (
   }
   return children
 }
+
+const scoreSpecialRoute = (route: RouteEntry, pathname: string) => {
+  const pathnameSegments = normalizeRoutePath(pathname).split('/').filter(Boolean)
+  let score = 0
+  for (let index = 0; index < route.segments.length && index < pathnameSegments.length; index += 1) {
+    const segment = route.segments[index]!
+    const pathnameSegment = pathnameSegments[index]
+    if (segment.kind === 'static') {
+      if (segment.value !== pathnameSegment) {
+        break
+      }
+      score += 10
+      continue
+    }
+    score += segment.kind === 'rest' ? 1 : 2
+    if (segment.kind === 'rest') {
+      break
+    }
+  }
+  return score
+}
+
+const findSpecialRoute = (
+  routes: RouteEntry[],
+  pathname: string,
+  kind: 'error' | 'notFound',
+): { params: RouteParams; route: RouteEntry } | null => {
+  const matched = matchRoute(routes, pathname)
+  if (matched?.route[kind]) {
+    return matched
+  }
+
+  let best: { params: RouteParams; route: RouteEntry } | null = null
+  let bestScore = -1
+  for (const route of routes) {
+    if (!route[kind]) {
+      continue
+    }
+    const score = scoreSpecialRoute(route, pathname)
+    if (score > bestScore) {
+      best = {
+        params: {},
+        route,
+      }
+      bestScore = score
+    }
+  }
+  return best
+}
+
+const applyRequestParams = (c: Context, params: RouteParams) => {
+  const req = c.req as any
+  req.param = (name?: string) => {
+    if (!name) {
+      return params
+    }
+    return params[name]
+  }
+}
+
+const isNotFoundError = (error: unknown) =>
+  !!error && typeof error === 'object' && (error as { __eclipsa_not_found__?: boolean }).__eclipsa_not_found__ === true
 
 const createDevApp = async (init: DevAppInit) => {
   const deps = init.deps ?? {
@@ -149,12 +231,6 @@ const createDevApp = async (init: DevAppInit) => {
   const allSymbols = await deps.collectAppSymbols(init.resolvedConfig.root)
   const actionModules = new Map(actions.map((action) => [action.id, action.filePath]))
   const loaderModules = new Map(loaders.map((loader) => [loader.id, loader.filePath]))
-  const loaderIdsByFilePath = new Map<string, string[]>()
-  for (const loader of loaders) {
-    const ids = loaderIdsByFilePath.get(loader.filePath) ?? []
-    ids.push(loader.id)
-    loaderIdsByFilePath.set(loader.filePath, ids)
-  }
   const symbolUrls = Object.fromEntries(
     allSymbols.map((symbol) => [
       symbol.id,
@@ -164,6 +240,109 @@ const createDevApp = async (init: DevAppInit) => {
   const routeManifest = createRouteManifest(routes, (entry) =>
     deps.createDevModuleUrl(init.resolvedConfig.root, entry),
   )
+
+  const invokeRouteServer = async (filePath: string, c: Context, params: RouteParams) => {
+    applyRequestParams(c, params)
+    const mod = await init.runner.import(filePath)
+    const methodHandler = mod[c.req.method] as ((context: Context) => Response | Promise<Response>) | undefined
+    if (typeof methodHandler === 'function') {
+      return methodHandler(c)
+    }
+    const serverApp = mod.default as { fetch?: (request: Request, env?: unknown, ctx?: unknown) => Response | Promise<Response> } | undefined
+    if (serverApp && typeof serverApp.fetch === 'function') {
+      return serverApp.fetch(c.req.raw)
+    }
+    return c.text('Not Found', 404)
+  }
+
+  const renderRouteResponse = async (
+    route: RouteEntry,
+    pathname: string,
+    params: RouteParams,
+    c: Context,
+    modulePath: string,
+    status = 200,
+  ) => {
+    const [
+      modules,
+      { default: SSRRoot },
+      { renderSSRAsync, resolvePendingLoaders, serializeResumePayload },
+    ] = await Promise.all([
+      Promise.all([
+        init.runner.import(modulePath),
+        ...route.layouts.map((layout) => init.runner.import(layout.filePath)),
+      ]),
+      init.runner.import('/app/+ssr-root.tsx'),
+      init.runner.import('eclipsa'),
+    ])
+    const [{ default: Page }, ...layoutModules] = modules
+    const Layouts = layoutModules.map((module) => module.default)
+
+    const document = SSRRoot({
+      children: createRouteElement(pathname, params, Page, Layouts) as SSRRootProps['children'],
+      head: {
+        type: Fragment,
+        isStatic: true,
+        props: {
+          children: [
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
+                children: 'import("/@vite/client")',
+              },
+            },
+            {
+              type: 'script',
+              props: {
+                src: '/app/+client.dev.tsx',
+                type: 'module',
+              },
+            },
+          ],
+        },
+      },
+    } satisfies SSRRootProps)
+
+    applyRequestParams(c, params)
+    const { html, payload } = await renderSSRAsync(() => document, {
+      resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
+      symbols: symbolUrls,
+    })
+    const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${serializeResumePayload(
+      payload,
+    )}</script>`
+    const routeManifestScript = `<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">${JSON.stringify(
+      routeManifest,
+    )}</script>`
+
+    return new Response(injectHeadScripts(html, payloadScript, routeManifestScript), { status, headers: { 'content-type': 'text/html; charset=utf-8' } })
+  }
+
+  const renderMatchedPage = async (
+    match: { params: RouteParams; route: RouteEntry },
+    c: Context,
+  ) => {
+    try {
+      return await renderRouteResponse(match.route, normalizeRoutePath(new URL(c.req.url).pathname), match.params, c, match.route.page!.filePath)
+    } catch (error) {
+      const fallback = isNotFoundError(error)
+        ? findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'notFound')
+        : findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'error')
+      const module = fallback?.route[isNotFoundError(error) ? 'notFound' : 'error']
+      if (!fallback || !module) {
+        return c.text(isNotFoundError(error) ? 'Not Found' : 'Internal Server Error', isNotFoundError(error) ? 404 : 500)
+      }
+      return renderRouteResponse(
+        fallback.route,
+        normalizeRoutePath(new URL(c.req.url).pathname),
+        fallback.params,
+        c,
+        module.filePath,
+        isNotFoundError(error) ? 404 : 500,
+      )
+    }
+  }
 
   app.post('/__eclipsa/action/:id', async (c) => {
     const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
@@ -191,71 +370,32 @@ const createDevApp = async (init: DevAppInit) => {
     return executeLoader(id, c)
   })
 
-  const createHandler = (entry: RouteEntry) => async (c: Context) => {
-    const [
-      modules,
-      { default: SSRRoot },
-      { primeLoaderState, renderSSRAsync, serializeResumePayload },
-    ] =
-      await Promise.all([
-        Promise.all([
-          init.runner.import(entry.page.filePath),
-          ...entry.layouts.map((layout) => init.runner.import(layout.filePath)),
-        ]),
-        init.runner.import('/app/+ssr-root.tsx'),
-        init.runner.import('eclipsa'),
-      ])
-    const [{ default: Page }, ...layoutModules] = modules
-    const Layouts = layoutModules.map((module) => module.default)
-    const loaderIds = [entry.page.filePath, ...entry.layouts.map((layout) => layout.filePath)].flatMap(
-      (filePath) => loaderIdsByFilePath.get(filePath) ?? [],
-    )
+  app.all('*', async (c) => {
+    const pathname = normalizeRoutePath(new URL(c.req.url).pathname)
+    const match = matchRoute(routes, pathname)
 
-    const document = SSRRoot({
-      children: createRouteElement(entry.honoPath, Page, Layouts) as SSRRootProps['children'],
-      head: {
-        type: Fragment,
-        isStatic: true,
-        props: {
-          children: [
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: 'import("/@vite/client")',
-              },
-            },
-            {
-              type: 'script',
-              props: {
-                src: '/app/+client.dev.tsx',
-                type: 'module',
-              },
-            },
-          ],
-        },
-      },
-    } satisfies SSRRootProps)
+    if (!match) {
+      const fallback = findSpecialRoute(routes, pathname, 'notFound')
+      if (fallback?.route.notFound) {
+        return renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound.filePath, 404)
+      }
+      return c.text('Not Found', 404)
+    }
 
-    const { html, payload } = await renderSSRAsync(() => document, {
-      prepare: async (container: any) => {
-        await Promise.all(loaderIds.map((id) => primeLoaderState(container, id, c)))
-      },
-      symbols: symbolUrls,
-    })
-    const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${serializeResumePayload(
-      payload,
-    )}</script>`
-    const routeManifestScript = `<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">${JSON.stringify(
-      routeManifest,
-    )}</script>`
+    if ((c.req.method === 'GET' || c.req.method === 'HEAD') && match.route.page) {
+      return renderMatchedPage(match, c)
+    }
 
-    return c.html(injectHeadScripts(html, payloadScript, routeManifestScript))
-  }
+    if (match.route.server) {
+      return invokeRouteServer(match.route.server.filePath, c, match.params)
+    }
 
-  for (const entry of routes) {
-    app.get(entry.honoPath, createHandler(entry))
-  }
+    if (match.route.page) {
+      return renderMatchedPage(match, c)
+    }
+
+    return c.text('Not Found', 404)
+  })
 
   return app
 }

@@ -28,7 +28,7 @@ const getResumePayload = (doc: Document): ResumePayload | null => {
 const getRouteManifest = (doc: Document): RouteManifest => {
   const elem = doc.getElementById(ROUTE_MANIFEST_ELEMENT_ID)
   if (!elem?.textContent) {
-    return {}
+    return []
   }
 
   return JSON.parse(elem.textContent) as RouteManifest

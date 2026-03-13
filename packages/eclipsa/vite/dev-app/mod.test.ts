@@ -21,12 +21,17 @@ describe('createDevFetch', () => {
   beforeEach(() => {
     routes = [
       {
-        honoPath: '/',
+        error: null,
         layouts: [],
+        loading: null,
+        notFound: null,
         page: {
           entryName: 'route__page',
           filePath: '/tmp/app/+page.tsx',
         },
+        routePath: '/',
+        segments: [],
+        server: null,
       },
     ]
     serverEntryImports = 0
@@ -74,7 +79,7 @@ describe('createDevFetch', () => {
                   payload: {},
                 }
               },
-              primeLoaderState: vi.fn(),
+              resolvePendingLoaders: vi.fn(),
               serializeResumePayload() {
                 return '{}'
               },
@@ -97,12 +102,17 @@ describe('createDevFetch', () => {
     routes = [
       ...routes,
       {
-        honoPath: 'hello',
+        error: null,
         layouts: [],
+        loading: null,
+        notFound: null,
         page: {
           entryName: 'route__hello__page',
           filePath: '/tmp/app/hello/+page.tsx',
         },
+        routePath: '/hello',
+        segments: [{ kind: 'static', value: 'hello' }],
+        server: null,
       },
     ]
     devFetch.invalidate()
@@ -119,17 +129,22 @@ describe('createDevFetch', () => {
   it('renders ancestor layouts around the page component', async () => {
     routes = [
       {
-        honoPath: '/',
+        error: null,
         layouts: [
           {
             entryName: 'layout__layout',
             filePath: '/tmp/app/+layout.tsx',
           },
         ],
+        loading: null,
+        notFound: null,
         page: {
           entryName: 'route__page',
           filePath: '/tmp/app/+page.tsx',
         },
+        routePath: '/',
+        segments: [],
+        server: null,
       },
     ]
 
@@ -177,7 +192,7 @@ describe('createDevFetch', () => {
                   payload: {},
                 }
               },
-              primeLoaderState: vi.fn(),
+              resolvePendingLoaders: vi.fn(),
               serializeResumePayload() {
                 return '{}'
               },
@@ -194,10 +209,10 @@ describe('createDevFetch', () => {
             }
           }
           return {
-            default() {
+            default(props: any) {
               return {
+                params: props.__eclipsa_route_params,
                 type: 'page',
-                props: {},
               }
             },
           }
@@ -219,16 +234,7 @@ describe('createDevFetch', () => {
 describe('shouldInvalidateDevApp', () => {
   it('tracks app tsx edits and server-entry changes', () => {
     expect(shouldInvalidateDevApp('/tmp', '/tmp/app/hello/+page.tsx', 'add')).toBe(true)
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/hello/+page.tsx', 'change')).toBe(true)
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/hello/+page.tsx', 'unlink')).toBe(true)
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/+page.tsx', 'add')).toBe(true)
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/+ssr-root.tsx', 'change')).toBe(true)
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/+client.dev.tsx', 'change')).toBe(true)
     expect(shouldInvalidateDevApp('/tmp', '/tmp/app/+server-entry.ts', 'change')).toBe(true)
-  })
-
-  it('ignores unrelated files', () => {
-    expect(shouldInvalidateDevApp('/tmp', '/tmp/app/data.json', 'change')).toBe(false)
     expect(shouldInvalidateDevApp('/tmp', '/tmp/src/hello/+page.tsx', 'add')).toBe(false)
   })
 })

@@ -15,6 +15,8 @@ import { useSignal } from './signal.ts'
 
 const LOADER_REGISTRY_KEY = Symbol.for('eclipsa.loader-registry')
 const LOADER_CONTENT_TYPE = 'application/eclipsa-loader+json'
+const SSR_PENDING_LOADER_ERROR = Symbol.for('eclipsa.ssr-pending-loader-error')
+const SSR_PENDING_LOADER_IDS_KEY = Symbol.for('eclipsa.ssr-pending-loader-ids')
 
 type MiddlewareEnv<T> = T extends {
   readonly __eclipsa_loader_env__?: infer MiddlewareEnv
@@ -114,6 +116,31 @@ interface LoaderJsonFailure {
   error: SerializedValue
   ok: false
 }
+
+const ensurePendingSsrLoaderIds = (container: RuntimeContainer) => {
+  const record = container as RuntimeContainer & {
+    [SSR_PENDING_LOADER_IDS_KEY]?: Set<string>
+  }
+  const existing = record[SSR_PENDING_LOADER_IDS_KEY]
+  if (existing instanceof Set) {
+    return existing
+  }
+  const created = new Set<string>()
+  record[SSR_PENDING_LOADER_IDS_KEY] = created
+  return created
+}
+
+export const markPendingSsrLoader = (container: RuntimeContainer, id: string) => {
+  ensurePendingSsrLoaderIds(container).add(id)
+}
+
+export const consumePendingSsrLoaderIds = (container: RuntimeContainer) => {
+  const ids = [...ensurePendingSsrLoaderIds(container)]
+  ensurePendingSsrLoaderIds(container).clear()
+  return ids
+}
+
+export const isPendingSsrLoaderError = (error: unknown) => error === SSR_PENDING_LOADER_ERROR
 
 const getLoaderRegistry = () => {
   const globalRecord = globalThis as Record<PropertyKey, unknown>
@@ -354,6 +381,15 @@ export const primeLoaderState = async (container: RuntimeContainer, id: string, 
   return value
 }
 
+export const resolvePendingLoaders = async (container: RuntimeContainer, c: Context<any>) => {
+  const pendingIds = consumePendingSsrLoaderIds(container)
+  if (pendingIds.length === 0) {
+    return false
+  }
+  await Promise.all(pendingIds.map((id) => primeLoaderState(container, id, c)))
+  return true
+}
+
 export const __eclipsaLoader = <const Middlewares extends readonly LoaderMiddleware<any>[], Output>(
   id: string,
   middlewares: readonly [...Middlewares],
@@ -378,7 +414,11 @@ export const __eclipsaLoader = <const Middlewares extends readonly LoaderMiddlew
 
       const initialState = container?.loaderStates.get(id)
       if (typeof window === 'undefined' && !initialState?.loaded) {
-        throw new Error(`loader$("${id}") was used during SSR before it was preloaded.`)
+        if (!container) {
+          throw new Error(`loader$("${id}") was used during SSR before it was preloaded.`)
+        }
+        markPendingSsrLoader(container, id)
+        throw SSR_PENDING_LOADER_ERROR
       }
 
       const loadingState = createHandleSignal(container, id, 'loading', false)

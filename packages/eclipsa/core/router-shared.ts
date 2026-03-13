@@ -11,9 +11,22 @@ export interface Navigate {
   readonly isNavigating: boolean
 }
 
-export interface RouteModuleManifest {
-  layouts: string[]
-  page: string
+export type RouteParams = Record<string, string | string[] | undefined>
+
+export interface RoutePathSegment {
+  kind: 'static' | 'required' | 'optional' | 'rest'
+  value: string
 }
 
-export type RouteManifest = Record<string, RouteModuleManifest>
+export interface RouteModuleManifest {
+  error: string | null
+  layouts: string[]
+  loading: string | null
+  notFound: string | null
+  page: string | null
+  routePath: string
+  segments: RoutePathSegment[]
+  server: string | null
+}
+
+export type RouteManifest = RouteModuleManifest[]

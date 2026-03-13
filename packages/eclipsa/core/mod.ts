@@ -1,7 +1,7 @@
 export * from './action.ts'
 export * from './component.ts'
 export * from './loader.ts'
-export { Link, useNavigate, type LinkProps } from './router.tsx'
+export { Link, notFound, useNavigate, useRouteParams, type LinkProps } from './router.tsx'
 export * from './resume.ts'
 export * from './serialize.ts'
 export * from './signal.ts'

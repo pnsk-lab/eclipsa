@@ -38,6 +38,7 @@ import {
   type NavigateOptions,
   type RouteManifest,
   type RouteModuleManifest,
+  type RouteParams,
 } from './router-shared.ts'
 
 const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
@@ -47,6 +48,8 @@ const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
 const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
 const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
 const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
+const ROUTE_NOT_FOUND_KEY = Symbol.for('eclipsa.route-not-found')
+const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 const ROOT_COMPONENT_ID = '$root'
@@ -141,7 +144,7 @@ interface RouterState {
   currentRoute: LoadedRoute | null
   isNavigating: { value: boolean }
   loadedRoutes: Map<string, LoadedRoute>
-  manifest: Map<string, RouteModuleManifest>
+  manifest: RouteManifest
   navigate: Navigate
   sequence: number
 }
@@ -198,7 +201,9 @@ interface LoadedRouteModule {
 }
 
 interface LoadedRoute {
+  entry: RouteModuleManifest
   layouts: LoadedRouteModule[]
+  params: RouteParams
   pathname: string
   page: LoadedRouteModule
   render: RouteRenderer
@@ -304,6 +309,129 @@ const normalizeRoutePath = (pathname: string) => {
   }
   return withLeadingSlash
 }
+
+const EMPTY_ROUTE_PARAMS = Object.freeze({}) as RouteParams
+
+const splitRoutePath = (pathname: string) => normalizeRoutePath(pathname).split('/').filter(Boolean)
+
+const matchRouteSegments = (
+  segments: RouteModuleManifest['segments'],
+  pathnameSegments: string[],
+  routeIndex = 0,
+  pathIndex = 0,
+  params: RouteParams = {},
+): RouteParams | null => {
+  if (routeIndex >= segments.length) {
+    return pathIndex >= pathnameSegments.length ? params : null
+  }
+
+  const segment = segments[routeIndex]!
+  switch (segment.kind) {
+    case 'static':
+      if (pathnameSegments[pathIndex] !== segment.value) {
+        return null
+      }
+      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, params)
+    case 'required':
+      if (pathIndex >= pathnameSegments.length) {
+        return null
+      }
+      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, {
+        ...params,
+        [segment.value]: pathnameSegments[pathIndex],
+      })
+    case 'optional': {
+      const consumed =
+        pathIndex < pathnameSegments.length
+          ? matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, {
+              ...params,
+              [segment.value]: pathnameSegments[pathIndex],
+            })
+          : null
+      if (consumed) {
+        return consumed
+      }
+      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex, {
+        ...params,
+        [segment.value]: undefined,
+      })
+    }
+    case 'rest':
+      return matchRouteSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
+        ...params,
+        [segment.value]: pathnameSegments.slice(pathIndex),
+      })
+  }
+}
+
+const matchRouteManifest = (manifest: RouteManifest, pathname: string) => {
+  const normalizedPath = normalizeRoutePath(pathname)
+  const pathnameSegments = splitRoutePath(normalizedPath)
+  for (const entry of manifest) {
+    const params = matchRouteSegments(entry.segments, pathnameSegments)
+    if (params) {
+      return {
+        entry,
+        params,
+        pathname: normalizedPath,
+      }
+    }
+  }
+  return null
+}
+
+const scoreSpecialManifestEntry = (entry: RouteModuleManifest, pathname: string) => {
+  const pathnameSegments = splitRoutePath(pathname)
+  let score = 0
+  for (let index = 0; index < entry.segments.length && index < pathnameSegments.length; index += 1) {
+    const segment = entry.segments[index]!
+    const pathnameSegment = pathnameSegments[index]
+    if (segment.kind === 'static') {
+      if (segment.value !== pathnameSegment) {
+        break
+      }
+      score += 10
+      continue
+    }
+    score += segment.kind === 'rest' ? 1 : 2
+    if (segment.kind === 'rest') {
+      break
+    }
+  }
+  return score
+}
+
+const findSpecialManifestEntry = (
+  manifest: RouteManifest,
+  pathname: string,
+  kind: 'error' | 'notFound',
+) => {
+  const matched = matchRouteManifest(manifest, pathname)
+  if (matched?.entry[kind]) {
+    return matched
+  }
+
+  let best: ReturnType<typeof matchRouteManifest> = null
+  let bestScore = -1
+  for (const entry of manifest) {
+    if (!entry[kind]) {
+      continue
+    }
+    const score = scoreSpecialManifestEntry(entry, pathname)
+    if (score > bestScore) {
+      best = {
+        entry,
+        params: EMPTY_ROUTE_PARAMS,
+        pathname: normalizeRoutePath(pathname),
+      }
+      bestScore = score
+    }
+  }
+  return best
+}
+
+const routeCacheKey = (pathname: string, variant: 'page' | 'loading' | 'error' | 'not-found' = 'page') =>
+  `${normalizeRoutePath(pathname)}::${variant}`
 
 let currentEffect: ReactiveEffect | null = null
 
@@ -694,9 +822,7 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
 const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
   if (container.router) {
     if (manifest) {
-      for (const [pathname, route] of Object.entries(manifest)) {
-        container.router.manifest.set(normalizeRoutePath(pathname), route)
-      }
+      container.router.manifest = [...manifest]
     }
     return container.router
   }
@@ -714,7 +840,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     currentRoute: null,
     isNavigating,
     loadedRoutes: new Map(),
-    manifest: new Map(),
+    manifest: [],
     navigate: undefined as unknown as Navigate,
     sequence: 0,
   }
@@ -735,9 +861,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   })
 
   if (manifest) {
-    for (const [pathname, route] of Object.entries(manifest)) {
-      router.manifest.set(normalizeRoutePath(pathname), route)
-    }
+    router.manifest = [...manifest]
   }
 
   return router
@@ -2063,8 +2187,21 @@ const resolveRouteSlot = (container: RuntimeContainer | null, slot: RouteSlotCar
 }
 
 const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
+  const createRouteProps = (props: Record<string, unknown>) => {
+    const nextProps = {
+      ...props,
+    }
+    Object.defineProperty(nextProps, ROUTE_PARAMS_PROP, {
+      configurable: true,
+      enumerable: false,
+      value: route.params,
+      writable: true,
+    })
+    return nextProps
+  }
+
   if (startLayoutIndex >= route.layouts.length) {
-    return jsxDEV(route.page.renderer as unknown as JSX.Type, {}, null, false, {})
+    return jsxDEV(route.page.renderer as unknown as JSX.Type, createRouteProps({}), null, false, {})
   }
 
   let children: unknown = null
@@ -2072,9 +2209,9 @@ const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
     const layout = route.layouts[index]!
     children = jsxDEV(
       layout.renderer as unknown as JSX.Type,
-      {
+      createRouteProps({
         children: createRouteSlot(route, index + 1),
-      },
+      }),
       null,
       false,
       {},
@@ -2151,32 +2288,71 @@ const loadRouteModule = async (url: string): Promise<LoadedRouteModule> => {
   }
 }
 
-const loadRouteComponent = async (container: RuntimeContainer, pathname: string) => {
+const loadResolvedRoute = async (
+  container: RuntimeContainer,
+  matched: {
+    entry: RouteModuleManifest
+    params: RouteParams
+    pathname: string
+  },
+  variant: 'page' | 'loading' | 'error' | 'not-found' = 'page',
+) => {
   const router = ensureRouterState(container)
-  const normalizedPath = normalizeRoutePath(pathname)
-  const existing = router.loadedRoutes.get(normalizedPath)
+  const normalizedPath = normalizeRoutePath(matched.pathname)
+  const cacheKey = routeCacheKey(normalizedPath, variant)
+  const existing = router.loadedRoutes.get(cacheKey)
   if (existing) {
     return existing
   }
 
-  const entry = router.manifest.get(normalizedPath)
-  if (!entry) {
+  const moduleUrl =
+    variant === 'page'
+      ? matched.entry.page
+      : variant === 'loading'
+        ? matched.entry.loading
+        : variant === 'error'
+          ? matched.entry.error
+          : matched.entry.notFound
+  if (!moduleUrl) {
     return null
   }
 
   const [page, ...layouts] = await Promise.all([
-    loadRouteModule(entry.page),
-    ...entry.layouts.map((layoutUrl) => loadRouteModule(layoutUrl)),
+    loadRouteModule(moduleUrl),
+    ...matched.entry.layouts.map((layoutUrl) => loadRouteModule(layoutUrl)),
   ])
-  const route: LoadedRoute = {
+  let route!: LoadedRoute
+  route = {
+    entry: matched.entry,
     layouts,
+    params: matched.params,
     pathname: normalizedPath,
     page,
     render: () => createRouteElement(route),
   }
 
-  router.loadedRoutes.set(normalizedPath, route)
+  router.loadedRoutes.set(cacheKey, route)
   return route
+}
+
+const loadResolvedRouteFromSpecial = async (
+  container: RuntimeContainer,
+  pathname: string,
+  kind: 'error' | 'notFound',
+) => {
+  const matched = findSpecialManifestEntry(ensureRouterState(container).manifest, pathname, kind)
+  if (!matched) {
+    return null
+  }
+  return loadResolvedRoute(container, matched, kind === 'error' ? 'error' : 'not-found')
+}
+
+const loadRouteComponent = async (container: RuntimeContainer, pathname: string) => {
+  const matched = matchRouteManifest(ensureRouterState(container).manifest, pathname)
+  if (!matched || !matched.entry.page) {
+    return null
+  }
+  return loadResolvedRoute(container, matched, 'page')
 }
 
 const findRouteComponentChain = (
@@ -2311,9 +2487,17 @@ const navigateContainer = async (
   const url = new URL(href, doc.location.href)
   const pathname = normalizeRoutePath(url.pathname)
   const router = ensureRouterState(container)
-  const routeEntry = url.origin === doc.location.origin ? router.manifest.get(pathname) : null
+  const matched = url.origin === doc.location.origin ? matchRouteManifest(router.manifest, pathname) : null
 
-  if (!routeEntry) {
+  if (!matched || !matched.entry.page) {
+    const notFoundRoute = !matched ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound') : null
+    if (notFoundRoute) {
+      renderRouteIntoRoot(container, notFoundRoute.render, `route:${pathname}:not-found`)
+      router.currentRoute = notFoundRoute
+      commitBrowserNavigation(doc, url, mode)
+      router.currentPath.value = pathname
+      return
+    }
     fallbackDocumentNavigation(doc, url, mode)
     return
   }
@@ -2331,11 +2515,26 @@ const navigateContainer = async (
   router.isNavigating.value = true
 
   try {
+    const nextRoutePromise = loadResolvedRoute(container, matched)
+    if (matched.entry.loading) {
+      let settled = false
+      nextRoutePromise.finally(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      if (!settled) {
+        const loadingRoute = await loadResolvedRoute(container, matched, 'loading')
+        if (loadingRoute) {
+          renderRouteIntoRoot(container, loadingRoute.render, `route:${pathname}:loading`)
+          router.currentRoute = loadingRoute
+        }
+      }
+    }
     const [currentRoute, nextRoute] = await Promise.all([
       router.currentRoute
         ? Promise.resolve(router.currentRoute)
         : loadRouteComponent(container, router.currentPath.value),
-      loadRouteComponent(container, pathname),
+      nextRoutePromise,
     ])
     if (!nextRoute) {
       fallbackDocumentNavigation(doc, url, mode)
@@ -2358,8 +2557,22 @@ const navigateContainer = async (
     router.currentRoute = nextRoute
     commitBrowserNavigation(doc, url, mode)
     router.currentPath.value = pathname
-  } catch {
+  } catch (error) {
     if (sequence === router.sequence) {
+      const fallbackRoute = isRouteNotFoundError(error)
+        ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound')
+        : await loadResolvedRoute(container, matched, 'error')
+      if (fallbackRoute) {
+        renderRouteIntoRoot(
+          container,
+          fallbackRoute.render,
+          `route:${pathname}:${isRouteNotFoundError(error) ? 'not-found' : 'error'}`,
+        )
+        router.currentRoute = fallbackRoute
+        commitBrowserNavigation(doc, url, mode)
+        router.currentPath.value = pathname
+        return
+      }
       fallbackDocumentNavigation(doc, url, mode)
     }
   } finally {
@@ -2976,7 +3189,8 @@ const getPendingLinkNavigationForLink = (
   if (url.origin !== container.doc.location.origin) {
     return null
   }
-  if (!ensureRouterState(container).manifest.has(pathname)) {
+  const matched = matchRouteManifest(ensureRouterState(container).manifest, pathname)
+  if (!matched?.entry.page) {
     return null
   }
 
@@ -3157,6 +3371,31 @@ export const useRuntimeNavigate = (): Navigate => {
   }
   return ensureRouterState(container).navigate
 }
+
+export const useRuntimeRouteParams = (): RouteParams => {
+  const frame = getCurrentFrame()
+  if (frame?.component.props && typeof frame.component.props === 'object') {
+    const candidate = (frame.component.props as Record<string, unknown>)[ROUTE_PARAMS_PROP]
+    if (candidate && typeof candidate === 'object') {
+      return candidate as RouteParams
+    }
+  }
+  const container = getCurrentContainer()
+  return container?.router?.currentRoute?.params ?? EMPTY_ROUTE_PARAMS
+}
+
+export const notFound = (): never => {
+  throw {
+    __eclipsa_not_found__: true,
+    [ROUTE_NOT_FOUND_KEY]: true,
+  }
+}
+
+export const isRouteNotFoundError = (error: unknown) =>
+  !!error &&
+  typeof error === 'object' &&
+  ((error as { __eclipsa_not_found__?: boolean }).__eclipsa_not_found__ === true ||
+    (error as Record<PropertyKey, unknown>)[ROUTE_NOT_FOUND_KEY] === true)
 
 export const createEffect = (fn: () => void) => {
   const effect: ReactiveEffect = {
