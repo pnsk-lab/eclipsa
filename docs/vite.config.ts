@@ -4,7 +4,7 @@ import tailwind from '@tailwindcss/vite'
 
 export default defineConfig({
   appType: 'custom',
-  plugins: [eclipsa(), tailwind()],
+  plugins: [eclipsa({ output: 'ssg' }), tailwind()],
   server: {
     fs: {
       allow: ['..'],

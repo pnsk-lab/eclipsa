@@ -71,6 +71,55 @@ describe('vite plugin hotUpdate', () => {
     })
   })
 
+  it('preserves css hot-update modules when handling non-resumable tsx updates', async () => {
+    const plugin = getPlugin()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const cssModule = {
+      id: '/src/app/style.css',
+      type: 'css',
+      url: '/src/app/style.css',
+    }
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+          moduleGraph: {
+            getModulesByFile() {
+              return new Set([
+                {
+                  type: 'js',
+                  url: '/src/non-resumable.tsx',
+                },
+              ])
+            },
+          },
+        },
+      } as any,
+      {
+        file: '/tmp/non-resumable.tsx',
+        modules: [
+          {
+            type: 'js',
+            url: '/src/non-resumable.tsx',
+          },
+          cssModule,
+        ],
+        read: () => 'export const value = <div>plain</div>;',
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([cssModule])
+    expect(send).toHaveBeenCalledWith('update-client', {
+      url: '/src/non-resumable.tsx',
+    })
+  })
+
   it('emits resumable HMR payloads for resumable tsx modules', async () => {
     const plugin = getPlugin()
     const hotUpdate = getHotUpdate(plugin)
@@ -121,6 +170,59 @@ describe('vite plugin hotUpdate', () => {
       fileUrl: '/resumable-page.tsx',
       fullReload: false,
     })
+  })
+
+  it('preserves css hot-update modules when handling resumable tsx updates', async () => {
+    const plugin = getPlugin()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const filePath = '/tmp/resumable-style.tsx'
+    const previousSource = `
+      import { component$ } from "eclipsa";
+      export default component$(() => <div class="bg-red-500">ready</div>);
+    `
+    const nextSource = `
+      import { component$ } from "eclipsa";
+      export default component$(() => <div class="bg-lime-500">ready</div>);
+    `
+    const cssModule = {
+      id: '/src/app/style.css',
+      type: 'css',
+      url: '/src/app/style.css',
+    }
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/resumable-style.tsx',
+          },
+          cssModule,
+        ],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([cssModule])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
   })
 
   it('leaves non-tsx updates to Vite', async () => {

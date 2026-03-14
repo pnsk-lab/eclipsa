@@ -70,12 +70,11 @@ export const shouldInvalidateDevApp = (
   return false
 }
 
-const injectHeadScripts = (html: string, ...scripts: string[]) => {
-  const scriptMarkup = scripts.join('')
-  return html.includes('</head>')
-    ? html.replace('</head>', `${scriptMarkup}</head>`)
-    : `${scriptMarkup}${html}`
-}
+const RESUME_PAYLOAD_PLACEHOLDER = '__ECLIPSA_RESUME_PAYLOAD__'
+const ROUTE_MANIFEST_PLACEHOLDER = '__ECLIPSA_ROUTE_MANIFEST__'
+
+const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
+  html.replace(placeholder, value)
 
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 
@@ -266,7 +265,7 @@ const createDevApp = async (init: DevAppInit) => {
     const [
       modules,
       { default: SSRRoot },
-      { renderSSRAsync, resolvePendingLoaders, serializeResumePayload },
+      { escapeJSONScriptText, renderSSRAsync, resolvePendingLoaders, serializeResumePayload },
     ] = await Promise.all([
       Promise.all([
         init.runner.import(modulePath),
@@ -285,6 +284,24 @@ const createDevApp = async (init: DevAppInit) => {
         isStatic: true,
         props: {
           children: [
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
+                children: RESUME_PAYLOAD_PLACEHOLDER,
+                id: 'eclipsa-resume',
+                type: 'application/eclipsa-resume+json',
+              },
+            },
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
+                children: ROUTE_MANIFEST_PLACEHOLDER,
+                id: ROUTE_MANIFEST_ELEMENT_ID,
+                type: 'application/eclipsa-route-manifest+json',
+              },
+            },
             {
               type: 'script',
               isStatic: true,
@@ -309,14 +326,14 @@ const createDevApp = async (init: DevAppInit) => {
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
       symbols: symbolUrls,
     })
-    const payloadScript = `<script type="application/eclipsa-resume+json" id="eclipsa-resume">${serializeResumePayload(
-      payload,
-    )}</script>`
-    const routeManifestScript = `<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">${JSON.stringify(
-      routeManifest,
-    )}</script>`
-
-    return new Response(injectHeadScripts(html, payloadScript, routeManifestScript), { status, headers: { 'content-type': 'text/html; charset=utf-8' } })
+    return new Response(
+      replaceHeadPlaceholder(
+        replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+        ROUTE_MANIFEST_PLACEHOLDER,
+        escapeJSONScriptText(JSON.stringify(routeManifest)),
+      ),
+      { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
+    )
   }
 
   const renderMatchedPage = async (

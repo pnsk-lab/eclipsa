@@ -1,30 +1,37 @@
 import { onCleanup } from 'eclipsa'
 
 const SHIELD_RADIUS = 100
+const MOBILE_DROP_COUNT = 50
+const DESKTOP_DROP_COUNT = 100
+const MOBILE_BREAKPOINT = 768
+const PASSIVE_EVENT_OPTIONS = { passive: true }
+
+interface ShieldPoint {
+  x: number
+  y: number
+}
 
 export interface LandingElements {
   canvas: HTMLCanvasElement
-  cursor: HTMLDivElement
-  root: HTMLDivElement
 }
 
-export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => {
+export const setupLandingScene = ({ canvas }: LandingElements) => {
   const initialContext = canvas.getContext('2d')
   if (!initialContext) {
     return
   }
   const drawingContext: CanvasRenderingContext2D = initialContext
 
-  const prefersFinePointer = window.matchMedia?.('(pointer: fine)').matches ?? true
-  const interactiveNodes = prefersFinePointer
-    ? Array.from(root.querySelectorAll<HTMLElement>('[data-interactive]'))
-    : []
-
-  let mouseX = window.innerWidth / 2
-  let mouseY = window.innerHeight / 2
+  let shieldPoints: ShieldPoint[] = [
+    {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    },
+  ]
   let width = 0
   let height = 0
   let animationFrame = 0
+  const activeTouchPointers = new Map<number, ShieldPoint>()
 
   class RainDrop {
     x = 0
@@ -55,14 +62,28 @@ export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => 
       this.x += this.vx
       this.vx *= 0.95
 
-      const dx = this.x - mouseX
-      const dy = this.y - mouseY
-      const distance = Math.sqrt(dx * dx + dy * dy)
+      let strongestForce = 0
+      let strongestDx = 0
+      let strongestDistance = 0
 
-      if (distance > 0 && distance < SHIELD_RADIUS && dy < 0) {
-        const force = (SHIELD_RADIUS - distance) / SHIELD_RADIUS
-        this.vx = (dx / distance) * force * 20
-        this.y -= this.speed * force * 0.8
+      for (const shieldPoint of shieldPoints) {
+        const dx = this.x - shieldPoint.x
+        const dy = this.y - shieldPoint.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+
+        if (distance > 0 && distance < SHIELD_RADIUS && dy < 0) {
+          const force = (SHIELD_RADIUS - distance) / SHIELD_RADIUS
+          if (force > strongestForce) {
+            strongestForce = force
+            strongestDx = dx
+            strongestDistance = distance
+          }
+        }
+      }
+
+      if (strongestForce > 0 && strongestDistance > 0) {
+        this.vx = (strongestDx / strongestDistance) * strongestForce * 20
+        this.y -= this.speed * strongestForce * 0.8
       }
 
       if (this.y > height || this.x < 0 || this.x > width) {
@@ -83,14 +104,9 @@ export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => 
 
   const drops: RainDrop[] = []
 
-  const syncCursor = () => {
-    cursor.style.left = `${mouseX}px`
-    cursor.style.top = `${mouseY}px`
-  }
-
   const repopulateDrops = () => {
     drops.length = 0
-    const count = window.innerWidth < 768 ? 150 : 400
+    const count = window.innerWidth < MOBILE_BREAKPOINT ? MOBILE_DROP_COUNT : DESKTOP_DROP_COUNT
     for (let index = 0; index < count; index += 1) {
       drops.push(new RainDrop())
     }
@@ -102,41 +118,71 @@ export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => 
     repopulateDrops()
   }
 
+  const updatePointerPosition = (clientX: number, clientY: number) => {
+    shieldPoints = [{ x: clientX, y: clientY }]
+  }
+
+  const updateTouchPositions = (
+    touches: ArrayLike<Pick<Touch, 'clientX' | 'clientY'>>,
+  ) => {
+    const nextShieldPoints: ShieldPoint[] = []
+
+    for (let index = 0; index < touches.length; index += 1) {
+      nextShieldPoints.push({
+        x: touches[index].clientX,
+        y: touches[index].clientY,
+      })
+    }
+
+    if (nextShieldPoints.length > 0) {
+      shieldPoints = nextShieldPoints
+    }
+  }
+
   const handleMove = (event: MouseEvent) => {
-    mouseX = event.clientX
-    mouseY = event.clientY
-    syncCursor()
+    updatePointerPosition(event.clientX, event.clientY)
   }
 
-  const handleEnter = () => {
-    cursor.classList.add('h-[60px]', 'w-[60px]', 'bg-[rgba(157,0,255,0.1)]')
-    cursor.classList.remove('h-10', 'w-10')
+  const syncActiveTouchPointers = () => {
+    if (activeTouchPointers.size > 0) {
+      shieldPoints = Array.from(activeTouchPointers.values())
+    }
   }
 
-  const handleLeave = () => {
-    cursor.classList.remove('h-[60px]', 'w-[60px]', 'bg-[rgba(157,0,255,0.1)]')
-    cursor.classList.add('h-10', 'w-10')
+  const handlePointer = (event: PointerEvent) => {
+    if (event.pointerType === 'touch') {
+      activeTouchPointers.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+      })
+      syncActiveTouchPointers()
+      return
+    }
+
+    updatePointerPosition(event.clientX, event.clientY)
+  }
+
+  const handlePointerEnd = (event: PointerEvent) => {
+    if (event.pointerType !== 'touch') {
+      return
+    }
+
+    activeTouchPointers.delete(event.pointerId)
+    if (activeTouchPointers.size > 0) {
+      syncActiveTouchPointers()
+      return
+    }
+
+    updatePointerPosition(event.clientX, event.clientY)
+  }
+
+  const handleTouch = (event: TouchEvent) => {
+    updateTouchPositions(event.touches.length > 0 ? event.touches : event.changedTouches)
   }
 
   const animate = () => {
     drawingContext.fillStyle = 'rgba(5, 5, 5, 0.3)'
     drawingContext.fillRect(0, 0, width, height)
-
-    const gradient = drawingContext.createRadialGradient(
-      mouseX,
-      mouseY,
-      0,
-      mouseX,
-      mouseY,
-      SHIELD_RADIUS,
-    )
-    gradient.addColorStop(0, 'rgba(157, 0, 255, 0.08)')
-    gradient.addColorStop(1, 'rgba(157, 0, 255, 0)')
-
-    drawingContext.fillStyle = gradient
-    drawingContext.beginPath()
-    drawingContext.arc(mouseX, mouseY, SHIELD_RADIUS, Math.PI, 0)
-    drawingContext.fill()
 
     for (const drop of drops) {
       drop.update()
@@ -147,17 +193,18 @@ export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => 
   }
 
   resize()
-  syncCursor()
 
-  if (prefersFinePointer) {
-    cursor.hidden = false
-    document.addEventListener('mousemove', handleMove)
-    for (const node of interactiveNodes) {
-      node.addEventListener('mouseenter', handleEnter)
-      node.addEventListener('mouseleave', handleLeave)
-    }
+  if ('PointerEvent' in window) {
+    document.addEventListener('pointerdown', handlePointer, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointermove', handlePointer, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointerup', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointercancel', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
   } else {
-    cursor.hidden = true
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('touchstart', handleTouch, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchmove', handleTouch, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchend', handleTouch, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchcancel', handleTouch, PASSIVE_EVENT_OPTIONS)
   }
 
   window.addEventListener('resize', resize)
@@ -165,12 +212,18 @@ export const setupLandingScene = ({ canvas, cursor, root }: LandingElements) => 
 
   onCleanup(() => {
     window.removeEventListener('resize', resize)
-    document.removeEventListener('mousemove', handleMove)
-    window.cancelAnimationFrame(animationFrame)
-
-    for (const node of interactiveNodes) {
-      node.removeEventListener('mouseenter', handleEnter)
-      node.removeEventListener('mouseleave', handleLeave)
+    if ('PointerEvent' in window) {
+      document.removeEventListener('pointerdown', handlePointer, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointermove', handlePointer, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointerup', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointercancel', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
+    } else {
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('touchstart', handleTouch, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchmove', handleTouch, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchend', handleTouch, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchcancel', handleTouch, PASSIVE_EVENT_OPTIONS)
     }
+    window.cancelAnimationFrame(animationFrame)
   })
 }

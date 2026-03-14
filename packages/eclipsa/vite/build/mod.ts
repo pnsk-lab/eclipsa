@@ -1,15 +1,16 @@
+import { toSSG } from 'hono/ssg'
 import type { UserConfig, ViteBuilder } from 'vite'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { cwd } from 'node:process'
-import type { RouteManifest } from '../../core/router-shared.ts'
+import { pathToFileURL } from 'node:url'
+import type { RouteManifest, RoutePathSegment } from '../../core/router-shared.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID } from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
   createBuildServerModuleUrl,
   createRouteManifest,
   createRoutes,
-  type RouteEntry,
 } from '../utils/routing.ts'
 import {
   collectAppActions,
@@ -19,15 +20,67 @@ import {
   createBuildServerLoaderUrl,
   createBuildSymbolUrl,
 } from '../compiler.ts'
+import type { ResolvedEclipsaPluginOptions } from '../options.ts'
 
-const renderServer = (
-  actions: Array<{ filePath: string; id: string }>,
-  loaders: Array<{ filePath: string; id: string }>,
-  routes: Awaited<ReturnType<typeof createRoutes>>,
-  routeManifest: RouteManifest,
-  symbolUrls: Record<string, string>,
-) => {
-  const serializedRoutes = JSON.stringify(
+const joinHonoPath = (left: string, right: string) => `${left}/${right}`.replaceAll(/\/+/g, '/')
+
+const toPublicAssetUrl = (root: string, filePath: string) =>
+  `/${path.relative(root, filePath).split(path.sep).join('/')}`
+
+const collectFiles = async (directory: string): Promise<string[]> => {
+  const entries = await fs.readdir(directory, { withFileTypes: true })
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(directory, entry.name)
+      return entry.isDirectory() ? collectFiles(entryPath) : [entryPath]
+    }),
+  )
+  return files.flat()
+}
+
+const collectClientStylesheetUrls = async (clientDir: string) => {
+  try {
+    const files = await collectFiles(clientDir)
+    return files
+      .filter((filePath) => path.extname(filePath) === '.css')
+      .sort()
+      .map((filePath) => toPublicAssetUrl(clientDir, filePath))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
+}
+
+export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
+  let paths = ['']
+
+  for (const segment of segments) {
+    switch (segment.kind) {
+      case 'static':
+        paths = paths.map((currentPath) => joinHonoPath(currentPath, segment.value))
+        break
+      case 'required':
+        paths = paths.map((currentPath) => joinHonoPath(currentPath, `:${segment.value}`))
+        break
+      case 'optional':
+        paths = paths.flatMap((currentPath) => [
+          currentPath,
+          joinHonoPath(currentPath, `:${segment.value}`),
+        ])
+        break
+      case 'rest':
+        paths = paths.map((currentPath) => joinHonoPath(currentPath, `:${segment.value}{.+}`))
+        break
+    }
+  }
+
+  return [...new Set(paths.map((currentPath) => (currentPath === '' ? '/' : currentPath)))]
+}
+
+const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
+  JSON.stringify(
     routes.map((route) => ({
       error: route.error ? createBuildServerModuleUrl(route.error) : null,
       layouts: route.layouts.map((layout) => createBuildServerModuleUrl(layout)),
@@ -39,28 +92,52 @@ const renderServer = (
       server: route.server ? createBuildServerModuleUrl(route.server) : null,
     })),
   )
-  const actionTable = actions
+
+const createActionTable = (actions: Array<{ filePath: string; id: string }>) =>
+  actions
     .map(
       (action) =>
         `  ${JSON.stringify(action.id)}: ${JSON.stringify(createBuildServerActionUrl(action.id))},`,
     )
     .join('\n')
-  const loaderTable = loaders
+
+const createLoaderTable = (loaders: Array<{ filePath: string; id: string }>) =>
+  loaders
     .map(
       (loader) =>
         `  ${JSON.stringify(loader.id)}: ${JSON.stringify(createBuildServerLoaderUrl(loader.id))},`,
     )
     .join('\n')
+
+const createPageRouteEntries = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
+  routes.flatMap((route, routeIndex) =>
+    route.page
+      ? toHonoRoutePaths(route.segments).map((honoPath) => ({
+          path: honoPath,
+          routeIndex,
+        }))
+      : [],
+  )
+
+const renderAppModule = (
+  actions: Array<{ filePath: string; id: string }>,
+  loaders: Array<{ filePath: string; id: string }>,
+  routes: Awaited<ReturnType<typeof createRoutes>>,
+  routeManifest: RouteManifest,
+  symbolUrls: Record<string, string>,
+  stylesheetUrls: string[],
+) => {
+  const serializedRoutes = createSerializedRoutes(routes)
+  const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
+  const actionTable = createActionTable(actions)
+  const loaderTable = createLoaderTable(loaders)
   const serializedSymbolUrls = JSON.stringify(symbolUrls)
   const serializedRouteManifest = JSON.stringify(routeManifest)
+  const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
 
-  return `import userApp from "../ssr/entries/server_entry.mjs";
-import SSRRoot from "../ssr/entries/ssr_root.mjs";
-import { Fragment, executeAction, executeLoader, hasAction, hasLoader, jsxDEV, renderSSRAsync, resolvePendingLoaders, serializeResumePayload } from "../ssr/entries/eclipsa_runtime.mjs";
-import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+  return `import userApp from "./entries/server_entry.mjs";
+import SSRRoot from "./entries/ssr_root.mjs";
+import { Fragment, escapeJSONScriptText, executeAction, executeLoader, hasAction, hasLoader, jsxDEV, renderSSRAsync, resolvePendingLoaders, serializeResumePayload } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -70,81 +147,13 @@ const loaders = {
 ${loaderTable}
 };
 const routes = ${serializedRoutes};
+const pageRouteEntries = ${serializedPageRouteEntries};
 const routeManifest = ${serializedRouteManifest};
 const symbolUrls = ${serializedSymbolUrls};
+const stylesheetUrls = ${serializedStylesheetUrls};
+const RESUME_PAYLOAD_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_RESUME_PAYLOAD__')};
+const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
-
-const fileTypes = new Map([
-  [".js", "text/javascript; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".css", "text/css; charset=utf-8"],
-  [".html", "text/html; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".svg", "image/svg+xml"],
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-]);
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientDir = path.resolve(__dirname, "../client");
-
-const toRequest = (incomingMessage) => {
-  const body =
-    incomingMessage.method !== "GET" && incomingMessage.method !== "HEAD"
-      ? new ReadableStream({
-          start(controller) {
-            incomingMessage.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
-            incomingMessage.on("end", () => controller.close());
-          },
-        })
-      : null;
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(incomingMessage.headers)) {
-    if (Array.isArray(value)) {
-      value.forEach((entry) => headers.append(key, entry));
-    } else if (value) {
-      headers.append(key, value);
-    }
-  }
-  return new Request(new URL(incomingMessage.url ?? "/", "http://localhost"), {
-    method: incomingMessage.method,
-    headers,
-    body,
-  });
-};
-
-const sendResponse = async (response, serverResponse) => {
-  for (const [key, value] of response.headers) {
-    serverResponse.setHeader(key, value);
-  }
-  serverResponse.statusCode = response.status;
-  serverResponse.statusMessage = response.statusText;
-  const buffer = Buffer.from(await response.arrayBuffer());
-  serverResponse.end(buffer);
-};
-
-const serveStatic = async (pathname) => {
-  const normalized = pathname.replace(/^\\/+/, "");
-  const filePath = path.join(clientDir, normalized);
-  if (!filePath.startsWith(clientDir)) {
-    return null;
-  }
-
-  try {
-    const info = await stat(filePath);
-    if (!info.isFile()) {
-      return null;
-    }
-    return new Response(await readFile(filePath), {
-      headers: {
-        "content-type": fileTypes.get(path.extname(filePath)) ?? "application/octet-stream",
-      },
-    });
-  } catch {
-    return null;
-  }
-};
 
 const normalizeRoutePath = (pathname) => {
   const normalizedPath = pathname.trim() || "/";
@@ -263,10 +272,7 @@ const applyRequestParams = (c, params) => {
 const isNotFoundError = (error) =>
   !!error && typeof error === "object" && error.__eclipsa_not_found__ === true;
 
-const injectHeadScripts = (html, ...scripts) => {
-  const scriptMarkup = scripts.join("");
-  return html.includes("</head>") ? html.replace("</head>", scriptMarkup + "</head>") : scriptMarkup + html;
-};
+const replaceHeadPlaceholder = (html, placeholder, value) => html.replace(placeholder, value);
 
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for("eclipsa.route-slot-route");
 
@@ -340,13 +346,39 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     head: {
       type: Fragment,
       isStatic: true,
-      props: {
-        children: [
-          {
-            type: "script",
-            isStatic: true,
-            props: {
-              type: "module",
+        props: {
+          children: [
+            ...stylesheetUrls.map((href) => ({
+              type: "link",
+              isStatic: true,
+              props: {
+                href,
+                rel: "stylesheet",
+              },
+            })),
+            {
+              type: "script",
+              isStatic: true,
+              props: {
+                children: RESUME_PAYLOAD_PLACEHOLDER,
+                id: "eclipsa-resume",
+                type: "application/eclipsa-resume+json",
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
+                children: ROUTE_MANIFEST_PLACEHOLDER,
+                id: "${ROUTE_MANIFEST_ELEMENT_ID}",
+                type: "application/eclipsa-route-manifest+json",
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
+                type: "module",
               src: "/entries/client_boot.js",
             },
           },
@@ -360,9 +392,14 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
     symbols: symbolUrls,
   });
-  const payloadScript = '<script type="application/eclipsa-resume+json" id="eclipsa-resume">' + serializeResumePayload(payload) + "</script>";
-  const routeManifestScript = '<script type="application/eclipsa-route-manifest+json" id="${ROUTE_MANIFEST_ELEMENT_ID}">' + JSON.stringify(routeManifest) + "</script>";
-  return c.html(injectHeadScripts(html, payloadScript, routeManifestScript), status);
+  return c.html(
+    replaceHeadPlaceholder(
+      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+      ROUTE_MANIFEST_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(routeManifest)),
+    ),
+    status,
+  );
 };
 
 const renderMatchedPage = async (match, c) => {
@@ -379,6 +416,17 @@ const renderMatchedPage = async (match, c) => {
     return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500);
   }
 };
+
+for (const pageRouteEntry of pageRouteEntries) {
+  app.get(pageRouteEntry.path, async (c) => {
+    const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
+    const match = matchRoute(pathname);
+    if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
+      return c.text("Not Found", 404);
+    }
+    return renderMatchedPage(match, c);
+  });
+}
 
 app.post("/__eclipsa/action/:id", async (c) => {
   const id = c.req.param("id");
@@ -428,6 +476,89 @@ app.all("*", async (c) => {
   return c.text("Not Found", 404);
 });
 
+export const pageRoutePatterns = [...new Set(pageRouteEntries.map((entry) => entry.path))];
+export default app;
+`
+}
+
+const renderNodeServer = () => `import app from "../ssr/eclipsa_app.mjs";
+import { createServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const fileTypes = new Map([
+  [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".html", "text/html; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".svg", "image/svg+xml"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+]);
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDir = path.resolve(__dirname, "../client");
+
+const toRequest = (incomingMessage) => {
+  const body =
+    incomingMessage.method !== "GET" && incomingMessage.method !== "HEAD"
+      ? new ReadableStream({
+          start(controller) {
+            incomingMessage.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
+            incomingMessage.on("end", () => controller.close());
+          },
+        })
+      : null;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(incomingMessage.headers)) {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => headers.append(key, entry));
+    } else if (value) {
+      headers.append(key, value);
+    }
+  }
+  return new Request(new URL(incomingMessage.url ?? "/", "http://localhost"), {
+    method: incomingMessage.method,
+    headers,
+    body,
+  });
+};
+
+const sendResponse = async (response, serverResponse) => {
+  for (const [key, value] of response.headers) {
+    serverResponse.setHeader(key, value);
+  }
+  serverResponse.statusCode = response.status;
+  serverResponse.statusMessage = response.statusText;
+  const buffer = Buffer.from(await response.arrayBuffer());
+  serverResponse.end(buffer);
+};
+
+const serveStatic = async (pathname) => {
+  const normalized = pathname.replace(/^\\/+/, "");
+  const filePath = path.join(clientDir, normalized);
+  if (!filePath.startsWith(clientDir)) {
+    return null;
+  }
+
+  try {
+    const info = await stat(filePath);
+    if (!info.isFile()) {
+      return null;
+    }
+    return new Response(await readFile(filePath), {
+      headers: {
+        "content-type": fileTypes.get(path.extname(filePath)) ?? "application/octet-stream",
+      },
+    });
+  } catch {
+    return null;
+  }
+};
+
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 
 createServer(async (req, res) => {
@@ -443,10 +574,13 @@ createServer(async (req, res) => {
 }).listen(port, () => {
   console.log("Eclipsa server listening on http://localhost:" + port);
 });
-`;
-}
+`
 
-export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
+export const build = async (
+  builder: ViteBuilder,
+  userConfig: UserConfig,
+  options: ResolvedEclipsaPluginOptions,
+) => {
   const root = userConfig.root ?? cwd()
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
@@ -460,10 +594,41 @@ export const build = async (builder: ViteBuilder, userConfig: UserConfig) => {
   await builder.build(builder.environments.client)
   await builder.build(builder.environments.ssr)
 
+  const clientDir = path.join(root, 'dist/client')
+  const stylesheetUrls = await collectClientStylesheetUrls(clientDir)
   const serverDir = path.join(root, 'dist/server')
-  await fs.mkdir(serverDir, { recursive: true })
+  const appModulePath = path.join(root, 'dist/ssr/eclipsa_app.mjs')
+  await fs.mkdir(path.dirname(appModulePath), { recursive: true })
   await fs.writeFile(
-    path.join(serverDir, 'index.mjs'),
-    renderServer(actions, loaders, routes, routeManifest, symbolUrls),
+    appModulePath,
+    renderAppModule(actions, loaders, routes, routeManifest, symbolUrls, stylesheetUrls),
   )
+
+  if (options.output === 'node') {
+    await fs.mkdir(serverDir, { recursive: true })
+    await fs.writeFile(path.join(serverDir, 'index.mjs'), renderNodeServer())
+    return
+  }
+
+  await fs.rm(serverDir, { force: true, recursive: true })
+
+  const {
+    default: app,
+    pageRoutePatterns,
+  } = (await import(`${pathToFileURL(appModulePath).href}?t=${Date.now()}`)) as {
+    default: { fetch(request: Request): Promise<Response> }
+    pageRoutePatterns: string[]
+  }
+  const pageRouteSet = new Set(pageRoutePatterns)
+  const result = await toSSG(app as any, fs, {
+    beforeRequestHook(request: Request) {
+      const routePath = new URL(request.url).pathname
+      return pageRouteSet.has(routePath) ? request : false
+    },
+    dir: clientDir,
+  })
+
+  if (!result.success) {
+    throw result.error ?? new Error('Failed to generate static output.')
+  }
 }

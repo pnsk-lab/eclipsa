@@ -1,26 +1,25 @@
-import { component$, onVisible, useSignal } from 'eclipsa'
+import { component$, Link, onVisible, useSignal } from 'eclipsa'
 import { setupLandingScene } from './landing-scene.ts'
+import { Logo } from '../components/logo.tsx'
 
 export default component$(() => {
   const rootRef = useSignal<HTMLDivElement | undefined>()
   const canvasRef = useSignal<HTMLCanvasElement | undefined>()
-  const cursorRef = useSignal<HTMLDivElement | undefined>()
 
   onVisible(() => {
     const root = rootRef.value
     const canvas = canvasRef.value
-    const cursor = cursorRef.value
 
-    if (!root || !canvas || !cursor) {
+    if (!root || !canvas) {
       return
     }
 
-    setupLandingScene({ canvas, cursor, root })
+    setupLandingScene({ canvas })
   })
 
   return (
     <div
-      class="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050505] text-white antialiased [font-family:'Space_Grotesk',sans-serif] selection:bg-purple-500 selection:text-white cursor-none"
+      class="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050505] text-white antialiased font-space-grotesk selection:bg-purple-500 selection:text-white"
       ref={rootRef}
     >
       <div
@@ -32,59 +31,42 @@ export default component$(() => {
         class="pointer-events-none fixed inset-0 z-[1] h-screen w-screen"
         ref={canvasRef}
       ></canvas>
-      <div
-        aria-hidden="true"
-        class="pointer-events-none fixed left-0 top-0 z-[9999] h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[rgba(157,0,255,0.5)] shadow-[0_0_20px_rgba(157,0,255,0.3)] mix-blend-screen transition-[width,height,background-color] duration-200"
-        ref={cursorRef}
-      ></div>
-
       <nav class="fixed top-0 z-50 flex w-full items-center justify-between bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] px-6 py-6">
         <a
-          class="flex items-center gap-2 text-xl font-bold uppercase tracking-[0.2em] [font-family:'Archivo_Black',sans-serif] cursor-none"
+          class="flex items-center gap-2 text-xl font-urbanist"
           data-interactive=""
           href="#hero"
         >
-          <svg
-            aria-hidden="true"
-            class="h-6 w-6 text-[#9d00ff]"
-            fill="none"
-            stroke="currentColor"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            viewBox="0 0 24 24"
-          >
-            <path d="M22 12a10 10 0 0 0-20 0Z" />
-            <path d="M12 12v6a2 2 0 0 0 4 0" />
-          </svg>
-          <span>Eclipsa</span>
+          <Logo class="w-5 h-5" />
+          <span>eclipsa</span>
+          <span class="text-xs">experimental</span>
         </a>
 
         <div class="hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 md:flex">
-          <a class="transition-colors hover:text-white cursor-none" data-interactive="" href="#hero">
+          <Link class="transition-colors hover:text-white" data-interactive="" href={`${import.meta.env.BASE_URL}docs`}>
             Docs
-          </a>
-          <a
-            class="transition-colors hover:text-white cursor-none"
+          </Link>
+          <Link
+            class="transition-colors hover:text-white"
             data-interactive=""
-            href="#features"
+            href={`${import.meta.env.BASE_URL}playground`}
           >
-            Components
-          </a>
-          <a
-            class="transition-colors hover:text-white cursor-none"
+            Playground
+          </Link>
+          <Link
+            class="transition-colors hover:text-white"
             data-interactive=""
-            href="#footer"
+            href={`${import.meta.env.BASE_URL}reference`}
           >
-            Ecosystem
-          </a>
+            Reference
+          </Link>
         </div>
 
         <a
           aria-label="GitHub"
-          class="text-white transition-colors hover:text-[#9d00ff] cursor-none"
+          class="text-white transition-colors hover:text-[#9d00ff]"
           data-interactive=""
-          href="#"
+          href="https://github.com/pnsk-lab/eclipsa"
         >
           <svg
             aria-hidden="true"
@@ -101,31 +83,25 @@ export default component$(() => {
         </a>
       </nav>
 
-      <main
-        class="relative z-20 flex min-h-screen flex-1 flex-col items-center justify-center px-4 pb-20 pt-32 text-center"
+      <div
+        class="relative z-20 flex h-170 max-h-screen flex-col px-4 pb-20 pt-20 text-center"
         id="hero"
       >
-        <h1 class="relative z-10 mb-8 w-full select-none text-[clamp(5rem,22vw,20rem)] leading-[0.75] tracking-[-0.02em] text-white [font-family:'Archivo_Black',sans-serif]">
-          eclipsa
+        <h1 class="uppercase relative z-10 mb-8 mt-15 w-full select-none text-black text-[clamp(3rem,8vw,8rem)] leading-[0.75] tracking-[-0.02em] text-white font-archivo-black">
+          The Final-Gen Frontend Framework
         </h1>
 
-        <div class="z-20 mt-2 flex flex-col items-center">
-          <p class="mb-6 text-sm font-bold uppercase tracking-[0.3em] text-[#9d00ff] md:text-base">
-            The Storm is Here
-          </p>
-          <p class="mb-6 max-w-3xl text-xl font-bold uppercase tracking-wide text-white [font-family:'Archivo_Black',sans-serif] md:text-2xl">
-            Final-Generation Web Framework
+        <div class="z-20 mt-10 flex flex-col items-center">
+          <p class="mb-6 max-w-3xl text-xl font-bold uppercase tracking-wide text-white font-archivo-black md:text-2xl">
+            Ultrafast development, ultrafast apps.
           </p>
           <p class="mx-auto mb-12 max-w-2xl text-sm font-medium leading-relaxed text-zinc-400 md:text-base">
-            Beautifully crafted, uncompromisingly fast.
-            <br class="hidden md:block" />
-            Eclipsa provides the ultimate umbrella against the chaos of modern web
-            development.
+            eclipsa aims to be the last frontend framework before AI replaces web app by performance and developer experience.
           </p>
 
           <div class="flex flex-col gap-6 sm:flex-row">
             <button
-              class="relative isolate flex items-center justify-center gap-3 overflow-hidden border border-[rgba(157,0,255,0.5)] px-10 py-4 text-sm font-bold uppercase tracking-[0.1em] text-white transition duration-300 before:absolute before:inset-y-0 before:left-[-100%] before:-z-10 before:w-full before:bg-[linear-gradient(90deg,transparent,rgba(157,0,255,0.4),transparent)] before:content-[''] before:transition-[left] before:duration-500 hover:border-[#9d00ff] hover:shadow-[0_0_20px_rgba(157,0,255,0.4)] hover:before:left-[100%] cursor-none"
+              class="relative isolate flex items-center justify-center gap-3 overflow-hidden border border-[rgba(157,0,255,0.5)] px-10 py-4 text-sm font-bold uppercase tracking-[0.1em] text-white transition duration-300 before:absolute before:inset-y-0 before:left-[-100%] before:-z-10 before:w-full before:bg-[linear-gradient(90deg,transparent,rgba(157,0,255,0.4),transparent)] before:content-[''] before:transition-[left] before:duration-500 hover:border-[#9d00ff] hover:shadow-[0_0_20px_rgba(157,0,255,0.4)] hover:before:left-[100%]"
               data-interactive=""
               type="button"
             >
@@ -145,20 +121,20 @@ export default component$(() => {
               <span>npm create eclipsa@latest</span>
             </button>
 
-            <a
-              class="self-center border-b border-transparent pb-1 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 transition-all hover:border-[#9d00ff] hover:text-white cursor-none"
+            <Link
+              class="self-center border-b border-transparent pb-1 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 transition-all hover:border-[#9d00ff] hover:text-white"
               data-interactive=""
-              href="#features"
+              href="/docs"
             >
               Read the Docs
-            </a>
+            </Link>
           </div>
         </div>
-      </main>
+      </div>
 
       <div
         aria-hidden="true"
-        class="mx-0 my-16 h-[2px] w-full bg-[linear-gradient(90deg,transparent,#9d00ff,transparent)] shadow-[0_0_15px_#9d00ff]"
+        class="relative z-20 mx-0 my-16 h-[2px] w-full bg-[linear-gradient(90deg,transparent,#9d00ff,transparent)] shadow-[0_0_15px_#9d00ff]"
       ></div>
 
       <section class="relative z-20 mx-auto w-full max-w-7xl px-6 py-20" id="features">
@@ -182,12 +158,13 @@ export default component$(() => {
                 <path d="m13 11-4 6h3l-1 6 4-6h-3Z" />
               </svg>
             </div>
-            <h2 class="mb-3 text-xl uppercase tracking-wide text-white [font-family:'Archivo_Black',sans-serif]">
-              Lightning Fast
+            <h2 class="mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
+              Resumable by Default
             </h2>
             <p class="text-sm leading-relaxed text-zinc-400">
-              Zero-overhead rendering. Eclipsa compiles away leaving only pure,
-              optimized JavaScript that hits your users like a lightning strike.
+              SSR ships resumable metadata for components, signals, visible
+              callbacks, and watches so the client can wake up only the
+              interactive work it actually needs.
             </p>
           </article>
 
@@ -210,12 +187,13 @@ export default component$(() => {
                 <path d="M12 12v6a2 2 0 0 0 4 0" />
               </svg>
             </div>
-            <h2 class="mb-3 text-xl uppercase tracking-wide text-white [font-family:'Archivo_Black',sans-serif]">
-              Rainproof State
+            <h2 class="mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
+              DOM-Compiled Client
             </h2>
             <p class="text-sm leading-relaxed text-zinc-400">
-              A deeply integrated, unbreakable state management system that keeps
-              your data dry and predictable, no matter how heavy the downpour.
+              Client transforms emit direct DOM operations instead of a generic
+              hydration runtime, keeping updates narrow and aligned with the SSR
+              output.
             </p>
           </article>
 
@@ -255,13 +233,13 @@ export default component$(() => {
                 <path d="M14 5a2 2 0 1 0 4 0c0-1.1-1-2.6-2-4-1 1.4-2 2.9-2 4Z" />
               </svg>
             </div>
-            <h2 class="relative z-10 mb-3 text-xl uppercase tracking-wide text-white [font-family:'Archivo_Black',sans-serif]">
-              Fluid Design
+            <h2 class="relative z-10 mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
+              Full-Stack Primitives
             </h2>
             <p class="relative z-10 text-sm leading-relaxed text-zinc-400">
-              Built-in styling solutions that flow naturally across breakpoints.
-              Eclipsa makes responsive design as effortless as water flowing
-              downhill.
+              Routing, loaders, actions, and symbol-aware Vite integration live
+              in one pipeline, so SSR, resume, dev HMR, and build output stay
+              consistent.
             </p>
           </article>
         </div>

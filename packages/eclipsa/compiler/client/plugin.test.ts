@@ -76,7 +76,7 @@ describe('compiler/client pluginClientJSX', () => {
       plugins: [pluginClientJSX({ hmr: false })],
     })?.code
 
-    expect(resultCode).toContain('get aa()')
+    expect(resultCode).toContain('get "aa"()')
     expect(resultCode).toContain('_createComponent(Header, {})')
     expect(resultCode).not.toContain('_createTemplate("<!--  -->")')
   })
@@ -114,5 +114,32 @@ describe('compiler/client pluginClientJSX', () => {
     )?.code
 
     expect(resultCode).toContain('<label>Right<input></input></label>')
+  })
+
+  it('emits dangerouslySetInnerHTML through runtime attr application', () => {
+    const resultCode = transform(`<div dangerouslySetInnerHTML="<span>raw</span>" />`, {
+      filename: 'plugin.test.tsx',
+      parserOpts: {
+        plugins: ['jsx'],
+      },
+      plugins: [pluginClientJSX({ hmr: false })],
+    })?.code
+
+    expect(resultCode).toContain('_attr(')
+    expect(resultCode).toContain('"dangerouslySetInnerHTML"')
+    expect(resultCode).not.toContain('dangerouslySetInnerHTML="&lt;span&gt;raw&lt;/span&gt;"')
+  })
+
+  it('supports namespaced SVG tags and attributes', () => {
+    const resultCode = transform(`<svg><sodipodi:namedview xml:space="preserve" /></svg>`, {
+      filename: 'plugin.test.tsx',
+      parserOpts: {
+        plugins: ['jsx'],
+      },
+      plugins: [pluginClientJSX({ hmr: false })],
+    })?.code
+
+    expect(resultCode).toContain('<svg><sodipodi:namedview></sodipodi:namedview></svg>')
+    expect(resultCode).toContain('"xml:space"')
   })
 })

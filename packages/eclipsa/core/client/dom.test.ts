@@ -64,4 +64,19 @@ describe('core/client dom attr', () => {
     expect(ref.value).toBe(elem)
     expect(setAttribute).not.toHaveBeenCalledWith('ref', expect.anything())
   })
+
+  it('assigns dangerouslySetInnerHTML via the DOM property', () => {
+    const setAttribute = vi.fn()
+    const elem = {
+      addEventListener: vi.fn(),
+      innerHTML: '',
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute,
+    }
+
+    attr(elem as unknown as Element, 'dangerouslySetInnerHTML', () => '<span>raw</span>')
+
+    expect(elem.innerHTML).toBe('<span>raw</span>')
+    expect(setAttribute).not.toHaveBeenCalledWith('dangerouslySetInnerHTML', expect.anything())
+  })
 })

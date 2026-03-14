@@ -1,4 +1,5 @@
 import { preprocessTSX } from '../shared/source.ts'
+import { getJSXAttributeName } from '../shared/jsx.ts'
 import { xxHash32 } from '../../utils/xxhash32.ts'
 import { analyzeImports } from './analyze-import.ts'
 import { babel, generate, t, traverse } from './babel.ts'
@@ -406,7 +407,7 @@ const buildResumeHmrMetadata = (
     JSXAttribute: {
       enter(path: any) {
         const nameNode = path.node.name
-        const attrName = t.isJSXIdentifier(nameNode) ? nameNode.name : nameNode.name.name
+        const attrName = getJSXAttributeName(nameNode)
         const eventName = toEventName(attrName)
         if (!eventName) {
           return
@@ -937,7 +938,7 @@ export const analyzeModule = async (
     JSXAttribute: {
       exit(path: any) {
         const nameNode = path.node.name
-        const attrName = t.isJSXIdentifier(nameNode) ? nameNode.name : nameNode.name.name
+        const attrName = getJSXAttributeName(nameNode)
         const eventName = toEventName(attrName)
         if (!eventName) {
           return

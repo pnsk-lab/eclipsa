@@ -1,4 +1,10 @@
-import { getJSXType, normalizeJSXText, transformProps, type JSXType } from '../../shared/jsx.ts'
+import {
+  getJSXAttributeName,
+  getJSXType,
+  normalizeJSXText,
+  transformProps,
+  type JSXType,
+} from '../../shared/jsx.ts'
 import { type NodePath, t } from '../babel.ts'
 
 interface Init {
@@ -53,7 +59,7 @@ export const processElement = (
       if (attr.type === 'JSXSpreadAttribute') {
         throw new TypeError('JSXSpreadAttribute is not supported.')
       }
-      const name = typeof attr.name.name === 'string' ? attr.name.name : attr.name.name.name
+      const name = getJSXAttributeName(attr.name)
       if (attr.value?.type === 'StringLiteral') {
         staticAttrs += `${name}="${attr.value.value.replaceAll('"', '\\"')}" `
         continue
@@ -71,7 +77,7 @@ export const processElement = (
             t.callExpression(init.prodClientIdenifiers.effect, [
               t.arrowFunctionExpression(
                 [],
-                t.assignmentExpression('=', t.memberExpression(elemId, t.identifier(name)), value),
+                t.assignmentExpression('=', t.memberExpression(elemId, t.stringLiteral(name), true), value),
               ),
             ]),
           ),

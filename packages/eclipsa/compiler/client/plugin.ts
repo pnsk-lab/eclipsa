@@ -1,7 +1,13 @@
 // @ts-types="@types/babel__traverse"
 import type { Visitor } from '@babel/traverse'
 import SyntaxJSX from '@babel/plugin-syntax-jsx'
-import { getJSXType, normalizeJSXText, transformChildren, transformProps } from '../shared/jsx.ts'
+import {
+  getJSXAttributeName,
+  getJSXType,
+  normalizeJSXText,
+  transformChildren,
+  transformProps,
+} from '../shared/jsx.ts'
 import * as t from '@babel/types'
 
 export const pluginClientJSX = (options?: { hmr?: boolean }) => {
@@ -259,7 +265,7 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
 
           for (const attr of elem.openingElement.attributes) {
             if (attr.type === 'JSXAttribute') {
-              const name = typeof attr.name.name === 'string' ? attr.name.name : attr.name.name.name
+              const name = getJSXAttributeName(attr.name)
 
               if (
                 attr.value?.type !== 'JSXExpressionContainer' &&
@@ -335,9 +341,7 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
           if (attr.type !== 'JSXAttribute') {
             return
           }
-          return (
-            (typeof attr.name.name === 'string' ? attr.name.name : attr.name.name.name) === 'key'
-          )
+          return getJSXAttributeName(attr.name) === 'key'
         })
         const key = keyNode
           ? (((keyNode as t.JSXAttribute).value as t.JSXExpressionContainer)

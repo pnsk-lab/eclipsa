@@ -1,6 +1,26 @@
 // @ts-types="@types/babel__core"
 import { types as t } from '@babel/core'
 
+export const getJSXAttributeName = (name: t.JSXAttribute['name']) => {
+  if (t.isJSXIdentifier(name)) {
+    return name.name
+  }
+  if (t.isJSXNamespacedName(name)) {
+    return `${name.namespace.name}:${name.name.name}`
+  }
+  throw new TypeError('expected JSXIdentifier or JSXNamespacedName')
+}
+
+export const getJSXElementName = (name: t.JSXOpeningElement['name']) => {
+  if (t.isJSXIdentifier(name)) {
+    return name.name
+  }
+  if (t.isJSXNamespacedName(name)) {
+    return `${name.namespace.name}:${name.name.name}`
+  }
+  throw new TypeError('expected JSXIdentifier or JSXNamespacedName')
+}
+
 export const transformProps = (elem: t.JSXOpeningElement) => {
   const propArr: (t.ObjectProperty | t.SpreadElement | t.ObjectMethod)[] = []
   let key: t.Expression | undefined
@@ -9,11 +29,9 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
       propArr.push(t.spreadElement(attr.argument))
       continue
     }
-    if (t.isJSXNamespacedName(attr.name)) {
-      throw new Error('JSXNamespacedName is not supported.')
-    }
-    const isKey = attr.name.name === 'key'
-    const name = t.stringLiteral(attr.name.name)
+    const attrName = getJSXAttributeName(attr.name)
+    const isKey = attrName === 'key'
+    const name = t.stringLiteral(attrName)
     if (attr.value === null) {
       propArr.push(t.objectProperty(name, t.booleanLiteral(true)))
       break
@@ -40,7 +58,7 @@ export const transformProps = (elem: t.JSXOpeningElement) => {
         propArr.push(
           t.objectMethod(
             'get',
-            t.identifier(attr.name.name),
+            t.stringLiteral(attrName),
             [],
             t.blockStatement([t.returnStatement(attr.value.expression)]),
           ),
@@ -63,10 +81,14 @@ export interface JSXType {
   __isJSXType: true
 }
 export const getJSXType = (elem: t.JSXOpeningElement): JSXType => {
-  if (elem.name.type !== 'JSXIdentifier') {
-    throw new TypeError('expected JSXIdentifier')
+  if (t.isJSXNamespacedName(elem.name)) {
+    return {
+      type: 'element',
+      name: getJSXElementName(elem.name),
+      __isJSXType: true,
+    }
   }
-  const name = elem.name.name
+  const name = getJSXElementName(elem.name)
   if (UPPER_CASE_REGEX.test(name[0])) {
     return { type: 'component', name, __isJSXType: true }
   }

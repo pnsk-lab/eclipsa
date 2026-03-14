@@ -73,6 +73,9 @@ describe('createDevFetch', () => {
           }
           if (id === 'eclipsa') {
             return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
               renderSSRAsync() {
                 return {
                   html: '<html><head></head><body></body></html>',
@@ -175,6 +178,9 @@ describe('createDevFetch', () => {
           }
           if (id === 'eclipsa') {
             return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
               renderSSRAsync(renderDocument: () => any) {
                 const resolveNode = (value: any): any => {
                   if (!value || typeof value !== 'object') {
@@ -228,6 +234,68 @@ describe('createDevFetch', () => {
     expect(html).toContain('"type":"layout"')
     expect(html).toContain('"__eclipsa_type":"route-slot"')
     expect(html).toContain('"pathname":"/"')
+  })
+
+  it('renders resume metadata through SSRRoot head props', async () => {
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return props
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              renderSSRAsync(renderDocument: () => any) {
+                return {
+                  html: JSON.stringify(renderDocument()),
+                  payload: {},
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+    const html = await response?.text()
+
+    expect(html).toContain('"id":"eclipsa-resume"')
+    expect(html).toContain(`"id":"${'eclipsa-route-manifest'}"`)
+    expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
+    expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
   })
 })
 

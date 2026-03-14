@@ -1644,6 +1644,24 @@ const removeVisibleState = (container: RuntimeContainer, visibleId: string) => {
   container.visibles.delete(visibleId)
 }
 
+const resetVisibleState = (visible: VisibleState) => {
+  disposeCleanupSlot(visible.cleanupSlot)
+  visible.cleanupSlot = createCleanupSlot()
+  visible.done = false
+  visible.pending = null
+}
+
+const resetComponentVisibleStates = (container: RuntimeContainer, componentId: string) => {
+  const targetIds = new Set<string>([componentId, ...collectDescendantIds(container, componentId)])
+
+  for (const visible of container.visibles.values()) {
+    if (!targetIds.has(visible.componentId)) {
+      continue
+    }
+    resetVisibleState(visible)
+  }
+}
+
 const pruneComponentWatches = (
   container: RuntimeContainer,
   component: ComponentState,
@@ -2201,6 +2219,10 @@ const htmlToNodes = (doc: Document, html: string) => {
 }
 
 const EVENT_PROP_REGEX = /^on([A-Z].+)\$$/
+const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
+
+const resolveDangerouslySetInnerHTML = (value: unknown) =>
+  value === false || value === undefined || value === null ? null : String(value)
 
 const toEventName = (propName: string) => {
   const matched = propName.match(EVENT_PROP_REGEX)
@@ -2354,6 +2376,8 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   const attrParts: string[] = []
   const descriptors = Object.getOwnPropertyDescriptors(resolved.props)
   const container = getCurrentContainer()
+  let hasInnerHTML = false
+  let innerHTML: string | null = null
 
   for (const [name, descriptor] of Object.entries(descriptors) as [string, PropertyDescriptor][]) {
     if (name === 'children') {
@@ -2383,6 +2407,12 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       continue
     }
 
+    if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+      hasInnerHTML = true
+      innerHTML = resolveDangerouslySetInnerHTML(value)
+      continue
+    }
+
     if (value === false || value === undefined || value === null) {
       continue
     }
@@ -2403,14 +2433,16 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     attrParts.push('data-e-resume="paused"')
   }
 
-  let childrenText = ''
-  const children = resolved.props.children
-  if (Array.isArray(children)) {
-    for (const child of children) {
-      childrenText += renderStringNode(child)
+  let childrenText = innerHTML ?? ''
+  if (!hasInnerHTML) {
+    const children = resolved.props.children
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        childrenText += renderStringNode(child)
+      }
+    } else {
+      childrenText += renderStringNode(children as JSX.Element)
     }
-  } else {
-    childrenText += renderStringNode(children as JSX.Element)
   }
 
   if (resolved.type === FRAGMENT) {
@@ -2510,6 +2542,14 @@ const applyElementProp = (
     return
   }
 
+  if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+    const html = resolveDangerouslySetInnerHTML(value)
+    if (html !== null) {
+      element.innerHTML = html
+    }
+    return
+  }
+
   if (value === false || value === undefined || value === null) {
     return
   }
@@ -2602,6 +2642,7 @@ export const renderClientNodes = (
   }
 
   const element = createElementNode(container.doc, resolved.type)
+  let hasInnerHTML = false
   for (const [name, descriptor] of Object.entries(
     Object.getOwnPropertyDescriptors(resolved.props),
   ) as [string, PropertyDescriptor][]) {
@@ -2612,7 +2653,14 @@ export const renderClientNodes = (
     if (resolved.type === 'body' && name === 'data-e-resume') {
       continue
     }
+    if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+      hasInnerHTML = true
+    }
     applyElementProp(element, name, value, container)
+  }
+
+  if (hasInnerHTML) {
+    return [element]
   }
 
   const children = resolved.props.children
@@ -3492,6 +3540,7 @@ export const applyResumeHmrUpdate = async (
     if (!component) {
       continue
     }
+    resetComponentVisibleStates(container, boundaryId)
     component.active = false
     container.dirty.add(boundaryId)
   }

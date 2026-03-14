@@ -2,6 +2,7 @@ import { createServerModuleRunner, type Plugin, type PluginOption, type Resolved
 import { createDevFetch, shouldInvalidateDevApp } from './dev-app/mod.ts'
 import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
 import { createConfig } from './config.ts'
+import { resolveEclipsaPluginOptions, type EclipsaPluginOptions } from './options.ts'
 import {
   compileModuleForClient,
   compileModuleForSSR,
@@ -12,12 +13,15 @@ import {
 } from './compiler.ts'
 import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
 
-const eclipsaCore = (): Plugin => {
+const preserveNonJsHotModules = <T extends { type?: string }>(modules: T[]) =>
+  modules.filter((module) => module.type !== 'js')
+
+const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
   let config: ResolvedConfig
 
   return {
     name: 'vite-plugin-eclipsa',
-    config: createConfig,
+    config: createConfig(resolveEclipsaPluginOptions(options)),
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
@@ -75,7 +79,7 @@ const eclipsaCore = (): Plugin => {
         if (resumableUpdate.update) {
           this.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update)
         }
-        return []
+        return preserveNonJsHotModules(options.modules)
       }
 
       const module =
@@ -87,7 +91,7 @@ const eclipsaCore = (): Plugin => {
       this.environment.hot.send('update-client', {
         url: module.url,
       })
-      return []
+      return preserveNonJsHotModules(options.modules)
     },
     async load(id) {
       if (!parseSymbolRequest(id)) {
@@ -113,4 +117,6 @@ const eclipsaCore = (): Plugin => {
   }
 }
 
-export const eclipsa = (): PluginOption => [eclipsaCore()]
+export type { EclipsaPluginOptions } from './options.ts'
+
+export const eclipsa = (options?: EclipsaPluginOptions): PluginOption => [eclipsaCore(options)]

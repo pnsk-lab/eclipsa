@@ -20,6 +20,16 @@ bun run pack
 `packages/eclipsa/vite.config.ts` uses `vite-plus` `pack` with `dts: true`, so
 `vp pack` builds the library and emits declaration files in `dist/`.
 
+## Docs Deploy
+
+```bash
+cd docs
+bun run deploy
+```
+
+This deploys `docs/dist/client` with Cloudflare Workers Static Assets using
+[`docs/wrangler.jsonc`](/home/nakasyou/eclipsa/docs/wrangler.jsonc).
+
 ## Test
 
 ```bash

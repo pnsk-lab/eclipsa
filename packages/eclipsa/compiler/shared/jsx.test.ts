@@ -1,7 +1,7 @@
 // @ts-types="@types/babel__core"
 import { parseSync, types as t } from '@babel/core'
 import { describe, expect, it } from 'vitest'
-import { transformChildren } from './jsx.ts'
+import { getJSXType, transformChildren, transformProps } from './jsx.ts'
 
 const parseJSXElement = (source: string) => {
   const parsed = parseSync(source, {
@@ -78,5 +78,36 @@ describe('transformChildren()', () => {
       type: 'Identifier',
       name: 'value',
     })
+  })
+})
+
+describe('shared JSX helpers', () => {
+  it('treats namespaced JSX tags as elements', () => {
+    const element = parseJSXElement('const view = <sodipodi:namedview />')
+
+    expect(getJSXType(element.openingElement)).toEqual({
+      type: 'element',
+      name: 'sodipodi:namedview',
+      __isJSXType: true,
+    })
+  })
+
+  it('preserves namespaced JSX attribute names in props', () => {
+    const element = parseJSXElement('const view = <svg xml:space="preserve" />')
+    const { props } = transformProps(element.openingElement)
+
+    expect(props.properties).toContainEqual(
+      expect.objectContaining({
+        type: 'ObjectProperty',
+        key: expect.objectContaining({
+          type: 'StringLiteral',
+          value: 'xml:space',
+        }),
+        value: expect.objectContaining({
+          type: 'StringLiteral',
+          value: 'preserve',
+        }),
+      }),
+    )
   })
 })

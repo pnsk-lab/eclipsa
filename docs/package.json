@@ -5,15 +5,20 @@
   "scripts": {
     "build": "vp build",
     "dev": "vp dev",
-    "start": "bun dist/server/index.mjs",
+    "deploy": "bun run build && wrangler deploy",
+    "deploy:dry-run": "bun run build && wrangler deploy --dry-run",
+    "start": "bun ./scripts/serve-static.ts",
+    "test": "bun x vitest run wrangler.test.ts app/landing-scene.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "eclipsa": "workspace:*",
+    "shiki": "^4.0.2",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
-    "@typescript/native-preview": "^7.0.0-dev.20260310.1"
+    "@typescript/native-preview": "^7.0.0-dev.20260310.1",
+    "wrangler": "^4.73.0"
   }
 }

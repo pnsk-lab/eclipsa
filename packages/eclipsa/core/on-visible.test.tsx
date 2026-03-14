@@ -3,7 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { component$ } from './component.ts'
 import { __eclipsaComponent, __eclipsaLazy } from './internal.ts'
-import { createResumeContainer, installResumeListeners, renderClientInsertable, withRuntimeContainer } from './runtime.ts'
+import {
+  applyResumeHmrUpdate,
+  createResumeContainer,
+  installResumeListeners,
+  renderClientInsertable,
+  withRuntimeContainer,
+} from './runtime.ts'
 import { onCleanup, onVisible, useSignal } from './signal.ts'
 import { renderSSR } from './ssr.ts'
 
@@ -259,11 +265,13 @@ class FakeDocument {
 const withFakeVisibleDocument = async (fn: (doc: Document, fakeWindow: FakeWindow) => Promise<void>) => {
   const OriginalComment = globalThis.Comment
   const OriginalDocument = globalThis.Document
+  const OriginalHTMLElement = globalThis.HTMLElement
   const OriginalNode = globalThis.Node
   const OriginalNodeFilter = globalThis.NodeFilter
 
   globalThis.Comment = FakeComment as unknown as typeof Comment
   globalThis.Document = FakeDocument as unknown as typeof Document
+  globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
   globalThis.Node = FakeNode as unknown as typeof Node
   globalThis.NodeFilter = { SHOW_COMMENT: 128 } as typeof NodeFilter
 
@@ -273,6 +281,7 @@ const withFakeVisibleDocument = async (fn: (doc: Document, fakeWindow: FakeWindo
   } finally {
     globalThis.Comment = OriginalComment
     globalThis.Document = OriginalDocument
+    globalThis.HTMLElement = OriginalHTMLElement
     globalThis.Node = OriginalNode
     globalThis.NodeFilter = OriginalNodeFilter
   }
@@ -547,6 +556,93 @@ describe('onVisible', () => {
 
       cleanup()
       delete globalRecord.__eclipsaVisibleRefTag
+    })
+  })
+
+  it('reruns resumed visible callbacks after an HMR boundary rerender', async () => {
+    await withFakeVisibleDocument(async (doc, fakeWindow) => {
+      const events: string[] = []
+      const container = createResumeContainer(doc, {
+        components: {
+          c0: {
+            props: {
+              __eclipsa_type: 'object',
+              entries: [],
+            },
+            scope: 'sc0',
+            signalIds: [],
+            symbol: 'page-symbol',
+            visibleCount: 1,
+            watchCount: 0,
+          },
+        },
+        loaders: {},
+        scopes: {
+          sc0: [],
+          sc1: [],
+        },
+        signals: {
+          '$router:isNavigating': false,
+          '$router:path': '/',
+        },
+        subscriptions: {
+          '$router:isNavigating': [],
+          '$router:path': [],
+        },
+        symbols: {
+          'page-symbol': '/virtual/page-symbol.js',
+          'visible-symbol': '/virtual/visible-symbol.js',
+        },
+        visibles: {
+          'c0:v0': {
+            componentId: 'c0',
+            scope: 'sc1',
+            symbol: 'visible-symbol',
+          },
+        },
+        watches: {},
+      })
+      container.imports.set(
+        'visible-symbol',
+        Promise.resolve({
+          default: () => {
+            events.push('run')
+            onCleanup(() => {
+              events.push('cleanup')
+            })
+          },
+        }),
+      )
+      container.imports.set(
+        'page-symbol',
+        Promise.resolve({
+          default: () => {
+            onVisible(__eclipsaLazy('visible-symbol', () => {}, () => []))
+            return jsxDEV('div', { children: 'ready' }, null, false, {})
+          },
+        }),
+      )
+
+      const cleanup = installResumeListeners(container)
+
+      ;(doc as unknown as FakeDocument).visible = true
+      fakeWindow.emit('resize')
+      await flushAsync()
+
+      expect(events).toEqual(['run'])
+
+      await applyResumeHmrUpdate(container, {
+        fileUrl: '/app/+page.tsx',
+        fullReload: false,
+        rerenderComponentSymbols: ['page-symbol'],
+        rerenderOwnerSymbols: [],
+        symbolUrlReplacements: {},
+      })
+      await flushAsync()
+
+      expect(events).toEqual(['run', 'cleanup', 'run'])
+
+      cleanup()
     })
   })
 })

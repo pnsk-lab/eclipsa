@@ -13,4 +13,14 @@ describe('compileSSRModule', () => {
     expect(resultCode).toContain('jsxDEV("span"')
     expect(resultCode).toContain('value')
   })
+
+  it('supports namespaced SVG tags and attributes', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <svg><sodipodi:namedview xml:space="preserve" /></svg>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).toContain('jsxDEV("sodipodi:namedview"')
+    expect(resultCode).toContain('"xml:space": "preserve"')
+  })
 })
