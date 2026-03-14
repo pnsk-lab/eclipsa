@@ -1,4 +1,16 @@
+import { readFile, rename, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
+
+const hmrSvgPagePath = fileURLToPath(new URL('../app/hmr-svg/+page.tsx', import.meta.url))
+const hmrBeforeLabel = 'svg hmr before'
+const hmrAfterLabel = 'svg hmr after'
+
+const writeSourceAtomically = async (filePath: string, source: string) => {
+  const tempPath = `${filePath}.tmp`
+  await writeFile(tempPath, source)
+  await rename(tempPath, filePath)
+}
 
 test.describe('example app in dev mode', () => {
   test.describe.configure({ mode: 'serial' })
@@ -150,5 +162,30 @@ test.describe('example app in dev mode', () => {
     await expect(page).toHaveURL(/\/actions$/)
 
     await expect.poll(getRightLabelText).toBe('Right')
+  })
+
+  test('applies resumable HMR updates for pages that render inline SVG', async ({ page }) => {
+    const originalSource = await readFile(hmrSvgPagePath, 'utf8')
+    const heading = page.getByRole('heading', { name: 'SVG HMR Probe' })
+    const status = page.locator('main main p').first()
+    const icon = page.locator('main main svg').first()
+
+    await page.goto('/hmr-svg')
+    await expect(heading).toBeVisible()
+    await expect(icon).toBeVisible()
+    await expect(status).toHaveText(hmrBeforeLabel)
+
+    const updatedSource = originalSource.replace(hmrBeforeLabel, hmrAfterLabel)
+    expect(updatedSource).not.toBe(originalSource)
+
+    try {
+      await writeSourceAtomically(hmrSvgPagePath, updatedSource)
+      await expect(heading).toBeVisible()
+      await expect(status).toHaveText(hmrAfterLabel)
+    } finally {
+      await writeSourceAtomically(hmrSvgPagePath, originalSource)
+      await expect(heading).toBeVisible()
+      await expect(status).toHaveText(hmrBeforeLabel)
+    }
   })
 })

@@ -52,6 +52,8 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
 const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+
   if (EVENT_ATTR_REGEX.test(name)) {
     const eventName = name[2].toLowerCase() + name.slice(3, -1)
     const resolved = value()
@@ -77,11 +79,20 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
 
   if (name === 'class') {
     effect(() => {
-      elem.className = String(value())
+      if (isSVG) {
+        elem.setAttribute('class', String(value()))
+        return
+      }
+      ;(elem as Element & { className: string }).className = String(value())
     })
+    return
   }
 
   effect(() => {
+    if (isSVG) {
+      elem.setAttribute(name, String(value()))
+      return
+    }
     // @ts-expect-error DOM property assignment uses dynamic keys.
     elem[name] = String(value())
   })
