@@ -1,4 +1,6 @@
-import { fetchEurl } from './eurl.ts'
+import { jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
+import type { Component } from '../component.ts'
+import { getRuntimeContainer, renderClientInsertable } from '../runtime.ts'
 
 interface ComponentResult {
   (): void
@@ -25,8 +27,25 @@ export const createTemplate = (templateHTML: string) => {
 export const createComponentEurl = (
   elem: HTMLElement,
   signalI: number,
-  componentEurl: string,
-  props: string,
+  Component: Component,
+  props: Record<string, unknown>,
 ) => {
-  console.log(elem, signalI, componentEurl, props)
+  const marker =
+    elem.getAttribute('sig') === String(signalI)
+      ? elem
+      : Array.from(elem.querySelectorAll('*')).find(
+          (candidate) => candidate.getAttribute('sig') === String(signalI),
+        )
+
+  if (!marker?.parentNode) {
+    return
+  }
+
+  const runtimeContainer = getRuntimeContainer()
+  const nodes = renderClientInsertable(jsxDEV(Component, props, null, false, {}), runtimeContainer)
+
+  for (const node of nodes) {
+    marker.parentNode.insertBefore(node, marker)
+  }
+  marker.remove()
 }

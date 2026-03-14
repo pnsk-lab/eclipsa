@@ -1,0 +1,19 @@
+{
+  "name": "@eclipsa/docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "dev": "vp dev",
+    "start": "bun dist/server/index.mjs",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "eclipsa": "workspace:*",
+    "tailwindcss": "^4.2.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@typescript/native-preview": "^7.0.0-dev.20260310.1"
+  }
+}

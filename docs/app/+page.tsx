@@ -1,6 +1,4 @@
 import { component$, For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
-import { ProjectedContent } from './ProjectedContent.tsx'
-import { RenderPropProbe } from './RenderPropProbe.tsx'
 
 export default component$(() => {
   const todos = useSignal<string[]>(['ToDo1'])
@@ -39,12 +37,12 @@ export default component$(() => {
       >
         Go to counter with navigate()
       </button>
-      <RenderPropProbe aa={<ProjectedContent label="Prop component content" />}>
-        <ProjectedContent label="Children component content" />
-      </RenderPropProbe>
       <ul>
         <For arr={todos.value} fn={(todo, i) => <li key={i}>{todo}</li>} />
       </ul>
+      <style>
+        
+      </style>
     </div>
   )
 })

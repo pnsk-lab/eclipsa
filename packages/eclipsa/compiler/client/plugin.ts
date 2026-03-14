@@ -117,6 +117,39 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
         },
       },
       JSXElement(path) {
+        const rootType = getJSXType(path.node.openingElement)
+        if (
+          rootType.type !== 'element' &&
+          !path.parentPath?.isJSXElement() &&
+          !path.parentPath?.isJSXFragment()
+        ) {
+          const componentId = t.identifier(rootType.name)
+          const { props, key } = transformProps(path.node.openingElement)
+          if (path.node.children.length > 0) {
+            props.properties.push(t.objectProperty(t.identifier('children'), transformChildren(path.node)))
+          }
+
+          let resultExpr: t.Expression = t.callExpression(createComponent, [componentId, props])
+          if (key) {
+            const id = t.identifier('f')
+            resultExpr = t.callExpression(
+              t.arrowFunctionExpression(
+                [],
+                t.blockStatement([
+                  t.variableDeclaration('var', [t.variableDeclarator(id, resultExpr)]),
+                  t.expressionStatement(
+                    t.assignmentExpression('=', t.memberExpression(id, t.identifier('key')), key),
+                  ),
+                  t.returnStatement(id),
+                ]),
+              ),
+              [],
+            )
+          }
+          path.replaceWith(resultExpr)
+          return
+        }
+
         type Path = number[]
         type InsertOperation =
           | {

@@ -112,27 +112,34 @@ export const normalizeJSXText = (value: string) => {
   return result === '' ? null : result
 }
 
+const transformChildNodes = (
+  children: (
+    | t.JSXText
+    | t.JSXExpressionContainer
+    | t.JSXElement
+    | t.JSXFragment
+    | t.JSXSpreadChild
+  )[],
+): t.Expression[] =>
+  children.flatMap((child) => {
+    if (t.isJSXText(child)) {
+      const str = normalizeJSXText(child.value)
+      return str === null ? [] : [t.stringLiteral(str)]
+    }
+    if (t.isJSXExpressionContainer(child)) {
+      if (t.isJSXEmptyExpression(child.expression)) {
+        return []
+      }
+      return [child.expression]
+    }
+    if (t.isJSXElement(child)) {
+      return [child as unknown as t.Expression]
+    }
+    if (t.isJSXFragment(child)) {
+      return transformChildNodes(child.children)
+    }
+    return []
+  })
+
 export const transformChildren = (elem: t.JSXElement) =>
-  t.arrayExpression(
-    elem.children
-      .map((child) => {
-        if (t.isJSXText(child)) {
-          const str = normalizeJSXText(child.value)
-          if (str === null) {
-            return null
-          }
-          return t.stringLiteral(str)
-        }
-        if (t.isJSXExpressionContainer(child)) {
-          if (t.isJSXEmptyExpression(child.expression)) {
-            return null
-          }
-          return child.expression
-        }
-        if (t.isJSXElement(child)) {
-          return child as unknown as t.Expression
-        }
-        return null
-      })
-      .filter(Boolean),
-  )
+  t.arrayExpression(transformChildNodes(elem.children))

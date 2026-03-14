@@ -51,4 +51,32 @@ describe('transformChildren()', () => {
     expect(children.elements).toHaveLength(2)
     expect(children.elements[0]).toEqual(t.stringLiteral('action last:'))
   })
+
+  it('flattens JSX fragments passed as children', () => {
+    const element = parseJSXElement(`
+      const view = (
+        <Layout>
+          <>
+            <span>a</span>
+            {value}
+          </>
+        </Layout>
+      )
+    `)
+    const children = transformChildren(element)
+
+    expect(children.elements).toHaveLength(2)
+    expect(children.elements[0]).toMatchObject({
+      type: 'JSXElement',
+      openingElement: {
+        name: {
+          name: 'span',
+        },
+      },
+    })
+    expect(children.elements[1]).toMatchObject({
+      type: 'Identifier',
+      name: 'value',
+    })
+  })
 })

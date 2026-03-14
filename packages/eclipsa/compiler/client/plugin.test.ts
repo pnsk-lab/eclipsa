@@ -53,6 +53,34 @@ describe('compiler/client pluginClientJSX', () => {
     expect(resultCode).toContain('Home')
   })
 
+  it('passes JSX fragment children through component props', () => {
+    const resultCode = transform(`<Layout><><span>a</span>{value}</></Layout>`, {
+      filename: 'plugin.test.tsx',
+      parserOpts: {
+        plugins: ['jsx'],
+      },
+      plugins: [pluginClientJSX({ hmr: false })],
+    })?.code
+
+    expect(resultCode).toContain('children: [')
+    expect(resultCode).toContain('<span>a</span>')
+    expect(resultCode).toContain('value')
+  })
+
+  it('emits standalone component expressions in props without placeholder templates', () => {
+    const resultCode = transform(`<Layout aa={<Header />} />`, {
+      filename: 'plugin.test.tsx',
+      parserOpts: {
+        plugins: ['jsx'],
+      },
+      plugins: [pluginClientJSX({ hmr: false })],
+    })?.code
+
+    expect(resultCode).toContain('get aa()')
+    expect(resultCode).toContain('_createComponent(Header, {})')
+    expect(resultCode).not.toContain('_createTemplate("<!--  -->")')
+  })
+
   it('preserves source order between component and expression inserts', () => {
     const resultCode = transform(`<div><Header /><main>{props.children}</main></div>`, {
       filename: 'plugin.test.tsx',

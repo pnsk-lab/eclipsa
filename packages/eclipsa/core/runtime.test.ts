@@ -151,4 +151,48 @@ describe('renderClientInsertable', () => {
       expect(container.signals.get('s1')?.value).toBe(0)
     })
   })
+
+  it('resolves resumed route slots from the page route cache entry during client rerenders', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
+      container.router = {
+        currentPath: { value: '/' },
+        currentRoute: null,
+        isNavigating: { value: false },
+        loadedRoutes: new Map([
+          [
+            '/::page',
+            {
+              entry: {} as any,
+              layouts: [],
+              page: { renderer: page },
+              params: {},
+              pathname: '/',
+              render: () => jsxDEV(page, {}, null, false, {}),
+            },
+          ],
+        ]),
+        manifest: [],
+        navigate: (async () => {}) as any,
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const [node] = renderClientInsertable(
+        {
+          __eclipsa_type: 'route-slot',
+          pathname: '/',
+          startLayoutIndex: 0,
+        },
+        container,
+      )
+
+      const element = node as unknown as FakeElement
+      expect(element).toBeInstanceOf(FakeElement)
+      expect(element.tagName).toBe('p')
+      expect(element.childNodes).toHaveLength(1)
+      expect(element.childNodes[0]).toBeInstanceOf(FakeText)
+      expect((element.childNodes[0] as FakeText).data).toBe('page content')
+    })
+  })
 })

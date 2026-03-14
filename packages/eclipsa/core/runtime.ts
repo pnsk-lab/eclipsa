@@ -6,10 +6,12 @@ import {
   deserializeValue,
   escapeJSONScriptText,
   serializeValue,
+  type SerializedReference,
   type SerializedValue,
 } from './serialize.ts'
 import type { Component } from './component.ts'
 import {
+  __eclipsaComponent,
   getActionHandleMeta,
   getActionHookMeta,
   getComponentMeta,
@@ -55,6 +57,8 @@ const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 const ROOT_COMPONENT_ID = '$root'
 const ROUTE_SLOT_TYPE = 'route-slot'
 const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
+const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
+const RENDER_REFERENCE_KIND = 'render'
 
 export interface ResumeComponentPayload {
   props: SerializedValue
@@ -257,6 +261,26 @@ type RenderObject = Extract<
     type: JSX.Type
   }
 >
+
+interface RenderComponentTypeRef {
+  scopeId: string
+  symbol: string
+}
+
+const resolvedRuntimeSymbols = new WeakMap<RuntimeContainer, Map<string, RuntimeSymbolModule>>()
+
+const getResolvedRuntimeSymbols = (container: RuntimeContainer) => {
+  const existing = resolvedRuntimeSymbols.get(container)
+  if (existing) {
+    return existing
+  }
+  const created = new Map<string, RuntimeSymbolModule>()
+  resolvedRuntimeSymbols.set(container, created)
+  return created
+}
+
+const isRenderObject = (value: unknown): value is RenderObject =>
+  typeof value === 'object' && value !== null && 'type' in value && 'props' in value
 
 const getContainerStack = (): RuntimeContainer[] => {
   const globalRecord = globalThis as Record<PropertyKey, unknown>
@@ -496,6 +520,190 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return proto === Object.prototype || proto === null
 }
 
+const getRenderComponentTypeRef = (value: unknown): RenderComponentTypeRef | null => {
+  if (typeof value !== 'function') {
+    return null
+  }
+  return (
+    ((value as unknown as Record<PropertyKey, unknown>)[RENDER_COMPONENT_TYPE_KEY] as
+      | RenderComponentTypeRef
+      | undefined) ?? null
+  )
+}
+
+const createMaterializedRenderComponentType = (
+  container: RuntimeContainer,
+  symbol: string,
+  scopeId: string,
+) => {
+  const component = __eclipsaComponent(
+    ((props: unknown) => {
+      const module = getResolvedRuntimeSymbols(container).get(symbol)
+      if (!module) {
+        throw new Error(`Missing preloaded render component symbol ${symbol}.`)
+      }
+      return module.default(materializeScope(container, scopeId), props)
+    }) as Component,
+    symbol,
+    () => materializeScope(container, scopeId),
+  )
+  Object.defineProperty(component, RENDER_COMPONENT_TYPE_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: {
+      scopeId,
+      symbol,
+    } satisfies RenderComponentTypeRef,
+    writable: true,
+  })
+  return component
+}
+
+const serializeRenderObjectReference = (
+  container: RuntimeContainer,
+  value: RenderObject,
+): SerializedReference => {
+  const evaluatedProps = evaluateProps(value.props)
+  const key = value.key ?? null
+  const metadata = value.metadata ?? null
+
+  if (typeof value.type === 'string') {
+    return {
+      __eclipsa_type: 'ref',
+      data: [
+        'element',
+        value.type,
+        null,
+        serializeRuntimeValue(container, evaluatedProps),
+        serializeRuntimeValue(container, key),
+        value.isStatic,
+        serializeRuntimeValue(container, metadata),
+      ],
+      kind: RENDER_REFERENCE_KIND,
+      token: 'jsx',
+    }
+  }
+
+  const meta = getComponentMeta(value.type)
+  if (!meta) {
+    throw new TypeError('Only resumable component render objects can be serialized.')
+  }
+
+  return {
+    __eclipsa_type: 'ref',
+    data: [
+      'component',
+      meta.symbol,
+      registerScope(container, meta.captures()),
+      serializeRuntimeValue(container, evaluatedProps),
+      serializeRuntimeValue(container, key),
+      value.isStatic,
+      serializeRuntimeValue(container, metadata),
+    ],
+    kind: RENDER_REFERENCE_KIND,
+    token: 'jsx',
+  }
+}
+
+const deserializeRenderObjectReference = (
+  container: RuntimeContainer,
+  data: SerializedValue | undefined,
+): RenderObject => {
+  if (!Array.isArray(data) || data.length !== 7) {
+    throw new TypeError('Render references require a seven-part payload.')
+  }
+
+  const [variant, typeValue, scopeValue, propsValue, keyValue, isStaticValue, metadataValue] = data
+  if (variant !== 'element' && variant !== 'component') {
+    throw new TypeError(`Unsupported render reference variant "${String(variant)}".`)
+  }
+  if (typeof isStaticValue !== 'boolean') {
+    throw new TypeError('Render references require a boolean static flag.')
+  }
+
+  const props = deserializeRuntimeValue(container, propsValue as SerializedValue)
+  const key = deserializeRuntimeValue(container, keyValue as SerializedValue)
+  const metadata = deserializeRuntimeValue(container, metadataValue as SerializedValue)
+
+  if (!props || typeof props !== 'object') {
+    throw new TypeError('Render references require object props.')
+  }
+
+  if (variant === 'element') {
+    if (typeof typeValue !== 'string') {
+      throw new TypeError('Element render references require a string tag name.')
+    }
+    return {
+      isStatic: isStaticValue,
+      key: (key ?? undefined) as RenderObject['key'],
+      metadata: (metadata ?? undefined) as RenderObject['metadata'],
+      props: props as Record<string, unknown>,
+      type: typeValue,
+    }
+  }
+
+  if (typeof typeValue !== 'string' || typeof scopeValue !== 'string') {
+    throw new TypeError('Component render references require a symbol id and scope id.')
+  }
+
+  return {
+    isStatic: isStaticValue,
+    key: (key ?? undefined) as RenderObject['key'],
+    metadata: (metadata ?? undefined) as RenderObject['metadata'],
+    props: props as Record<string, unknown>,
+    type: createMaterializedRenderComponentType(container, typeValue, scopeValue),
+  }
+}
+
+const preloadResumableValue = async (
+  container: RuntimeContainer,
+  value: unknown,
+  seen = new Set<unknown>(),
+): Promise<void> => {
+  if (value === null || value === undefined || value === false) {
+    return
+  }
+  if (seen.has(value)) {
+    return
+  }
+  if (typeof value === 'function') {
+    const renderComponentRef = getRenderComponentTypeRef(value)
+    if (!renderComponentRef) {
+      return
+    }
+    seen.add(value)
+    await loadSymbol(container, renderComponentRef.symbol)
+    for (const capturedValue of materializeScope(container, renderComponentRef.scopeId)) {
+      await preloadResumableValue(container, capturedValue, seen)
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    seen.add(value)
+    for (const entry of value) {
+      await preloadResumableValue(container, entry, seen)
+    }
+    return
+  }
+  if (typeof Node !== 'undefined' && value instanceof Node) {
+    return
+  }
+  if (isRenderObject(value)) {
+    seen.add(value)
+    await preloadResumableValue(container, value.type, seen)
+    await preloadResumableValue(container, evaluateProps(value.props), seen)
+    return
+  }
+  if (!isPlainObject(value)) {
+    return
+  }
+
+  seen.add(value)
+  for (const entry of Object.values(value)) {
+    await preloadResumableValue(container, entry, seen)
+  }
+}
+
 const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): SerializedValue =>
   serializeValue(value, {
     serializeReference(candidate) {
@@ -553,6 +761,9 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
           kind: 'route-slot',
           token: candidate.pathname,
         }
+      }
+      if (isRenderObject(candidate)) {
+        return serializeRenderObjectReference(container, candidate)
       }
       const lazyMeta = getLazyMeta(candidate)
       if (lazyMeta) {
@@ -633,6 +844,9 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
         }
         const scopeId = registerSerializedScope(container, reference.data)
         return materializeSymbolReference(container, reference.token, scopeId)
+      }
+      if (reference.kind === RENDER_REFERENCE_KIND) {
+        return deserializeRenderObjectReference(container, reference.data)
       }
       if (reference.kind === 'dom') {
         const element = findRuntimeElement(container, reference.token)
@@ -1647,9 +1861,6 @@ const resolveRenderable = (value: JSX.Element): JSX.Element => {
   return current
 }
 
-const isRenderObject = (value: JSX.Element): value is RenderObject =>
-  typeof value === 'object' && value !== null && 'type' in value && 'props' in value
-
 const nextComponentPosition = (container: RuntimeContainer) => {
   const frame = getCurrentFrame()
   if (!frame) {
@@ -2032,9 +2243,15 @@ const loadSymbol = async (
   container: RuntimeContainer,
   symbolId: string,
 ): Promise<RuntimeSymbolModule> => {
+  const resolved = getResolvedRuntimeSymbols(container).get(symbolId)
+  if (resolved) {
+    return resolved
+  }
   const existing = container.imports.get(symbolId)
   if (existing) {
-    return existing
+    const module = await existing
+    getResolvedRuntimeSymbols(container).set(symbolId, module)
+    return module
   }
 
   const url = container.symbols.get(symbolId)
@@ -2042,7 +2259,10 @@ const loadSymbol = async (
     throw new Error(`Missing symbol URL for ${symbolId}.`)
   }
 
-  const loaded = import(/* @vite-ignore */ url) as Promise<RuntimeSymbolModule>
+  const loaded = (import(/* @vite-ignore */ url) as Promise<RuntimeSymbolModule>).then((module) => {
+    getResolvedRuntimeSymbols(container).set(symbolId, module)
+    return module
+  })
   container.imports.set(symbolId, loaded)
   return loaded
 }
@@ -2179,7 +2399,9 @@ const createRouteSlot = (route: LoadedRoute, startLayoutIndex: number): RouteSlo
 }
 
 const resolveRouteSlot = (container: RuntimeContainer | null, slot: RouteSlotCarrier) => {
-  const route = slot[ROUTE_SLOT_ROUTE_KEY] ?? container?.router?.loadedRoutes.get(slot.pathname)
+  const route =
+    slot[ROUTE_SLOT_ROUTE_KEY] ??
+    container?.router?.loadedRoutes.get(routeCacheKey(slot.pathname, 'page'))
   if (!route) {
     return null
   }
@@ -2647,6 +2869,8 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, component.scopeId)
+  await preloadResumableValue(container, scope)
+  await preloadResumableValue(container, component.props)
   const module = await loadSymbol(container, component.symbol)
   const frame = createFrame(container, component, 'client')
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)

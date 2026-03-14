@@ -5,10 +5,14 @@ test.describe('example app in dev mode', () => {
 
   test('renders the SSR shell and adds todos after resume', async ({ page }) => {
     await page.goto('/')
+    const propComponentContent = page.getByText('Prop component content')
+    const childrenComponentContent = page.getByText('Children component content')
 
     await expect(page).toHaveTitle('Document')
     await expect(page.getByRole('heading', { name: 'Todo List' })).toBeVisible()
     await expect(page.getByText('Shared layout shell updated')).toBeVisible()
+    await expect(propComponentContent).toBeVisible()
+    await expect(childrenComponentContent).toBeVisible()
     await expect(page.getByRole('listitem')).toHaveCount(1)
     await expect(page.getByRole('listitem').first()).toHaveText('ToDo1')
 
@@ -37,6 +41,23 @@ test.describe('example app in dev mode', () => {
 
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+  })
+
+  test('keeps component-valued props and children rendered after client updates', async ({ page }) => {
+    await page.goto('/')
+    const propComponentContent = page.getByText('Prop component content')
+    const childrenComponentContent = page.getByText('Children component content')
+
+    await expect(propComponentContent).toBeVisible()
+    await expect(childrenComponentContent).toBeVisible()
+
+    const input = page.getByRole('textbox')
+    await input.fill('Keeps component props')
+    await page.getByRole('button', { name: 'Add' }).click()
+
+    await expect(page.getByRole('listitem')).toHaveCount(2)
+    await expect(propComponentContent).toBeVisible()
+    await expect(childrenComponentContent).toBeVisible()
   })
 
   test('navigates imperatively and updates the counter', async ({ page }) => {
