@@ -79,4 +79,24 @@ describe('core/client dom attr', () => {
     expect(elem.innerHTML).toBe('<span>raw</span>')
     expect(setAttribute).not.toHaveBeenCalledWith('dangerouslySetInnerHTML', expect.anything())
   })
+
+  it('preserves string style attributes for svg rerenders', () => {
+    const setAttribute = vi.fn()
+    const elem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/2000/svg',
+      setAttribute,
+    }
+
+    attr(
+      elem as unknown as Element,
+      'style',
+      () => 'display:inline;opacity:0.5;fill:url(#linearGradient3);fill-opacity:1',
+    )
+
+    expect(setAttribute).toHaveBeenCalledWith(
+      'style',
+      'display:inline;opacity:0.5;fill:url(#linearGradient3);fill-opacity:1',
+    )
+  })
 })

@@ -88,7 +88,7 @@ export default component$(() => {
         id="hero"
       >
         <h1 class="uppercase relative z-10 mb-8 mt-15 w-full select-none text-black text-[clamp(3rem,8vw,8rem)] leading-[0.75] tracking-[-0.02em] text-white font-archivo-black">
-          The Final-Gen Frontend Framework
+          The <span class="bg-gradient-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent">Final</span>-Gen Frontend Framework
         </h1>
 
         <div class="z-20 mt-10 flex flex-col items-center">

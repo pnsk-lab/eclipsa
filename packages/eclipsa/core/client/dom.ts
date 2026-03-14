@@ -71,9 +71,13 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
 
   if (name === 'style') {
     effect(() => {
-      const styleValue = Object.entries(value() as Record<string, string>)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(';')
+      const resolved = value()
+      const styleValue =
+        resolved && typeof resolved === 'object'
+          ? Object.entries(resolved as Record<string, string>)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join('; ')
+          : String(resolved ?? '')
       elem.setAttribute('style', styleValue)
     })
     return
