@@ -116,6 +116,7 @@ describe('resume HMR runtime helpers', () => {
             didMount: false,
             end: {} as Comment,
             id: 'c0',
+            mountCleanupSlots: [],
             parentId: '$root',
             props: {},
             projectionSlots: null,
@@ -137,6 +138,7 @@ describe('resume HMR runtime helpers', () => {
         [
           'v0',
           {
+            cleanupSlot: { callbacks: [] },
             componentId: 'c0',
             done: false,
             id: 'v0',
@@ -151,6 +153,7 @@ describe('resume HMR runtime helpers', () => {
         [
           'w0',
           {
+            cleanupSlot: { callbacks: [] },
             componentId: 'c0',
             effect: {
               fn: () => {},
@@ -204,6 +207,7 @@ describe('resume HMR runtime helpers', () => {
             didMount: false,
             end: {} as Comment,
             id: 'c0',
+            mountCleanupSlots: [],
             parentId: '$root',
             props: {},
             projectionSlots: null,
@@ -221,6 +225,7 @@ describe('resume HMR runtime helpers', () => {
             active: true,
             didMount: false,
             id: 'c0.0',
+            mountCleanupSlots: [],
             parentId: 'c0',
             props: {},
             projectionSlots: null,
@@ -247,6 +252,7 @@ describe('resume HMR runtime helpers', () => {
             didMount: false,
             end: {} as Comment,
             id: 'c0',
+            mountCleanupSlots: [],
             parentId: '$root',
             props: {},
             projectionSlots: null,
