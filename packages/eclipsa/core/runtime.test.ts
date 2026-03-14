@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { component$ } from './component.ts'
 import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
-import { useSignal, useWatch } from './signal.ts'
+import { onCleanup, onMount, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
 
 class FakeNode {
@@ -89,9 +89,17 @@ const withFakeNodeGlobal = <T>(fn: () => T) => {
   const OriginalNode = globalThis.Node
   globalThis.Node = FakeNode as unknown as typeof Node
   try {
-    return fn()
-  } finally {
+    const result = fn()
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        globalThis.Node = OriginalNode
+      }) as T
+    }
     globalThis.Node = OriginalNode
+    return result
+  } catch (error) {
+    globalThis.Node = OriginalNode
+    throw error
   }
 }
 
@@ -111,11 +119,43 @@ const collectComments = (nodes: FakeNode[]): string[] => {
   return result
 }
 
+const flushAsync = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 describe('renderClientInsertable', () => {
   it('keeps nodes returned from function arrays during client rerenders', () => {
     withFakeNodeGlobal(() => {
       const node = new FakeNode() as unknown as Node
       expect(renderClientInsertable(() => [node], createContainer())).toEqual([node])
+    })
+  })
+
+  it('assigns signal refs to rendered elements', () => {
+    withFakeNodeGlobal(() => {
+      let ref!: { value: HTMLElement | undefined }
+
+      const App = component$(
+        __eclipsaComponent(
+          () => {
+            ref = useSignal<HTMLElement | undefined>()
+            return jsxDEV('div', { ref }, null, false, {})
+          },
+          'component-ref',
+          () => [],
+        ),
+      )
+
+      const container = createContainer()
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      const element = nodes.find((node) => node instanceof FakeElement) as FakeElement | undefined
+
+      expect(element).toBeInstanceOf(FakeElement)
+      expect(ref.value).toBe(element as unknown as HTMLElement)
+      expect(element?.tagName).toBe('div')
     })
   })
 
@@ -173,6 +213,106 @@ describe('renderClientInsertable', () => {
       expect(container.components.get('c0')?.watchCount).toBe(0)
       expect(container.watches.has('c0:w0')).toBe(false)
       expect(container.signals.get('s1')?.value).toBe(0)
+    })
+  })
+
+  it('runs onMount cleanup when a component slot changes symbol', async () => {
+    await withFakeNodeGlobal(async () => {
+      const events: string[] = []
+      const First = component$(
+        __eclipsaComponent(
+          () => {
+            onMount(() => {
+              events.push('mount')
+              onCleanup(() => {
+                events.push('cleanup')
+              })
+            })
+            return 'first'
+          },
+          'component-mount-first',
+          () => [],
+        ),
+      )
+
+      const Second = component$(
+        __eclipsaComponent(
+          () => 'second',
+          'component-mount-second',
+          () => [],
+        ),
+      )
+
+      const container = createContainer()
+
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(First, {}, null, false, {}), container)
+      })
+
+      await flushAsync()
+      expect(events).toEqual(['mount'])
+
+      container.rootChildCursor = 0
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(Second, {}, null, false, {}), container)
+      })
+
+      expect(events).toEqual(['mount', 'cleanup'])
+    })
+  })
+
+  it('runs watch cleanup when a resumable watch is torn down', () => {
+    withFakeNodeGlobal(() => {
+      let count!: { value: number }
+      const events: string[] = []
+
+      const First = component$(
+        __eclipsaComponent(
+          () => {
+            count = useSignal(0)
+            useWatch(
+              __eclipsaWatch(
+                'watch-cleanup',
+                () => {
+                  const snapshot = count.value
+                  events.push(`run:${snapshot}`)
+                  onCleanup(() => {
+                    events.push(`cleanup:${snapshot}`)
+                  })
+                },
+                () => [count],
+              ),
+            )
+            return count.value
+          },
+          'component-watch-first',
+          () => [],
+        ),
+      )
+
+      const Second = component$(
+        __eclipsaComponent(
+          () => 'done',
+          'component-watch-second',
+          () => [],
+        ),
+      )
+
+      const container = createContainer()
+
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(First, {}, null, false, {}), container)
+      })
+
+      count.value = 1
+      expect(events).toEqual(['run:0', 'cleanup:0', 'run:1'])
+
+      container.rootChildCursor = 0
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(Second, {}, null, false, {}), container)
+      })
+
+      expect(events).toEqual(['run:0', 'cleanup:0', 'run:1', 'cleanup:1'])
     })
   })
 

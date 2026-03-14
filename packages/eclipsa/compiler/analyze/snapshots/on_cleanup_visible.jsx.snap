@@ -1,0 +1,54 @@
+// ================= ENTRY (on_cleanup_visible.jsx) ==
+import { component$, onCleanup, onVisible } from 'eclipsa'
+
+export default component$(() => {
+  const value = 'visible'
+
+  onVisible(() => {
+    console.log(value)
+    onCleanup(() => {
+      console.log(`cleanup:${value}`)
+    })
+  })
+
+  return <button>{value}</button>
+})
+
+
+// ================= analyzed ==
+import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
+import { component$, onCleanup, onVisible } from "eclipsa";
+var analyze_input_default = component$(__eclipsaComponent(() => {
+  const value = "visible";
+  onVisible(__eclipsaLazy("y19usd", () => {
+    console.log(value);
+    onCleanup(() => {
+      console.log(`cleanup:${value}`);
+    });
+  }, () => [value]));
+  return <button>{value}</button>;
+}, "1waxrep", () => []));
+export { analyze_input_default as default };
+
+// ================= y19usd (lazy) ==
+import { component$, onCleanup, onVisible } from "eclipsa";
+export default __scope => {
+  console.log(__scope[0]);
+  onCleanup(() => {
+    console.log(`cleanup:${__scope[0]}`);
+  });
+};
+
+// ================= 1waxrep (component) ==
+import { component$, onCleanup, onVisible } from "eclipsa";
+import { __eclipsaLazy } from "eclipsa/internal";
+export default __scope => {
+  const value = "visible";
+  onVisible(__eclipsaLazy("y19usd", () => {
+    console.log(value);
+    onCleanup(() => {
+      console.log(`cleanup:${value}`);
+    });
+  }, () => [value]));
+  return <button>{value}</button>;
+};

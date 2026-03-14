@@ -60,6 +60,7 @@ const PROJECTION_SLOT_TYPE = 'projection-slot'
 const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
 const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
 const RENDER_REFERENCE_KIND = 'render'
+const REF_SIGNAL_ATTR = 'data-e-ref'
 
 export interface ResumeComponentPayload {
   props: SerializedValue
@@ -112,11 +113,18 @@ interface SignalRecord<T = unknown> {
   value: T
 }
 
+type CleanupCallback = () => void
+
+interface CleanupSlot {
+  callbacks: CleanupCallback[]
+}
+
 interface ComponentState {
   active: boolean
   didMount: boolean
   end?: Comment
   id: string
+  mountCleanupSlots: CleanupSlot[]
   parentId: string | null
   props: unknown
   projectionSlots: Record<string, number> | null
@@ -239,6 +247,7 @@ interface ProjectionSlotValue {
 }
 
 interface WatchState {
+  cleanupSlot: CleanupSlot
   componentId: string
   effect: ReactiveEffect
   id: string
@@ -251,6 +260,7 @@ interface WatchState {
 }
 
 interface VisibleState {
+  cleanupSlot: CleanupSlot
   componentId: string
   done: boolean
   id: string
@@ -473,6 +483,7 @@ const routeCacheKey = (pathname: string, variant: 'page' | 'loading' | 'error' |
   `${normalizeRoutePath(pathname)}::${variant}`
 
 let currentEffect: ReactiveEffect | null = null
+let currentCleanupSlot: CleanupSlot | null = null
 
 const withoutTrackedEffect = <T>(fn: () => T): T => {
   const previous = currentEffect
@@ -481,6 +492,48 @@ const withoutTrackedEffect = <T>(fn: () => T): T => {
     return fn()
   } finally {
     currentEffect = previous
+  }
+}
+
+const createCleanupSlot = (): CleanupSlot => ({
+  callbacks: [],
+})
+
+const withCleanupSlot = <T>(slot: CleanupSlot, fn: () => T): T => {
+  const previous = currentCleanupSlot
+  currentCleanupSlot = slot
+  try {
+    return fn()
+  } finally {
+    currentCleanupSlot = previous
+  }
+}
+
+const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
+  if (!slot || slot.callbacks.length === 0) {
+    return
+  }
+
+  const callbacks = [...slot.callbacks].reverse()
+  slot.callbacks.length = 0
+  let firstError: unknown = null
+  const previous = currentCleanupSlot
+  currentCleanupSlot = null
+
+  try {
+    for (const callback of callbacks) {
+      try {
+        withoutTrackedEffect(callback)
+      } catch (error) {
+        firstError ??= error
+      }
+    }
+  } finally {
+    currentCleanupSlot = previous
+  }
+
+  if (firstError) {
+    throw firstError
   }
 }
 
@@ -515,16 +568,29 @@ const trackWatchDependencies = (dependencies: WatchDependency[]) => {
   }
 }
 
-const createLocalWatchRunner =
-  (effect: ReactiveEffect, fn: () => void, dependencies?: WatchDependency[]) => () => {
-    if (!dependencies) {
-      collectTrackedDependencies(effect, fn)
-      return
-    }
+const runWatchCallback = (
+  effect: ReactiveEffect,
+  cleanupSlot: CleanupSlot,
+  fn: () => void,
+  dependencies?: WatchDependency[],
+) => {
+  disposeCleanupSlot(cleanupSlot)
+  if (!dependencies) {
     collectTrackedDependencies(effect, () => {
-      trackWatchDependencies(dependencies)
+      withCleanupSlot(cleanupSlot, fn)
     })
-    fn()
+    return
+  }
+  collectTrackedDependencies(effect, () => {
+    trackWatchDependencies(dependencies)
+  })
+  withCleanupSlot(cleanupSlot, fn)
+}
+
+const createLocalWatchRunner =
+  (effect: ReactiveEffect, cleanupSlot: CleanupSlot, fn: () => void, dependencies?: WatchDependency[]) =>
+  () => {
+    runWatchCallback(effect, cleanupSlot, fn, dependencies)
   }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
@@ -974,6 +1040,58 @@ const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
   return nextId
 }
 
+const getRefSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+
+export const assignRuntimeRef = (
+  value: unknown,
+  element: Element,
+  container: RuntimeContainer | null = getCurrentContainer(),
+) => {
+  const signalMeta = getSignalMeta<Element | undefined>(value)
+  if (!signalMeta) {
+    return false
+  }
+
+  const record = container?.signals.get(signalMeta.id)
+  if (record) {
+    record.value = element
+    return true
+  }
+
+  signalMeta.set(element)
+  return true
+}
+
+const restoreSignalRefs = (container: RuntimeContainer, root: HTMLElement) => {
+  if (typeof root.getAttribute !== 'function') {
+    return
+  }
+
+  const assignElement = (element: Element) => {
+    const signalId = element.getAttribute(REF_SIGNAL_ATTR)
+    if (!signalId) {
+      return
+    }
+    const record = container.signals.get(signalId)
+    if (!record) {
+      return
+    }
+    record.value = element
+  }
+
+  if (root.getAttribute(REF_SIGNAL_ATTR)) {
+    assignElement(root)
+  }
+
+  if (!('querySelectorAll' in root)) {
+    return
+  }
+
+  for (const element of root.querySelectorAll(`[${REF_SIGNAL_ATTR}]`)) {
+    assignElement(element)
+  }
+}
+
 const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> => {
   const result: Record<string, unknown> = {}
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(props))) {
@@ -1371,6 +1489,7 @@ const getOrCreateComponentState = (
     active: false,
     didMount: false,
     id,
+    mountCleanupSlots: [],
     parentId,
     props: {},
     projectionSlots: null,
@@ -1389,6 +1508,7 @@ const resetComponentForSymbolChange = (
   component: ComponentState,
   meta: ComponentMeta,
 ) => {
+  disposeComponentMountCleanups(component)
   component.didMount = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.scopeId = registerScope(container, meta.captures())
@@ -1415,6 +1535,7 @@ const getOrCreateWatchState = (
     signals: new Set(),
   }
   const watch: WatchState = {
+    cleanupSlot: createCleanupSlot(),
     componentId,
     effect,
     id,
@@ -1434,19 +1555,24 @@ const getOrCreateWatchState = (
       return
     }
     const scheduled = (watch.pending ?? Promise.resolve()).then(async () => {
+      disposeCleanupSlot(watch.cleanupSlot)
       const module = await loadSymbol(container, watch.symbol)
       const scope = materializeScope(container, watch.scopeId)
       await withClientContainer(container, () => {
         if (watch.mode === 'dynamic') {
           collectTrackedDependencies(effect, () => {
-            module.default(scope)
+            withCleanupSlot(watch.cleanupSlot, () => {
+              module.default(scope)
+            })
           })
           return
         }
         collectTrackedDependencies(effect, () => {
           module.default(scope, 'track')
         })
-        module.default(scope, 'run')
+        withCleanupSlot(watch.cleanupSlot, () => {
+          module.default(scope, 'run')
+        })
       })
       await flushDirtyComponents(container)
     })
@@ -1473,6 +1599,7 @@ const getOrCreateVisibleState = (
   }
 
   const visible: VisibleState = {
+    cleanupSlot: createCleanupSlot(),
     componentId,
     done: false,
     id,
@@ -1491,16 +1618,29 @@ const clearComponentSubscriptions = (container: RuntimeContainer, componentId: s
   }
 }
 
+const disposeComponentMountCleanups = (component: ComponentState) => {
+  const cleanupSlots = [...component.mountCleanupSlots].reverse()
+  component.mountCleanupSlots = []
+  for (const cleanupSlot of cleanupSlots) {
+    disposeCleanupSlot(cleanupSlot)
+  }
+}
+
 const removeWatchState = (container: RuntimeContainer, watchId: string) => {
   const watch = container.watches.get(watchId)
   if (!watch) {
     return
   }
+  disposeCleanupSlot(watch.cleanupSlot)
   clearEffectSignals(watch.effect)
   container.watches.delete(watchId)
 }
 
 const removeVisibleState = (container: RuntimeContainer, visibleId: string) => {
+  const visible = container.visibles.get(visibleId)
+  if (visible) {
+    disposeCleanupSlot(visible.cleanupSlot)
+  }
   container.visibles.delete(visibleId)
 }
 
@@ -1544,6 +1684,7 @@ const pruneRemovedComponents = (
     clearComponentSubscriptions(container, descendantId)
     const descendant = container.components.get(descendantId)
     if (descendant) {
+      disposeComponentMountCleanups(descendant)
       pruneComponentVisibles(container, descendant, 0)
       pruneComponentWatches(container, descendant, 0)
     }
@@ -1623,12 +1764,14 @@ const runVisibleCallback = async (container: RuntimeContainer, visible: VisibleS
     .then(async () => {
       if (visible.run) {
         await withClientContainer(container, async () => {
-          await visible.run?.()
+          await withCleanupSlot(visible.cleanupSlot, () => visible.run?.())
         })
       } else {
         const module = await loadSymbol(container, visible.symbol)
         await withClientContainer(container, async () => {
-          await module.default(materializeScope(container, visible.scopeId))
+          await withCleanupSlot(visible.cleanupSlot, () =>
+            module.default(materializeScope(container, visible.scopeId)),
+          )
         })
       }
       await flushDirtyComponents(container)
@@ -1699,7 +1842,9 @@ const scheduleMountCallbacks = (
   scheduleMicrotask(() => {
     void withClientContainer(container, () => {
       for (const callback of callbacks) {
-        callback()
+        const cleanupSlot = createCleanupSlot()
+        component.mountCleanupSlots.push(cleanupSlot)
+        withCleanupSlot(cleanupSlot, callback)
       }
     })
       .then(() => flushDirtyComponents(container))
@@ -2230,6 +2375,14 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       continue
     }
 
+    if (name === 'ref') {
+      const signalId = getRefSignalId(value)
+      if (signalId) {
+        attrParts.push(`${REF_SIGNAL_ATTR}="${escapeAttr(signalId)}"`)
+      }
+      continue
+    }
+
     if (value === false || value === undefined || value === null) {
       continue
     }
@@ -2349,6 +2502,11 @@ const applyElementProp = (
     }
     element.setAttribute('data-eid', `e${container.nextElementId++}`)
     element.setAttribute(`data-e-on${eventName}`, registerEventBinding(container, eventMeta))
+    return
+  }
+
+  if (name === 'ref') {
+    assignRuntimeRef(value, element, container)
     return
   }
 
@@ -2613,6 +2771,12 @@ export const renderClientInsertable = (
 }
 
 const resetContainerForRouteRender = (container: RuntimeContainer) => {
+  for (const component of container.components.values()) {
+    disposeComponentMountCleanups(component)
+    pruneComponentVisibles(container, component, 0)
+    pruneComponentWatches(container, component, 0)
+  }
+
   for (const watch of container.watches.values()) {
     clearEffectSignals(watch.effect)
   }
@@ -2723,6 +2887,7 @@ const renderRouteIntoRoot = (
   rootComponent.active = true
   rootComponent.didMount = false
   rootComponent.end = undefined
+  rootComponent.mountCleanupSlots = []
   rootComponent.props = {}
   rootComponent.scopeId = registerScope(container, getComponentMeta(Page)?.captures() ?? [])
   rootComponent.signalIds = []
@@ -3402,6 +3567,7 @@ export const beginSSRContainer = <T>(
     active: false,
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCleanupSlots: [],
     parentId: null,
     props: {},
     projectionSlots: null,
@@ -3433,6 +3599,7 @@ export const beginAsyncSSRContainer = async <T>(
     active: false,
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCleanupSlots: [],
     parentId: null,
     props: {},
     projectionSlots: null,
@@ -3549,6 +3716,7 @@ export const createResumeContainer = (
       active: false,
       didMount: false,
       id,
+      mountCleanupSlots: [],
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
       props: deserializeRuntimeValue(container, componentPayload.props),
       projectionSlots: componentPayload.projectionSlots
@@ -3606,6 +3774,8 @@ export const createResumeContainer = (
     component.start = boundary.start
     component.end = boundary.end
   }
+
+  restoreSignalRefs(container, root as HTMLElement)
 
   restoreRegisteredRpcHandles(container)
 
@@ -3925,6 +4095,15 @@ export const createEffect = (fn: () => void) => {
   effect.fn()
 }
 
+export const createOnCleanup = (fn: () => void) => {
+  if (!currentCleanupSlot) {
+    throw new Error(
+      'onCleanup() can only be used while running onMount(), onVisible(), or useWatch() callbacks.',
+    )
+  }
+  currentCleanupSlot.callbacks.push(fn)
+}
+
 export const createOnMount = (fn: () => void) => {
   const frame = getCurrentFrame()
   if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
@@ -3962,9 +4141,10 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   const watchMeta = getWatchMeta(fn)
 
   if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID || !watchMeta) {
+    const cleanupSlot = createCleanupSlot()
     const effect: ReactiveEffect = {
       fn() {
-        createLocalWatchRunner(effect, fn, dependencies)()
+        createLocalWatchRunner(effect, cleanupSlot, fn, dependencies)()
       },
       signals: new Set(),
     }
@@ -3979,7 +4159,7 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   watch.scopeId = registerScope(container, watchMeta.captures())
   watch.symbol = watchMeta.symbol
   watch.track = dependencies ? () => trackWatchDependencies(dependencies) : null
-  watch.run = createLocalWatchRunner(watch.effect, fn, dependencies)
+  watch.run = createLocalWatchRunner(watch.effect, watch.cleanupSlot, fn, dependencies)
   watch.effect.fn()
 }
 

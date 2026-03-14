@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { component$ } from './component.ts'
 import { __eclipsaComponent } from './internal.ts'
-import { useSignal, useWatch } from './signal.ts'
+import { onCleanup, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
 
 class FakeNode {}
@@ -81,9 +81,17 @@ const withFakeNodeGlobal = <T>(fn: () => T) => {
   const OriginalNode = globalThis.Node
   globalThis.Node = FakeNode as unknown as typeof Node
   try {
-    return fn()
-  } finally {
+    const result = fn()
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        globalThis.Node = OriginalNode
+      }) as T
+    }
     globalThis.Node = OriginalNode
+    return result
+  } catch (error) {
+    globalThis.Node = OriginalNode
+    throw error
   }
 }
 
@@ -105,6 +113,12 @@ describe('useSignal', () => {
   it('throws when called outside a component render', () => {
     expect(() => useSignal(0)).toThrowError(
       'useSignal() can only be used while rendering a component.',
+    )
+  })
+
+  it('throws when onCleanup is called outside a lifecycle or watch callback', () => {
+    expect(() => onCleanup(() => {})).toThrowError(
+      'onCleanup() can only be used while running onMount(), onVisible(), or useWatch() callbacks.',
     )
   })
 })
@@ -134,6 +148,40 @@ describe('useWatch', () => {
     })
   })
 
+  it('runs cleanup before each local dynamic rerun', () => {
+    withFakeNodeGlobal(() => {
+      let tracked!: { value: number }
+      let untracked!: { value: string }
+      const events: string[] = []
+
+      renderComponent(() => {
+        tracked = useSignal(0)
+        untracked = useSignal('a')
+
+        useWatch(() => {
+          const snapshot = `${tracked.value}:${untracked.value}`
+          events.push(`run:${snapshot}`)
+          onCleanup(() => {
+            events.push(`cleanup:${snapshot}`)
+          })
+        })
+
+        return 'ready'
+      })
+
+      untracked.value = 'b'
+      tracked.value = 1
+
+      expect(events).toEqual([
+        'run:0:a',
+        'cleanup:0:a',
+        'run:0:b',
+        'cleanup:0:b',
+        'run:1:b',
+      ])
+    })
+  })
+
   it('re-runs only for explicitly listed signal dependencies', () => {
     withFakeNodeGlobal(() => {
       let tracked!: { value: number }
@@ -155,6 +203,34 @@ describe('useWatch', () => {
       tracked.value = 1
 
       expect(values).toEqual(['a', 'b'])
+    })
+  })
+
+  it('runs cleanup before each local explicit-dependency rerun', () => {
+    withFakeNodeGlobal(() => {
+      let tracked!: { value: number }
+      let untracked!: { value: string }
+      const events: string[] = []
+
+      renderComponent(() => {
+        tracked = useSignal(0)
+        untracked = useSignal('a')
+
+        useWatch(() => {
+          const snapshot = untracked.value
+          events.push(`run:${snapshot}`)
+          onCleanup(() => {
+            events.push(`cleanup:${snapshot}`)
+          })
+        }, [tracked])
+
+        return 'ready'
+      })
+
+      untracked.value = 'b'
+      tracked.value = 1
+
+      expect(events).toEqual(['run:a', 'cleanup:a', 'run:b'])
     })
   })
 

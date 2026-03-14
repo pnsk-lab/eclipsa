@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { component$ } from './component.ts'
 import { __eclipsaComponent, __eclipsaLazy } from './internal.ts'
-import { createResumeContainer, installResumeListeners } from './runtime.ts'
-import { onVisible } from './signal.ts'
+import { createResumeContainer, installResumeListeners, renderClientInsertable, withRuntimeContainer } from './runtime.ts'
+import { onCleanup, onVisible, useSignal } from './signal.ts'
 import { renderSSR } from './ssr.ts'
 
 class FakeNode {
+  childNodes: FakeNode[] = []
   nextSibling: FakeNode | null = null
   parentNode: FakeElement | null = null
   previousSibling: FakeNode | null = null
@@ -62,8 +64,8 @@ class FakeElement extends FakeNode {
     return node
   }
 
-  querySelectorAll() {
-    return [] as unknown as NodeListOf<Element>
+  querySelectorAll(selector?: string) {
+    return this.querySelectorAllBySelector(selector ?? '') as unknown as NodeListOf<Element>
   }
 
   removeChild(node: FakeNode) {
@@ -88,6 +90,38 @@ class FakeElement extends FakeNode {
 
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value)
+  }
+
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null
+  }
+
+  hasAttribute(name: string) {
+    return this.attributes.has(name)
+  }
+
+  private querySelectorAllBySelector(selector: string) {
+    const attrMatch = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+    if (!attrMatch) {
+      return []
+    }
+
+    const [, attrName, attrValue] = attrMatch
+    const results: FakeElement[] = []
+    const visit = (node: FakeNode) => {
+      if (node instanceof FakeElement) {
+        const currentValue = node.getAttribute(attrName)
+        if (currentValue !== null && (attrValue === undefined || currentValue === attrValue)) {
+          results.push(node)
+        }
+      }
+      for (const child of node.childNodes) {
+        visit(child)
+      }
+    }
+
+    visit(this)
+    return results
   }
 }
 
@@ -355,6 +389,164 @@ describe('onVisible', () => {
 
       cleanup()
       delete globalRecord.__eclipsaVisibleRuns
+    })
+  })
+
+  it('runs cleanup only when the visible registration is torn down', async () => {
+    await withFakeVisibleDocument(async (doc, fakeWindow) => {
+      const events: string[] = []
+      const container = createResumeContainer(doc, {
+        components: {
+          c0: {
+            props: {
+              __eclipsa_type: 'object',
+              entries: [],
+            },
+            scope: 'sc0',
+            signalIds: [],
+            symbol: 'page-symbol',
+            visibleCount: 1,
+            watchCount: 0,
+          },
+        },
+        loaders: {},
+        scopes: {
+          sc0: [],
+          sc1: [],
+        },
+        signals: {
+          '$router:isNavigating': false,
+          '$router:path': '/',
+        },
+        subscriptions: {
+          '$router:isNavigating': [],
+          '$router:path': [],
+        },
+        symbols: {
+          'visible-cleanup-symbol': '/virtual/on-visible-cleanup-symbol.js',
+        },
+        visibles: {
+          'c0:v0': {
+            componentId: 'c0',
+            scope: 'sc1',
+            symbol: 'visible-cleanup-symbol',
+          },
+        },
+        watches: {},
+      })
+      container.imports.set(
+        'visible-cleanup-symbol',
+        Promise.resolve({
+          default: () => {
+            events.push('run')
+            onCleanup(() => {
+              events.push('cleanup')
+            })
+          },
+        }),
+      )
+
+      const cleanup = installResumeListeners(container)
+
+      ;(doc as unknown as FakeDocument).visible = true
+      fakeWindow.emit('resize')
+      await flushAsync()
+      expect(events).toEqual(['run'])
+
+      ;(doc as unknown as FakeDocument).visible = false
+      fakeWindow.emit('resize')
+      await flushAsync()
+      expect(events).toEqual(['run'])
+
+      const Replacement = component$(
+        __eclipsaComponent(
+          () => <span>done</span>,
+          'replacement-symbol',
+          () => [],
+        ),
+      )
+
+      container.rootChildCursor = 0
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(Replacement, {}, null, false, {}), container)
+      })
+
+      expect(events).toEqual(['run', 'cleanup'])
+
+      cleanup()
+    })
+  })
+
+  it('restores signal refs before resumed visible callbacks run', async () => {
+    const globalRecord = globalThis as Record<PropertyKey, unknown>
+    const App = component$(
+      __eclipsaComponent(
+        () => {
+          const ref = useSignal<HTMLElement | undefined>()
+
+          onVisible(
+            __eclipsaLazy(
+              'visible-ref-symbol',
+              () => {
+                globalRecord.__eclipsaVisibleRefTag =
+                  (ref.value as { tagName?: string } | undefined)?.tagName ?? null
+              },
+              () => [ref],
+            ),
+          )
+
+          return <div ref={ref}>ready</div>
+        },
+        'component-ref',
+        () => [],
+      ),
+    )
+
+    const { html, payload } = renderSSR(() => <App />)
+    const signalId = payload.components.c0?.signalIds[0]
+
+    expect(signalId).toBeTruthy()
+    expect(html).toContain(`data-e-ref="${signalId}"`)
+    expect(html).not.toContain(' ref=')
+
+    await withFakeVisibleDocument(async (doc, fakeWindow) => {
+      globalRecord.__eclipsaVisibleRefTag = null
+
+      const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
+      const element = body.childNodes[1] as FakeElement
+      element.setAttribute('data-e-ref', signalId as string)
+
+      const container = createResumeContainer(doc, {
+        ...payload,
+        symbols: {
+          ...payload.symbols,
+          'visible-ref-symbol': '/virtual/visible-ref-symbol.js',
+        },
+      })
+      container.imports.set(
+        'visible-ref-symbol',
+        Promise.resolve({
+          default: (scope: unknown[]) => {
+            const [ref] = scope as [{ value?: { tagName?: string } }]
+            globalRecord.__eclipsaVisibleRefTag = ref.value?.tagName ?? null
+          },
+        }),
+      )
+
+      const cleanup = installResumeListeners(container)
+
+      await flushAsync()
+      expect(globalRecord.__eclipsaVisibleRefTag).toBe(null)
+
+      ;(doc as unknown as FakeDocument).visible = true
+      fakeWindow.emit('resize')
+      await flushAsync()
+
+      expect(globalRecord.__eclipsaVisibleRefTag).toBe('div')
+      expect(container.components.get('c0')?.active).toBe(false)
+
+      cleanup()
+      delete globalRecord.__eclipsaVisibleRefTag
     })
   })
 })

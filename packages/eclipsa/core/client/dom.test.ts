@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { attr } from './dom.ts'
+import { createDetachedRuntimeSignal, type RuntimeContainer } from '../runtime.ts'
+
+const createContainer = () =>
+  ({
+    signals: new Map(),
+  }) as RuntimeContainer
 
 describe('core/client dom attr', () => {
   it('applies class with setAttribute so svg elements can be rerendered', () => {
@@ -42,5 +48,20 @@ describe('core/client dom attr', () => {
 
     expect(() => attr(elem as unknown as Element, 'viewBox', () => '0 0 24 24')).not.toThrow()
     expect(setAttribute).toHaveBeenCalledWith('viewBox', '0 0 24 24')
+  })
+
+  it('assigns signal refs without stringifying them into attributes', () => {
+    const setAttribute = vi.fn()
+    const elem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute,
+    }
+    const ref = createDetachedRuntimeSignal(createContainer(), 's0', undefined as Element | undefined)
+
+    attr(elem as unknown as Element, 'ref', () => ref)
+
+    expect(ref.value).toBe(elem)
+    expect(setAttribute).not.toHaveBeenCalledWith('ref', expect.anything())
   })
 })

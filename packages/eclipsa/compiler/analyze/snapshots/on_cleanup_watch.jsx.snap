@@ -1,0 +1,70 @@
+// ================= ENTRY (on_cleanup_watch.jsx) ==
+import { component$, onCleanup, useSignal, useWatch } from 'eclipsa'
+
+export default component$(() => {
+  const tracked = useSignal(0)
+
+  useWatch(() => {
+    console.log(tracked.value)
+    onCleanup(() => {
+      console.log(`cleanup:${tracked.value}`)
+    })
+  }, [tracked])
+
+  return <button>{tracked.value}</button>
+})
+
+
+// ================= analyzed ==
+import { __eclipsaComponent, __eclipsaWatch } from "eclipsa/internal";
+import { component$, onCleanup, useSignal, useWatch } from "eclipsa";
+var analyze_input_default = component$(__eclipsaComponent(() => {
+  const tracked = useSignal(0);
+  useWatch(__eclipsaWatch("v8dq18", () => {
+    console.log(tracked.value);
+    onCleanup(() => {
+      console.log(`cleanup:${tracked.value}`);
+    });
+  }, () => [tracked]), [tracked]);
+  return <button>{tracked.value}</button>;
+}, "vxq296", () => []));
+export { analyze_input_default as default };
+
+// ================= v8dq18 (watch) ==
+import { component$, onCleanup, useSignal, useWatch } from "eclipsa";
+import { getSignalMeta } from "eclipsa/internal";
+export default (__scope, __phase) => {
+  if (__phase === "track") {
+    const __dependencies = [__scope[0]];
+    for (const __dependency of __dependencies) {
+      if (typeof __dependency === "function") {
+        __dependency();
+        continue;
+      }
+      const __signalMeta = getSignalMeta(__dependency);
+      if (!__signalMeta) {
+        throw new TypeError("useWatch dependencies must be signals or getter functions.");
+      }
+      __dependency.value;
+    }
+    return;
+  }
+  console.log(__scope[0].value);
+  onCleanup(() => {
+    console.log(`cleanup:${__scope[0].value}`);
+  });
+};
+
+// ================= vxq296 (component) ==
+import { component$, onCleanup, useSignal, useWatch } from "eclipsa";
+import { __eclipsaWatch } from "eclipsa/internal";
+export default __scope => {
+  const tracked = useSignal(0);
+  useWatch(__eclipsaWatch("v8dq18", () => {
+    console.log(tracked.value);
+    onCleanup(() => {
+      console.log(`cleanup:${tracked.value}`);
+    });
+  }, () => [tracked]), [tracked]);
+  return <button>{tracked.value}</button>;
+};

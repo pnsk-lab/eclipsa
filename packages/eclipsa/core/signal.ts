@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createOnCleanup,
   createOnMount,
   createOnVisible,
   createWatch,
@@ -20,6 +21,7 @@ export type WatchDependency<T = unknown> = Signal<T> | (() => T)
 export const useSignal: UseSignal = (value) => useRuntimeSignal(value)
 
 export const effect = (fn: () => void) => createEffect(fn)
+export const onCleanup = (fn: () => void) => createOnCleanup(fn)
 export const onMount = (fn: () => void) => createOnMount(fn)
 export const onVisible = (fn: () => void) => createOnVisible(fn)
 export const useWatch = (fn: () => void, dependencies?: WatchDependency[]) =>

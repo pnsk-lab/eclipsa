@@ -1,6 +1,7 @@
 import type { Component } from '../component.ts'
 import { getComponentMeta } from '../internal.ts'
 import {
+  assignRuntimeRef,
   bindRuntimeEvent,
   getRuntimeContainer,
   renderClientComponent,
@@ -85,6 +86,11 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
       }
       ;(elem as Element & { className: string }).className = String(value())
     })
+    return
+  }
+
+  if (name === 'ref') {
+    assignRuntimeRef(value(), elem, getRuntimeContainer())
     return
   }
 
