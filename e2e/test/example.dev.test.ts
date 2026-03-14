@@ -11,7 +11,8 @@ test.describe('example app in dev mode', () => {
     await expect(page).toHaveTitle('Document')
     await expect(page.getByRole('heading', { name: 'Todo List' })).toBeVisible()
     await expect(page.getByText('Shared layout shell updated')).toBeVisible()
-    await expect(propComponentContent).toBeVisible()
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(propComponentContent.first()).toBeVisible()
     await expect(childrenComponentContent).toBeVisible()
     await expect(page.getByRole('listitem')).toHaveCount(1)
     await expect(page.getByRole('listitem').first()).toHaveText('ToDo1')
@@ -47,8 +48,16 @@ test.describe('example app in dev mode', () => {
     await page.goto('/')
     const propComponentContent = page.getByText('Prop component content')
     const childrenComponentContent = page.getByText('Children component content')
+    const probeButton = page.getByRole('button', { name: /^Probe count:\s*0$/ })
 
-    await expect(propComponentContent).toBeVisible()
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(propComponentContent.first()).toBeVisible()
+    await expect(childrenComponentContent).toBeVisible()
+
+    await probeButton.click()
+    await expect(page.getByRole('button', { name: /^Probe count:\s*1$/ })).toBeVisible()
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(propComponentContent.first()).toBeVisible()
     await expect(childrenComponentContent).toBeVisible()
 
     const input = page.getByRole('textbox')
@@ -56,7 +65,8 @@ test.describe('example app in dev mode', () => {
     await page.getByRole('button', { name: 'Add' }).click()
 
     await expect(page.getByRole('listitem')).toHaveCount(2)
-    await expect(propComponentContent).toBeVisible()
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(propComponentContent.first()).toBeVisible()
     await expect(childrenComponentContent).toBeVisible()
   })
 

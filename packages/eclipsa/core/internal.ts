@@ -18,6 +18,7 @@ const LOADER_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.loader-hook-registry')
 
 export interface ComponentMeta {
   captures: () => unknown[]
+  projectionSlots?: Record<string, number>
   symbol: string
 }
 
@@ -86,6 +87,7 @@ export const __eclipsaComponent = <T>(
   component: Component<T>,
   symbol: string,
   captures: () => unknown[],
+  projectionSlots?: Record<string, number>,
 ): Component<T> => {
   Object.defineProperty(component, COMPONENT_META_KEY, {
     configurable: true,
@@ -93,6 +95,7 @@ export const __eclipsaComponent = <T>(
     value: {
       symbol,
       captures,
+      ...(projectionSlots ? { projectionSlots } : {}),
     } satisfies ComponentMeta,
     writable: true,
   })

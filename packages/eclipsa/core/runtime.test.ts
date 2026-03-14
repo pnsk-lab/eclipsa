@@ -5,17 +5,23 @@ import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
 import { useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
 
-class FakeNode {}
+class FakeNode {
+  childNodes: FakeNode[] = []
+  nodeType = 0
+  parentNode: FakeNode | null = null
+}
 
 class FakeText extends FakeNode {
   constructor(readonly data: string) {
     super()
+    this.nodeType = 3
   }
 }
 
 class FakeComment extends FakeNode {
   constructor(readonly data: string) {
     super()
+    this.nodeType = 8
   }
 }
 
@@ -25,9 +31,11 @@ class FakeElement extends FakeNode {
 
   constructor(readonly tagName: string) {
     super()
+    this.nodeType = 1
   }
 
   appendChild(node: FakeNode) {
+    node.parentNode = this
     this.childNodes.push(node)
     return node
   }
@@ -85,6 +93,22 @@ const withFakeNodeGlobal = <T>(fn: () => T) => {
   } finally {
     globalThis.Node = OriginalNode
   }
+}
+
+const collectComments = (nodes: FakeNode[]): string[] => {
+  const result: string[] = []
+  const visit = (node: FakeNode) => {
+    if (node instanceof FakeComment) {
+      result.push(node.data)
+    }
+    for (const child of node.childNodes) {
+      visit(child)
+    }
+  }
+  for (const node of nodes) {
+    visit(node)
+  }
+  return result
 }
 
 describe('renderClientInsertable', () => {
@@ -193,6 +217,60 @@ describe('renderClientInsertable', () => {
       expect(element.childNodes).toHaveLength(1)
       expect(element.childNodes[0]).toBeInstanceOf(FakeText)
       expect((element.childNodes[0] as FakeText).data).toBe('page content')
+    })
+  })
+
+  it('wraps projection slot insertions in stable marker comments during client renders', () => {
+    withFakeNodeGlobal(() => {
+      const Probe = component$(
+        __eclipsaComponent(
+          (props: { aa?: unknown; children?: unknown }) =>
+            jsxDEV(
+              'section',
+              {
+                children: [
+                  jsxDEV('div', { children: props.aa }, null, false, {}),
+                  jsxDEV('div', { children: props.children }, null, false, {}),
+                  jsxDEV('div', { children: props.aa }, null, false, {}),
+                ],
+              },
+              null,
+              false,
+              {},
+            ),
+          'probe-symbol',
+          () => [],
+          { aa: 2, children: 1 },
+        ),
+      )
+
+      const container = createContainer()
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Probe as any,
+            {
+              aa: 'prop content',
+              children: 'children content',
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      expect(collectComments(nodes)).toEqual([
+        'ec:c:c0:start',
+        'ec:s:c0:aa:0:start',
+        'ec:s:c0:aa:0:end',
+        'ec:s:c0:children:0:start',
+        'ec:s:c0:children:0:end',
+        'ec:s:c0:aa:1:start',
+        'ec:s:c0:aa:1:end',
+        'ec:c:c0:end',
+      ])
     })
   })
 })

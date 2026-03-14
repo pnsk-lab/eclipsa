@@ -23,6 +23,35 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
     tmpl: string
   }[] = []
 
+  const deferJSXExpression = (value: t.Expression) =>
+    t.isJSXElement(value) || t.isJSXFragment(value)
+      ? t.arrowFunctionExpression([], value)
+      : value
+
+  const deferJSXInChildrenArray = (children: t.ArrayExpression) => {
+    children.elements = children.elements.map((entry) =>
+      entry && t.isExpression(entry) ? deferJSXExpression(entry) : entry,
+    )
+    return children
+  }
+
+  const deferJSXInProps = (props: t.ObjectExpression) => {
+    for (const property of props.properties) {
+      if (t.isObjectProperty(property) && t.isExpression(property.value)) {
+        property.value = deferJSXExpression(property.value)
+        continue
+      }
+      if (t.isObjectMethod(property) && property.kind === 'get') {
+        const statement = property.body.body[0]
+        if (!statement || !t.isReturnStatement(statement) || !statement.argument) {
+          continue
+        }
+        statement.argument = deferJSXExpression(statement.argument)
+      }
+    }
+    return props
+  }
+
   return {
     inherits: SyntaxJSX.default,
     visitor: {
@@ -125,8 +154,14 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
         ) {
           const componentId = t.identifier(rootType.name)
           const { props, key } = transformProps(path.node.openingElement)
+          deferJSXInProps(props)
           if (path.node.children.length > 0) {
-            props.properties.push(t.objectProperty(t.identifier('children'), transformChildren(path.node)))
+            props.properties.push(
+              t.objectProperty(
+                t.identifier('children'),
+                deferJSXInChildrenArray(transformChildren(path.node)),
+              ),
+            )
           }
 
           let resultExpr: t.Expression = t.callExpression(createComponent, [componentId, props])
@@ -204,9 +239,13 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
           if (jsxType.type !== 'element') {
             const componentId = t.identifier(jsxType.name)
             const { props } = transformProps(elem.openingElement)
+            deferJSXInProps(props)
             if (elem.children.length > 0) {
               props.properties.push(
-                t.objectProperty(t.identifier('children'), transformChildren(elem)),
+                t.objectProperty(
+                  t.identifier('children'),
+                  deferJSXInChildrenArray(transformChildren(elem)),
+                ),
               )
             }
             inserts.push({

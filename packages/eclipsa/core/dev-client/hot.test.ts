@@ -13,9 +13,7 @@ describe('core/dev-client hot', () => {
       name: 'default',
     })
 
-    const rendered = wrapped({})
-
-    expect((rendered as () => string)()).toBe('before')
+    expect(wrapped({})).toBe('before')
 
     const newRegistry = createHotRegistry()
     defineHotComponent(makeComponent('after'), {
@@ -24,7 +22,7 @@ describe('core/dev-client hot', () => {
     })
 
     expect(applyHotUpdate(registry, newRegistry)).toBe('updated')
-    expect((rendered as () => string)()).toBe('after')
+    expect(wrapped({})).toBe('after')
   })
 
   it('requests reload when the component graph changes', () => {
@@ -63,5 +61,6 @@ describe('core/dev-client hot', () => {
     })
 
     expect(getComponentMeta(wrapped)?.symbol).toBe('page-symbol')
+    expect(getComponentMeta(wrapped)?.projectionSlots).toBeUndefined()
   })
 })

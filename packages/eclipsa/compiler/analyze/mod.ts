@@ -186,6 +186,97 @@ interface PrecomputedSymbolInfo {
   ownerComponentKey: string | null
 }
 
+const getProjectionPropName = (
+  path: NodePath<t.MemberExpression | t.OptionalMemberExpression>,
+  propsIdentifier: string,
+) => {
+  const objectPath = path.get('object')
+  if (!objectPath.isIdentifier() || objectPath.node.name !== propsIdentifier) {
+    return null
+  }
+
+  const propertyPath = path.get('property')
+  if (path.node.computed) {
+    return propertyPath.isStringLiteral() ? propertyPath.node.value : null
+  }
+  return propertyPath.isIdentifier() ? propertyPath.node.name : null
+}
+
+const isBareProjectionRenderAccess = (path: NodePath<t.MemberExpression | t.OptionalMemberExpression>) => {
+  const parent = path.parentPath
+  if (!parent?.isJSXExpressionContainer() || parent.node.expression !== path.node) {
+    return false
+  }
+  const owner = parent.parentPath
+  return !!owner && (owner.isJSXElement() || owner.isJSXFragment())
+}
+
+const collectProjectionSlots = (fnPath: FunctionPath) => {
+  const firstParam = fnPath.get('params')[0]
+  if (!firstParam?.isIdentifier()) {
+    return null
+  }
+
+  const propsIdentifier = firstParam.node.name
+  const allowedPaths = new Set<t.Node>()
+  const allAccesses: Array<{ name: string; path: NodePath<t.MemberExpression | t.OptionalMemberExpression> }> = []
+  const counts = new Map<string, number>()
+
+  fnPath.traverse({
+    MemberExpression(path: any) {
+      const projectionName = getProjectionPropName(
+        path as NodePath<t.MemberExpression>,
+        propsIdentifier,
+      )
+      if (!projectionName) {
+        return
+      }
+      allAccesses.push({
+        name: projectionName,
+        path: path as NodePath<t.MemberExpression>,
+      })
+      if (!isBareProjectionRenderAccess(path as NodePath<t.MemberExpression>)) {
+        return
+      }
+      allowedPaths.add(path.node)
+      counts.set(projectionName, (counts.get(projectionName) ?? 0) + 1)
+    },
+    OptionalMemberExpression(path: any) {
+      const projectionName = getProjectionPropName(
+        path as NodePath<t.OptionalMemberExpression>,
+        propsIdentifier,
+      )
+      if (!projectionName) {
+        return
+      }
+      allAccesses.push({
+        name: projectionName,
+        path: path as NodePath<t.OptionalMemberExpression>,
+      })
+      if (!isBareProjectionRenderAccess(path as NodePath<t.OptionalMemberExpression>)) {
+        return
+      }
+      allowedPaths.add(path.node)
+      counts.set(projectionName, (counts.get(projectionName) ?? 0) + 1)
+    },
+  })
+
+  if (counts.size === 0) {
+    return null
+  }
+
+  for (const access of allAccesses) {
+    if (!counts.has(access.name) || allowedPaths.has(access.path.node)) {
+      continue
+    }
+    throw access.path.buildCodeFrameError(
+      `Projection slot prop "${access.name}" must be rendered directly as {${propsIdentifier}.${access.name}} inside JSX.`,
+    )
+  }
+
+  return Object.fromEntries(counts)
+}
+
 const createIndexedKey = (base: string, count: number) => (count === 0 ? base : `${base}:${count}`)
 
 const getComponentBindingName = (path: NodePath<t.CallExpression>) => {
@@ -1097,6 +1188,7 @@ export const analyzeModule = async (
           if (!argPath?.isArrowFunctionExpression() && !argPath?.isFunctionExpression()) {
             throw path.buildCodeFrameError('component$() expects a function expression.')
           }
+          const projectionSlots = collectProjectionSlots(argPath as FunctionPath)
 
           const extracted = extractSymbol(argPath as FunctionPath, 'component', id, {
             normalizeSymbolId(symbolId) {
@@ -1134,6 +1226,9 @@ export const analyzeModule = async (
             t.cloneNode(argPath.node, true),
             t.stringLiteral(extracted.id),
             buildCaptureGetter(extracted.captures),
+            ...(projectionSlots
+              ? [t.valueToNode(projectionSlots as Record<string, number>)]
+              : []),
           ])
         }
       },

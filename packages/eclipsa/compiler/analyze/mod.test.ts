@@ -48,4 +48,35 @@ describe('analyzeModule()', () => {
       'useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).',
     )
   })
+
+  it('annotates direct projection slot props on component metadata', async () => {
+    const analyzed = await analyzeModule(`
+      import { component$ } from "eclipsa";
+      export const Probe = component$((props) => (
+        <section>
+          <div>{props.aa}</div>
+          <div>{props.children}</div>
+          <span>{props.aa}</span>
+        </section>
+      ));
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect(analyzed?.code).toContain('aa: 2')
+    expect(analyzed?.code).toContain('children: 1')
+  })
+
+  it('rejects non-direct uses of projection slot props', async () => {
+    await expect(
+      analyzeModule(`
+        import { component$ } from "eclipsa";
+        export default component$((props) => {
+          const forwarded = props.children;
+          return <div>{props.children}</div>;
+        });
+      `),
+    ).rejects.toThrowError(
+      'Projection slot prop "children" must be rendered directly as {props.children} inside JSX.',
+    )
+  })
 })

@@ -8,6 +8,7 @@ const Projected = component$(
     (props: { label: string }) => <span>{props.label}</span>,
     'projected-symbol',
     () => [],
+    { label: 1 },
   ),
 )
 
@@ -21,11 +22,12 @@ const Probe = component$(
     ),
     'probe-symbol',
     () => [],
+    { aa: 1, children: 1 },
   ),
 )
 
 describe('render props resume payload', () => {
-  it('serializes component-valued props and children into the resume payload', () => {
+  it('serializes projection slot props and children into the resume payload', () => {
     const { html, payload } = renderSSR(() => (
       <Probe aa={<Projected label="prop content" />}>
         <Projected label="children content" />
@@ -34,6 +36,9 @@ describe('render props resume payload', () => {
 
     expect(html).toContain('prop content')
     expect(html).toContain('children content')
+    expect(html).toContain('ec:s:c0:aa:0:start')
+    expect(html).toContain('ec:s:c0:children:0:start')
     expect(JSON.stringify(payload.components['c0']?.props)).toContain(`"kind":"render"`)
+    expect(JSON.stringify(payload.components['c0']?.projectionSlots)).toContain('"aa":1')
   })
 })

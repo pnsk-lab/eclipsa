@@ -60,12 +60,17 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
   })
 
   const HotComponent = (props: unknown) => {
-    return () => current.value(props)
+    return current.value(props)
   }
   if (!componentMeta) {
     return HotComponent
   }
-  return __eclipsaComponent(HotComponent, componentMeta.symbol, componentMeta.captures)
+  return __eclipsaComponent(
+    HotComponent,
+    componentMeta.symbol,
+    componentMeta.captures,
+    componentMeta.projectionSlots,
+  )
 }
 
 interface HotComponentData {

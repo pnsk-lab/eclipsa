@@ -56,12 +56,14 @@ const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 const ROOT_COMPONENT_ID = '$root'
 const ROUTE_SLOT_TYPE = 'route-slot'
+const PROJECTION_SLOT_TYPE = 'projection-slot'
 const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
 const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
 const RENDER_REFERENCE_KIND = 'render'
 
 export interface ResumeComponentPayload {
   props: SerializedValue
+  projectionSlots?: Record<string, number>
   scope: string
   signalIds: string[]
   symbol: string
@@ -117,6 +119,7 @@ interface ComponentState {
   id: string
   parentId: string | null
   props: unknown
+  projectionSlots: Record<string, number> | null
   scopeId: string
   signalIds: string[]
   start?: Comment
@@ -130,6 +133,10 @@ interface RenderFrame {
   component: ComponentState
   container: RuntimeContainer
   mountCallbacks: Array<() => void>
+  projectionState: {
+    counters: Map<string, number>
+    reuseExistingDom: boolean
+  }
   visitedDescendants: Set<string>
   mode: 'client' | 'ssr'
   signalCursor: number
@@ -221,6 +228,14 @@ interface RouteSlotValue {
 
 interface RouteSlotCarrier extends RouteSlotValue {
   [ROUTE_SLOT_ROUTE_KEY]?: LoadedRoute
+}
+
+interface ProjectionSlotValue {
+  __eclipsa_type: typeof PROJECTION_SLOT_TYPE
+  componentId: string
+  name: string
+  occurrence: number
+  source: unknown
 }
 
 interface WatchState {
@@ -520,6 +535,48 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return proto === Object.prototype || proto === null
 }
 
+const isProjectionSlot = (value: unknown): value is ProjectionSlotValue =>
+  isPlainObject(value) && value.__eclipsa_type === PROJECTION_SLOT_TYPE
+
+const createProjectionSlot = (
+  componentId: string,
+  name: string,
+  occurrence: number,
+  source: unknown,
+): ProjectionSlotValue => ({
+  __eclipsa_type: PROJECTION_SLOT_TYPE,
+  componentId,
+  name,
+  occurrence,
+  source,
+})
+
+const encodeProjectionSlotName = (value: string) => encodeURIComponent(value)
+const decodeProjectionSlotName = (value: string) => decodeURIComponent(value)
+
+const createProjectionSlotMarker = (
+  componentId: string,
+  name: string,
+  occurrence: number,
+  kind: 'start' | 'end',
+) => `ec:s:${componentId}:${encodeProjectionSlotName(name)}:${occurrence}:${kind}`
+
+const PROJECTION_SLOT_MARKER_REGEX = /^ec:s:([^:]+):([^:]+):(\d+):(start|end)$/
+
+const parseProjectionSlotMarker = (value: string) => {
+  const matched = value.match(PROJECTION_SLOT_MARKER_REGEX)
+  if (!matched) {
+    return null
+  }
+  return {
+    componentId: matched[1],
+    kind: matched[4] as 'start' | 'end',
+    key: `${matched[1]}:${matched[2]}:${matched[3]}`,
+    name: decodeProjectionSlotName(matched[2]),
+    occurrence: Number(matched[3]),
+  }
+}
+
 const getRenderComponentTypeRef = (value: unknown): RenderComponentTypeRef | null => {
   if (typeof value !== 'function') {
     return null
@@ -688,6 +745,9 @@ const preloadResumableValue = async (
   if (typeof Node !== 'undefined' && value instanceof Node) {
     return
   }
+  if (isProjectionSlot(value)) {
+    return
+  }
   if (isRenderObject(value)) {
     seen.add(value)
     await preloadResumableValue(container, value.type, seen)
@@ -762,6 +822,18 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
           token: candidate.pathname,
         }
       }
+      if (isProjectionSlot(candidate)) {
+        return {
+          __eclipsa_type: 'ref',
+          data: serializeRuntimeValue(container, candidate.source),
+          kind: PROJECTION_SLOT_TYPE,
+          token: JSON.stringify([
+            candidate.componentId,
+            candidate.name,
+            candidate.occurrence,
+          ]),
+        }
+      }
       if (isRenderObject(candidate)) {
         return serializeRenderObjectReference(container, candidate)
       }
@@ -831,6 +903,34 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
           startLayoutIndex,
         } satisfies RouteSlotValue
       }
+      if (reference.kind === PROJECTION_SLOT_TYPE) {
+        let componentId = ''
+        let name = ''
+        let occurrence = 0
+        try {
+          const parsed = JSON.parse(reference.token)
+          if (
+            !Array.isArray(parsed) ||
+            parsed.length !== 3 ||
+            typeof parsed[0] !== 'string' ||
+            typeof parsed[1] !== 'string' ||
+            typeof parsed[2] !== 'number'
+          ) {
+            throw new Error('invalid projection slot token')
+          }
+          componentId = parsed[0]
+          name = parsed[1]
+          occurrence = parsed[2]
+        } catch {
+          throw new TypeError('Projection slot references require a component id, name, and occurrence.')
+        }
+        return createProjectionSlot(
+          componentId,
+          name,
+          occurrence,
+          deserializeRuntimeValue(container, reference.data as SerializedValue),
+        )
+      }
       if (reference.kind === 'signal') {
         const record = container.signals.get(reference.token)
         if (!record) {
@@ -884,6 +984,64 @@ const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> 
     }
   }
   return result
+}
+
+const hasProjectionSlotValue = (props: Record<string, unknown>, name: string) =>
+  Object.prototype.hasOwnProperty.call(props, name)
+
+const createRenderProps = (
+  componentId: string,
+  meta: ComponentMeta,
+  props: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (!meta.projectionSlots || Object.keys(meta.projectionSlots).length === 0) {
+    return props
+  }
+
+  const nextProps: Record<string, unknown> = {
+    ...props,
+  }
+  const counters = new Map<string, number>()
+
+  for (const [name, totalOccurrences] of Object.entries(meta.projectionSlots)) {
+    Object.defineProperty(nextProps, name, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        if (!hasProjectionSlotValue(props, name)) {
+          return undefined
+        }
+        const current = counters.get(name) ?? 0
+        counters.set(name, current + 1)
+        const occurrence =
+          totalOccurrences > 0 ? current % totalOccurrences : current
+        return createProjectionSlot(componentId, name, occurrence, props[name])
+      },
+    })
+  }
+
+  return nextProps
+}
+
+const preloadComponentProps = async (
+  container: RuntimeContainer,
+  meta: ComponentMeta,
+  props: unknown,
+) => {
+  if (!props || typeof props !== 'object' || !meta.projectionSlots) {
+    await preloadResumableValue(container, props)
+    return
+  }
+
+  const projectionNames = new Set(Object.keys(meta.projectionSlots))
+  const entries: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(props as Record<string, unknown>)) {
+    if (projectionNames.has(key)) {
+      continue
+    }
+    entries[key] = value
+  }
+  await preloadResumableValue(container, entries)
 }
 
 const createContainer = (symbols: Record<string, string>, doc?: Document): RuntimeContainer => ({
@@ -1167,12 +1325,19 @@ const createFrame = (
   container: RuntimeContainer,
   component: ComponentState,
   mode: RenderFrame['mode'],
+  options?: {
+    reuseExistingDom?: boolean
+  },
 ): RenderFrame => ({
   childCursor: 0,
   component,
   container,
   mountCallbacks: [],
   mode,
+  projectionState: {
+    counters: new Map(),
+    reuseExistingDom: options?.reuseExistingDom ?? false,
+  },
   signalCursor: 0,
   visibleCursor: 0,
   visitedDescendants: new Set(),
@@ -1208,6 +1373,7 @@ const getOrCreateComponentState = (
     id,
     parentId,
     props: {},
+    projectionSlots: null,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol,
@@ -1224,6 +1390,7 @@ const resetComponentForSymbolChange = (
   meta: ComponentMeta,
 ) => {
   component.didMount = false
+  component.projectionSlots = meta.projectionSlots ?? null
   component.scopeId = registerScope(container, meta.captures())
   component.signalIds = []
   pruneComponentVisibles(container, component, 0)
@@ -1542,7 +1709,59 @@ const scheduleMountCallbacks = (
   })
 }
 
+const collectProjectionSlotRanges = (roots: Node[]) => {
+  const starts = new Map<string, Comment>()
+  const ranges = new Map<string, { end: Comment; start: Comment }>()
+
+  const visit = (node: Node) => {
+    if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
+      const commentNode = node as Comment
+      const marker = parseProjectionSlotMarker(commentNode.data)
+      if (marker) {
+        if (marker.kind === 'start') {
+          starts.set(marker.key, commentNode)
+        } else {
+          const startNode = starts.get(marker.key)
+          if (startNode) {
+            ranges.set(marker.key, { end: commentNode, start: startNode })
+          }
+        }
+      }
+    }
+    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
+      visit(child)
+    }
+  }
+
+  for (const root of roots) {
+    visit(root)
+  }
+
+  return ranges
+}
+
+const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Node[]) => {
+  const currentNodes = getBoundaryChildren(start, end)
+  const currentRanges = collectProjectionSlotRanges(currentNodes)
+  const nextRanges = collectProjectionSlotRanges(nodes)
+
+  for (const [key, nextRange] of nextRanges) {
+    const currentRange = currentRanges.get(key)
+    if (!currentRange) {
+      continue
+    }
+
+    let cursor = currentRange.start.nextSibling
+    while (cursor && cursor !== currentRange.end) {
+      const nextSibling = cursor.nextSibling
+      nextRange.end.parentNode?.insertBefore(cursor, nextRange.end)
+      cursor = nextSibling
+    }
+  }
+}
+
 const replaceBoundaryContents = (start: Comment, end: Comment, nodes: Node[]) => {
+  preserveProjectionSlotContents(start, end, nodes)
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
@@ -1899,6 +2118,34 @@ export const bindRuntimeEvent = (element: Element, eventName: string, value: unk
   return true
 }
 
+const renderProjectionSlotToString = (slot: ProjectionSlotValue) => {
+  const frame = getCurrentFrame()
+  const start = createProjectionSlotMarker(slot.componentId, slot.name, slot.occurrence, 'start')
+  const end = createProjectionSlotMarker(slot.componentId, slot.name, slot.occurrence, 'end')
+  if (frame?.component.id === slot.componentId && frame.projectionState.reuseExistingDom) {
+    return `<!--${start}--><!--${end}-->`
+  }
+  return `<!--${start}-->${renderStringNode(slot.source as JSX.Element)}<!--${end}-->`
+}
+
+const renderProjectionSlotToNodes = (slot: ProjectionSlotValue, container: RuntimeContainer) => {
+  if (!container.doc) {
+    throw new Error('Client rendering requires a document.')
+  }
+  const frame = getCurrentFrame()
+
+  const start = container.doc.createComment(
+    createProjectionSlotMarker(slot.componentId, slot.name, slot.occurrence, 'start'),
+  )
+  const end = container.doc.createComment(
+    createProjectionSlotMarker(slot.componentId, slot.name, slot.occurrence, 'end'),
+  )
+  if (frame?.component.id === slot.componentId && frame.projectionState.reuseExistingDom) {
+    return [start, end]
+  }
+  return [start, ...renderClientInsertable(slot.source, container), end]
+}
+
 const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string => {
   if (Array.isArray(inputElementLike)) {
     return inputElementLike.map((entry) => renderStringNode(entry)).join('')
@@ -1917,6 +2164,9 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     typeof resolved === 'boolean'
   ) {
     return escapeText(String(resolved))
+  }
+  if (isProjectionSlot(resolved)) {
+    return renderProjectionSlotToString(resolved)
   }
   if (isRouteSlot(resolved)) {
     const routeElement = resolveRouteSlot(getCurrentContainer(), resolved)
@@ -1944,11 +2194,13 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     )
     component.scopeId = registerScope(container, meta.captures())
     component.props = evaluatedProps
+    component.projectionSlots = meta.projectionSlots ?? null
     const frame = createFrame(container, component, 'ssr')
     clearComponentSubscriptions(container, component.id)
+    const renderProps = createRenderProps(componentId, meta, evaluatedProps)
 
     const componentFn = resolved.type as Component
-    const body = pushFrame(frame, () => renderStringNode(componentFn(evaluatedProps)))
+    const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
@@ -2048,6 +2300,7 @@ const renderComponentToNodes = (
     resetComponentForSymbolChange(container, component, meta)
   }
   component.props = props
+  component.projectionSlots = meta.projectionSlots ?? null
   const frame = createFrame(container, component, mode)
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
@@ -2055,7 +2308,8 @@ const renderComponentToNodes = (
   const end = container.doc.createComment(`ec:c:${componentId}:end`)
   component.start = start
   component.end = end
-  const rendered = pushFrame(frame, () => toMountedNodes(componentFn(props), container))
+  const renderProps = createRenderProps(componentId, meta, props)
+  const rendered = pushFrame(frame, () => toMountedNodes(componentFn(renderProps), container))
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
@@ -2159,6 +2413,9 @@ export const renderClientNodes = (
   }
   if (typeof Node !== 'undefined' && resolved instanceof Node) {
     return [resolved]
+  }
+  if (isProjectionSlot(resolved)) {
+    return renderProjectionSlotToNodes(resolved, container)
   }
   if (isRouteSlot(resolved)) {
     const routeElement = resolveRouteSlot(container, resolved)
@@ -2337,6 +2594,11 @@ export const renderClientInsertable = (
     typeof resolved === 'boolean'
   ) {
     return [doc.createTextNode(String(resolved))]
+  }
+  if (isProjectionSlot(resolved)) {
+    return container
+      ? renderProjectionSlotToNodes(resolved, container)
+      : renderClientInsertable(resolved.source, container)
   }
   if (isRouteSlot(resolved)) {
     const routeElement = resolveRouteSlot(container, resolved)
@@ -2827,6 +3089,7 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
     props && typeof props === 'object'
       ? evaluateProps(props as Record<string, unknown>)
       : (props as unknown)
+  component.projectionSlots = meta.projectionSlots ?? null
   if (!existing || symbolChanged) {
     resetComponentForSymbolChange(container, component, meta)
   }
@@ -2837,7 +3100,11 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   const frame = createFrame(container, component, 'client')
   const oldDescendants = collectDescendantIds(container, componentId)
   clearComponentSubscriptions(container, componentId)
-  const rendered = pushFrame(frame, () => componentFn(props))
+  const renderProps =
+    component.props && typeof component.props === 'object'
+      ? createRenderProps(componentId, meta, component.props as Record<string, unknown>)
+      : component.props
+  const rendered = pushFrame(frame, () => componentFn(renderProps as T))
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
@@ -2870,13 +3137,33 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, component.scopeId)
   await preloadResumableValue(container, scope)
-  await preloadResumableValue(container, component.props)
   const module = await loadSymbol(container, component.symbol)
-  const frame = createFrame(container, component, 'client')
+  await preloadComponentProps(
+    container,
+    {
+      captures: () => [],
+      projectionSlots: component.projectionSlots ?? undefined,
+      symbol: component.symbol,
+    },
+    component.props,
+  )
+  const frame = createFrame(container, component, 'client', { reuseExistingDom: true })
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => {
-      const rendered = module.default(scope, component.props)
+      const renderProps =
+        component.props && typeof component.props === 'object'
+          ? createRenderProps(
+              component.id,
+              {
+                captures: () => [],
+                projectionSlots: component.projectionSlots ?? undefined,
+                symbol: component.symbol,
+              },
+              component.props as Record<string, unknown>,
+            )
+          : component.props
+      const rendered = module.default(scope, renderProps)
       return toMountedNodes(rendered, container)
     }),
   )
@@ -3117,6 +3404,7 @@ export const beginSSRContainer = <T>(
     id: ROOT_COMPONENT_ID,
     parentId: null,
     props: {},
+    projectionSlots: null,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
@@ -3147,6 +3435,7 @@ export const beginAsyncSSRContainer = async <T>(
     id: ROOT_COMPONENT_ID,
     parentId: null,
     props: {},
+    projectionSlots: null,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
@@ -3169,6 +3458,7 @@ export const toResumePayload = (container: RuntimeContainer): ResumePayload => (
       id,
       {
         props: serializeRuntimeValue(container, component.props),
+        ...(component.projectionSlots ? { projectionSlots: { ...component.projectionSlots } } : {}),
         scope: component.scopeId,
         signalIds: [...component.signalIds],
         symbol: component.symbol,
@@ -3261,6 +3551,9 @@ export const createResumeContainer = (
       id,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
       props: deserializeRuntimeValue(container, componentPayload.props),
+      projectionSlots: componentPayload.projectionSlots
+        ? { ...componentPayload.projectionSlots }
+        : null,
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
