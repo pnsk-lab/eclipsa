@@ -17,6 +17,7 @@ export default defineConfig({
       'jsx/mod.ts',
       'jsx/jsx-runtime.ts',
       'jsx/jsx-dev-runtime.ts',
+      'core/internal.ts',
       'core/client/mod.ts',
       'core/dev-client/mod.ts',
       'core/prod-client/mod.ts',

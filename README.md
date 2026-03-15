@@ -17,8 +17,9 @@ bun run dev
 bun run pack
 ```
 
-`packages/eclipsa/vite.config.ts` uses `vite-plus` `pack` with `dts: true`, so
-`vp pack` builds the library and emits declaration files in `dist/`.
+The publishable packages use package-local `vite.config.ts` files with
+`vite-plus` `pack`, emit declarations into `dist/`, and generate a
+publish-ready `dist/package.json` from package-local `publishConfig`.
 
 ## Docs Deploy
 

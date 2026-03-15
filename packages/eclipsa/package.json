@@ -1,6 +1,16 @@
 {
   "name": "eclipsa",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.0",
+  "license": "none",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/eclipsa"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -40,9 +50,49 @@
       "import": "./core/prod-client/mod.ts"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./mod.d.mts",
+        "import": "./mod.mjs"
+      },
+      "./vite": {
+        "types": "./vite/mod.d.mts",
+        "import": "./vite/mod.mjs"
+      },
+      "./jsx-runtime": {
+        "types": "./jsx/jsx-runtime.d.mts",
+        "import": "./jsx/jsx-runtime.mjs"
+      },
+      "./jsx-dev-runtime": {
+        "types": "./jsx/jsx-dev-runtime.d.mts",
+        "import": "./jsx/jsx-dev-runtime.mjs"
+      },
+      "./jsx": {
+        "types": "./jsx/mod.d.mts",
+        "import": "./jsx/mod.mjs"
+      },
+      "./internal": {
+        "types": "./core/internal.d.mts",
+        "import": "./core/internal.mjs"
+      },
+      "./client": {
+        "types": "./core/client/mod.d.mts",
+        "import": "./core/client/mod.mjs"
+      },
+      "./dev-client": {
+        "types": "./core/dev-client/mod.d.mts",
+        "import": "./core/dev-client/mod.mjs"
+      },
+      "./prod-client": {
+        "types": "./core/prod-client/mod.d.mts",
+        "import": "./core/prod-client/mod.mjs"
+      }
+    }
+  },
   "scripts": {
-    "build": "vp pack",
-    "pack": "vp pack",
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
     "test": "vp test --run"
   },
