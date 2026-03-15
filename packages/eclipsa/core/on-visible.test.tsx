@@ -53,7 +53,9 @@ class FakeElement extends FakeNode {
       node.parentNode.removeChild(node)
     }
     const nextSibling = referenceNode
-    const previousSibling = nextSibling ? nextSibling.previousSibling : this.childNodes.at(-1) ?? null
+    const previousSibling = nextSibling
+      ? nextSibling.previousSibling
+      : (this.childNodes.at(-1) ?? null)
     node.parentNode = this
     node.previousSibling = previousSibling
     node.nextSibling = nextSibling
@@ -262,7 +264,9 @@ class FakeDocument {
   }
 }
 
-const withFakeVisibleDocument = async (fn: (doc: Document, fakeWindow: FakeWindow) => Promise<void>) => {
+const withFakeVisibleDocument = async (
+  fn: (doc: Document, fakeWindow: FakeWindow) => Promise<void>,
+) => {
   const OriginalComment = globalThis.Comment
   const OriginalDocument = globalThis.Document
   const OriginalHTMLElement = globalThis.HTMLElement
@@ -333,6 +337,7 @@ describe('onVisible', () => {
       globalRecord.__eclipsaVisibleRuns = 0
 
       const container = createResumeContainer(doc, {
+        actions: {},
         components: {
           c0: {
             props: {
@@ -405,6 +410,7 @@ describe('onVisible', () => {
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
       const events: string[] = []
       const container = createResumeContainer(doc, {
+        actions: {},
         components: {
           c0: {
             props: {
@@ -563,6 +569,7 @@ describe('onVisible', () => {
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
       const events: string[] = []
       const container = createResumeContainer(doc, {
+        actions: {},
         components: {
           c0: {
             props: {
@@ -617,7 +624,13 @@ describe('onVisible', () => {
         'page-symbol',
         Promise.resolve({
           default: () => {
-            onVisible(__eclipsaLazy('visible-symbol', () => {}, () => []))
+            onVisible(
+              __eclipsaLazy(
+                'visible-symbol',
+                () => {},
+                () => [],
+              ),
+            )
             return jsxDEV('div', { children: 'ready' }, null, false, {})
           },
         }),

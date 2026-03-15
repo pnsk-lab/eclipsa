@@ -1,9 +1,20 @@
 import { Hono, type Context } from 'hono'
+import type { MiddlewareHandler, Next } from 'hono/types'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
-import { ROUTE_MANIFEST_ELEMENT_ID, type RouteParams } from '../../core/router-shared.ts'
+import {
+  ROUTE_MANIFEST_ELEMENT_ID,
+  ROUTE_PREFLIGHT_ENDPOINT,
+  ROUTE_PREFLIGHT_REQUEST_HEADER,
+  type RouteParams,
+} from '../../core/router-shared.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import { Fragment, jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
+import {
+  composeRouteMetadata,
+  renderRouteMetadataHead,
+  type RouteMetadataExport,
+} from '../../core/metadata.ts'
 import {
   createDevModuleUrl,
   createRouteManifest,
@@ -21,7 +32,6 @@ import {
 } from '../compiler.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
-
 interface DevAppDeps {
   collectAppActions(root: string): Promise<{ id: string; filePath: string }[]>
   collectAppLoaders(root: string): Promise<{ id: string; filePath: string }[]>
@@ -75,6 +85,27 @@ const ROUTE_MANIFEST_PLACEHOLDER = '__ECLIPSA_ROUTE_MANIFEST__'
 
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
   html.replace(placeholder, value)
+
+const splitHtmlForStreaming = (html: string) => {
+  const bodyCloseIndex = html.lastIndexOf('</body>')
+  if (bodyCloseIndex >= 0) {
+    return {
+      prefix: html.slice(0, bodyCloseIndex),
+      suffix: html.slice(bodyCloseIndex),
+    }
+  }
+  const htmlCloseIndex = html.lastIndexOf('</html>')
+  if (htmlCloseIndex >= 0) {
+    return {
+      prefix: html.slice(0, htmlCloseIndex),
+      suffix: html.slice(htmlCloseIndex),
+    }
+  }
+  return {
+    prefix: html,
+    suffix: '',
+  }
+}
 
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 
@@ -153,7 +184,11 @@ const createRouteElement = (
 const scoreSpecialRoute = (route: RouteEntry, pathname: string) => {
   const pathnameSegments = normalizeRoutePath(pathname).split('/').filter(Boolean)
   let score = 0
-  for (let index = 0; index < route.segments.length && index < pathnameSegments.length; index += 1) {
+  for (
+    let index = 0;
+    index < route.segments.length && index < pathnameSegments.length;
+    index += 1
+  ) {
     const segment = route.segments[index]!
     const pathnameSegment = pathnameSegments[index]
     if (segment.kind === 'static') {
@@ -210,7 +245,21 @@ const applyRequestParams = (c: Context, params: RouteParams) => {
 }
 
 const isNotFoundError = (error: unknown) =>
-  !!error && typeof error === 'object' && (error as { __eclipsa_not_found__?: boolean }).__eclipsa_not_found__ === true
+  !!error &&
+  typeof error === 'object' &&
+  (error as { __eclipsa_not_found__?: boolean }).__eclipsa_not_found__ === true
+
+const isRedirectResponse = (
+  response: unknown,
+): response is { headers: { get(name: string): string | null }; status: number } =>
+  !!response &&
+  typeof response === 'object' &&
+  typeof (response as { status?: unknown }).status === 'number' &&
+  !!(response as { headers?: { get?: unknown } }).headers &&
+  typeof (response as { headers: { get?: unknown } }).headers.get === 'function' &&
+  (response as { status: number }).status >= 300 &&
+  (response as { status: number }).status < 400 &&
+  !!(response as { headers: { get(name: string): string | null } }).headers.get('location')
 
 const createDevApp = async (init: DevAppInit) => {
   const deps = init.deps ?? {
@@ -240,14 +289,75 @@ const createDevApp = async (init: DevAppInit) => {
     deps.createDevModuleUrl(init.resolvedConfig.root, entry),
   )
 
+  const loadRouteMiddlewares = async (route: RouteEntry): Promise<MiddlewareHandler[]> =>
+    await Promise.all(
+      route.middlewares.map(async (middleware) => {
+        const mod = await init.runner.import(middleware.filePath)
+        if (typeof mod.default !== 'function') {
+          throw new TypeError(
+            `Route middleware "${middleware.filePath}" must default export a middleware function.`,
+          )
+        }
+        return mod.default as MiddlewareHandler
+      }),
+    )
+
+  const composeRouteMiddlewares = async <T>(
+    route: RouteEntry,
+    c: Context,
+    params: RouteParams,
+    handler: () => Promise<T>,
+  ): Promise<T | Response> => {
+    applyRequestParams(c, params)
+    const middlewares = await loadRouteMiddlewares(route)
+    let index = -1
+    const dispatch = async (nextIndex: number): Promise<T | Response> => {
+      if (nextIndex <= index) {
+        throw new Error('Route middleware called next() multiple times.')
+      }
+      index = nextIndex
+      const middleware = middlewares[nextIndex]
+      if (!middleware) {
+        return handler()
+      }
+      let nextResult: T | Response | undefined = undefined
+      const result = await middleware(c, (async () => {
+        nextResult = await dispatch(nextIndex + 1)
+      }) as Next)
+      if (result !== undefined) {
+        return result as Response
+      }
+      return nextResult as T | Response
+    }
+    return dispatch(0)
+  }
+
+  const resolvePreflightTarget = (pathname: string) => {
+    const match = matchRoute(routes, pathname)
+    if (match?.route.page) {
+      return match
+    }
+    if (!match) {
+      const fallback = findSpecialRoute(routes, pathname, 'notFound')
+      if (fallback?.route.notFound) {
+        return fallback
+      }
+    }
+    return null
+  }
+
   const invokeRouteServer = async (filePath: string, c: Context, params: RouteParams) => {
     applyRequestParams(c, params)
     const mod = await init.runner.import(filePath)
-    const methodHandler = mod[c.req.method] as ((context: Context) => Response | Promise<Response>) | undefined
+    const methodHandler = mod[c.req.method] as
+      | ((context: Context) => Response | Promise<Response>)
+      | undefined
     if (typeof methodHandler === 'function') {
       return methodHandler(c)
     }
-    const serverApp = mod.default as { fetch?: (request: Request, env?: unknown, ctx?: unknown) => Response | Promise<Response> } | undefined
+    const serverApp = mod.default as
+      | { fetch?: (request: Request, env?: unknown, ctx?: unknown) => Response | Promise<Response> }
+      | undefined
     if (serverApp && typeof serverApp.fetch === 'function') {
       return serverApp.fetch(c.req.raw)
     }
@@ -261,11 +371,21 @@ const createDevApp = async (init: DevAppInit) => {
     c: Context,
     modulePath: string,
     status = 200,
+    options?: {
+      prepare?: (container: any) => void | Promise<void>
+    },
   ) => {
     const [
       modules,
       { default: SSRRoot },
-      { escapeJSONScriptText, renderSSRAsync, resolvePendingLoaders, serializeResumePayload },
+      {
+        escapeJSONScriptText,
+        getStreamingResumeBootstrapScriptContent,
+        renderSSRStream,
+        resolvePendingLoaders,
+        serializeResumePayload,
+        RESUME_FINAL_STATE_ELEMENT_ID,
+      },
     ] = await Promise.all([
       Promise.all([
         init.runner.import(modulePath),
@@ -274,8 +394,19 @@ const createDevApp = async (init: DevAppInit) => {
       init.runner.import('/app/+ssr-root.tsx'),
       init.runner.import('eclipsa'),
     ])
-    const [{ default: Page }, ...layoutModules] = modules
+    const [pageModule, ...layoutModules] = modules as Array<{
+      default: (props: unknown) => unknown
+      metadata?: RouteMetadataExport
+    }>
+    const { default: Page } = pageModule
     const Layouts = layoutModules.map((module) => module.default)
+    const metadata = composeRouteMetadata(
+      [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
+      {
+        params,
+        url: new URL(c.req.url),
+      },
+    )
 
     const document = SSRRoot({
       children: createRouteElement(pathname, params, Page, Layouts) as SSRRootProps['children'],
@@ -284,6 +415,7 @@ const createDevApp = async (init: DevAppInit) => {
         isStatic: true,
         props: {
           children: [
+            ...renderRouteMetadataHead(metadata),
             {
               type: 'script',
               isStatic: true,
@@ -306,6 +438,13 @@ const createDevApp = async (init: DevAppInit) => {
               type: 'script',
               isStatic: true,
               props: {
+                dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
+              },
+            },
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
                 children: 'import("/@vite/client")',
               },
             },
@@ -322,16 +461,50 @@ const createDevApp = async (init: DevAppInit) => {
     } satisfies SSRRootProps)
 
     applyRequestParams(c, params)
-    const { html, payload } = await renderSSRAsync(() => document, {
+    const { html, payload, chunks } = await renderSSRStream(() => document, {
+      prepare: options?.prepare,
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
       symbols: symbolUrls,
     })
+    const shellHtml = replaceHeadPlaceholder(
+      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+      ROUTE_MANIFEST_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(routeManifest)),
+    )
+    const { prefix, suffix } = splitHtmlForStreaming(shellHtml)
+    const encoder = new TextEncoder()
+
     return new Response(
-      replaceHeadPlaceholder(
-        replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
-        ROUTE_MANIFEST_PLACEHOLDER,
-        escapeJSONScriptText(JSON.stringify(routeManifest)),
-      ),
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(prefix))
+          void (async () => {
+            let latestPayload = payload
+
+            for await (const chunk of chunks) {
+              latestPayload = chunk.payload
+              const templateId = `eclipsa-suspense-template-${chunk.boundaryId}`
+              const payloadId = `eclipsa-suspense-payload-${chunk.boundaryId}`
+              controller.enqueue(
+                encoder.encode(
+                  `<template id="${templateId}">${chunk.html}</template>` +
+                    `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeResumePayload(chunk.payload)}</script>` +
+                    `<script>window.__eclipsa_stream.enqueue({boundaryId:${JSON.stringify(chunk.boundaryId)},payloadScriptId:${JSON.stringify(payloadId)},templateId:${JSON.stringify(templateId)}})</script>`,
+                ),
+              )
+            }
+
+            controller.enqueue(
+              encoder.encode(
+                `<script id="${RESUME_FINAL_STATE_ELEMENT_ID}" type="application/eclipsa-resume+json">${serializeResumePayload(latestPayload)}</script>${suffix}`,
+              ),
+            )
+            controller.close()
+          })().catch((error) => {
+            controller.error(error)
+          })
+        },
+      }),
       { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
     )
   }
@@ -339,16 +512,30 @@ const createDevApp = async (init: DevAppInit) => {
   const renderMatchedPage = async (
     match: { params: RouteParams; route: RouteEntry },
     c: Context,
+    options?: {
+      prepare?: (container: any) => void | Promise<void>
+    },
   ) => {
     try {
-      return await renderRouteResponse(match.route, normalizeRoutePath(new URL(c.req.url).pathname), match.params, c, match.route.page!.filePath)
+      return await renderRouteResponse(
+        match.route,
+        normalizeRoutePath(new URL(c.req.url).pathname),
+        match.params,
+        c,
+        match.route.page!.filePath,
+        200,
+        options,
+      )
     } catch (error) {
       const fallback = isNotFoundError(error)
         ? findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'notFound')
         : findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'error')
       const module = fallback?.route[isNotFoundError(error) ? 'notFound' : 'error']
       if (!fallback || !module) {
-        return c.text(isNotFoundError(error) ? 'Not Found' : 'Internal Server Error', isNotFoundError(error) ? 404 : 500)
+        return c.text(
+          isNotFoundError(error) ? 'Not Found' : 'Internal Server Error',
+          isNotFoundError(error) ? 404 : 500,
+        )
       }
       return renderRouteResponse(
         fallback.route,
@@ -357,8 +544,51 @@ const createDevApp = async (init: DevAppInit) => {
         c,
         module.filePath,
         isNotFoundError(error) ? 404 : 500,
+        options,
       )
     }
+  }
+
+  const resolveRoutePreflight = async (href: string, c: Context) => {
+    const requestUrl = new URL(c.req.url)
+    const targetUrl = new URL(href, requestUrl)
+    if (targetUrl.origin !== requestUrl.origin) {
+      return c.json({ document: true, ok: false })
+    }
+
+    const target = resolvePreflightTarget(normalizeRoutePath(targetUrl.pathname))
+    if (!target) {
+      return c.json({ ok: true })
+    }
+
+    const headers = new Headers(c.req.raw.headers)
+    headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, '1')
+    let response: Response
+    try {
+      response = await fetch(targetUrl.href, {
+        headers,
+        redirect: 'manual',
+      })
+    } catch {
+      response = await app.fetch(
+        new Request(targetUrl.href, {
+          headers,
+          method: 'GET',
+          redirect: 'manual',
+        }),
+      )
+    }
+
+    if (response.status >= 200 && response.status < 300) {
+      return c.json({ ok: true })
+    }
+    if (isRedirectResponse(response)) {
+      return c.json({
+        location: new URL(response.headers.get('location')!, requestUrl).href,
+        ok: false,
+      })
+    }
+    return c.json({ document: true, ok: false })
   }
 
   app.post('/__eclipsa/action/:id', async (c) => {
@@ -387,6 +617,14 @@ const createDevApp = async (init: DevAppInit) => {
     return executeLoader(id, c)
   })
 
+  app.get(ROUTE_PREFLIGHT_ENDPOINT, async (c) => {
+    const href = c.req.query('href')
+    if (!href) {
+      return c.json({ document: true, ok: false }, 400)
+    }
+    return resolveRoutePreflight(href, c)
+  })
+
   app.all('*', async (c) => {
     const pathname = normalizeRoutePath(new URL(c.req.url).pathname)
     const match = matchRoute(routes, pathname)
@@ -394,21 +632,89 @@ const createDevApp = async (init: DevAppInit) => {
     if (!match) {
       const fallback = findSpecialRoute(routes, pathname, 'notFound')
       if (fallback?.route.notFound) {
-        return renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound.filePath, 404)
+        return composeRouteMiddlewares(fallback.route, c, fallback.params, async () =>
+          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+            ? c.body(null, 204)
+            : renderRouteResponse(
+                fallback.route,
+                pathname,
+                fallback.params,
+                c,
+                fallback.route.notFound!.filePath,
+                404,
+              ),
+        )
       }
       return c.text('Not Found', 404)
     }
 
     if ((c.req.method === 'GET' || c.req.method === 'HEAD') && match.route.page) {
-      return renderMatchedPage(match, c)
+      return composeRouteMiddlewares(match.route, c, match.params, async () =>
+        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+          ? c.body(null, 204)
+          : renderMatchedPage(match, c),
+      )
+    }
+
+    if (c.req.method === 'POST' && match.route.page) {
+      return composeRouteMiddlewares(match.route, c, match.params, async () => {
+        const [
+          {
+            ACTION_CONTENT_TYPE,
+            deserializeValue,
+            executeAction,
+            getNormalizedActionInput,
+            getActionFormSubmissionId,
+            hasAction,
+            primeActionState,
+          },
+        ] = await Promise.all([init.runner.import('eclipsa')])
+        const actionId = await getActionFormSubmissionId(c)
+        if (!actionId) {
+          return match.route.server
+            ? invokeRouteServer(match.route.server.filePath, c, match.params)
+            : renderMatchedPage(match, c)
+        }
+        const modulePath = actionModules.get(actionId)
+        if (!modulePath) {
+          return c.text('Not Found', 404)
+        }
+        if (!hasAction(actionId)) {
+          await init.runner.import(modulePath)
+        }
+        const input = await getNormalizedActionInput(c)
+        const response = await executeAction(actionId, c)
+        const contentType = response.headers.get('content-type') ?? ''
+        if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
+          return response
+        }
+        const body = (await response.json()) as
+          | { error: unknown; ok: false }
+          | { ok: true; value: unknown }
+        return renderMatchedPage(match, c, {
+          prepare(container) {
+            primeActionState(container, actionId, {
+              error: body.ok ? undefined : deserializeValue(body.error),
+              input,
+              result: body.ok ? deserializeValue(body.value) : undefined,
+            })
+          },
+        })
+      })
     }
 
     if (match.route.server) {
-      return invokeRouteServer(match.route.server.filePath, c, match.params)
+      return composeRouteMiddlewares(match.route, c, match.params, async () =>
+        invokeRouteServer(match.route.server!.filePath, c, match.params),
+      )
     }
 
     if (match.route.page) {
-      return renderMatchedPage(match, c)
+      return composeRouteMiddlewares(match.route, c, match.params, async () =>
+        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+          ? c.body(null, 204)
+          : renderMatchedPage(match, c),
+      )
     }
 
     return c.text('Not Found', 404)

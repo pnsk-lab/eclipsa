@@ -19,7 +19,9 @@ vi.mock('hono/ssg', () => ({
 
 vi.mock('../utils/routing.ts', () => ({
   createBuildModuleUrl: vi.fn((entry: { entryName: string }) => `/entries/${entry.entryName}.js`),
-  createBuildServerModuleUrl: vi.fn((entry: { entryName: string }) => `/entries/${entry.entryName}.mjs`),
+  createBuildServerModuleUrl: vi.fn(
+    (entry: { entryName: string }) => `/entries/${entry.entryName}.mjs`,
+  ),
   createRouteManifest: mocks.createRouteManifest,
   createRoutes: mocks.createRoutes,
 }))
@@ -48,6 +50,7 @@ const createRootRoute = (): RouteEntry => ({
   error: null,
   layouts: [],
   loading: null,
+  middlewares: [],
   notFound: null,
   page: {
     entryName: 'route__page',
@@ -96,6 +99,75 @@ describe('build', () => {
       'const pageRouteEntries = [{"path":"/","routeIndex":0}];',
     )
     expect(mocks.toSSG).not.toHaveBeenCalled()
+  })
+
+  it('prerenders static routes while keeping the node server bundle for dynamic routes', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-hybrid-'))
+    const builder = createBuilder()
+    const entriesDir = path.join(root, 'dist/ssr/entries')
+    const assetsDir = path.join(root, 'dist/client/assets')
+
+    await fs.mkdir(entriesDir, { recursive: true })
+    await fs.mkdir(assetsDir, { recursive: true })
+    await fs.writeFile(
+      path.join(entriesDir, 'server_entry.mjs'),
+      'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
+    )
+    await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
+    await fs.writeFile(
+      path.join(entriesDir, 'eclipsa_runtime.mjs'),
+      [
+        'export const Fragment = Symbol.for("fragment");',
+        'export const executeAction = async () => new Response(null, { status: 204 });',
+        'export const executeLoader = async () => new Response(null, { status: 204 });',
+        'export const escapeJSONScriptText = (value) => value;',
+        'export const hasAction = () => false;',
+        'export const hasLoader = () => false;',
+        'export const jsxDEV = () => ({});',
+        'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
+        'export const resolvePendingLoaders = async () => undefined;',
+        'export const serializeResumePayload = () => "{}";',
+        '',
+      ].join('\n'),
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        renderMode: 'static',
+      },
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__dashboard__page',
+          filePath: '/tmp/app/dashboard/+page.tsx',
+        },
+        renderMode: 'dynamic',
+        routePath: '/dashboard',
+        segments: [{ kind: 'static', value: 'dashboard' }],
+      },
+    ])
+    mocks.toSSG.mockResolvedValue({
+      files: ['index.html'],
+      success: true,
+    })
+
+    await build(builder, { root }, { output: 'node' })
+
+    expect(builder.build).toHaveBeenCalledTimes(2)
+    expect(mocks.toSSG).toHaveBeenCalledTimes(1)
+    const [, , options] = mocks.toSSG.mock.calls[0] as [
+      { fetch(request: Request): Promise<Response> },
+      typeof fs,
+      {
+        beforeRequestHook(request: Request): Request | false
+        dir: string
+      },
+    ]
+    expect(options.beforeRequestHook(new Request('http://localhost/'))).toBeInstanceOf(Request)
+    expect(options.beforeRequestHook(new Request('http://localhost/dashboard'))).toBe(false)
+    expect(await fs.readFile(path.join(root, 'dist/server/index.mjs'), 'utf8')).toContain(
+      '../ssr/eclipsa_app.mjs',
+    )
   })
 
   it('runs Hono toSSG for ssg output and skips non-page routes', async () => {
@@ -156,5 +228,64 @@ describe('build', () => {
       'const stylesheetUrls = ["/assets/layout.css"];',
     )
     await expect(fs.stat(path.join(root, 'dist/server'))).rejects.toThrow()
+  })
+
+  it('rejects ssg output when route middleware is present', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-middleware-'))
+    const builder = createBuilder()
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        middlewares: [
+          {
+            entryName: 'special__middleware',
+            filePath: '/tmp/app/+middleware.ts',
+          },
+        ],
+      },
+    ])
+
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(
+      /Route middleware is not supported with output "ssg"/,
+    )
+  })
+
+  it('rejects ssg output when a page is marked dynamic', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-dynamic-'))
+    const builder = createBuilder()
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        renderMode: 'dynamic',
+      },
+    ])
+
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(
+      /render = "dynamic".*output "ssg"/,
+    )
+  })
+
+  it('rejects static rendering for routes with dynamic segments', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-static-dynamic-segment-'))
+    const builder = createBuilder()
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__blog___slug___page',
+          filePath: '/tmp/app/blog/[slug]/+page.tsx',
+        },
+        renderMode: 'static',
+        routePath: '/blog/[slug]',
+        segments: [
+          { kind: 'static', value: 'blog' },
+          { kind: 'required', value: 'slug' },
+        ],
+      },
+    ])
+
+    await expect(build(builder, { root }, { output: 'node' })).rejects.toThrow(
+      /Static rendering currently requires a concrete route path/,
+    )
   })
 })

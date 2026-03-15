@@ -57,7 +57,11 @@ describe('core/client dom attr', () => {
       namespaceURI: 'http://www.w3.org/1999/xhtml',
       setAttribute,
     }
-    const ref = createDetachedRuntimeSignal(createContainer(), 's0', undefined as Element | undefined)
+    const ref = createDetachedRuntimeSignal(
+      createContainer(),
+      's0',
+      undefined as Element | undefined,
+    )
 
     attr(elem as unknown as Element, 'ref', () => ref)
 

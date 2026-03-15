@@ -61,7 +61,6 @@ createServer(async (request, response) => {
     contentTypes.get(path.extname(filePath)) ?? 'application/octet-stream',
   )
   response.end(await readFile(filePath))
+}).listen(port, () => {
+  console.log(`Docs preview listening on http://localhost:${port}`)
 })
-  .listen(port, () => {
-    console.log(`Docs preview listening on http://localhost:${port}`)
-  })

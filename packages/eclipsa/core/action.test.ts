@@ -113,6 +113,51 @@ describe('action runtime', () => {
     })
   })
 
+  it('validates native form submissions by normalizing FormData to objects', async () => {
+    const app = createActionApp()
+    registerAction(
+      'form-sum',
+      [
+        validator(
+          createSchema((value) => {
+            if (
+              value &&
+              typeof value === 'object' &&
+              typeof (value as Record<string, unknown>).left === 'string' &&
+              typeof (value as Record<string, unknown>).right === 'string'
+            ) {
+              return {
+                value: {
+                  left: Number((value as Record<string, unknown>).left),
+                  right: Number((value as Record<string, unknown>).right),
+                },
+              }
+            }
+            return {
+              issues: [{ message: 'invalid form payload' }],
+            }
+          }),
+        ),
+      ],
+      async (c) => c.var.input!.left + c.var.input!.right,
+    )
+
+    const formData = new FormData()
+    formData.set('left', '4')
+    formData.set('right', '6')
+
+    const response = await app.request('http://localhost/__eclipsa/action/form-sum', {
+      body: formData,
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      value: 10,
+    })
+  })
+
   it('streams async generators and readable streams with framed payloads', async () => {
     const app = createActionApp()
     registerAction('stream', [], async function* () {

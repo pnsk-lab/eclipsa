@@ -77,7 +77,11 @@ export const processElement = (
             t.callExpression(init.prodClientIdenifiers.effect, [
               t.arrowFunctionExpression(
                 [],
-                t.assignmentExpression('=', t.memberExpression(elemId, t.stringLiteral(name), true), value),
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(elemId, t.stringLiteral(name), true),
+                  value,
+                ),
               ),
             ]),
           ),

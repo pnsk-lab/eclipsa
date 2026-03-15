@@ -306,6 +306,7 @@ describe('resume HMR runtime helpers', () => {
   it('advances signal and scope cursors when restoring a resumed container', () => {
     withFakeResumeDocument({}, (doc) => {
       const container = createResumeContainer(doc, {
+        actions: {},
         components: {},
         loaders: {},
         scopes: {
@@ -336,6 +337,7 @@ describe('resume HMR runtime helpers', () => {
       },
       (doc) => {
         const container = createResumeContainer(doc, {
+          actions: {},
           components: {
             c0: {
               props: {
@@ -377,5 +379,101 @@ describe('resume HMR runtime helpers', () => {
         expect(container.dirty).toEqual(new Set(['c0']))
       },
     )
+  })
+
+  it('restores ref signals without requiring a global Element constructor', () => {
+    const globalRecord = globalThis as Record<PropertyKey, unknown>
+    const OriginalComment = globalThis.Comment
+    const OriginalDocument = globalThis.Document
+    const OriginalElement = globalRecord.Element
+    const OriginalHTMLElement = globalThis.HTMLElement
+    const OriginalNode = globalThis.Node
+    const originalNodeFilter = globalThis.NodeFilter
+
+    class FakeNode {}
+    class FakeComment extends FakeNode {}
+    class FakeElement extends FakeNode {
+      ownerDocument: FakeDocument
+      #attributes = new Map<string, string>()
+
+      constructor(ownerDocument: FakeDocument) {
+        super()
+        this.ownerDocument = ownerDocument
+      }
+
+      getAttribute(name: string) {
+        return this.#attributes.get(name) ?? null
+      }
+
+      querySelectorAll() {
+        return [] as unknown as NodeListOf<Element>
+      }
+
+      setAttribute(name: string, value: string) {
+        this.#attributes.set(name, value)
+      }
+    }
+
+    class FakeDocument {
+      body: FakeElement
+      defaultView = {
+        HTMLElement: FakeElement,
+      } as unknown as Window
+      location = { pathname: '/' } as Location
+
+      constructor() {
+        this.body = new FakeElement(this)
+      }
+
+      createTreeWalker() {
+        return {
+          currentNode: null,
+          nextNode() {
+            return null
+          },
+        }
+      }
+    }
+
+    globalThis.Comment = FakeComment as unknown as typeof Comment
+    globalThis.Document = FakeDocument as unknown as typeof Document
+    globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
+    globalThis.Node = FakeNode as unknown as typeof Node
+    globalThis.NodeFilter = { SHOW_COMMENT: 128 } as typeof NodeFilter
+    globalRecord.Element = undefined
+
+    try {
+      const doc = new FakeDocument() as unknown as Document
+      ;(doc.body as unknown as FakeElement).setAttribute('data-e-ref', 's0')
+
+      const container = createResumeContainer(doc, {
+        actions: {},
+        components: {},
+        loaders: {},
+        scopes: {},
+        signals: {
+          s0: null,
+          '$router:isNavigating': false,
+          '$router:path': '/',
+        },
+        subscriptions: {
+          s0: [],
+          '$router:isNavigating': [],
+          '$router:path': [],
+        },
+        symbols: {},
+        visibles: {},
+        watches: {},
+      })
+
+      expect(container.signals.get('s0')?.value).toBe(doc.body)
+    } finally {
+      globalThis.Comment = OriginalComment
+      globalThis.Document = OriginalDocument
+      globalThis.HTMLElement = OriginalHTMLElement
+      globalThis.Node = OriginalNode
+      globalThis.NodeFilter = originalNodeFilter
+      globalRecord.Element = OriginalElement
+    }
   })
 })

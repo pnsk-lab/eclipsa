@@ -1,16 +1,15 @@
 import {
   action$,
   validator,
+  type ActionFormProps,
   type ActionHandle,
   type ActionMiddleware,
+  type ActionSubmission,
   type StandardSchemaV1,
 } from './action.ts'
 
-type Equal<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends (
-  <T>() => T extends Right ? 1 : 2
-)
-  ? true
-  : false
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2 ? true : false
 type Expect<T extends true> = T
 
 const userMiddleware: ActionMiddleware<{
@@ -71,8 +70,24 @@ type _Handle = Expect<
   >
 >
 
+type _Form = Expect<Equal<Parameters<SumHandle['Form']>[0], ActionFormProps>>
+type _Submission = Expect<
+  Equal<
+    SumHandle['lastSubmission'],
+    | ActionSubmission<
+        { left: string; right: string },
+        {
+          total: number
+          userId: string
+        }
+      >
+    | undefined
+  >
+>
+
 declare const sumHandle: SumHandle
 sumHandle.action({ left: '1', right: '2' })
+sumHandle.action(new FormData())
 // @ts-expect-error Validated action input remains required.
 sumHandle.action()
 // @ts-expect-error Input type comes from schema input, not output.

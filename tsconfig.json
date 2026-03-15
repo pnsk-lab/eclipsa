@@ -19,6 +19,7 @@
     "packages/**/*.d.ts",
     "example/**/*.ts",
     "example/**/*.tsx",
-    "example/**/*.d.ts"
-, "e2e/playwright.config.ts"  ]
+    "example/**/*.d.ts",
+    "e2e/playwright.config.ts"
+  ]
 }

@@ -1,17 +1,12 @@
 import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import { deserializeValue, serializeValue, type SerializedValue } from './serialize.ts'
-import {
-  registerLoaderHook,
-  setLoaderHandleMeta,
-  setLoaderHookMeta,
-} from './internal.ts'
+import { registerLoaderHook, setLoaderHandleMeta, setLoaderHookMeta } from './internal.ts'
 import {
   createDetachedRuntimeSignal,
   getRuntimeContainer,
   type RuntimeContainer,
 } from './runtime.ts'
-import { useSignal } from './signal.ts'
 
 const LOADER_REGISTRY_KEY = Symbol.for('eclipsa.loader-registry')
 const LOADER_CONTENT_TYPE = 'application/eclipsa-loader+json'
@@ -50,9 +45,10 @@ export type LoaderHandler<E extends Env = Env, Output = unknown> = (
   c: Context<E>,
 ) => Output | Promise<Output>
 
-type LoaderUse<Middlewares extends readonly LoaderMiddleware<any>[], Output> = () => LoaderHandle<
-  Output
->
+type LoaderUse<
+  Middlewares extends readonly LoaderMiddleware<any>[],
+  Output,
+> = () => LoaderHandle<Output>
 
 export interface LoaderFactory {
   <Output>(handler: LoaderHandler<{}, Output>): LoaderUse<[], Output>
@@ -65,7 +61,12 @@ export interface LoaderFactory {
     middleware2: M2,
     handler: LoaderHandler<LoaderEnv<[M1, M2]>, Output>,
   ): LoaderUse<[M1, M2], Output>
-  <M1 extends LoaderMiddleware<any>, M2 extends LoaderMiddleware<any>, M3 extends LoaderMiddleware<any>, Output>(
+  <
+    M1 extends LoaderMiddleware<any>,
+    M2 extends LoaderMiddleware<any>,
+    M3 extends LoaderMiddleware<any>,
+    Output,
+  >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
@@ -227,19 +228,12 @@ const createHandleSignal = <T>(
   key: string,
   initialValue: T,
 ) => {
-  try {
-    return {
-      detached: false,
-      signal: useSignal(initialValue),
-    }
-  } catch {
-    if (!container) {
-      throw new Error('Loader handles require an active runtime container.')
-    }
-    return {
-      detached: true,
-      signal: createDetachedRuntimeSignal(container, `$loader:${id}:${key}`, initialValue),
-    }
+  if (!container) {
+    throw new Error('Loader handles require an active runtime container.')
+  }
+  return {
+    detached: false,
+    signal: createDetachedRuntimeSignal(container, `$loader:${id}:${key}`, initialValue),
   }
 }
 
@@ -371,7 +365,11 @@ export const executeLoader = async (id: string, c: Context<any>) => {
   }
 }
 
-export const primeLoaderState = async (container: RuntimeContainer, id: string, c: Context<any>) => {
+export const primeLoaderState = async (
+  container: RuntimeContainer,
+  id: string,
+  c: Context<any>,
+) => {
   const value = await resolveLoader(id, c)
   updateLoaderSnapshot(container, id, {
     data: value,

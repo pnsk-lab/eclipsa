@@ -1,6 +1,11 @@
 import { component$, useSignal } from 'eclipsa'
 import { Header } from './Header.tsx'
 
+export const metadata = {
+  description: 'E2E layout description',
+  title: 'E2E App',
+}
+
 export default component$((props: { children?: unknown }) => {
   const layoutCount = useSignal(0)
 

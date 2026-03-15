@@ -203,7 +203,9 @@ const getProjectionPropName = (
   return propertyPath.isIdentifier() ? propertyPath.node.name : null
 }
 
-const isBareProjectionRenderAccess = (path: NodePath<t.MemberExpression | t.OptionalMemberExpression>) => {
+const isBareProjectionRenderAccess = (
+  path: NodePath<t.MemberExpression | t.OptionalMemberExpression>,
+) => {
   const parent = path.parentPath
   if (!parent?.isJSXExpressionContainer() || parent.node.expression !== path.node) {
     return false
@@ -220,7 +222,10 @@ const collectProjectionSlots = (fnPath: FunctionPath) => {
 
   const propsIdentifier = firstParam.node.name
   const allowedPaths = new Set<t.Node>()
-  const allAccesses: Array<{ name: string; path: NodePath<t.MemberExpression | t.OptionalMemberExpression> }> = []
+  const allAccesses: Array<{
+    name: string
+    path: NodePath<t.MemberExpression | t.OptionalMemberExpression>
+  }> = []
   const counts = new Map<string, number>()
 
   fnPath.traverse({
@@ -994,7 +999,12 @@ export const analyzeModule = async (
 
         const calleeName = path.node.callee.name
         if (signalIdentifier && calleeName === signalIdentifier) {
-          if (!isDirectlyInsideComponent(path as NodePath<t.Node>, hmrMetadata.componentInfoByFunction)) {
+          if (
+            !isDirectlyInsideComponent(
+              path as NodePath<t.Node>,
+              hmrMetadata.componentInfoByFunction,
+            )
+          ) {
             throw path.buildCodeFrameError(
               'useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).',
             )
@@ -1227,9 +1237,7 @@ export const analyzeModule = async (
             t.cloneNode(argPath.node, true),
             t.stringLiteral(extracted.id),
             buildCaptureGetter(extracted.captures),
-            ...(projectionSlots
-              ? [t.valueToNode(projectionSlots as Record<string, number>)]
-              : []),
+            ...(projectionSlots ? [t.valueToNode(projectionSlots as Record<string, number>)] : []),
           ])
         }
       },

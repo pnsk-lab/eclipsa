@@ -4,6 +4,6 @@
   "compatibility_date": "2026-03-14",
   "assets": {
     "directory": "./dist/client",
-    "html_handling": "auto-trailing-slash"
-  }
+    "html_handling": "auto-trailing-slash",
+  },
 }

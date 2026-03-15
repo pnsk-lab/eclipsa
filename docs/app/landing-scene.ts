@@ -4,7 +4,7 @@ const SHIELD_RADIUS = 100
 const MOBILE_DROP_COUNT = 50
 const DESKTOP_DROP_COUNT = 100
 const MOBILE_BREAKPOINT = 768
-const PASSIVE_EVENT_OPTIONS = { passive: true }
+const PASSIVE_EVENT_OPTIONS: AddEventListenerOptions = { passive: true }
 
 interface ShieldPoint {
   x: number
@@ -122,9 +122,7 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
     shieldPoints = [{ x: clientX, y: clientY }]
   }
 
-  const updateTouchPositions = (
-    touches: ArrayLike<Pick<Touch, 'clientX' | 'clientY'>>,
-  ) => {
+  const updateTouchPositions = (touches: ArrayLike<Pick<Touch, 'clientX' | 'clientY'>>) => {
     const nextShieldPoints: ShieldPoint[] = []
 
     for (let index = 0; index < touches.length; index += 1) {
@@ -180,6 +178,18 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
     updateTouchPositions(event.touches.length > 0 ? event.touches : event.changedTouches)
   }
 
+  const handlePointerListener: EventListener = (event) => {
+    handlePointer(event as PointerEvent)
+  }
+
+  const handlePointerEndListener: EventListener = (event) => {
+    handlePointerEnd(event as PointerEvent)
+  }
+
+  const handleTouchListener: EventListener = (event) => {
+    handleTouch(event as TouchEvent)
+  }
+
   const animate = () => {
     drawingContext.fillStyle = 'rgba(5, 5, 5, 0.3)'
     drawingContext.fillRect(0, 0, width, height)
@@ -195,16 +205,16 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
   resize()
 
   if ('PointerEvent' in window) {
-    document.addEventListener('pointerdown', handlePointer, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('pointermove', handlePointer, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('pointerup', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('pointercancel', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointerdown', handlePointerListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointermove', handlePointerListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointerup', handlePointerEndListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('pointercancel', handlePointerEndListener, PASSIVE_EVENT_OPTIONS)
   } else {
     document.addEventListener('mousemove', handleMove)
-    document.addEventListener('touchstart', handleTouch, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('touchmove', handleTouch, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('touchend', handleTouch, PASSIVE_EVENT_OPTIONS)
-    document.addEventListener('touchcancel', handleTouch, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchstart', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchmove', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchend', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+    document.addEventListener('touchcancel', handleTouchListener, PASSIVE_EVENT_OPTIONS)
   }
 
   window.addEventListener('resize', resize)
@@ -213,16 +223,16 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
   onCleanup(() => {
     window.removeEventListener('resize', resize)
     if ('PointerEvent' in window) {
-      document.removeEventListener('pointerdown', handlePointer, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('pointermove', handlePointer, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('pointerup', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('pointercancel', handlePointerEnd, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointerdown', handlePointerListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointermove', handlePointerListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointerup', handlePointerEndListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('pointercancel', handlePointerEndListener, PASSIVE_EVENT_OPTIONS)
     } else {
       document.removeEventListener('mousemove', handleMove)
-      document.removeEventListener('touchstart', handleTouch, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('touchmove', handleTouch, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('touchend', handleTouch, PASSIVE_EVENT_OPTIONS)
-      document.removeEventListener('touchcancel', handleTouch, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchstart', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchmove', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchend', handleTouchListener, PASSIVE_EVENT_OPTIONS)
+      document.removeEventListener('touchcancel', handleTouchListener, PASSIVE_EVENT_OPTIONS)
     }
     window.cancelAnimationFrame(animationFrame)
   })

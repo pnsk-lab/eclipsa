@@ -61,6 +61,7 @@ class FakeDocument {
 const createContainer = () =>
   ({
     actions: new Map(),
+    actionStates: new Map(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -140,7 +141,7 @@ describe('dangerouslySetInnerHTML', () => {
           container,
         ),
       )
-      const element = nodes[0] as FakeElement
+      const element = nodes[0] as unknown as FakeElement
 
       expect(element.innerHTML).toBe('<span>raw</span>')
       expect(element.attributes.has('dangerouslySetInnerHTML')).toBe(false)

@@ -7,7 +7,6 @@ export default function Root(props: SSRRootProps) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Document</title>
         {import.meta.env.VITE_ERUDA && (
           <>
             <script src="https://cdn.jsdelivr.net/npm/eruda"></script>

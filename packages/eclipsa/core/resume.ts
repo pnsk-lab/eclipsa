@@ -1,8 +1,10 @@
 import {
   applyResumeHmrUpdateToRegisteredContainers,
   createResumeContainer,
+  RESUME_FINAL_STATE_ELEMENT_ID,
   installResumeListeners,
   primeRouteModules,
+  RESUME_STATE_ELEMENT_ID,
   restoreRegisteredRpcHandles,
   registerResumeContainer,
   type ResumePayload,
@@ -10,14 +12,13 @@ import {
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID, type RouteManifest } from './router-shared.ts'
 
-const STATE_ELEMENT_ID = 'eclipsa-resume'
-
 interface ViteHotContext {
   on(event: string, listener: (data: ResumeHmrUpdatePayload) => void | Promise<void>): void
 }
 
 const getResumePayload = (doc: Document): ResumePayload | null => {
-  const elem = doc.getElementById(STATE_ELEMENT_ID)
+  const elem =
+    doc.getElementById(RESUME_FINAL_STATE_ELEMENT_ID) ?? doc.getElementById(RESUME_STATE_ELEMENT_ID)
   if (!elem?.textContent) {
     return null
   }

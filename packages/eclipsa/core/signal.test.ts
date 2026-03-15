@@ -54,6 +54,7 @@ class FakeDocument {
 const createContainer = () =>
   ({
     actions: new Map(),
+    actionStates: new Map(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -96,13 +97,7 @@ const withFakeNodeGlobal = <T>(fn: () => T) => {
 }
 
 const renderComponent = (render: () => string) => {
-  const App = component$(
-    __eclipsaComponent(
-      render,
-      'component-signal-test',
-      () => [],
-    ),
-  )
+  const App = component$(__eclipsaComponent(render, 'component-signal-test', () => []))
   const container = createContainer()
   withRuntimeContainer(container, () => {
     renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)
@@ -172,13 +167,7 @@ describe('useWatch', () => {
       untracked.value = 'b'
       tracked.value = 1
 
-      expect(events).toEqual([
-        'run:0:a',
-        'cleanup:0:a',
-        'run:0:b',
-        'cleanup:0:b',
-        'run:1:b',
-      ])
+      expect(events).toEqual(['run:0:a', 'cleanup:0:a', 'run:0:b', 'cleanup:0:b', 'run:1:b'])
     })
   })
 

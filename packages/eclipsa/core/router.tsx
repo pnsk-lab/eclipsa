@@ -1,12 +1,39 @@
 import type { JSX } from '../jsx/types.ts'
 import { component$ } from './component.ts'
-import { ROUTE_LINK_ATTR, ROUTE_REPLACE_ATTR, type Navigate, type RouteParams } from './router-shared.ts'
-import { notFound as throwRouteNotFound, useRuntimeNavigate, useRuntimeRouteParams } from './runtime.ts'
+import {
+  ROUTE_LINK_ATTR,
+  ROUTE_PREFETCH_ATTR,
+  ROUTE_REPLACE_ATTR,
+  type LinkPrefetchMode,
+  type Navigate,
+  type RouteParams,
+} from './router-shared.ts'
+import {
+  notFound as throwRouteNotFound,
+  useRuntimeNavigate,
+  useRuntimeRouteParams,
+} from './runtime.ts'
 
 export interface LinkProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
   href: string
+  prefetch?: LinkPrefetchMode | boolean
   replace?: boolean
+}
+
+const normalizeLinkPrefetchMode = (
+  prefetch: LinkProps['prefetch'],
+): LinkPrefetchMode | undefined => {
+  if (prefetch === undefined) {
+    return undefined
+  }
+  if (prefetch === true) {
+    return 'intent'
+  }
+  if (prefetch === false) {
+    return 'none'
+  }
+  return prefetch
 }
 
 const appendClientChildren = (parent: Element, value: unknown) => {
@@ -35,14 +62,19 @@ const appendClientChildren = (parent: Element, value: unknown) => {
 const createClientLinkNode = (props: LinkProps) => {
   const anchor = document.createElement('a')
   anchor.setAttribute(ROUTE_LINK_ATTR, '')
+  const prefetchMode = normalizeLinkPrefetchMode(props.prefetch)
 
   if (props.replace) {
     anchor.setAttribute(ROUTE_REPLACE_ATTR, 'true')
+  }
+  if (prefetchMode) {
+    anchor.setAttribute(ROUTE_PREFETCH_ATTR, prefetchMode)
   }
 
   for (const [name, value] of Object.entries(props)) {
     if (
       name === 'children' ||
+      name === 'prefetch' ||
       name === 'replace' ||
       value === false ||
       value === undefined ||
@@ -79,14 +111,19 @@ export const Link = component$((props: LinkProps) => {
     return createClientLinkNode(props) as unknown as JSX.Element
   }
 
+  const prefetchMode = normalizeLinkPrefetchMode(props.prefetch)
   const nextProps: Record<string, unknown> = {
     ...props,
     [ROUTE_LINK_ATTR]: '',
   }
 
+  if (prefetchMode) {
+    nextProps[ROUTE_PREFETCH_ATTR] = prefetchMode
+  }
   if (props.replace) {
     nextProps[ROUTE_REPLACE_ATTR] = 'true'
   }
+  delete nextProps.prefetch
   delete nextProps.replace
 
   return {

@@ -344,9 +344,11 @@ export const createDevSymbolUrl = (root: string, filePath: string, symbolId: str
 
 export const createBuildSymbolUrl = (symbolId: string) => `/entries/symbol__${symbolId}.js`
 
-export const createBuildServerActionUrl = (actionId: string) => `../ssr/entries/action__${actionId}.mjs`
+export const createBuildServerActionUrl = (actionId: string) =>
+  `../ssr/entries/action__${actionId}.mjs`
 
-export const createBuildServerLoaderUrl = (loaderId: string) => `../ssr/entries/loader__${loaderId}.mjs`
+export const createBuildServerLoaderUrl = (loaderId: string) =>
+  `../ssr/entries/loader__${loaderId}.mjs`
 
 export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
   const appDir = path.join(root, 'app')

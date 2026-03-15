@@ -1,0 +1,12 @@
+{
+  "name": "create-eclipsa",
+  "private": true,
+  "bin": {
+    "create-eclipsa": "./mod.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "vp test --run",
+    "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
+  }
+}

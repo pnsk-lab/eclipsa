@@ -282,9 +282,9 @@ describe('createResumeHmrUpdate', () => {
     expect(update?.fullReload).toBe(false)
     expect(update?.rerenderOwnerSymbols).toEqual([])
     expect(previousSymbolId).toBeTruthy()
-    expect(
-      previousSymbolId ? update?.symbolUrlReplacements[previousSymbolId] : undefined,
-    ).toMatch(/\?eclipsa-symbol=/)
+    expect(previousSymbolId ? update?.symbolUrlReplacements[previousSymbolId] : undefined).toMatch(
+      /\?eclipsa-symbol=/,
+    )
   })
 
   it('falls back to full reload when top-level component membership changes', async () => {

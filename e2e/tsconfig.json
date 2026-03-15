@@ -1,4 +1,7 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["./**/*.ts", "./**/*.tsx", "../packages/eclipsa/**/*.d.ts"]
+  "compilerOptions": {
+    "types": ["node", "@eclipsa/image/client"]
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts", "../packages/eclipsa/**/*.d.ts"]
 }

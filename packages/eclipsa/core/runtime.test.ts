@@ -62,6 +62,7 @@ class FakeDocument {
 const createContainer = () =>
   ({
     actions: new Map(),
+    actionStates: new Map(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,

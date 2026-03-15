@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { cwd } from 'node:process'
 import { pathToFileURL } from 'node:url'
 import type { RouteManifest, RoutePathSegment } from '../../core/router-shared.ts'
-import { ROUTE_MANIFEST_ELEMENT_ID } from '../../core/router-shared.ts'
+import { ROUTE_MANIFEST_ELEMENT_ID, ROUTE_PREFLIGHT_ENDPOINT } from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
   createBuildServerModuleUrl,
@@ -53,6 +53,14 @@ const collectClientStylesheetUrls = async (clientDir: string) => {
   }
 }
 
+const resolveRouteRenderMode = (
+  route: Awaited<ReturnType<typeof createRoutes>>[number],
+  output: ResolvedEclipsaPluginOptions['output'],
+) => route.renderMode ?? (output === 'ssg' ? 'static' : 'dynamic')
+
+const isConcreteStaticRoute = (route: Awaited<ReturnType<typeof createRoutes>>[number]) =>
+  route.segments.every((segment) => segment.kind === 'static')
+
 export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
   let paths = ['']
 
@@ -85,6 +93,7 @@ const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>
       error: route.error ? createBuildServerModuleUrl(route.error) : null,
       layouts: route.layouts.map((layout) => createBuildServerModuleUrl(layout)),
       loading: route.loading ? createBuildServerModuleUrl(route.loading) : null,
+      middlewares: route.middlewares.map((middleware) => createBuildServerModuleUrl(middleware)),
       notFound: route.notFound ? createBuildServerModuleUrl(route.notFound) : null,
       page: route.page ? createBuildServerModuleUrl(route.page) : null,
       routePath: route.routePath,
@@ -137,7 +146,7 @@ const renderAppModule = (
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { Fragment, escapeJSONScriptText, executeAction, executeLoader, hasAction, hasLoader, jsxDEV, renderSSRAsync, resolvePendingLoaders, serializeResumePayload } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, composeRouteMetadata, deserializeValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, primeActionState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, serializeResumePayload } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -154,6 +163,7 @@ const stylesheetUrls = ${serializedStylesheetUrls};
 const RESUME_PAYLOAD_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_RESUME_PAYLOAD__')};
 const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
+const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
 
 const normalizeRoutePath = (pathname) => {
   const normalizedPath = pathname.trim() || "/";
@@ -272,7 +282,86 @@ const applyRequestParams = (c, params) => {
 const isNotFoundError = (error) =>
   !!error && typeof error === "object" && error.__eclipsa_not_found__ === true;
 
+const isRedirectResponse = (response) =>
+  !!response &&
+  typeof response === "object" &&
+  typeof response.status === "number" &&
+  !!response.headers &&
+  typeof response.headers.get === "function" &&
+  response.status >= 300 &&
+  response.status < 400 &&
+  !!response.headers.get("location");
+
+const loadRouteMiddlewares = async (route) =>
+  Promise.all(
+    route.middlewares.map(async (middlewareUrl) => {
+      const mod = await import(middlewareUrl);
+      if (typeof mod.default !== "function") {
+        throw new TypeError(
+          \`Route middleware "\${middlewareUrl}" must default export a middleware function.\`,
+        );
+      }
+      return mod.default;
+    }),
+  );
+
+const composeRouteMiddlewares = async (route, c, params, handler) => {
+  applyRequestParams(c, params);
+  const middlewares = await loadRouteMiddlewares(route);
+  let index = -1;
+  const dispatch = async (nextIndex) => {
+    if (nextIndex <= index) {
+      throw new Error("Route middleware called next() multiple times.");
+    }
+    index = nextIndex;
+    const middleware = middlewares[nextIndex];
+    if (!middleware) {
+      return handler();
+    }
+    let nextResult;
+    const result = await middleware(c, async () => {
+      nextResult = await dispatch(nextIndex + 1);
+    });
+    return result !== undefined ? result : nextResult;
+  };
+  return dispatch(0);
+};
+
+const resolvePreflightTarget = (pathname) => {
+  const match = matchRoute(pathname);
+  if (match?.route?.page) {
+    return match;
+  }
+  if (!match) {
+    const fallback = findSpecialRoute(pathname, "notFound");
+    if (fallback?.route?.notFound) {
+      return fallback;
+    }
+  }
+  return null;
+};
+
 const replaceHeadPlaceholder = (html, placeholder, value) => html.replace(placeholder, value);
+const splitHtmlForStreaming = (html) => {
+  const bodyCloseIndex = html.lastIndexOf("</body>");
+  if (bodyCloseIndex >= 0) {
+    return {
+      prefix: html.slice(0, bodyCloseIndex),
+      suffix: html.slice(bodyCloseIndex),
+    };
+  }
+  const htmlCloseIndex = html.lastIndexOf("</html>");
+  if (htmlCloseIndex >= 0) {
+    return {
+      prefix: html.slice(0, htmlCloseIndex),
+      suffix: html.slice(htmlCloseIndex),
+    };
+  }
+  return {
+    prefix: html,
+    suffix: "",
+  };
+};
 
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for("eclipsa.route-slot-route");
 
@@ -335,12 +424,20 @@ const invokeRouteServer = async (moduleUrl, c, params) => {
   return c.text("Not Found", 404);
 };
 
-const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status = 200) => {
-  const [{ default: Page }, ...layoutModules] = await Promise.all([
+const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status = 200, options) => {
+  const [pageModule, ...layoutModules] = await Promise.all([
     import(moduleUrl),
     ...route.layouts.map((layout) => import(layout)),
   ]);
+  const Page = pageModule.default;
   const Layouts = layoutModules.map((module) => module.default);
+  const metadata = composeRouteMetadata(
+    [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
+    {
+      params,
+      url: new URL(c.req.url),
+    },
+  );
   const document = SSRRoot({
     children: createRouteElement(pathname, params, Page, Layouts),
     head: {
@@ -348,6 +445,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
       isStatic: true,
         props: {
           children: [
+            ...renderRouteMetadataHead(metadata),
             ...stylesheetUrls.map((href) => ({
               type: "link",
               isStatic: true,
@@ -378,6 +476,13 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               type: "script",
               isStatic: true,
               props: {
+                dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
                 type: "module",
               src: "/entries/client_boot.js",
             },
@@ -388,24 +493,62 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
   });
 
   applyRequestParams(c, params);
-  const { html, payload } = await renderSSRAsync(() => document, {
+  const { html, payload, chunks } = await renderSSRStream(() => document, {
+    prepare: options?.prepare,
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
     symbols: symbolUrls,
   });
-  return c.html(
-    replaceHeadPlaceholder(
-      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
-      ROUTE_MANIFEST_PLACEHOLDER,
-      escapeJSONScriptText(JSON.stringify(routeManifest)),
-    ),
-    status,
+  const shellHtml = replaceHeadPlaceholder(
+    replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+    ROUTE_MANIFEST_PLACEHOLDER,
+    escapeJSONScriptText(JSON.stringify(routeManifest)),
+  );
+  const { prefix, suffix } = splitHtmlForStreaming(shellHtml);
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(prefix));
+        void (async () => {
+          let latestPayload = payload;
+
+          for await (const chunk of chunks) {
+            latestPayload = chunk.payload;
+            const templateId = "eclipsa-suspense-template-" + chunk.boundaryId;
+            const payloadId = "eclipsa-suspense-payload-" + chunk.boundaryId;
+            controller.enqueue(
+              encoder.encode(
+                "<template id=\\"" + templateId + "\\">" + chunk.html + "</template>" +
+                  "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(chunk.payload) + "</script>" +
+                  "<script>window.__eclipsa_stream.enqueue({boundaryId:" + JSON.stringify(chunk.boundaryId) + ",payloadScriptId:" + JSON.stringify(payloadId) + ",templateId:" + JSON.stringify(templateId) + "})</script>",
+              ),
+            );
+          }
+
+          controller.enqueue(
+            encoder.encode(
+              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(latestPayload) + "</script>" + suffix,
+            ),
+          );
+          controller.close();
+        })().catch((error) => {
+          controller.error(error);
+        });
+      },
+    }),
+    {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+      },
+      status,
+    },
   );
 };
 
-const renderMatchedPage = async (match, c) => {
+const renderMatchedPage = async (match, c, options) => {
   const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
   try {
-    return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page);
+    return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page, 200, options);
   } catch (error) {
     const fallback = isNotFoundError(error) ? findSpecialRoute(pathname, "notFound") : findSpecialRoute(pathname, "error");
     const kind = isNotFoundError(error) ? "notFound" : "error";
@@ -413,8 +556,50 @@ const renderMatchedPage = async (match, c) => {
     if (!fallback || !moduleUrl) {
       return c.text(isNotFoundError(error) ? "Not Found" : "Internal Server Error", isNotFoundError(error) ? 404 : 500);
     }
-    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500);
+    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500, options);
   }
+};
+
+const resolveRoutePreflight = async (href, c) => {
+  const requestUrl = new URL(c.req.url);
+  const targetUrl = new URL(href, requestUrl);
+  if (targetUrl.origin !== requestUrl.origin) {
+    return c.json({ document: true, ok: false });
+  }
+
+  const target = resolvePreflightTarget(normalizeRoutePath(targetUrl.pathname));
+  if (!target) {
+    return c.json({ ok: true });
+  }
+
+  const headers = new Headers(c.req.raw.headers);
+  headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, "1");
+  let response;
+  try {
+    response = await fetch(targetUrl.href, {
+      headers,
+      redirect: "manual",
+    });
+  } catch {
+    response = await app.fetch(
+      new Request(targetUrl.href, {
+        headers,
+        method: "GET",
+        redirect: "manual",
+      }),
+    );
+  }
+
+  if (response.status >= 200 && response.status < 300) {
+    return c.json({ ok: true });
+  }
+  if (isRedirectResponse(response)) {
+    return c.json({
+      location: new URL(response.headers.get("location"), requestUrl).href,
+      ok: false,
+    });
+  }
+  return c.json({ document: true, ok: false });
 };
 
 for (const pageRouteEntry of pageRouteEntries) {
@@ -424,7 +609,15 @@ for (const pageRouteEntry of pageRouteEntries) {
     if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
       return c.text("Not Found", 404);
     }
-    return renderMatchedPage(match, c);
+    return composeRouteMiddlewares(
+      match.route,
+      c,
+      match.params,
+      async () =>
+        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+          ? c.body(null, 204)
+          : renderMatchedPage(match, c),
+    );
   });
 }
 
@@ -452,6 +645,14 @@ app.get("/__eclipsa/loader/:id", async (c) => {
   return executeLoader(id, c);
 });
 
+app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) => {
+  const href = c.req.query("href");
+  if (!href) {
+    return c.json({ document: true, ok: false }, 400);
+  }
+  return resolveRoutePreflight(href, c);
+});
+
 app.all("*", async (c) => {
   const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
   const match = matchRoute(pathname);
@@ -459,19 +660,83 @@ app.all("*", async (c) => {
   if (!match) {
     const fallback = findSpecialRoute(pathname, "notFound");
     if (fallback?.route?.notFound) {
-      return renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404);
+      return composeRouteMiddlewares(
+        fallback.route,
+        c,
+        fallback.params,
+        async () =>
+          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? c.body(null, 204)
+            : renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404),
+      );
     }
     return c.text("Not Found", 404);
   }
 
   if ((c.req.method === "GET" || c.req.method === "HEAD") && match.route.page) {
-    return renderMatchedPage(match, c);
+    return composeRouteMiddlewares(
+      match.route,
+      c,
+      match.params,
+      async () =>
+        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+          ? c.body(null, 204)
+          : renderMatchedPage(match, c),
+    );
+  }
+  if (c.req.method === "POST" && match.route.page) {
+    return composeRouteMiddlewares(
+      match.route,
+      c,
+      match.params,
+      async () => {
+        const actionId = await getActionFormSubmissionId(c);
+        if (!actionId) {
+          return match.route.server
+            ? invokeRouteServer(match.route.server, c, match.params)
+            : renderMatchedPage(match, c);
+        }
+        const moduleUrl = actions[actionId];
+        if (!moduleUrl) {
+          return c.text("Not Found", 404);
+        }
+        if (!hasAction(actionId)) {
+          await import(moduleUrl);
+        }
+        const input = await getNormalizedActionInput(c);
+        const response = await executeAction(actionId, c);
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
+          return response;
+        }
+        const body = await response.json();
+        return renderMatchedPage(match, c, {
+          prepare(container) {
+            primeActionState(container, actionId, {
+              error: body.ok ? undefined : deserializeValue(body.error),
+              input,
+              result: body.ok ? deserializeValue(body.value) : undefined,
+            });
+          },
+        });
+      },
+    );
   }
   if (match.route.server) {
-    return invokeRouteServer(match.route.server, c, match.params);
+    return composeRouteMiddlewares(match.route, c, match.params, async () =>
+      invokeRouteServer(match.route.server, c, match.params),
+    );
   }
   if (match.route.page) {
-    return renderMatchedPage(match, c);
+    return composeRouteMiddlewares(
+      match.route,
+      c,
+      match.params,
+      async () =>
+        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+          ? c.body(null, 204)
+          : renderMatchedPage(match, c),
+    );
   }
   return c.text("Not Found", 404);
 });
@@ -585,6 +850,32 @@ export const build = async (
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
   const routes = await createRoutes(root)
+  const staticPageRoutes = routes.filter(
+    (route) => route.page && resolveRouteRenderMode(route, options.output) === 'static',
+  )
+  const dynamicPageRoutes = routes.filter(
+    (route) => route.page && resolveRouteRenderMode(route, options.output) === 'dynamic',
+  )
+  const nonConcreteStaticRoute = staticPageRoutes.find((route) => !isConcreteStaticRoute(route))
+  if (nonConcreteStaticRoute) {
+    throw new Error(
+      `Static rendering currently requires a concrete route path. Remove dynamic segments from ${nonConcreteStaticRoute.routePath} or switch it to render = "dynamic".`,
+    )
+  }
+  if (options.output === 'ssg') {
+    const dynamicRoute = dynamicPageRoutes[0]
+    if (dynamicRoute) {
+      throw new Error(
+        `Route ${dynamicRoute.routePath} is marked render = "dynamic", which is not supported with output "ssg". Switch the app output to "node" or mark the route as "static".`,
+      )
+    }
+    const routeWithMiddleware = routes.find((route) => route.middlewares.length > 0)
+    if (routeWithMiddleware) {
+      throw new Error(
+        `Route middleware is not supported with output "ssg". Remove +middleware.ts from route ${routeWithMiddleware.routePath} or switch to output "node".`,
+      )
+    }
+  }
   const routeManifest = createRouteManifest(routes, createBuildModuleUrl)
   const symbols = await collectAppSymbols(root)
   const symbolUrls = Object.fromEntries(
@@ -604,31 +895,38 @@ export const build = async (
     renderAppModule(actions, loaders, routes, routeManifest, symbolUrls, stylesheetUrls),
   )
 
+  const staticPageRouteSet = new Set(staticPageRoutes.map((route) => route.routePath))
+
+  const prerenderStaticRoutes = async () => {
+    if (staticPageRouteSet.size === 0) {
+      return
+    }
+
+    const { default: app } = (await import(
+      `${pathToFileURL(appModulePath).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+    const result = await toSSG(app as any, fs, {
+      beforeRequestHook(request: Request) {
+        const routePath = new URL(request.url).pathname
+        return staticPageRouteSet.has(routePath) ? request : false
+      },
+      dir: clientDir,
+    })
+
+    if (!result.success) {
+      throw result.error ?? new Error('Failed to generate static output.')
+    }
+  }
+
   if (options.output === 'node') {
+    await prerenderStaticRoutes()
     await fs.mkdir(serverDir, { recursive: true })
     await fs.writeFile(path.join(serverDir, 'index.mjs'), renderNodeServer())
     return
   }
 
   await fs.rm(serverDir, { force: true, recursive: true })
-
-  const {
-    default: app,
-    pageRoutePatterns,
-  } = (await import(`${pathToFileURL(appModulePath).href}?t=${Date.now()}`)) as {
-    default: { fetch(request: Request): Promise<Response> }
-    pageRoutePatterns: string[]
-  }
-  const pageRouteSet = new Set(pageRoutePatterns)
-  const result = await toSSG(app as any, fs, {
-    beforeRequestHook(request: Request) {
-      const routePath = new URL(request.url).pathname
-      return pageRouteSet.has(routePath) ? request : false
-    },
-    dir: clientDir,
-  })
-
-  if (!result.success) {
-    throw result.error ?? new Error('Failed to generate static output.')
-  }
+  await prerenderStaticRoutes()
 }

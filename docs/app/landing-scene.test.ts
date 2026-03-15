@@ -15,21 +15,17 @@ import { setupLandingScene } from './landing-scene.ts'
 class FakeEventTarget {
   listeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
 
-  addEventListener = vi.fn(
-    (type: string, listener: EventListenerOrEventListenerObject) => {
-      if (!this.listeners.has(type)) {
-        this.listeners.set(type, new Set())
-      }
+  addEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set())
+    }
 
-      this.listeners.get(type)?.add(listener)
-    },
-  )
+    this.listeners.get(type)?.add(listener)
+  })
 
-  removeEventListener = vi.fn(
-    (type: string, listener: EventListenerOrEventListenerObject) => {
-      this.listeners.get(type)?.delete(listener)
-    },
-  )
+  removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+    this.listeners.get(type)?.delete(listener)
+  })
 
   emit(type: string, event: object) {
     for (const listener of this.listeners.get(type) ?? []) {
