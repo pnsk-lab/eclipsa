@@ -50,11 +50,28 @@ describe('routing helpers', () => {
     ])
     await Promise.all([
       fs.writeFile(path.join(root, 'app', '+layout.tsx'), 'export default () => null;'),
+      fs.writeFile(
+        path.join(root, 'app', '+middleware.ts'),
+        'export default async (_, next) => { await next(); };',
+      ),
       fs.writeFile(path.join(root, 'app', '+not-found.tsx'), 'export default () => null;'),
       fs.writeFile(path.join(root, 'app', '(app)', '+layout.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '+loading.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '[slug]', '+page.tsx'), 'export default () => null;'),
-      fs.writeFile(path.join(root, 'app', '(app)', 'blog', '[slug]', '+server.ts'), 'export default { fetch() {} };'),
+      fs.writeFile(
+        path.join(root, 'app', '(app)', 'blog', '+middleware.ts'),
+        'export default async (_, next) => { await next(); };',
+      ),
+      fs.writeFile(
+        path.join(root, 'app', '(app)', 'blog', '+loading.tsx'),
+        'export default () => null;',
+      ),
+      fs.writeFile(
+        path.join(root, 'app', '(app)', 'blog', '[slug]', '+page.tsx'),
+        "export const render = 'static';\nexport default () => null;",
+      ),
+      fs.writeFile(
+        path.join(root, 'app', '(app)', 'blog', '[slug]', '+server.ts'),
+        'export default { fetch() {} };',
+      ),
     ])
 
     const routes = await createRoutes(root)
@@ -76,6 +93,16 @@ describe('routing helpers', () => {
         entryName: 'special___app___blog___loading',
         filePath: path.join(root, 'app', '(app)', 'blog', '+loading.tsx'),
       },
+      middlewares: [
+        {
+          entryName: 'special___middleware',
+          filePath: path.join(root, 'app', '+middleware.ts'),
+        },
+        {
+          entryName: 'special___app___blog___middleware',
+          filePath: path.join(root, 'app', '(app)', 'blog', '+middleware.ts'),
+        },
+      ],
       notFound: {
         entryName: 'special___not_found',
         filePath: path.join(root, 'app', '+not-found.tsx'),
@@ -84,6 +111,7 @@ describe('routing helpers', () => {
         entryName: 'route___app___blog___slug____page',
         filePath: path.join(root, 'app', '(app)', 'blog', '[slug]', '+page.tsx'),
       },
+      renderMode: 'static',
       routePath: '/blog/[slug]',
       server: {
         entryName: 'server___app___blog___slug____server',
@@ -92,12 +120,24 @@ describe('routing helpers', () => {
     })
   })
 
+  it('rejects unsupported page render modes', async () => {
+    const root = await createTempApp()
+    await fs.mkdir(path.join(root, 'app'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'app', '+page.tsx'),
+      "export const render = 'streaming';\nexport default () => null;",
+    )
+
+    await expect(createRoutes(root)).rejects.toThrow(/Unsupported render mode "streaming"/)
+  })
+
   it('supports dynamic, optional, and catch-all params with route groups removed from the path', () => {
     const routes: RouteEntry[] = [
       {
         error: null,
         layouts: [],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: null,
         routePath: '/blog/[slug]',
@@ -111,6 +151,7 @@ describe('routing helpers', () => {
         error: null,
         layouts: [],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: null,
         routePath: '/docs/[...rest]',
@@ -124,6 +165,7 @@ describe('routing helpers', () => {
         error: null,
         layouts: [],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: null,
         routePath: '/[[lang]]/about',
@@ -167,6 +209,12 @@ describe('routing helpers', () => {
           entryName: 'special__counter__loading',
           filePath: '/tmp/app/counter/+loading.tsx',
         },
+        middlewares: [
+          {
+            entryName: 'special__middleware',
+            filePath: '/tmp/app/+middleware.ts',
+          },
+        ],
         notFound: null,
         page: {
           entryName: 'route__counter__page',
@@ -189,6 +237,7 @@ describe('routing helpers', () => {
     expect(createRouteManifest(routes, createBuildModuleUrl)).toEqual([
       {
         error: null,
+        hasMiddleware: true,
         layouts: ['/entries/layout___layout.js'],
         loading: '/entries/special__counter__loading.js',
         notFound: null,
@@ -216,6 +265,10 @@ describe('routing helpers', () => {
       },
     ])
     expect(collectRouteServerModules(routes)).toEqual([
+      {
+        entryName: 'special__middleware',
+        filePath: '/tmp/app/+middleware.ts',
+      },
       {
         entryName: 'server__counter__server',
         filePath: '/tmp/app/counter/+server.ts',

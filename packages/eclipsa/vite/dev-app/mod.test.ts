@@ -24,6 +24,7 @@ describe('createDevFetch', () => {
         error: null,
         layouts: [],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: {
           entryName: 'route__page',
@@ -76,12 +77,17 @@ describe('createDevFetch', () => {
               escapeJSONScriptText(value: string) {
                 return value
               },
-              renderSSRAsync() {
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream() {
                 return {
+                  chunks: (async function* () {})(),
                   html: '<html><head></head><body></body></html>',
                   payload: {},
                 }
               },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
               resolvePendingLoaders: vi.fn(),
               serializeResumePayload() {
                 return '{}'
@@ -108,6 +114,7 @@ describe('createDevFetch', () => {
         error: null,
         layouts: [],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: {
           entryName: 'route__hello__page',
@@ -140,6 +147,7 @@ describe('createDevFetch', () => {
           },
         ],
         loading: null,
+        middlewares: [],
         notFound: null,
         page: {
           entryName: 'route__page',
@@ -181,7 +189,10 @@ describe('createDevFetch', () => {
               escapeJSONScriptText(value: string) {
                 return value
               },
-              renderSSRAsync(renderDocument: () => any) {
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream(renderDocument: () => any) {
                 const resolveNode = (value: any): any => {
                   if (!value || typeof value !== 'object') {
                     return value
@@ -194,10 +205,12 @@ describe('createDevFetch', () => {
                   )
                 }
                 return {
+                  chunks: (async function* () {})(),
                   html: JSON.stringify(resolveNode(renderDocument())),
                   payload: {},
                 }
               },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
               resolvePendingLoaders: vi.fn(),
               serializeResumePayload() {
                 return '{}'
@@ -258,7 +271,25 @@ describe('createDevFetch', () => {
           if (id === '/app/+ssr-root.tsx') {
             return {
               default(props: any) {
-                return props
+                return {
+                  props: {
+                    children: [
+                      {
+                        props: {
+                          children: props.head,
+                        },
+                        type: 'head',
+                      },
+                      {
+                        props: {
+                          children: props.body,
+                        },
+                        type: 'body',
+                      },
+                    ],
+                  },
+                  type: 'html',
+                }
               },
             }
           }
@@ -267,12 +298,17 @@ describe('createDevFetch', () => {
               escapeJSONScriptText(value: string) {
                 return value
               },
-              renderSSRAsync(renderDocument: () => any) {
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream(renderDocument: () => any) {
                 return {
+                  chunks: (async function* () {})(),
                   html: JSON.stringify(renderDocument()),
                   payload: {},
                 }
               },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
               resolvePendingLoaders: vi.fn(),
               serializeResumePayload() {
                 return '{}'
@@ -296,6 +332,426 @@ describe('createDevFetch', () => {
     expect(html).toContain(`"id":"${'eclipsa-route-manifest'}"`)
     expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
     expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+  })
+
+  it('injects the suspense streaming bootstrap script without escaping it', async () => {
+    const bootstrapScript = '(()=>window.__eclipsa_stream_boot=1)()'
+    const renderNode = (value: any): string => {
+      if (value === false || value === null || value === undefined) {
+        return ''
+      }
+      if (Array.isArray(value)) {
+        return value.map((entry) => renderNode(entry)).join('')
+      }
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value)
+      }
+      if (typeof value.type === 'function') {
+        return renderNode(value.type(value.props ?? {}))
+      }
+      const props = value.props ?? {}
+      const attrs = Object.entries(props)
+        .filter(([name]) => name !== 'children' && name !== 'dangerouslySetInnerHTML')
+        .map(([name, attrValue]) => `${name}="${String(attrValue)}"`)
+        .join(' ')
+      const children =
+        props.dangerouslySetInnerHTML !== undefined
+          ? String(props.dangerouslySetInnerHTML ?? '')
+          : renderNode(props.children)
+      return `<${value.type}${attrs ? ` ${attrs}` : ''}>${children}</${value.type}>`
+    }
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return {
+                  props: {
+                    children: [
+                      {
+                        props: {
+                          children: props.head,
+                        },
+                        type: 'head',
+                      },
+                      {
+                        props: {
+                          children: props.body,
+                        },
+                        type: 'body',
+                      },
+                    ],
+                  },
+                  type: 'html',
+                }
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return bootstrapScript
+              },
+              renderSSRStream(renderDocument: () => any) {
+                return {
+                  chunks: (async function* () {})(),
+                  html: renderNode(renderDocument()),
+                  payload: {},
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+    const html = await response?.text()
+
+    expect(html).toContain(`<script>${bootstrapScript}</script>`)
+    expect(html).not.toContain('&gt;')
+    expect(html).toContain(
+      '<script id="eclipsa-resume-final" type="application/eclipsa-resume+json">',
+    )
+  })
+
+  it('runs route middleware through the preflight endpoint before client navigation', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__guarded__middleware',
+            filePath: '/tmp/app/guarded/+middleware.ts',
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__guarded__page',
+          filePath: '/tmp/app/guarded/+page.tsx',
+        },
+        routePath: '/guarded',
+        segments: [{ kind: 'static', value: 'guarded' }],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/guarded/+middleware.ts') {
+            return {
+              default(c: any) {
+                return c.redirect('/counter')
+              },
+            }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return props
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream() {
+                return {
+                  chunks: (async function* () {})(),
+                  html: '<html><head></head><body></body></html>',
+                  payload: {},
+                }
+              },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-preflight?href=http%3A%2F%2Flocalhost%2Fguarded',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      location: 'http://localhost/counter',
+      ok: false,
+    })
+  })
+
+  it('accepts response-like redirect values from route middleware preflight', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__guarded__middleware',
+            filePath: '/tmp/app/guarded/+middleware.ts',
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__guarded__page',
+          filePath: '/tmp/app/guarded/+page.tsx',
+        },
+        routePath: '/guarded',
+        segments: [{ kind: 'static', value: 'guarded' }],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/guarded/+middleware.ts') {
+            return {
+              default() {
+                return {
+                  headers: {
+                    get(name: string) {
+                      return name === 'location' ? '/counter' : null
+                    },
+                  },
+                  status: 302,
+                }
+              },
+            }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return props
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream() {
+                return {
+                  chunks: (async function* () {})(),
+                  html: '<html><head></head><body></body></html>',
+                  payload: {},
+                }
+              },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-preflight?href=http%3A%2F%2Flocalhost%2Fguarded',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      location: 'http://localhost/counter',
+      ok: false,
+    })
+  })
+
+  it('evaluates middleware against the target preflight URL', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__guarded__middleware',
+            filePath: '/tmp/app/guarded/+middleware.ts',
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__guarded__page',
+          filePath: '/tmp/app/guarded/+page.tsx',
+        },
+        routePath: '/guarded',
+        segments: [{ kind: 'static', value: 'guarded' }],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/guarded/+middleware.ts') {
+            return {
+              default(c: any, next: any) {
+                if (new URL(c.req.url).searchParams.get('allow') === '1') {
+                  return next()
+                }
+                return c.redirect('/counter')
+              },
+            }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return props
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream() {
+                return {
+                  chunks: (async function* () {})(),
+                  html: '<html><head></head><body></body></html>',
+                  payload: {},
+                }
+              },
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-preflight?href=http%3A%2F%2Flocalhost%2Fguarded%3Fallow%3D1',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      ok: true,
+    })
   })
 })
 

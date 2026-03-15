@@ -30,9 +30,7 @@ export const pluginClientJSX = (options?: { hmr?: boolean }) => {
   }[] = []
 
   const deferJSXExpression = (value: t.Expression) =>
-    t.isJSXElement(value) || t.isJSXFragment(value)
-      ? t.arrowFunctionExpression([], value)
-      : value
+    t.isJSXElement(value) || t.isJSXFragment(value) ? t.arrowFunctionExpression([], value) : value
 
   const deferJSXInChildrenArray = (children: t.ArrayExpression) => {
     children.elements = children.elements.map((entry) =>

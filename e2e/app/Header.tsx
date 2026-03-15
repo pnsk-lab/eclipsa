@@ -9,6 +9,8 @@ export const Header = component$(() => (
       <Link href="/counter">Counter</Link>
       {' | '}
       <Link href="/actions">Actions</Link>
+      {' | '}
+      <Link href="/suspense">Suspense</Link>
     </nav>
   </div>
 ))

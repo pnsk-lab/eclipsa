@@ -5,11 +5,13 @@ import { collectRouteModules, collectRouteServerModules, createRoutes } from './
 import { build } from './build/mod.ts'
 import { collectAppActions, collectAppLoaders, collectAppSymbols } from './compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
+import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
 
 export const createConfig =
   (options: ResolvedEclipsaPluginOptions): Plugin['config'] =>
   async (userConfig) => {
     const root = userConfig.root ?? cwd()
+    const nitroEnabled = hasNitroPlugin(userConfig.plugins)
     const routes = await createRoutes(root)
     const routeModules = collectRouteModules(routes)
     const routeServerModules = collectRouteServerModules(routes)
@@ -43,6 +45,14 @@ export const createConfig =
         jsxImportSource: 'eclipsa',
         sourcemap: false,
       },
+      ...(nitroEnabled
+        ? ({
+            nitro: createEclipsaNitroConfig(
+              root,
+              (userConfig as typeof userConfig & { nitro?: Record<string, unknown> }).nitro,
+            ),
+          } as Record<string, unknown>)
+        : {}),
       environments: {
         client: {
           build: {

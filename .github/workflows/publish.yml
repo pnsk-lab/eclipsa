@@ -1,0 +1,230 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package to release'
+        required: true
+        type: choice
+        options:
+          - eclipsa
+          - create-eclipsa
+          - image
+      release_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - alpha-patch
+          - alpha-minor
+          - alpha-major
+          - beta-patch
+          - beta-minor
+          - beta-major
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ inputs.package }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_KEY: ${{ inputs.package }}
+      INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Restore Bun and Turbo caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.turbo
+            **/.turbo
+          key: ${{ runner.os }}-bun-turbo-${{ hashFiles('bun.lock', 'turbo.json', 'package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-turbo-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Resolve package paths
+        id: package
+        shell: bash
+        run: |
+          case "$PACKAGE_KEY" in
+            eclipsa)
+              package_json_path="packages/eclipsa/package.json"
+              publish_dir="packages/eclipsa/dist"
+              build_command="bun run --filter eclipsa build"
+              ;;
+            create-eclipsa)
+              package_json_path="packages/create-eclipsa/package.json"
+              publish_dir="packages/create-eclipsa"
+              build_command=""
+              ;;
+            image)
+              package_json_path="packages/image/package.json"
+              publish_dir="packages/image"
+              build_command=""
+              ;;
+            *)
+              echo "Unsupported package: $PACKAGE_KEY"
+              exit 1
+              ;;
+          esac
+
+          if [ ! -r "$package_json_path" ]; then
+            echo "package.json not found or not readable: $package_json_path"
+            exit 1
+          fi
+
+          echo "package_json_path=$package_json_path" >> "$GITHUB_OUTPUT"
+          echo "publish_dir=$publish_dir" >> "$GITHUB_OUTPUT"
+          echo "build_command=$build_command" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          metadata_json="$(bun scripts/release/resolve-release-metadata.ts \
+            --package-json '${{ steps.package.outputs.package_json_path }}' \
+            --package-key "$PACKAGE_KEY" \
+            --release-type "$INPUT_RELEASE_TYPE")"
+
+          node -e "
+          const data = JSON.parse(process.argv[1]);
+          for (const [key, value] of Object.entries(data)) {
+            process.stdout.write(\`\${key}=\${value}\n\`);
+          }
+          " "$metadata_json" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release refs do not exist already
+        shell: bash
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.metadata.outputs.tag }}" >/dev/null; then
+            echo "Tag already exists: ${{ steps.metadata.outputs.tag }}"
+            exit 1
+          fi
+
+          if gh release view "${{ steps.metadata.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release already exists: ${{ steps.metadata.outputs.tag }}"
+            exit 1
+          fi
+
+      - name: Ensure workflow runs on branch
+        shell: bash
+        run: |
+          if [[ '${{ github.ref_type }}' != 'branch' ]]; then
+            echo "This workflow must run on a branch ref to push version updates."
+            echo "Current ref_type: ${{ github.ref_type }}"
+            exit 1
+          fi
+
+      - name: Update package version for publish
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = process.argv[1];
+          const version = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.version = version;
+          if (pkg.private === true) {
+            pkg.private = false;
+          }
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          " '${{ steps.package.outputs.package_json_path }}' '${{ steps.metadata.outputs.version }}'
+
+      - name: Build package
+        if: steps.package.outputs.build_command != ''
+        shell: bash
+        run: ${{ steps.package.outputs.build_command }}
+
+      - name: Pack package tarball
+        id: pack
+        shell: bash
+        run: |
+          publish_dir='${{ steps.package.outputs.publish_dir }}'
+          tarball_output="$(cd "$publish_dir" && bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish package tarball to npm
+        shell: bash
+        run: |
+          publish_args=(npm publish '${{ steps.pack.outputs.path }}' --provenance --access public)
+
+          if [[ '${{ steps.metadata.outputs.npmTag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ steps.metadata.outputs.npmTag }}')
+          fi
+
+          "${publish_args[@]}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit and push version update
+        id: version_commit
+        shell: bash
+        run: |
+          file_path='${{ steps.package.outputs.package_json_path }}'
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add "$file_path"
+
+          if git diff --cached --quiet; then
+            echo "No version updates to commit."
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m 'chore(release): bump ${{ steps.metadata.outputs.packageKey }} to v${{ steps.metadata.outputs.version }}'
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create release with generated notes
+        shell: bash
+        run: |
+          gh release create '${{ steps.metadata.outputs.tag }}' \
+            --generate-notes \
+            --target '${{ steps.version_commit.outputs.sha }}'

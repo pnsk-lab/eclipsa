@@ -1,0 +1,20 @@
+{
+  "name": "__APP_NAME__",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite-plus dev",
+    "build": "vite-plus build",
+    "start": "node dist/server/index.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "eclipsa": "latest",
+    "hono": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "vite-plus": "^0.1.4"
+  }
+}

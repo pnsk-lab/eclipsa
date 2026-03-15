@@ -1,4 +1,4 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["./**/*.ts", "./**/*.tsx", "../packages/eclipsa/**/*.d.ts"]
+  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts", "../packages/eclipsa/**/*.d.ts"]
 }

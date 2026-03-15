@@ -1,10 +1,7 @@
 import { loader$, type LoaderHandle, type LoaderMiddleware } from './loader.ts'
 
-type Equal<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends (
-  <T>() => T extends Right ? 1 : 2
-)
-  ? true
-  : false
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2 ? true : false
 type Expect<T extends true> = T
 
 const requestMeta: LoaderMiddleware<{

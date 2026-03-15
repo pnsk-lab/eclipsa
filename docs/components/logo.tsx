@@ -1,8 +1,6 @@
-import { component$ } from "eclipsa";
+import { component$ } from 'eclipsa'
 
-export const Logo = component$((props: {
-  class?: string
-}) => {
+export const Logo = component$((props: { class?: string }) => {
   return (
     <svg
       version="1.0"
@@ -86,5 +84,5 @@ export const Logo = component$((props: {
         />
       </g>
     </svg>
-  );
-});
+  )
+})

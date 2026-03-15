@@ -42,9 +42,13 @@ describe('loader runtime', () => {
     registerLoader('preloaded', [], async () => ({ ready: true }))
 
     app.get('/payload', async (c) => {
-      const { container } = await beginAsyncSSRContainer({}, () => null, async (runtimeContainer) => {
-        await primeLoaderState(runtimeContainer, 'preloaded', c)
-      })
+      const { container } = await beginAsyncSSRContainer(
+        {},
+        () => null,
+        async (runtimeContainer) => {
+          await primeLoaderState(runtimeContainer, 'preloaded', c)
+        },
+      )
       return c.json(toResumePayload(container))
     })
 

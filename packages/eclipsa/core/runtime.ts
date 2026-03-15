@@ -1,6 +1,7 @@
 import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
-import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { isSSRAttrValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import {
   deserializeValue,
@@ -10,6 +11,12 @@ import {
   type SerializedValue,
 } from './serialize.ts'
 import type { Component } from './component.ts'
+import {
+  ROUTE_METADATA_HEAD_ATTR,
+  composeRouteMetadata,
+  type RouteMetadata,
+  type RouteMetadataExport,
+} from './metadata.ts'
 import {
   __eclipsaComponent,
   getActionHandleMeta,
@@ -35,7 +42,10 @@ import {
 } from './internal.ts'
 import {
   ROUTE_LINK_ATTR,
+  ROUTE_PREFETCH_ATTR,
+  ROUTE_PREFLIGHT_REQUEST_HEADER,
   ROUTE_REPLACE_ATTR,
+  type LinkPrefetchMode,
   type Navigate,
   type NavigateOptions,
   type RouteManifest,
@@ -46,21 +56,36 @@ import {
 const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
 const FRAME_STACK_KEY = Symbol.for('eclipsa.frame-stack')
 const DIRTY_FLUSH_PROMISE_KEY = Symbol.for('eclipsa.dirty-flush-promise')
+const ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY = Symbol.for('eclipsa.async-signal-snapshot-cache')
+const STANDALONE_SIGNAL_ID_KEY = Symbol.for('eclipsa.standalone-signal-id')
+const ACTION_FORM_ATTR = 'data-e-action-form'
 const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
 const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
 const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
 const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
+const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
 const ROUTE_NOT_FOUND_KEY = Symbol.for('eclipsa.route-not-found')
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
+export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
+export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
 const ROOT_COMPONENT_ID = '$root'
+const SUSPENSE_COMPONENT_SYMBOL = '$suspense'
 const ROUTE_SLOT_TYPE = 'route-slot'
 const PROJECTION_SLOT_TYPE = 'projection-slot'
 const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
 const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
 const RENDER_REFERENCE_KIND = 'render'
 const REF_SIGNAL_ATTR = 'data-e-ref'
+const STREAM_STATE_KEY = '__eclipsa_stream'
+type DomConstructorName =
+  | 'Element'
+  | 'HTMLElement'
+  | 'HTMLInputElement'
+  | 'HTMLTextAreaElement'
+  | 'HTMLAnchorElement'
+  | 'HTMLFormElement'
 
 export interface ResumeComponentPayload {
   props: SerializedValue
@@ -80,6 +105,12 @@ interface ResumeWatchPayload {
   symbol: string
 }
 
+interface ResumeActionPayload {
+  error: SerializedValue
+  input: SerializedValue
+  result: SerializedValue
+}
+
 interface ResumeVisiblePayload {
   componentId: string
   scope: string
@@ -92,7 +123,14 @@ interface ResumeLoaderPayload {
   loaded: boolean
 }
 
+interface LoaderSnapshot {
+  data: unknown
+  error: unknown
+  loaded: boolean
+}
+
 export interface ResumePayload {
+  actions: Record<string, ResumeActionPayload>
   components: Record<string, ResumeComponentPayload>
   loaders: Record<string, ResumeLoaderPayload>
   scopes: Record<string, SerializedValue[]>
@@ -101,6 +139,19 @@ export interface ResumePayload {
   symbols: Record<string, string>
   visibles: Record<string, ResumeVisiblePayload>
   watches: Record<string, ResumeWatchPayload>
+}
+
+interface StreamedSuspenseChunk {
+  boundaryId: string
+  payloadScriptId: string
+  templateId: string
+}
+
+interface StreamState {
+  enqueue: (chunk: StreamedSuspenseChunk) => void
+  pending: StreamedSuspenseChunk[]
+  process?: () => Promise<void>
+  processing?: Promise<void> | null
 }
 
 interface SignalRecord<T = unknown> {
@@ -115,6 +166,64 @@ interface SignalRecord<T = unknown> {
 
 type CleanupCallback = () => void
 
+const getDomContexts = (value: unknown): Array<Window | typeof globalThis> => {
+  const contexts: Array<Window | typeof globalThis> = []
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+    return contexts
+  }
+  if ('ownerDocument' in value) {
+    const ownerDocument = (value as { ownerDocument?: Document | null }).ownerDocument
+    if (ownerDocument?.defaultView) {
+      contexts.push(ownerDocument.defaultView)
+    }
+  }
+  if ('defaultView' in value) {
+    const defaultView = (value as { defaultView?: Window | null }).defaultView
+    if (defaultView) {
+      contexts.push(defaultView)
+    }
+  }
+  contexts.push(globalThis)
+  return contexts
+}
+
+const isDomInstance = <T>(value: unknown, name: DomConstructorName): value is T => {
+  for (const context of getDomContexts(value)) {
+    const ctor = (context as Record<DomConstructorName, unknown>)[name]
+    if (typeof ctor === 'function' && value instanceof ctor) {
+      return true
+    }
+  }
+  return false
+}
+
+const hasOwnerDocument = (value: unknown): value is ParentNode & { ownerDocument: Document } =>
+  !!value &&
+  (typeof value === 'object' || typeof value === 'function') &&
+  'ownerDocument' in value &&
+  !!(value as { ownerDocument?: Document | null }).ownerDocument
+
+const isElementNode = (value: unknown): value is Element =>
+  isDomInstance<Element>(value, 'Element') || isDomInstance<HTMLElement>(value, 'HTMLElement')
+
+const isHTMLElementNode = (value: unknown): value is HTMLElement =>
+  isDomInstance<HTMLElement>(value, 'HTMLElement')
+
+const isHTMLInputElementNode = (value: unknown): value is HTMLInputElement =>
+  isDomInstance<HTMLInputElement>(value, 'HTMLInputElement')
+
+const isHTMLTextAreaElementNode = (value: unknown): value is HTMLTextAreaElement =>
+  isDomInstance<HTMLTextAreaElement>(value, 'HTMLTextAreaElement')
+
+const isTextEntryElement = (value: unknown): value is HTMLInputElement | HTMLTextAreaElement =>
+  isHTMLInputElementNode(value) || isHTMLTextAreaElementNode(value)
+
+const isHTMLAnchorElementNode = (value: unknown): value is HTMLAnchorElement =>
+  isDomInstance<HTMLAnchorElement>(value, 'HTMLAnchorElement')
+
+const isHTMLFormElementNode = (value: unknown): value is HTMLFormElement =>
+  isDomInstance<HTMLFormElement>(value, 'HTMLFormElement')
+
 interface CleanupSlot {
   callbacks: CleanupCallback[]
 }
@@ -128,10 +237,12 @@ interface ComponentState {
   parentId: string | null
   props: unknown
   projectionSlots: Record<string, number> | null
+  reuseExistingDomOnActivate?: boolean
   scopeId: string
   signalIds: string[]
   start?: Comment
   symbol: string
+  suspensePromise?: Promise<unknown> | null
   visibleCount: number
   watchCount: number
 }
@@ -161,15 +272,26 @@ interface RouterEventState {
 interface RouterState {
   currentPath: { value: string }
   currentRoute: LoadedRoute | null
+  defaultTitle: string
   isNavigating: { value: boolean }
   loadedRoutes: Map<string, LoadedRoute>
   manifest: RouteManifest
   navigate: Navigate
+  prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
+  routePrefetches: Map<string, Promise<void>>
   sequence: number
 }
 
 export interface RuntimeContainer {
   actions: Map<string, unknown>
+  actionStates: Map<
+    string,
+    {
+      error: unknown
+      input: unknown
+      result: unknown
+    }
+  >
   components: Map<string, ComponentState>
   dirty: Set<string>
   doc?: Document
@@ -188,9 +310,12 @@ export interface RuntimeContainer {
   nextElementId: number
   nextScopeId: number
   nextSignalId: number
+  pendingSuspensePromises: Set<Promise<unknown>>
   rootChildCursor: number
   rootElement?: HTMLElement
   router: RouterState | null
+  asyncSignalStates: Map<string, unknown>
+  asyncSignalSnapshotCache: Map<string, unknown>
   scopes: Map<string, SerializedValue[]>
   signals: Map<string, SignalRecord>
   symbols: Map<string, string>
@@ -214,6 +339,7 @@ type WatchMode = 'dynamic' | 'explicit'
 type RouteRenderer = (props: unknown) => unknown
 
 interface LoadedRouteModule {
+  metadata: RouteMetadataExport | null
   renderer: RouteRenderer
   symbol: string | null
   url: string
@@ -227,6 +353,25 @@ interface LoadedRoute {
   page: LoadedRouteModule
   render: RouteRenderer
 }
+
+interface RoutePreflightSuccess {
+  ok: true
+}
+
+interface RoutePreflightRedirect {
+  location: string
+  ok: false
+}
+
+interface RoutePreflightDocumentFallback {
+  document: true
+  ok: false
+}
+
+type RoutePreflightResult =
+  | RoutePreflightSuccess
+  | RoutePreflightRedirect
+  | RoutePreflightDocumentFallback
 
 interface RouteSlotValue {
   __eclipsa_type: typeof ROUTE_SLOT_TYPE
@@ -345,6 +490,48 @@ const getCurrentContainer = (): RuntimeContainer | null => {
   return stack.length > 0 ? stack[stack.length - 1] : null
 }
 
+const getAsyncSignalSnapshotCache = () => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY]
+  if (existing instanceof Map) {
+    return existing as Map<string, unknown>
+  }
+  const created = new Map<string, unknown>()
+  globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY] = created
+  return created
+}
+
+export const readAsyncSignalSnapshot = (
+  id: string,
+  container: RuntimeContainer | null = getCurrentContainer(),
+) =>
+  container?.asyncSignalStates.get(id) ??
+  container?.asyncSignalSnapshotCache.get(id) ??
+  getAsyncSignalSnapshotCache().get(id)
+
+export const writeAsyncSignalSnapshot = (
+  id: string,
+  value: unknown,
+  container: RuntimeContainer | null = getCurrentContainer(),
+) => {
+  container?.asyncSignalStates.set(id, value)
+  container?.asyncSignalSnapshotCache.set(id, value)
+  if (!container) {
+    getAsyncSignalSnapshotCache().set(id, value)
+  }
+}
+
+export const clearAsyncSignalSnapshot = (
+  id: string,
+  container: RuntimeContainer | null = getCurrentContainer(),
+) => {
+  container?.asyncSignalStates.delete(id)
+  container?.asyncSignalSnapshotCache.delete(id)
+  if (!container) {
+    getAsyncSignalSnapshotCache().delete(id)
+  }
+}
+
 const getCurrentFrame = (): RenderFrame | null => {
   const stack = getFrameStack()
   return stack.length > 0 ? stack[stack.length - 1] : null
@@ -406,10 +593,16 @@ const matchRouteSegments = (
       })
     }
     case 'rest':
-      return matchRouteSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
-        ...params,
-        [segment.value]: pathnameSegments.slice(pathIndex),
-      })
+      return matchRouteSegments(
+        segments,
+        pathnameSegments,
+        segments.length,
+        pathnameSegments.length,
+        {
+          ...params,
+          [segment.value]: pathnameSegments.slice(pathIndex),
+        },
+      )
   }
 }
 
@@ -432,7 +625,11 @@ const matchRouteManifest = (manifest: RouteManifest, pathname: string) => {
 const scoreSpecialManifestEntry = (entry: RouteModuleManifest, pathname: string) => {
   const pathnameSegments = splitRoutePath(pathname)
   let score = 0
-  for (let index = 0; index < entry.segments.length && index < pathnameSegments.length; index += 1) {
+  for (
+    let index = 0;
+    index < entry.segments.length && index < pathnameSegments.length;
+    index += 1
+  ) {
     const segment = entry.segments[index]!
     const pathnameSegment = pathnameSegments[index]
     if (segment.kind === 'static') {
@@ -479,8 +676,12 @@ const findSpecialManifestEntry = (
   return best
 }
 
-const routeCacheKey = (pathname: string, variant: 'page' | 'loading' | 'error' | 'not-found' = 'page') =>
-  `${normalizeRoutePath(pathname)}::${variant}`
+const routeCacheKey = (
+  pathname: string,
+  variant: 'page' | 'loading' | 'error' | 'not-found' = 'page',
+) => `${normalizeRoutePath(pathname)}::${variant}`
+
+const routePrefetchKey = (url: URL) => `${normalizeRoutePath(url.pathname)}${url.search}`
 
 let currentEffect: ReactiveEffect | null = null
 let currentCleanupSlot: CleanupSlot | null = null
@@ -588,7 +789,12 @@ const runWatchCallback = (
 }
 
 const createLocalWatchRunner =
-  (effect: ReactiveEffect, cleanupSlot: CleanupSlot, fn: () => void, dependencies?: WatchDependency[]) =>
+  (
+    effect: ReactiveEffect,
+    cleanupSlot: CleanupSlot,
+    fn: () => void,
+    dependencies?: WatchDependency[],
+  ) =>
   () => {
     runWatchCallback(effect, cleanupSlot, fn, dependencies)
   }
@@ -893,11 +1099,7 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
           __eclipsa_type: 'ref',
           data: serializeRuntimeValue(container, candidate.source),
           kind: PROJECTION_SLOT_TYPE,
-          token: JSON.stringify([
-            candidate.componentId,
-            candidate.name,
-            candidate.occurrence,
-          ]),
+          token: JSON.stringify([candidate.componentId, candidate.name, candidate.occurrence]),
         }
       }
       if (isRenderObject(candidate)) {
@@ -912,7 +1114,7 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
           token: lazyMeta.symbol,
         }
       }
-      if (typeof Element !== 'undefined' && candidate instanceof Element) {
+      if (isElementNode(candidate)) {
         return {
           __eclipsa_type: 'ref',
           kind: 'dom',
@@ -958,8 +1160,7 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
         return loaderHook
       }
       if (reference.kind === 'route-slot') {
-        const startLayoutIndex =
-          reference.data === undefined ? 0 : deserializeValue(reference.data)
+        const startLayoutIndex = reference.data === undefined ? 0 : deserializeValue(reference.data)
         if (typeof startLayoutIndex !== 'number' || !Number.isInteger(startLayoutIndex)) {
           throw new TypeError('Route slot references require an integer start layout index.')
         }
@@ -988,7 +1189,9 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
           name = parsed[1]
           occurrence = parsed[2]
         } catch {
-          throw new TypeError('Projection slot references require a component id, name, and occurrence.')
+          throw new TypeError(
+            'Projection slot references require a component id, name, and occurrence.',
+          )
         }
         return createProjectionSlot(
           componentId,
@@ -1062,11 +1265,7 @@ export const assignRuntimeRef = (
   return true
 }
 
-const restoreSignalRefs = (container: RuntimeContainer, root: HTMLElement) => {
-  if (typeof root.getAttribute !== 'function') {
-    return
-  }
-
+const restoreSignalRefs = (container: RuntimeContainer, root: ParentNode) => {
   const assignElement = (element: Element) => {
     const signalId = element.getAttribute(REF_SIGNAL_ATTR)
     if (!signalId) {
@@ -1079,7 +1278,7 @@ const restoreSignalRefs = (container: RuntimeContainer, root: HTMLElement) => {
     record.value = element
   }
 
-  if (root.getAttribute(REF_SIGNAL_ATTR)) {
+  if (isElementNode(root) && root.getAttribute(REF_SIGNAL_ATTR)) {
     assignElement(root)
   }
 
@@ -1131,8 +1330,7 @@ const createRenderProps = (
         }
         const current = counters.get(name) ?? 0
         counters.set(name, current + 1)
-        const occurrence =
-          totalOccurrences > 0 ? current % totalOccurrences : current
+        const occurrence = totalOccurrences > 0 ? current % totalOccurrences : current
         return createProjectionSlot(componentId, name, occurrence, props[name])
       },
     })
@@ -1162,8 +1360,15 @@ const preloadComponentProps = async (
   await preloadResumableValue(container, entries)
 }
 
-const createContainer = (symbols: Record<string, string>, doc?: Document): RuntimeContainer => ({
+const createContainer = (
+  symbols: Record<string, string>,
+  doc?: Document,
+  asyncSignalSnapshotCache?: Map<string, unknown>,
+): RuntimeContainer => ({
   actions: new Map(),
+  actionStates: new Map(),
+  asyncSignalStates: new Map(),
+  asyncSignalSnapshotCache: asyncSignalSnapshotCache ?? new Map(),
   components: new Map(),
   dirty: new Set(),
   doc,
@@ -1177,6 +1382,7 @@ const createContainer = (symbols: Record<string, string>, doc?: Document): Runti
   nextElementId: 0,
   nextScopeId: 0,
   nextSignalId: 0,
+  pendingSuspensePromises: new Set(),
   rootChildCursor: 0,
   rootElement: doc?.body,
   router: null,
@@ -1328,10 +1534,13 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   const router: RouterState = {
     currentPath,
     currentRoute: null,
+    defaultTitle: container.doc?.title ?? '',
     isNavigating,
     loadedRoutes: new Map(),
     manifest: [],
     navigate: undefined as unknown as Navigate,
+    prefetchedLoaders: new Map(),
+    routePrefetches: new Map(),
     sequence: 0,
   }
 
@@ -1391,7 +1600,10 @@ export const ensureRuntimeElementId = (container: RuntimeContainer, element: Ele
   return nextId
 }
 
-export const findRuntimeElement = (container: RuntimeContainer, elementId: string): Element | null => {
+export const findRuntimeElement = (
+  container: RuntimeContainer,
+  elementId: string,
+): Element | null => {
   const root = container.rootElement ?? container.doc?.body
   if (!root) {
     return null
@@ -1404,7 +1616,10 @@ export const findRuntimeElement = (container: RuntimeContainer, elementId: strin
 
 const registerScope = (container: RuntimeContainer, values: unknown[]): string => {
   const id = allocateScopeId(container)
-  container.scopes.set(id, values.map((value) => serializeRuntimeValue(container, value)))
+  container.scopes.set(
+    id,
+    values.map((value) => serializeRuntimeValue(container, value)),
+  )
   return id
 }
 
@@ -1493,9 +1708,11 @@ const getOrCreateComponentState = (
     parentId,
     props: {},
     projectionSlots: null,
+    reuseExistingDomOnActivate: true,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol,
+    suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
   }
@@ -1513,12 +1730,14 @@ const resetComponentForSymbolChange = (
   component.projectionSlots = meta.projectionSlots ?? null
   component.scopeId = registerScope(container, meta.captures())
   component.signalIds = []
+  component.suspensePromise = null
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
 }
 
 const createWatchId = (componentId: string, watchIndex: number) => `${componentId}:w${watchIndex}`
-const createVisibleId = (componentId: string, visibleIndex: number) => `${componentId}:v${visibleIndex}`
+const createVisibleId = (componentId: string, visibleIndex: number) =>
+  `${componentId}:v${visibleIndex}`
 
 const getOrCreateWatchState = (
   container: RuntimeContainer,
@@ -1923,8 +2142,17 @@ const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Nod
   }
 }
 
-const replaceBoundaryContents = (start: Comment, end: Comment, nodes: Node[]) => {
-  preserveProjectionSlotContents(start, end, nodes)
+const replaceBoundaryContents = (
+  start: Comment,
+  end: Comment,
+  nodes: Node[],
+  options?: {
+    preserveProjectionSlots?: boolean
+  },
+) => {
+  if (options?.preserveProjectionSlots ?? true) {
+    preserveProjectionSlotContents(start, end, nodes)
+  }
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
@@ -2031,7 +2259,7 @@ const captureBoundaryFocus = (
   end: Comment,
 ): FocusSnapshot | null => {
   const activeElement = doc.activeElement
-  if (!(activeElement instanceof HTMLElement)) {
+  if (!isHTMLElementNode(activeElement)) {
     return null
   }
 
@@ -2040,7 +2268,7 @@ const captureBoundaryFocus = (
     const candidate = topLevelNodes[i]
     if (
       candidate !== activeElement &&
-      (!(candidate instanceof Element) || !candidate.contains(activeElement))
+      (!isElementNode(candidate) || !candidate.contains(activeElement))
     ) {
       continue
     }
@@ -2052,18 +2280,11 @@ const captureBoundaryFocus = (
 
     return {
       path: [i, ...innerPath],
-      selectionDirection:
-        activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-          ? activeElement.selectionDirection
-          : null,
-      selectionEnd:
-        activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-          ? activeElement.selectionEnd
-          : null,
-      selectionStart:
-        activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-          ? activeElement.selectionStart
-          : null,
+      selectionDirection: isTextEntryElement(activeElement)
+        ? activeElement.selectionDirection
+        : null,
+      selectionEnd: isTextEntryElement(activeElement) ? activeElement.selectionEnd : null,
+      selectionStart: isTextEntryElement(activeElement) ? activeElement.selectionStart : null,
     }
   }
 
@@ -2087,7 +2308,7 @@ const restoreBoundaryFocus = (
   }
 
   const nextActive = innerPath.length > 0 ? getNodeByPath(root, innerPath) : root
-  if (!(nextActive instanceof HTMLElement)) {
+  if (!isHTMLElementNode(nextActive)) {
     return
   }
 
@@ -2101,7 +2322,7 @@ const restoreFocusTarget = (doc: Document, nextActive: HTMLElement, snapshot: Fo
     }
     nextActive.focus({ preventScroll: true })
     if (
-      (nextActive instanceof HTMLInputElement || nextActive instanceof HTMLTextAreaElement) &&
+      isTextEntryElement(nextActive) &&
       snapshot.selectionStart !== null &&
       snapshot.selectionStart !== undefined
     ) {
@@ -2150,12 +2371,11 @@ const captureDocumentFocus = (
   doc: Document,
   focusSource?: EventTarget | null,
 ): FocusSnapshot | null => {
-  const candidate =
-    focusSource instanceof HTMLElement
-      ? focusSource
-      : doc.activeElement instanceof HTMLElement
-        ? doc.activeElement
-        : null
+  const candidate = isHTMLElementNode(focusSource)
+    ? focusSource
+    : isHTMLElementNode(doc.activeElement)
+      ? doc.activeElement
+      : null
   if (!candidate) {
     return null
   }
@@ -2167,18 +2387,9 @@ const captureDocumentFocus = (
 
   return {
     path,
-    selectionDirection:
-      candidate instanceof HTMLInputElement || candidate instanceof HTMLTextAreaElement
-        ? candidate.selectionDirection
-        : null,
-    selectionEnd:
-      candidate instanceof HTMLInputElement || candidate instanceof HTMLTextAreaElement
-        ? candidate.selectionEnd
-        : null,
-    selectionStart:
-      candidate instanceof HTMLInputElement || candidate instanceof HTMLTextAreaElement
-        ? candidate.selectionStart
-        : null,
+    selectionDirection: isTextEntryElement(candidate) ? candidate.selectionDirection : null,
+    selectionEnd: isTextEntryElement(candidate) ? candidate.selectionEnd : null,
+    selectionStart: isTextEntryElement(candidate) ? candidate.selectionStart : null,
   }
 }
 
@@ -2205,7 +2416,7 @@ const restorePendingFocus = (container: RuntimeContainer, pending: PendingFocusR
   }
 
   const nextActive = getElementByPath(container.doc.body, pending.snapshot.path)
-  if (!(nextActive instanceof HTMLElement)) {
+  if (!isHTMLElementNode(nextActive)) {
     return
   }
 
@@ -2233,11 +2444,103 @@ const toEventName = (propName: string) => {
   return `${first.toLowerCase()}${rest.join('')}`
 }
 
-const escapeText = (value: string) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+const TEXT_ESCAPE_REGEX = /[&<>]/
+const ATTR_ESCAPE_REGEX = /[&<>'"]/
 
-const escapeAttr = (value: string) =>
-  escapeText(value).replaceAll('"', '&quot;').replaceAll("'", '&#39;')
+const escapeString = (value: string, mode: 'text' | 'attr') => {
+  const escapePattern = mode === 'attr' ? ATTR_ESCAPE_REGEX : TEXT_ESCAPE_REGEX
+  const firstMatch = value.search(escapePattern)
+  if (firstMatch < 0) {
+    return value
+  }
+
+  let output = ''
+  let lastIndex = 0
+  for (let index = firstMatch; index < value.length; index += 1) {
+    let escaped: string | null = null
+    switch (value.charCodeAt(index)) {
+      case 34:
+        escaped = mode === 'attr' ? '&quot;' : null
+        break
+      case 38:
+        escaped = '&amp;'
+        break
+      case 39:
+        escaped = mode === 'attr' ? '&#39;' : null
+        break
+      case 60:
+        escaped = '&lt;'
+        break
+      case 62:
+        escaped = '&gt;'
+        break
+    }
+    if (!escaped) {
+      continue
+    }
+    output += value.slice(lastIndex, index)
+    output += escaped
+    lastIndex = index + 1
+  }
+  return output + value.slice(lastIndex)
+}
+
+const escapeText = (value: string) => escapeString(value, 'text')
+
+const escapeAttr = (value: string) => escapeString(value, 'attr')
+
+const renderSSRAttr = (name: string, value: unknown) => {
+  if (value === false || value === undefined || value === null) {
+    return ''
+  }
+  if (value === true) {
+    return ` ${name}`
+  }
+  return ` ${name}="${escapeAttr(String(value))}"`
+}
+
+const renderStringArray = (values: readonly (JSX.Element | JSX.Element[])[]) => {
+  let output = ''
+  for (let index = 0; index < values.length; index += 1) {
+    output += renderStringNode(values[index] as JSX.Element | JSX.Element[])
+  }
+  return output
+}
+
+const renderSSRTemplateValue = (value: unknown): string => {
+  if (value === false || value === null || value === undefined) {
+    return ''
+  }
+  if (Array.isArray(value)) {
+    return renderStringArray(value as readonly (JSX.Element | JSX.Element[])[])
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return escapeText(String(value))
+  }
+  if (isSSRTemplate(value)) {
+    return renderSSRTemplateNode(value)
+  }
+  if (isProjectionSlot(value)) {
+    return renderProjectionSlotToString(value)
+  }
+  if (isRouteSlot(value)) {
+    const routeElement = resolveRouteSlot(getCurrentContainer(), value)
+    return routeElement ? renderStringNode(routeElement as JSX.Element) : ''
+  }
+  return renderStringNode(value as JSX.Element)
+}
+
+const renderSSRTemplateNode = (template: JSX.SSRTemplate) => {
+  let output = template.strings[0] ?? ''
+  for (let index = 0; index < template.values.length; index += 1) {
+    const value = template.values[index]
+    output += isSSRAttrValue(value)
+      ? renderSSRAttr(value.name, value.value)
+      : renderSSRTemplateValue(value)
+    output += template.strings[index + 1] ?? ''
+  }
+  return output
+}
 
 const resolveRenderable = (value: JSX.Element): JSX.Element => {
   let current = value
@@ -2315,7 +2618,7 @@ const renderProjectionSlotToNodes = (slot: ProjectionSlotValue, container: Runti
 
 const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string => {
   if (Array.isArray(inputElementLike)) {
-    return inputElementLike.map((entry) => renderStringNode(entry)).join('')
+    return renderStringArray(inputElementLike)
   }
 
   const resolved = resolveRenderable(inputElementLike as JSX.Element)
@@ -2332,6 +2635,9 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   ) {
     return escapeText(String(resolved))
   }
+  if (isSSRTemplate(resolved)) {
+    return renderSSRTemplateNode(resolved)
+  }
   if (isProjectionSlot(resolved)) {
     return renderProjectionSlotToString(resolved)
   }
@@ -2343,11 +2649,16 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     return ''
   }
 
+  if (isSuspenseType(resolved.type)) {
+    return renderSuspenseComponentToString(resolved.props as SuspenseProps)
+  }
+
   if (typeof resolved.type === 'function') {
     const container = getCurrentContainer()
-    const meta = getComponentMeta(resolved.type)
+    const componentFn = resolved.type as Component
+    const meta = getComponentMeta(componentFn)
     if (!meta || !container) {
-      return renderStringNode(resolved.type(resolved.props))
+      return renderStringNode(componentFn(resolved.props))
     }
 
     const evaluatedProps = evaluateProps(resolved.props)
@@ -2366,7 +2677,6 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     clearComponentSubscriptions(container, component.id)
     const renderProps = createRenderProps(componentId, meta, evaluatedProps)
 
-    const componentFn = resolved.type as Component
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
@@ -2374,18 +2684,20 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   }
 
   const attrParts: string[] = []
-  const descriptors = Object.getOwnPropertyDescriptors(resolved.props)
   const container = getCurrentContainer()
   let hasInnerHTML = false
   let innerHTML: string | null = null
 
-  for (const [name, descriptor] of Object.entries(descriptors) as [string, PropertyDescriptor][]) {
+  for (const name in resolved.props) {
+    if (!Object.hasOwn(resolved.props, name)) {
+      continue
+    }
     if (name === 'children') {
       continue
     }
 
     const eventName = toEventName(name)
-    const value = descriptor.get ? descriptor.get.call(resolved.props) : descriptor.value
+    const value = resolved.props[name]
 
     if (eventName) {
       const eventMeta = getEventMeta(value)
@@ -2572,7 +2884,7 @@ const applyElementProp = (
   if (name === 'value' && 'value' in element) {
     ;(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value = String(value)
   }
-  if (name === 'checked' && element instanceof HTMLInputElement) {
+  if (name === 'checked' && isHTMLInputElementNode(element)) {
     element.checked = Boolean(value)
   }
 
@@ -2621,6 +2933,10 @@ export const renderClientNodes = (
   }
   if (!isRenderObject(resolved)) {
     return []
+  }
+
+  if (isSuspenseType(resolved.type)) {
+    return renderSuspenseComponentToNodes(resolved.props as SuspenseProps, container, 'client')
   }
 
   if (typeof resolved.type === 'function') {
@@ -2675,7 +2991,7 @@ export const renderClientNodes = (
 }
 
 const scanComponentBoundaries = (
-  root: HTMLElement,
+  root: ParentNode & { ownerDocument: Document },
 ): Map<string, { end?: Comment; start?: Comment }> => {
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_COMMENT)
   const boundaries = new Map<string, { end?: Comment; start?: Comment }>()
@@ -2916,6 +3232,178 @@ const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
   return children
 }
 
+const trackSuspenseBoundaryPromise = (
+  container: RuntimeContainer,
+  componentId: string,
+  promise: Promise<unknown>,
+) => {
+  const component = container.components.get(componentId)
+  if (!component) {
+    return
+  }
+  component.suspensePromise = promise
+  promise.finally(() => {
+    const current = container.components.get(componentId)
+    if (!current || current.suspensePromise !== promise) {
+      return
+    }
+    current.suspensePromise = null
+    current.active = false
+    container.dirty.add(componentId)
+    void flushDirtyComponents(container)
+  })
+}
+
+const renderSuspenseContentToString = (
+  props: SuspenseProps,
+  container: RuntimeContainer,
+  componentId: string,
+) => {
+  try {
+    const rendered =
+      typeof props.children === 'function' ? props.children() : (props.children ?? null)
+    return renderStringNode(rendered as JSX.Element | JSX.Element[])
+  } catch (error) {
+    if (!isPendingSignalError(error)) {
+      throw error
+    }
+    container.pendingSuspensePromises.add(error.promise)
+    const component = container.components.get(componentId)
+    if (component) {
+      component.suspensePromise = error.promise
+    }
+    return renderStringNode((props.fallback ?? null) as JSX.Element | JSX.Element[])
+  }
+}
+
+export const collectPendingSuspenseBoundaryIds = (container: RuntimeContainer) =>
+  [...container.components.values()]
+    .filter(
+      (component) => component.symbol === SUSPENSE_COMPONENT_SYMBOL && !!component.suspensePromise,
+    )
+    .map((component) => component.id)
+    .sort((left, right) => left.split('.').length - right.split('.').length)
+
+export const renderResolvedSuspenseBoundaryToString = (
+  container: RuntimeContainer,
+  componentId: string,
+) => {
+  const component = container.components.get(componentId)
+  if (!component || component.symbol !== SUSPENSE_COMPONENT_SYMBOL) {
+    throw new Error(`Missing suspense boundary ${componentId}.`)
+  }
+
+  pruneRemovedComponents(container, componentId, new Set())
+  clearComponentSubscriptions(container, component.id)
+  component.suspensePromise = null
+  const frame = createFrame(container, component, 'ssr')
+  return pushContainer(container, () =>
+    pushFrame(frame, () =>
+      renderSuspenseContentToString(component.props as SuspenseProps, container, componentId),
+    ),
+  )
+}
+
+const renderSuspenseContentToNodes = (
+  props: SuspenseProps,
+  container: RuntimeContainer,
+  componentId: string,
+) => {
+  try {
+    const rendered =
+      typeof props.children === 'function' ? props.children() : (props.children ?? null)
+    return toMountedNodes(rendered as JSX.Element | JSX.Element[], container)
+  } catch (error) {
+    if (!isPendingSignalError(error)) {
+      throw error
+    }
+    trackSuspenseBoundaryPromise(container, componentId, error.promise)
+    const fallback = props.fallback ?? null
+    return toMountedNodes(fallback as JSX.Element | JSX.Element[], container)
+  }
+}
+
+const renderSuspenseComponentToString = (props: SuspenseProps) => {
+  const container = getCurrentContainer()
+  if (!container) {
+    return renderStringNode((props.children ?? null) as JSX.Element | JSX.Element[])
+  }
+  const parentFrame = getCurrentFrame()
+  if (!parentFrame) {
+    return renderSuspenseContentToString(props, container, ROOT_COMPONENT_ID)
+  }
+
+  const position = nextComponentPosition(container)
+  const componentId = createComponentId(container, position.parentId, position.childIndex)
+  const component = getOrCreateComponentState(
+    container,
+    componentId,
+    SUSPENSE_COMPONENT_SYMBOL,
+    position.parentId,
+  )
+  component.props = {
+    children: props.children,
+    fallback: props.fallback,
+  }
+  component.projectionSlots = null
+  const frame = createFrame(container, component, 'ssr')
+  clearComponentSubscriptions(container, component.id)
+  const body = pushFrame(frame, () =>
+    renderSuspenseContentToString(component.props as SuspenseProps, container, componentId),
+  )
+  pruneComponentVisibles(container, component, frame.visibleCursor)
+  pruneComponentWatches(container, component, frame.watchCursor)
+  return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
+}
+
+const renderSuspenseComponentToNodes = (
+  props: SuspenseProps,
+  container: RuntimeContainer,
+  mode: RenderFrame['mode'],
+) => {
+  const parentFrame = getCurrentFrame()
+  if (!parentFrame) {
+    return renderSuspenseContentToNodes(props, container, ROOT_COMPONENT_ID)
+  }
+
+  const position = nextComponentPosition(container)
+  const componentId = createComponentId(container, position.parentId, position.childIndex)
+  const component = getOrCreateComponentState(
+    container,
+    componentId,
+    SUSPENSE_COMPONENT_SYMBOL,
+    position.parentId,
+  )
+  component.props = {
+    children: props.children,
+    fallback: props.fallback,
+  }
+  component.projectionSlots = null
+  component.active = true
+  component.start = undefined
+  component.end = undefined
+
+  const frame = createFrame(container, component, mode)
+  clearComponentSubscriptions(container, component.id)
+  const bodyNodes = pushFrame(frame, () =>
+    renderSuspenseContentToNodes(component.props as SuspenseProps, container, componentId),
+  )
+  pruneComponentVisibles(container, component, frame.visibleCursor)
+  pruneComponentWatches(container, component, frame.watchCursor)
+  parentFrame.visitedDescendants.add(componentId)
+  scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleVisibleCallbacksCheck(container)
+
+  if (!container.doc) {
+    return bodyNodes
+  }
+  const start = container.doc.createComment(`ec:c:${componentId}:start`)
+  const end = container.doc.createComment(`ec:c:${componentId}:end`)
+  component.start = start
+  component.end = end
+  return [start, ...bodyNodes, end]
+}
+
 const renderRouteIntoRoot = (
   container: RuntimeContainer,
   Page: RouteRenderer,
@@ -2973,15 +3461,85 @@ const renderRouteIntoRoot = (
 }
 
 const loadRouteModule = async (url: string): Promise<LoadedRouteModule> => {
-  const module = (await import(/* @vite-ignore */ url)) as { default?: RouteRenderer }
+  const module = (await import(/* @vite-ignore */ url)) as {
+    default?: RouteRenderer
+    metadata?: RouteMetadataExport
+  }
   if (typeof module.default !== 'function') {
     throw new TypeError(`Route module ${url} does not export a default component.`)
   }
 
   return {
+    metadata: module.metadata ?? null,
     renderer: module.default,
     symbol: getComponentMeta(module.default)?.symbol ?? null,
     url,
+  }
+}
+
+const createManagedHeadElement = (doc: Document, tagName: 'link' | 'meta') => {
+  const element = doc.createElement(tagName)
+  element.setAttribute(ROUTE_METADATA_HEAD_ATTR, '')
+  return element
+}
+
+const applyRouteMetadata = (doc: Document, route: LoadedRoute, url: URL, defaultTitle: string) => {
+  for (const element of [...doc.head.querySelectorAll(`[${ROUTE_METADATA_HEAD_ATTR}]`)]) {
+    element.remove()
+  }
+
+  const metadata = composeRouteMetadata(
+    [...route.layouts.map((layout) => layout.metadata ?? null), route.page.metadata ?? null],
+    {
+      params: route.params,
+      url,
+    },
+  )
+
+  doc.title = metadata?.title ?? defaultTitle
+
+  const appendMeta = (name: string, content: string, attr: 'name' | 'property') => {
+    const meta = createManagedHeadElement(doc, 'meta')
+    meta.setAttribute(attr, name)
+    meta.setAttribute('content', content)
+    doc.head.appendChild(meta)
+  }
+
+  if (metadata?.description) {
+    appendMeta('description', metadata.description, 'name')
+  }
+  if (metadata?.canonical) {
+    const link = createManagedHeadElement(doc, 'link')
+    link.setAttribute('href', metadata.canonical)
+    link.setAttribute('rel', 'canonical')
+    doc.head.appendChild(link)
+  }
+  if (metadata?.openGraph?.title) {
+    appendMeta('og:title', metadata.openGraph.title, 'property')
+  }
+  if (metadata?.openGraph?.description) {
+    appendMeta('og:description', metadata.openGraph.description, 'property')
+  }
+  if (metadata?.openGraph?.type) {
+    appendMeta('og:type', metadata.openGraph.type, 'property')
+  }
+  if (metadata?.openGraph?.url) {
+    appendMeta('og:url', metadata.openGraph.url, 'property')
+  }
+  for (const image of metadata?.openGraph?.images ?? []) {
+    appendMeta('og:image', image, 'property')
+  }
+  if (metadata?.twitter?.card) {
+    appendMeta('twitter:card', metadata.twitter.card, 'name')
+  }
+  if (metadata?.twitter?.title) {
+    appendMeta('twitter:title', metadata.twitter.title, 'name')
+  }
+  if (metadata?.twitter?.description) {
+    appendMeta('twitter:description', metadata.twitter.description, 'name')
+  }
+  for (const image of metadata?.twitter?.images ?? []) {
+    appendMeta('twitter:image', image, 'name')
   }
 }
 
@@ -3093,7 +3651,9 @@ const collectSharedLayoutBoundaryIds = (container: RuntimeContainer, route: Load
   const symbols = route.layouts.map((layout) => layout.symbol as string)
   if (route.page.symbol) {
     const chain = findRouteComponentChain(container, [...symbols, route.page.symbol])
-    return chain?.slice(0, route.layouts.length) ?? null
+    if (chain) {
+      return chain.slice(0, route.layouts.length)
+    }
   }
 
   return findRouteComponentChain(container, symbols)
@@ -3137,6 +3697,7 @@ const updateSharedLayoutBoundary = async (
     children: createRouteElement(next, sharedLayoutCount),
   }
   boundary.active = false
+  boundary.reuseExistingDomOnActivate = false
   container.dirty.add(boundaryId)
   await flushDirtyComponents(container)
   return true
@@ -3168,10 +3729,179 @@ const fallbackDocumentNavigation = (doc: Document, url: URL, mode: NavigationMod
   doc.defaultView.location.assign(url.href)
 }
 
+const parseResumePayloadFromHtml = (html: string): ResumePayload | null => {
+  if (typeof DOMParser === 'undefined') {
+    return null
+  }
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  const payloadNode =
+    parsed.getElementById(RESUME_FINAL_STATE_ELEMENT_ID) ??
+    parsed.getElementById(RESUME_STATE_ELEMENT_ID)
+  if (!payloadNode?.textContent) {
+    return null
+  }
+  return JSON.parse(payloadNode.textContent) as ResumePayload
+}
+
+const cachePrefetchedLoaders = (
+  container: RuntimeContainer,
+  url: URL,
+  payload: ResumePayload | null,
+) => {
+  if (!payload) {
+    return
+  }
+  const router = ensureRouterState(container)
+  const snapshots = new Map<string, LoaderSnapshot>()
+  for (const [id, loaderPayload] of Object.entries(payload.loaders ?? {})) {
+    snapshots.set(id, {
+      data: deserializeRuntimeValue(container, loaderPayload.data),
+      error: deserializeRuntimeValue(container, loaderPayload.error),
+      loaded: loaderPayload.loaded,
+    })
+  }
+  router.prefetchedLoaders.set(routePrefetchKey(url), snapshots)
+}
+
+const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
+  const router = ensureRouterState(container)
+  const prefetchedLoaders = router.prefetchedLoaders.get(routePrefetchKey(url))
+  if (!prefetchedLoaders) {
+    return
+  }
+  for (const [id, snapshot] of prefetchedLoaders) {
+    container.loaderStates.set(id, {
+      data: snapshot.data,
+      error: snapshot.error,
+      loaded: snapshot.loaded,
+    })
+  }
+}
+
+const requestRoutePreflight = async (href: string): Promise<RoutePreflightResult> => {
+  try {
+    const requestUrl = new URL(
+      href,
+      typeof window === 'undefined' ? 'http://localhost' : window.location.href,
+    )
+    const response = await fetch(requestUrl.href, {
+      headers: {
+        [ROUTE_PREFLIGHT_REQUEST_HEADER]: '1',
+      },
+    })
+    if (response.status < 200 || response.status >= 300) {
+      return {
+        document: true,
+        ok: false,
+      }
+    }
+    const finalUrl = new URL(response.url || requestUrl.href, requestUrl.href)
+    if (
+      finalUrl.origin !== requestUrl.origin ||
+      finalUrl.pathname !== requestUrl.pathname ||
+      finalUrl.search !== requestUrl.search
+    ) {
+      return {
+        location: finalUrl.href,
+        ok: false,
+      }
+    }
+    return {
+      ok: true,
+    }
+  } catch {
+    return {
+      document: true,
+      ok: false,
+    }
+  }
+}
+
+const prefetchResolvedRouteModules = async (
+  container: RuntimeContainer,
+  pathname: string,
+  finalUrl: URL,
+) => {
+  const router = ensureRouterState(container)
+  const matched = matchRouteManifest(router.manifest, pathname)
+  if (matched?.entry.page) {
+    await loadResolvedRoute(container, matched)
+    return
+  }
+  const notFoundMatched = findSpecialManifestEntry(router.manifest, pathname, 'notFound')
+  if (notFoundMatched?.entry.notFound) {
+    await loadResolvedRoute(container, notFoundMatched, 'not-found')
+  }
+  if (finalUrl.pathname !== pathname) {
+    const redirectedPath = normalizeRoutePath(finalUrl.pathname)
+    const redirectedMatched = matchRouteManifest(router.manifest, redirectedPath)
+    if (redirectedMatched?.entry.page) {
+      await loadResolvedRoute(container, redirectedMatched)
+    }
+  }
+}
+
+const prefetchRoute = async (container: RuntimeContainer, href: string) => {
+  const doc = container.doc
+  if (!doc) {
+    return
+  }
+
+  const requestUrl = new URL(href, doc.location.href)
+  if (requestUrl.origin !== doc.location.origin) {
+    return
+  }
+  const key = routePrefetchKey(requestUrl)
+  const router = ensureRouterState(container)
+  const existing = router.routePrefetches.get(key)
+  if (existing) {
+    await existing
+    return
+  }
+
+  const pathname = normalizeRoutePath(requestUrl.pathname)
+  const matched = matchRouteManifest(router.manifest, pathname)
+  const specialRoute = !matched
+    ? findSpecialManifestEntry(router.manifest, pathname, 'notFound')
+    : null
+  if (!matched?.entry.page && !specialRoute?.entry.notFound) {
+    return
+  }
+
+  const prefetchPromise = (async () => {
+    try {
+      const response = await fetch(requestUrl.href)
+      if (response.status < 200 || response.status >= 300) {
+        return
+      }
+
+      const finalUrl = new URL(response.url || requestUrl.href, requestUrl.href)
+      if (finalUrl.origin !== requestUrl.origin) {
+        return
+      }
+
+      const contentType = response.headers.get('content-type') ?? ''
+      const html = contentType.includes('text/html') ? await response.text() : ''
+      await prefetchResolvedRouteModules(container, normalizeRoutePath(finalUrl.pathname), finalUrl)
+      cachePrefetchedLoaders(
+        container,
+        new URL(`${finalUrl.pathname}${finalUrl.search}`, requestUrl.origin),
+        html ? parseResumePayloadFromHtml(html) : null,
+      )
+    } catch {
+      return
+    }
+  })()
+
+  router.routePrefetches.set(key, prefetchPromise)
+  await prefetchPromise
+}
+
 const navigateContainer = async (
   container: RuntimeContainer,
   href: string,
   options?: {
+    redirectDepth?: number
     mode?: NavigationMode
   },
 ) => {
@@ -3181,16 +3911,60 @@ const navigateContainer = async (
   }
 
   const mode = options?.mode ?? 'push'
+  const redirectDepth = options?.redirectDepth ?? 0
   const url = new URL(href, doc.location.href)
+  if (url.origin !== doc.location.origin) {
+    fallbackDocumentNavigation(doc, url, mode)
+    return
+  }
   const pathname = normalizeRoutePath(url.pathname)
   const router = ensureRouterState(container)
-  const matched = url.origin === doc.location.origin ? matchRouteManifest(router.manifest, pathname) : null
+  const matched = matchRouteManifest(router.manifest, pathname)
+  const specialPreflightTarget = !matched
+    ? findSpecialManifestEntry(router.manifest, pathname, 'notFound')
+    : null
+
+  const currentHref = `${doc.location.pathname}${doc.location.search}${doc.location.hash}`
+  const nextHref = `${url.pathname}${url.search}${url.hash}`
+  if (nextHref === currentHref) {
+    return
+  }
+
+  const shouldPreflight =
+    (matched?.entry.page && matched.entry.hasMiddleware) ||
+    (!!specialPreflightTarget?.entry.notFound && specialPreflightTarget.entry.hasMiddleware)
+  if (shouldPreflight) {
+    const preflight = await requestRoutePreflight(url.href)
+    if (!preflight.ok) {
+      if ('location' in preflight) {
+        if (redirectDepth >= 8) {
+          fallbackDocumentNavigation(doc, new URL(preflight.location, doc.location.href), mode)
+          return
+        }
+        const redirectUrl = new URL(preflight.location, doc.location.href)
+        if (redirectUrl.origin !== doc.location.origin) {
+          fallbackDocumentNavigation(doc, redirectUrl, mode)
+          return
+        }
+        await navigateContainer(container, redirectUrl.href, {
+          mode,
+          redirectDepth: redirectDepth + 1,
+        })
+        return
+      }
+      fallbackDocumentNavigation(doc, url, mode)
+      return
+    }
+  }
 
   if (!matched || !matched.entry.page) {
-    const notFoundRoute = !matched ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound') : null
+    const notFoundRoute = !matched
+      ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound')
+      : null
     if (notFoundRoute) {
       renderRouteIntoRoot(container, notFoundRoute.render, `route:${pathname}:not-found`)
       router.currentRoute = notFoundRoute
+      applyRouteMetadata(doc, notFoundRoute, url, router.defaultTitle)
       commitBrowserNavigation(doc, url, mode)
       router.currentPath.value = pathname
       return
@@ -3199,8 +3973,6 @@ const navigateContainer = async (
     return
   }
 
-  const currentHref = `${doc.location.pathname}${doc.location.search}${doc.location.hash}`
-  const nextHref = `${url.pathname}${url.search}${url.hash}`
   if (pathname === router.currentPath.value) {
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
@@ -3208,6 +3980,11 @@ const navigateContainer = async (
     return
   }
 
+  const pendingPrefetch = router.routePrefetches.get(routePrefetchKey(url))
+  if (pendingPrefetch) {
+    await pendingPrefetch
+  }
+  applyPrefetchedLoaders(container, url)
   const sequence = ++router.sequence
   router.isNavigating.value = true
 
@@ -3252,6 +4029,7 @@ const navigateContainer = async (
     }
 
     router.currentRoute = nextRoute
+    applyRouteMetadata(doc, nextRoute, url, router.defaultTitle)
     commitBrowserNavigation(doc, url, mode)
     router.currentPath.value = pathname
   } catch (error) {
@@ -3266,6 +4044,7 @@ const navigateContainer = async (
           `route:${pathname}:${isRouteNotFoundError(error) ? 'not-found' : 'error'}`,
         )
         router.currentRoute = fallbackRoute
+        applyRouteMetadata(doc, fallbackRoute, url, router.defaultTitle)
         commitBrowserNavigation(doc, url, mode)
         router.currentPath.value = pathname
         return
@@ -3346,6 +4125,36 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     return
   }
 
+  if (component.symbol === SUSPENSE_COMPONENT_SYMBOL) {
+    clearComponentSubscriptions(container, componentId)
+    const oldDescendants = collectDescendantIds(container, componentId)
+    const frame = createFrame(container, component, 'client', {
+      reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
+    })
+    component.reuseExistingDomOnActivate = true
+    const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
+    const nodes = pushContainer(container, () =>
+      pushFrame(frame, () =>
+        renderSuspenseContentToNodes(component.props as SuspenseProps, container, componentId),
+      ),
+    )
+    pruneComponentVisibles(container, component, frame.visibleCursor)
+    pruneComponentWatches(container, component, frame.watchCursor)
+    replaceBoundaryContents(component.start, component.end, nodes, {
+      preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+    })
+    restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+    component.active = true
+    pruneRemovedComponents(container, componentId, frame.visitedDescendants)
+    for (const descendantId of oldDescendants) {
+      if (frame.visitedDescendants.has(descendantId)) {
+        continue
+      }
+      clearComponentSubscriptions(container, descendantId)
+    }
+    return
+  }
+
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, component.scopeId)
@@ -3360,7 +4169,10 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     },
     component.props,
   )
-  const frame = createFrame(container, component, 'client', { reuseExistingDom: true })
+  const frame = createFrame(container, component, 'client', {
+    reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
+  })
+  component.reuseExistingDomOnActivate = true
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => {
@@ -3382,7 +4194,9 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   )
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  replaceBoundaryContents(component.start, component.end, nodes)
+  replaceBoundaryContents(component.start, component.end, nodes, {
+    preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+  })
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
     bindRouterLinks(container, component.start.parentNode as ParentNode)
   }
@@ -3623,6 +4437,7 @@ export const beginSSRContainer = <T>(
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
   }
@@ -3639,11 +4454,14 @@ export const beginAsyncSSRContainer = async <T>(
   symbols: Record<string, string>,
   render: () => T,
   prepare?: (container: RuntimeContainer) => void | Promise<void>,
+  options?: {
+    asyncSignalSnapshotCache?: Map<string, unknown>
+  },
 ): Promise<{
   container: RuntimeContainer
   result: T
 }> => {
-  const container = createContainer(symbols)
+  const container = createContainer(symbols, undefined, options?.asyncSignalSnapshotCache)
   const rootComponent: ComponentState = {
     active: false,
     didMount: false,
@@ -3655,6 +4473,7 @@ export const beginAsyncSSRContainer = async <T>(
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
   }
@@ -3668,78 +4487,129 @@ export const beginAsyncSSRContainer = async <T>(
   }
 }
 
-export const toResumePayload = (container: RuntimeContainer): ResumePayload => ({
-  components: Object.fromEntries(
-    [...container.components.entries()].map(([id, component]) => [
-      id,
-      {
-        props: serializeRuntimeValue(container, component.props),
-        ...(component.projectionSlots ? { projectionSlots: { ...component.projectionSlots } } : {}),
-        scope: component.scopeId,
-        signalIds: [...component.signalIds],
-        symbol: component.symbol,
-        visibleCount: component.visibleCount,
-        watchCount: component.watchCount,
-      } satisfies ResumeComponentPayload,
-    ]),
-  ),
-  loaders: Object.fromEntries(
-    [...container.loaderStates.entries()].map(([id, loader]) => [
-      id,
-      {
-        data: serializeRuntimeValue(container, loader.data),
-        error: serializeRuntimeValue(container, loader.error),
-        loaded: loader.loaded,
-      } satisfies ResumeLoaderPayload,
-    ]),
-  ),
-  scopes: Object.fromEntries(container.scopes.entries()),
-  signals: Object.fromEntries(
-    [...container.signals.entries()].map(([id, record]) => [
-      id,
-      serializeRuntimeValue(container, record.value),
-    ]),
-  ),
-  subscriptions: Object.fromEntries(
-    [...container.signals.entries()].map(([id, record]) => [id, [...record.subscribers]]),
-  ),
-  symbols: Object.fromEntries(container.symbols.entries()),
-  visibles: Object.fromEntries(
-    [...container.visibles.entries()].map(([id, visible]) => [
-      id,
-      {
-        componentId: visible.componentId,
-        scope: visible.scopeId,
-        symbol: visible.symbol,
-      } satisfies ResumeVisiblePayload,
-    ]),
-  ),
-  watches: Object.fromEntries(
-    [...container.watches.entries()].map(([id, watch]) => [
-      id,
-      {
-        componentId: watch.componentId,
-        mode: watch.mode,
-        scope: watch.scopeId,
-        signals: [...watch.effect.signals].map((signal) => signal.id),
-        symbol: watch.symbol,
-      } satisfies ResumeWatchPayload,
-    ]),
-  ),
-})
+const createResumePayload = (
+  container: RuntimeContainer,
+  componentIds?: Iterable<string>,
+): ResumePayload => {
+  const keepComponents = componentIds ? new Set(componentIds) : null
+  const componentEntries = [...container.components.entries()].filter(
+    ([id]) => !keepComponents || keepComponents.has(id),
+  )
+  const keepSignals = new Set(componentEntries.flatMap(([, component]) => component.signalIds))
 
-export const createResumeContainer = (
-  source: Document | HTMLElement,
-  payload: ResumePayload,
-  options?: {
-    routeManifest?: RouteManifest
-  },
-) => {
-  const doc = source instanceof Document ? source : source.ownerDocument
-  const root = source instanceof Document ? doc.body : source
-  const container = createContainer(payload.symbols, doc)
-  container.rootElement = root as HTMLElement
-  ensureRouterState(container, options?.routeManifest)
+  return {
+    actions: Object.fromEntries(
+      [...container.actionStates.entries()].map(([id, action]) => [
+        id,
+        {
+          error: serializeRuntimeValue(container, action.error),
+          input: serializeRuntimeValue(container, action.input),
+          result: serializeRuntimeValue(container, action.result),
+        } satisfies ResumeActionPayload,
+      ]),
+    ),
+    components: Object.fromEntries(
+      componentEntries.map(([id, component]) => [
+        id,
+        {
+          props: serializeRuntimeValue(container, component.props),
+          ...(component.projectionSlots
+            ? { projectionSlots: { ...component.projectionSlots } }
+            : {}),
+          scope: component.scopeId,
+          signalIds: [...component.signalIds],
+          symbol: component.symbol,
+          visibleCount: component.visibleCount,
+          watchCount: component.watchCount,
+        } satisfies ResumeComponentPayload,
+      ]),
+    ),
+    loaders: Object.fromEntries(
+      [...container.loaderStates.entries()].map(([id, loader]) => [
+        id,
+        {
+          data: serializeRuntimeValue(container, loader.data),
+          error: serializeRuntimeValue(container, loader.error),
+          loaded: loader.loaded,
+        } satisfies ResumeLoaderPayload,
+      ]),
+    ),
+    scopes: Object.fromEntries(container.scopes.entries()),
+    signals: Object.fromEntries(
+      [...container.signals.entries()]
+        .filter(([id]) => !keepComponents || keepSignals.has(id))
+        .map(([id, record]) => [id, serializeRuntimeValue(container, record.value)]),
+    ),
+    subscriptions: Object.fromEntries(
+      [...container.signals.entries()]
+        .filter(([id]) => !keepComponents || keepSignals.has(id))
+        .map(([id, record]) => [
+          id,
+          [...record.subscribers].filter(
+            (componentId) => !keepComponents || keepComponents.has(componentId),
+          ),
+        ]),
+    ),
+    symbols: Object.fromEntries(container.symbols.entries()),
+    visibles: Object.fromEntries(
+      [...container.visibles.entries()]
+        .filter(([, visible]) => !keepComponents || keepComponents.has(visible.componentId))
+        .map(([id, visible]) => [
+          id,
+          {
+            componentId: visible.componentId,
+            scope: visible.scopeId,
+            symbol: visible.symbol,
+          } satisfies ResumeVisiblePayload,
+        ]),
+    ),
+    watches: Object.fromEntries(
+      [...container.watches.entries()]
+        .filter(([, watch]) => !keepComponents || keepComponents.has(watch.componentId))
+        .map(([id, watch]) => [
+          id,
+          {
+            componentId: watch.componentId,
+            mode: watch.mode,
+            scope: watch.scopeId,
+            signals: [...watch.effect.signals].map((signal) => signal.id),
+            symbol: watch.symbol,
+          } satisfies ResumeWatchPayload,
+        ]),
+    ),
+  }
+}
+
+export const toResumePayload = (container: RuntimeContainer): ResumePayload =>
+  createResumePayload(container)
+
+export const toResumePayloadSubset = (
+  container: RuntimeContainer,
+  componentIds: Iterable<string>,
+): ResumePayload => createResumePayload(container, componentIds)
+
+const bindComponentBoundaries = (container: RuntimeContainer, root: ParentNode) => {
+  if (!hasOwnerDocument(root)) {
+    return
+  }
+  for (const [id, boundary] of scanComponentBoundaries(root)) {
+    const component = container.components.get(id)
+    if (!component) {
+      continue
+    }
+    component.start = boundary.start
+    component.end = boundary.end
+  }
+}
+
+export const mergeResumePayload = (container: RuntimeContainer, payload: ResumePayload) => {
+  for (const [id, actionPayload] of Object.entries(payload.actions ?? {})) {
+    container.actionStates.set(id, {
+      error: deserializeRuntimeValue(container, actionPayload.error),
+      input: deserializeRuntimeValue(container, actionPayload.input),
+      result: deserializeRuntimeValue(container, actionPayload.result),
+    })
+  }
 
   for (const [id, encodedValue] of Object.entries(payload.signals)) {
     const decodedValue = deserializeRuntimeValue(container, encodedValue)
@@ -3774,6 +4644,7 @@ export const createResumeContainer = (
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
+      suspensePromise: null,
       visibleCount: componentPayload.visibleCount ?? 0,
       watchCount: componentPayload.watchCount,
     })
@@ -3814,16 +4685,124 @@ export const createResumeContainer = (
     visible.scopeId = visiblePayload.scope
     visible.symbol = visiblePayload.symbol
   }
+}
 
-  for (const [id, boundary] of scanComponentBoundaries(root as HTMLElement)) {
-    const component = container.components.get(id)
-    if (!component) {
-      continue
-    }
-    component.start = boundary.start
-    component.end = boundary.end
+const pruneStreamedBoundaryDescendants = (
+  container: RuntimeContainer,
+  boundaryId: string,
+  payload: ResumePayload,
+) => {
+  const keep = new Set(
+    Object.keys(payload.components).filter((candidate) => isDescendantOf(boundaryId, candidate)),
+  )
+  pruneRemovedComponents(container, boundaryId, keep)
+}
+
+const applyStreamedSuspenseBoundary = (
+  container: RuntimeContainer,
+  chunk: StreamedSuspenseChunk,
+) => {
+  const doc = container.doc
+  if (!doc) {
+    return
+  }
+  const component = container.components.get(chunk.boundaryId)
+  if (!component?.start || !component.end) {
+    return
+  }
+  const template = doc.getElementById(chunk.templateId)
+  const payloadScript = doc.getElementById(chunk.payloadScriptId)
+  if (!(template instanceof HTMLTemplateElement) || !payloadScript?.textContent) {
+    return
   }
 
+  const payload = JSON.parse(payloadScript.textContent) as ResumePayload
+  const focusSnapshot = captureBoundaryFocus(doc, component.start, component.end)
+  const fragment = template.content.cloneNode(true) as DocumentFragment
+  const nodes = [...fragment.childNodes]
+  replaceBoundaryContents(component.start, component.end, nodes)
+  pruneStreamedBoundaryDescendants(container, chunk.boundaryId, payload)
+  mergeResumePayload(container, payload)
+  component.suspensePromise = null
+
+  const parentRoot = component.start.parentNode
+  if (parentRoot) {
+    bindComponentBoundaries(container, parentRoot)
+    restoreSignalRefs(container, parentRoot)
+    if ('querySelectorAll' in parentRoot) {
+      bindRouterLinks(container, parentRoot)
+    }
+  }
+
+  restoreBoundaryFocus(doc, component.start, component.end, focusSnapshot)
+  scheduleVisibleCallbacksCheck(container)
+  template.remove()
+  payloadScript.remove()
+}
+
+const getStreamState = (): StreamState => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[STREAM_STATE_KEY]
+  if (existing && typeof existing === 'object' && 'enqueue' in existing && 'pending' in existing) {
+    return existing as StreamState
+  }
+  const created: StreamState = {
+    enqueue(chunk) {
+      created.pending.push(chunk)
+      void created.process?.()
+    },
+    pending: [],
+    processing: null,
+  }
+  globalRecord[STREAM_STATE_KEY] = created
+  return created
+}
+
+export const getStreamingResumeBootstrapScriptContent = () =>
+  '(()=>{const key="__eclipsa_stream";const state=window[key]??={pending:[]};state.enqueue=state.enqueue??function(chunk){this.pending.push(chunk);if(this.process){void this.process();}};})();'
+
+const installStreamedSuspenseController = (container: RuntimeContainer) => {
+  const state = getStreamState()
+  state.process = async () => {
+    if (state.processing) {
+      await state.processing
+      return
+    }
+    state.processing = (async () => {
+      while (state.pending.length > 0) {
+        const chunk = state.pending.shift()
+        if (!chunk) {
+          continue
+        }
+        applyStreamedSuspenseBoundary(container, chunk)
+      }
+    })()
+    try {
+      await state.processing
+    } finally {
+      state.processing = null
+    }
+  }
+  if (state.pending.length > 0) {
+    void state.process()
+  }
+}
+
+export const createResumeContainer = (
+  source: Document | HTMLElement,
+  payload: ResumePayload,
+  options?: {
+    routeManifest?: RouteManifest
+  },
+) => {
+  const doc = source instanceof Document ? source : source.ownerDocument
+  const root = source instanceof Document ? doc.body : source
+  const container = createContainer(payload.symbols, doc)
+  container.rootElement = root as HTMLElement
+  ensureRouterState(container, options?.routeManifest)
+
+  mergeResumePayload(container, payload)
+  bindComponentBoundaries(container, root as HTMLElement)
   restoreSignalRefs(container, root as HTMLElement)
 
   restoreRegisteredRpcHandles(container)
@@ -3852,6 +4831,14 @@ export const primeRouteModules = async (container: RuntimeContainer) => {
   const currentRoute = await loadRouteComponent(container, router.currentPath.value)
   if (currentRoute) {
     router.currentRoute = currentRoute
+    if (container.doc) {
+      applyRouteMetadata(
+        container.doc,
+        currentRoute,
+        new URL(container.doc.location.href),
+        router.defaultTitle,
+      )
+    }
   }
 }
 
@@ -3883,8 +4870,11 @@ const getRouterEventState = (event: Event): RouterEventState => {
 }
 
 const findInteractiveTarget = (target: EventTarget | null, eventName: string): Element | null => {
-  let element =
-    target instanceof Element ? target : target instanceof Node ? target.parentElement : null
+  let element = isElementNode(target)
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null
   while (element) {
     if (element.hasAttribute(`data-e-on${eventName}`)) {
       return element
@@ -3941,6 +4931,44 @@ const getPendingLinkNavigationForLink = (
   }
 }
 
+const getLinkPrefetchMode = (link: HTMLAnchorElement): LinkPrefetchMode => {
+  const value = link.getAttribute(ROUTE_PREFETCH_ATTR)
+  if (value === 'hover' || value === 'focus' || value === 'intent' || value === 'none') {
+    return value
+  }
+  return 'intent'
+}
+
+const bindRouterLinkPrefetch = (container: RuntimeContainer, link: HTMLAnchorElement) => {
+  const boundLink = link as HTMLAnchorElement & {
+    [ROUTER_LINK_PREFETCH_BOUND_KEY]?: true
+  }
+  if (boundLink[ROUTER_LINK_PREFETCH_BOUND_KEY]) {
+    return
+  }
+
+  boundLink[ROUTER_LINK_PREFETCH_BOUND_KEY] = true
+  const mode = getLinkPrefetchMode(link)
+  if (mode === 'none') {
+    return
+  }
+
+  const runPrefetch = () => {
+    const href = link.getAttribute('href')
+    if (!href) {
+      return
+    }
+    void prefetchRoute(container, href)
+  }
+
+  if (mode === 'hover' || mode === 'intent') {
+    link.addEventListener('mouseenter', runPrefetch)
+  }
+  if (mode === 'focus' || mode === 'intent') {
+    link.addEventListener('focus', runPrefetch)
+  }
+}
+
 const bindRouterLink = (container: RuntimeContainer, link: HTMLAnchorElement) => {
   const boundLink = link as HTMLAnchorElement & {
     [ROUTER_LINK_BOUND_KEY]?: true
@@ -3964,9 +4992,10 @@ const bindRouterLink = (container: RuntimeContainer, link: HTMLAnchorElement) =>
 const bindRouterLinks = (container: RuntimeContainer, root: ParentNode) => {
   const links = root.querySelectorAll(`a[${ROUTE_LINK_ATTR}]`)
   for (const link of links) {
-    if (!(link instanceof HTMLAnchorElement)) {
+    if (!isHTMLAnchorElementNode(link)) {
       continue
     }
+    bindRouterLinkPrefetch(container, link)
     bindRouterLink(container, link)
   }
 }
@@ -4036,6 +5065,28 @@ export const dispatchResumeEvent = async (container: RuntimeContainer, event: Ev
 
 const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
   await dispatchResumeEvent(container, event)
+  if (event.type === 'submit' && !event.defaultPrevented && isHTMLFormElementNode(event.target)) {
+    const actionId = event.target.getAttribute(ACTION_FORM_ATTR)
+    if (actionId) {
+      const handle = container.actions.get(actionId) as
+        | {
+            action: (input?: unknown) => Promise<unknown>
+          }
+        | undefined
+      if (handle) {
+        event.preventDefault()
+        const submitter =
+          typeof SubmitEvent !== 'undefined' && event instanceof SubmitEvent
+            ? (event.submitter ?? undefined)
+            : undefined
+        const formData = isHTMLElementNode(submitter)
+          ? new FormData(event.target, submitter)
+          : new FormData(event.target)
+        await handle.action(formData)
+        await flushDirtyComponents(container)
+      }
+    }
+  }
 }
 
 export const installResumeListeners = (container: RuntimeContainer) => {
@@ -4044,6 +5095,7 @@ export const installResumeListeners = (container: RuntimeContainer) => {
     return () => {}
   }
   bindRouterLinks(container, doc)
+  installStreamedSuspenseController(container)
   ensureVisibilityListeners(container)
   scheduleVisibleCallbacksCheck(container)
   const listeners = ['click', 'input', 'change', 'submit'] as const
@@ -4072,6 +5124,13 @@ export const installResumeListeners = (container: RuntimeContainer) => {
 
 export const renderString = (inputElementLike: JSX.Element | JSX.Element[]) =>
   renderStringNode(inputElementLike)
+
+export const createStandaloneRuntimeSignal = <T>(fallback: T): { value: T } => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const nextId = ((globalRecord[STANDALONE_SIGNAL_ID_KEY] as number | undefined) ?? 0) + 1
+  globalRecord[STANDALONE_SIGNAL_ID_KEY] = nextId
+  return ensureSignalRecord(null, `$standalone:${nextId}`, fallback).handle
+}
 
 export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   const container = getCurrentContainer()
@@ -4177,7 +5236,9 @@ export const createOnVisible = (fn: () => void) => {
   const visibleIndex = frame.visibleCursor++
   const visibleId = createVisibleId(frame.component.id, visibleIndex)
   const visible = getOrCreateVisibleState(container, visibleId, frame.component.id)
-  visible.scopeId = lazyMeta ? registerScope(container, lazyMeta.captures()) : registerScope(container, [])
+  visible.scopeId = lazyMeta
+    ? registerScope(container, lazyMeta.captures())
+    : registerScope(container, [])
   visible.symbol = lazyMeta?.symbol ?? ''
   visible.run = lazyMeta ? null : fn
 

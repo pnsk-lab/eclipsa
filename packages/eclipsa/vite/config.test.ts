@@ -63,4 +63,38 @@ describe('createConfig', () => {
       output: 'ssg',
     })
   })
+
+  it('injects Nitro entry configuration when a Nitro plugin is present', async () => {
+    const userConfig = {
+      plugins: [[{ name: 'nitro:main' }]],
+      root: '/tmp/app',
+    }
+
+    mocks.createRoutes.mockResolvedValue([])
+    mocks.collectRouteModules.mockReturnValue([])
+    mocks.collectRouteServerModules.mockReturnValue([])
+    mocks.collectAppActions.mockResolvedValue([])
+    mocks.collectAppLoaders.mockResolvedValue([])
+    mocks.collectAppSymbols.mockResolvedValue([])
+
+    const hook = createConfig({ output: 'node' })
+    if (typeof hook !== 'function') {
+      throw new Error('Expected createConfig() to return a config hook function')
+    }
+
+    const config = await hook.call({} as any, userConfig as any, {} as any)
+
+    expect((config as Record<string, any>).nitro).toMatchObject({
+      entry: '#eclipsa/nitro-entry',
+      publicAssets: [
+        {
+          baseURL: '/',
+          dir: '/tmp/app/dist/client',
+        },
+      ],
+      virtual: {
+        '#eclipsa/nitro-entry': expect.stringContaining('eclipsa_app.mjs'),
+      },
+    })
+  })
 })

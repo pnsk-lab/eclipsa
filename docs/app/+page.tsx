@@ -32,18 +32,18 @@ export default component$(() => {
         ref={canvasRef}
       ></canvas>
       <nav class="fixed top-0 z-50 flex w-full items-center justify-between bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] px-6 py-6">
-        <a
-          class="flex items-center gap-2 text-xl font-urbanist"
-          data-interactive=""
-          href="#hero"
-        >
+        <a class="flex items-center gap-2 text-xl font-urbanist" data-interactive="" href="#hero">
           <Logo class="w-5 h-5" />
           <span>eclipsa</span>
           <span class="text-xs">experimental</span>
         </a>
 
         <div class="hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 md:flex">
-          <Link class="transition-colors hover:text-white" data-interactive="" href={`${import.meta.env.BASE_URL}docs`}>
+          <Link
+            class="transition-colors hover:text-white"
+            data-interactive=""
+            href={`${import.meta.env.BASE_URL}docs`}
+          >
             Docs
           </Link>
           <Link
@@ -88,7 +88,11 @@ export default component$(() => {
         id="hero"
       >
         <h1 class="uppercase relative z-10 mb-8 mt-15 w-full select-none text-black text-[clamp(3rem,8vw,8rem)] leading-[0.75] tracking-[-0.02em] text-white font-archivo-black">
-          The <span class="bg-gradient-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent">Final</span>-Gen Frontend Framework
+          The{' '}
+          <span class="bg-gradient-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent">
+            Final
+          </span>
+          -Gen Frontend Framework
         </h1>
 
         <div class="z-20 mt-10 flex flex-col items-center">
@@ -96,7 +100,8 @@ export default component$(() => {
             Ultrafast development, ultrafast apps.
           </p>
           <p class="mx-auto mb-12 max-w-2xl text-sm font-medium leading-relaxed text-zinc-400 md:text-base">
-            eclipsa aims to be the last frontend framework before AI replaces web app by performance and developer experience.
+            eclipsa aims to be the last frontend framework before AI replaces web app by performance
+            and developer experience.
           </p>
 
           <div class="flex flex-col gap-6 sm:flex-row">
@@ -162,9 +167,8 @@ export default component$(() => {
               Resumable by Default
             </h2>
             <p class="text-sm leading-relaxed text-zinc-400">
-              SSR ships resumable metadata for components, signals, visible
-              callbacks, and watches so the client can wake up only the
-              interactive work it actually needs.
+              SSR ships resumable metadata for components, signals, visible callbacks, and watches
+              so the client can wake up only the interactive work it actually needs.
             </p>
           </article>
 
@@ -191,9 +195,8 @@ export default component$(() => {
               DOM-Compiled Client
             </h2>
             <p class="text-sm leading-relaxed text-zinc-400">
-              Client transforms emit direct DOM operations instead of a generic
-              hydration runtime, keeping updates narrow and aligned with the SSR
-              output.
+              Client transforms emit direct DOM operations instead of a generic hydration runtime,
+              keeping updates narrow and aligned with the SSR output.
             </p>
           </article>
 
@@ -201,7 +204,10 @@ export default component$(() => {
             class="group relative overflow-hidden rounded-lg border border-white/5 border-t-[rgba(157,0,255,0.3)] bg-[rgba(20,20,25,0.6)] p-8 backdrop-blur-[10px] transition duration-300 hover:-translate-y-2"
             data-interactive=""
           >
-            <div aria-hidden="true" class="pointer-events-none absolute -bottom-4 -right-4 opacity-10">
+            <div
+              aria-hidden="true"
+              class="pointer-events-none absolute -bottom-4 -right-4 opacity-10"
+            >
               <svg
                 aria-hidden="true"
                 class="h-32 w-32 text-[#9d00ff]"
@@ -237,9 +243,8 @@ export default component$(() => {
               Full-Stack Primitives
             </h2>
             <p class="relative z-10 text-sm leading-relaxed text-zinc-400">
-              Routing, loaders, actions, and symbol-aware Vite integration live
-              in one pipeline, so SSR, resume, dev HMR, and build output stay
-              consistent.
+              Routing, loaders, actions, and symbol-aware Vite integration live in one pipeline, so
+              SSR, resume, dev HMR, and build output stay consistent.
             </p>
           </article>
         </div>

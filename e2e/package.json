@@ -9,14 +9,18 @@
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",
+    "test": "bun -e \"console.log('Use bun run test:e2e for @eclipsa/e2e.')\"",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@eclipsa/image": "workspace:*",
     "eclipsa": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
-    "@typescript/native-preview": "^7.0.0-dev.20260310.1"
+    "@typescript/native-preview": "^7.0.0-dev.20260310.1",
+    "hono": "^4.10.2",
+    "mitata": "^1.0.34"
   }
 }

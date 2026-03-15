@@ -1,4 +1,5 @@
 import fg from 'fast-glob'
+import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import type {
   RouteManifest,
@@ -20,8 +21,10 @@ export interface RouteEntry {
   error: RouteModuleEntry | null
   layouts: RouteModuleEntry[]
   loading: RouteModuleEntry | null
+  middlewares: RouteModuleEntry[]
   notFound: RouteModuleEntry | null
   page: RouteModuleEntry | null
+  renderMode?: 'dynamic' | 'static' | null
   routePath: string
   segments: RoutePathSegment[]
   server: RouteModuleEntry | null
@@ -41,6 +44,7 @@ interface RouteDirectoryEntry {
   error: RouteFileEntry | null
   layout: RouteFileEntry | null
   loading: RouteFileEntry | null
+  middleware: RouteFileEntry | null
   notFound: RouteFileEntry | null
   page: RouteFileEntry | null
   server: RouteFileEntry | null
@@ -55,6 +59,7 @@ const createDirectoryEntry = (): RouteDirectoryEntry => ({
   error: null,
   layout: null,
   loading: null,
+  middleware: null,
   notFound: null,
   page: null,
   server: null,
@@ -79,7 +84,11 @@ const toEntryName = (relativePath: string) => {
   return [prefix, ...mapped].join('__')
 }
 
-const toRouteModuleEntry = (appDir: string, filePath: string, breakoutTarget: string | null): RouteFileEntry => {
+const toRouteModuleEntry = (
+  appDir: string,
+  filePath: string,
+  breakoutTarget: string | null,
+): RouteFileEntry => {
   const relativePath = path.relative(appDir, filePath).replaceAll('\\', '/')
   return {
     breakoutTarget,
@@ -260,10 +269,11 @@ const matchSegments = (
   }
 }
 
-const toMatch = <T extends { segments: RoutePathSegment[] }>(route: T, pathname: string): RouteMatch<T> | null => {
-  const pathnameSegments = normalizeRoutePath(pathname)
-    .split('/')
-    .filter(Boolean)
+const toMatch = <T extends { segments: RoutePathSegment[] }>(
+  route: T,
+  pathname: string,
+): RouteMatch<T> | null => {
+  const pathnameSegments = normalizeRoutePath(pathname).split('/').filter(Boolean)
   const params = matchSegments(route.segments, pathnameSegments)
   if (!params) {
     return null
@@ -314,6 +324,15 @@ const collectLayouts = (
   return layouts.map(({ entryName, filePath }) => ({ entryName, filePath }))
 }
 
+const collectMiddlewares = (
+  directories: Map<string, RouteDirectoryEntry>,
+  candidateDirs: string[],
+) =>
+  candidateDirs.flatMap((candidateDir) => {
+    const middleware = directories.get(candidateDir)?.middleware
+    return middleware ? [{ entryName: middleware.entryName, filePath: middleware.filePath }] : []
+  })
+
 const parseAppFile = (appDir: string, filePath: string) => {
   const relativePath = path.relative(appDir, filePath).replaceAll('\\', '/')
   const fileName = path.posix.basename(relativePath)
@@ -342,6 +361,9 @@ const parseAppFile = (appDir: string, filePath: string) => {
   if (fileName === '+loading.tsx') {
     return { breakoutTarget: null, dir, kind: 'loading' as const, relativePath }
   }
+  if (/^\+middleware\.(ts|tsx)$/.test(fileName)) {
+    return { breakoutTarget: null, dir, kind: 'middleware' as const, relativePath }
+  }
   if (fileName === '+error.tsx') {
     return { breakoutTarget: null, dir, kind: 'error' as const, relativePath }
   }
@@ -352,6 +374,20 @@ const parseAppFile = (appDir: string, filePath: string) => {
     return { breakoutTarget: null, dir, kind: 'server' as const, relativePath }
   }
   return null
+}
+
+const resolvePageRenderMode = async (filePath: string): Promise<'dynamic' | 'static' | null> => {
+  const source = await fs.readFile(filePath, 'utf8')
+  const match = source.match(/export\s+const\s+render\s*=\s*(['"])([^'"\\]+)\1(?:\s+as\s+const)?/s)
+  if (!match) {
+    return null
+  }
+  if (match[2] === 'dynamic' || match[2] === 'static') {
+    return match[2]
+  }
+  throw new Error(
+    `Unsupported render mode "${match[2]}" in ${filePath}. Expected "static" or "dynamic".`,
+  )
 }
 
 export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
@@ -387,15 +423,29 @@ export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
     }
     seenRoutePaths.set(routePath, relativeDir)
 
-    const effectiveAncestorDirs = resolveAncestorDirs(relativeDir, directory.page?.breakoutTarget ?? null)
+    const effectiveAncestorDirs = resolveAncestorDirs(
+      relativeDir,
+      directory.page?.breakoutTarget ?? null,
+    )
     result.push({
-      error: directory.page ? selectNearestSpecial(directories, effectiveAncestorDirs, 'error') : null,
+      error: directory.page
+        ? selectNearestSpecial(directories, effectiveAncestorDirs, 'error')
+        : null,
       layouts: directory.page
         ? collectLayouts(directories, relativeDir, directory.page?.breakoutTarget ?? null)
         : [],
-      loading: directory.page ? selectNearestSpecial(directories, effectiveAncestorDirs, 'loading') : null,
-      notFound: directory.page ? selectNearestSpecial(directories, effectiveAncestorDirs, 'notFound') : null,
+      loading: directory.page
+        ? selectNearestSpecial(directories, effectiveAncestorDirs, 'loading')
+        : null,
+      middlewares:
+        directory.page || directory.server
+          ? collectMiddlewares(directories, effectiveAncestorDirs)
+          : [],
+      notFound: directory.page
+        ? selectNearestSpecial(directories, effectiveAncestorDirs, 'notFound')
+        : null,
       page: directory.page,
+      renderMode: directory.page ? await resolvePageRenderMode(directory.page.filePath) : null,
       routePath,
       segments,
       server: directory.server,
@@ -408,7 +458,13 @@ export const createRoutes = async (root: string): Promise<RouteEntry[]> => {
 export const collectRouteModules = (routes: RouteEntry[]): RouteModuleEntry[] => {
   const modules = new Map<string, RouteModuleEntry>()
   for (const route of routes) {
-    for (const entry of [route.page, ...route.layouts, route.loading, route.error, route.notFound]) {
+    for (const entry of [
+      route.page,
+      ...route.layouts,
+      route.loading,
+      route.error,
+      route.notFound,
+    ]) {
       if (!entry) {
         continue
       }
@@ -421,6 +477,9 @@ export const collectRouteModules = (routes: RouteEntry[]): RouteModuleEntry[] =>
 export const collectRouteServerModules = (routes: RouteEntry[]): RouteModuleEntry[] => {
   const modules = new Map<string, RouteModuleEntry>()
   for (const route of routes) {
+    for (const middleware of route.middlewares) {
+      modules.set(middleware.filePath, middleware)
+    }
     if (route.server) {
       modules.set(route.server.filePath, route.server)
     }
@@ -444,6 +503,7 @@ export const createRouteManifest = (
     (route) =>
       ({
         error: route.error ? resolveUrl(route.error) : null,
+        hasMiddleware: route.middlewares.length > 0,
         layouts: route.layouts.map((layout) => resolveUrl(layout)),
         loading: route.loading ? resolveUrl(route.loading) : null,
         notFound: route.notFound ? resolveUrl(route.notFound) : null,
