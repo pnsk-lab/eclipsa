@@ -9,7 +9,7 @@
     },
     "./client": {
       "types": "./client.d.ts",
-      "import": "./client.d.ts"
+      "import": "./client.ts"
     },
     "./vite": {
       "types": "./vite.ts",

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import sharp from 'sharp'
@@ -53,8 +54,15 @@ const splitId = (id: string) => {
 
 const toOutputExtension = (format: string) => (format === 'jpeg' ? 'jpg' : format)
 
-const toContentType = (format: string) =>
-  format === 'svg' ? 'image/svg+xml' : `image/${toOutputExtension(format)}`
+export const toContentType = (format: string) => {
+  if (format === 'svg') {
+    return 'image/svg+xml'
+  }
+  if (format === 'jpeg') {
+    return 'image/jpeg'
+  }
+  return `image/${toOutputExtension(format)}`
+}
 
 const toRoundedHeight = (sourceWidth: number, sourceHeight: number, targetWidth: number) =>
   Math.max(1, Math.round((sourceHeight * targetWidth) / sourceWidth))
@@ -81,6 +89,38 @@ export const readLocalImage = async (filePath: string): Promise<LoadedImage> => 
     source,
     width: metadata.width,
   }
+}
+
+const resolveRealPath = async (filePath: string) => {
+  const resolvedPath = path.resolve(filePath)
+  try {
+    return await fs.realpath(resolvedPath)
+  } catch {
+    return resolvedPath
+  }
+}
+
+const isInsideDirectory = (filePath: string, directoryPath: string) => {
+  const relative = path.relative(directoryPath, filePath)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+export const isAllowedImagePath = async (
+  filePath: string,
+  config: Pick<ResolvedConfig, 'root' | 'server'>,
+) => {
+  const allowedRoots = new Set<string>()
+  for (const allowedPath of [config.root, ...(config.server.fs.allow ?? [])]) {
+    allowedRoots.add(await resolveRealPath(path.resolve(config.root, allowedPath)))
+  }
+
+  const resolvedFilePath = await resolveRealPath(filePath)
+  for (const allowedRoot of allowedRoots) {
+    if (isInsideDirectory(resolvedFilePath, allowedRoot)) {
+      return true
+    }
+  }
+  return false
 }
 
 const parseWidths = (value: string | null) =>
@@ -183,8 +223,11 @@ const buildVariantAssets = async (
   )
 }
 
-const createAssetName = (filePath: string, width: number, format: string) =>
-  `${path.basename(filePath, path.extname(filePath))}-${width}w.${toOutputExtension(format)}`
+export const createAssetName = (filePath: string, width: number, format: string) => {
+  const fileName = path.basename(filePath, path.extname(filePath))
+  const fileHash = createHash('sha1').update(path.normalize(filePath)).digest('hex').slice(0, 8)
+  return `${fileName}-${fileHash}-${width}w.${toOutputExtension(format)}`
+}
 
 const createBuildModule = (
   variants: ImageVariantAsset[],
@@ -248,7 +291,11 @@ export default {
 `
 }
 
-const writeDevImageResponse = async (req: IncomingMessage, res: ServerResponse) => {
+const writeDevImageResponse = async (
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: Pick<ResolvedConfig, 'root' | 'server'>,
+) => {
   const requestUrl = new URL(req.url ?? '/', 'http://localhost')
   if (requestUrl.pathname !== DEV_IMAGE_ENDPOINT) {
     return false
@@ -260,6 +307,12 @@ const writeDevImageResponse = async (req: IncomingMessage, res: ServerResponse) 
   if (!filePath || !Number.isFinite(width) || width <= 0) {
     res.statusCode = 400
     res.end('Invalid image request.')
+    return true
+  }
+
+  if (!(await isAllowedImagePath(filePath, config))) {
+    res.statusCode = 403
+    res.end('Image path is not allowed.')
     return true
   }
 
@@ -305,7 +358,11 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         try {
-          if (await writeDevImageResponse(req, res)) {
+          if (!config) {
+            next(new Error('vite-plugin-eclipsa-image requires a resolved Vite config.'))
+            return
+          }
+          if (await writeDevImageResponse(req, res, config)) {
             return
           }
         } catch (error) {

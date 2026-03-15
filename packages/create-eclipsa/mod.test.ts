@@ -36,6 +36,9 @@ describe('create-eclipsa', () => {
     await expect(fs.readFile(path.join(target, 'app/+page.tsx'), 'utf8')).resolves.toContain(
       'Hello from Eclipsa',
     )
+    await expect(
+      fs.readFile(path.join(target, 'app/+ssr-root.tsx'), 'utf8'),
+    ).resolves.not.toContain("import './vite-env.d.ts'")
   })
 
   it('rejects non-empty target directories', async () => {

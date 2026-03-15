@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
 import { Image } from './mod.ts'
-import { readLocalImage, resolveImageWidths } from './vite.ts'
+import {
+  createAssetName,
+  isAllowedImagePath,
+  readLocalImage,
+  resolveImageWidths,
+  toContentType,
+} from './vite.ts'
 
 describe('@eclipsa/image helpers', () => {
   it('keeps configured widths ordered and appends the source width', () => {
@@ -31,6 +37,41 @@ describe('@eclipsa/image helpers', () => {
       height: 600,
       width: 900,
     })
+  })
+
+  it('returns the correct jpeg mime type', () => {
+    expect(toContentType('jpeg')).toBe('image/jpeg')
+    expect(toContentType('png')).toBe('image/png')
+  })
+
+  it('creates distinct emitted asset names for duplicate basenames', () => {
+    expect(createAssetName('/tmp/one/hero.png', 320, 'png')).not.toBe(
+      createAssetName('/tmp/two/hero.png', 320, 'png'),
+    )
+  })
+
+  it('only serves dev image paths inside the configured allowlist', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-root-'))
+    const allowed = path.join(root, 'allowed')
+    const denied = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-denied-'))
+    const allowedFile = path.join(allowed, 'hero.png')
+    const deniedFile = path.join(denied, 'hero.png')
+
+    await fs.mkdir(allowed, { recursive: true })
+    await fs.writeFile(allowedFile, 'ok')
+    await fs.writeFile(deniedFile, 'nope')
+
+    const config = {
+      root,
+      server: {
+        fs: {
+          allow: [allowed],
+        },
+      },
+    } as const
+
+    await expect(isAllowedImagePath(allowedFile, config as any)).resolves.toBe(true)
+    await expect(isAllowedImagePath(deniedFile, config as any)).resolves.toBe(false)
   })
 
   it('renders img defaults from imported metadata', () => {
