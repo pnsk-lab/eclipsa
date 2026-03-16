@@ -1,7 +1,4 @@
-// @ts-types="@types/babel__core"
-import { transformAsync } from '@babel/core'
-import { pluginClientJSX } from './plugin.ts'
-import { preprocessTSX } from '../shared/source.ts'
+import { runRustCompiler } from '../native/mod.ts'
 
 export const compileClientModule = async (
   input: string,
@@ -10,20 +7,10 @@ export const compileClientModule = async (
     hmr?: boolean
   },
 ) => {
-  const preprocessed = await preprocessTSX(input, id)
-  const resultCode = (
-    await transformAsync(preprocessed.code, {
-      filename: id,
-      parserOpts: {
-        sourceType: 'module',
-        plugins: ['jsx'],
-      },
-      plugins: [pluginClientJSX(options)],
-      sourceMaps: 'inline',
-    })
-  )?.code
-  if (!resultCode) {
-    throw new Error('Compiling JSX was failed.')
-  }
-  return resultCode
+  return runRustCompiler({
+    hmr: options?.hmr ?? true,
+    id,
+    source: input,
+    target: 'client',
+  })
 }

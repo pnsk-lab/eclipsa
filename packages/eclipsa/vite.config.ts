@@ -21,6 +21,7 @@ export default defineConfig({
       'core/client/mod.ts',
       'core/dev-client/mod.ts',
       'core/prod-client/mod.ts',
+      'core/internal.ts',
     ],
     dts: true,
     format: ['esm'],

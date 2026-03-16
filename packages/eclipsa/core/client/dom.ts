@@ -1,3 +1,4 @@
+import { jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
 import type { Component } from '../component.ts'
 import { getComponentMeta } from '../internal.ts'
 import {
@@ -8,6 +9,7 @@ import {
   renderClientInsertable,
 } from '../runtime.ts'
 import { effect } from '../signal.ts'
+import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
 
@@ -138,6 +140,9 @@ export const hydrate = (
 }
 
 export const createComponent = (Component: Component, props: unknown) => {
+  if (isSuspenseType(Component)) {
+    return () => jsxDEV(Component, props as Record<string, unknown>, null, false, {})
+  }
   if (!getComponentMeta(Component)) {
     return () => Component(props) as unknown as ClientElementLike
   }

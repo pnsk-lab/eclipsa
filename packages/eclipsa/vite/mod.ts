@@ -6,6 +6,7 @@ import { resolveEclipsaPluginOptions, type EclipsaPluginOptions } from './option
 import {
   compileModuleForClient,
   compileModuleForSSR,
+  inspectResumeHmrUpdate,
   loadSymbolModuleForClient,
   loadSymbolModuleForSSR,
   parseSymbolRequest,
@@ -13,13 +14,14 @@ import {
 } from './compiler.ts'
 import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
 
-const preserveNonJsHotModules = <T extends { type?: string }>(modules: T[]) =>
-  modules.filter((module) => module.type !== 'js')
+const preserveCssHotModules = <T extends { type?: string }>(modules: T[]) =>
+  modules.filter((module) => module.type === 'css')
 
 const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
   let config: ResolvedConfig
 
   return {
+    enforce: 'pre',
     name: 'vite-plugin-eclipsa',
     config: createConfig(resolveEclipsaPluginOptions(options)),
     configResolved(resolvedConfig) {
@@ -63,13 +65,21 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
       })
     },
     async hotUpdate(options) {
-      if (this.environment.name !== 'client') {
-        return
-      }
       if (!options.file.endsWith('.tsx')) {
         return
       }
       const source = await options.read()
+      if (this.environment.name !== 'client') {
+        const resumableUpdate = await inspectResumeHmrUpdate({
+          filePath: options.file,
+          root: config.root,
+          source,
+        })
+        if (resumableUpdate.isResumable) {
+          return preserveCssHotModules(options.modules)
+        }
+        return
+      }
       const resumableUpdate = await resolveResumeHmrUpdate({
         filePath: options.file,
         root: config.root,
@@ -79,7 +89,7 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
         if (resumableUpdate.update) {
           this.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update)
         }
-        return preserveNonJsHotModules(options.modules)
+        return preserveCssHotModules(options.modules)
       }
 
       const module =
@@ -91,7 +101,7 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
       this.environment.hot.send('update-client', {
         url: module.url,
       })
-      return preserveNonJsHotModules(options.modules)
+      return preserveCssHotModules(options.modules)
     },
     async load(id) {
       if (!parseSymbolRequest(id)) {

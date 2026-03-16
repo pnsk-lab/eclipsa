@@ -14,22 +14,27 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent } from "eclipsa/internal";
-import { component$, onMount } from "eclipsa";
-var analyze_input_default = component$(__eclipsaComponent(() => {
-  const value = "mounted";
-  onMount(() => {
-    console.log(value);
-  });
-  return <button>{value}</button>;
-}, "vslqlr", () => []));
-export { analyze_input_default as default };
+import { component$, onMount } from 'eclipsa'
 
-// ================= vslqlr (component) ==
-import { component$, onMount } from "eclipsa";
-export default __scope => {
-  const value = "mounted";
+export default component$(__eclipsaComponent(() => {
+  const value = 'mounted'
+
   onMount(() => {
-    console.log(value);
-  });
-  return <button>{value}</button>;
+    console.log(value)
+  })
+
+  return <button>{value}</button>
+}, "12cvs17", ()=>[]))
+
+
+// ================= 12cvs17 (component) ==
+import { component$, onMount } from 'eclipsa'
+export default (__scope) => {
+  const value = 'mounted'
+
+  onMount(() => {
+    console.log(value)
+  })
+
+  return <button>{value}</button>
 };

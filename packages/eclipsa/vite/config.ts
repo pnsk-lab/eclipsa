@@ -39,7 +39,7 @@ export const createConfig =
     ])
 
     return {
-      esbuild: {
+      oxc: {
         jsx: 'preserve',
         jsxFactory: 'jsx',
         jsxImportSource: 'eclipsa',

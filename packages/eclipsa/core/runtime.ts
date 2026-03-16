@@ -2806,7 +2806,19 @@ const renderComponentToNodes = (
   component.start = start
   component.end = end
   const renderProps = createRenderProps(componentId, meta, props)
-  const rendered = pushFrame(frame, () => toMountedNodes(componentFn(renderProps), container))
+  const parentFrame = getCurrentFrame()
+  let rendered: Node[]
+  try {
+    rendered = pushFrame(frame, () => toMountedNodes(componentFn(renderProps), container))
+  } catch (error) {
+    if (isPendingSignalError(error) && parentFrame) {
+      parentFrame.visitedDescendants.add(componentId)
+      for (const descendantId of frame.visitedDescendants) {
+        parentFrame.visitedDescendants.add(descendantId)
+      }
+    }
+    throw error
+  }
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
@@ -2818,11 +2830,10 @@ const renderComponentToNodes = (
     clearComponentSubscriptions(container, descendantId)
   }
 
-  const currentFrame = getCurrentFrame()
-  if (currentFrame) {
-    currentFrame.visitedDescendants.add(componentId)
+  if (parentFrame) {
+    parentFrame.visitedDescendants.add(componentId)
     for (const descendantId of frame.visitedDescendants) {
-      currentFrame.visitedDescendants.add(descendantId)
+      parentFrame.visitedDescendants.add(descendantId)
     }
   }
 
@@ -3391,6 +3402,9 @@ const renderSuspenseComponentToNodes = (
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   parentFrame.visitedDescendants.add(componentId)
+  for (const descendantId of frame.visitedDescendants) {
+    parentFrame.visitedDescendants.add(descendantId)
+  }
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
 
@@ -4096,7 +4110,18 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
     component.props && typeof component.props === 'object'
       ? createRenderProps(componentId, meta, component.props as Record<string, unknown>)
       : component.props
-  const rendered = pushFrame(frame, () => componentFn(renderProps as T))
+  let rendered: unknown
+  try {
+    rendered = pushFrame(frame, () => componentFn(renderProps as T))
+  } catch (error) {
+    if (isPendingSignalError(error)) {
+      parentFrame.visitedDescendants.add(componentId)
+      for (const descendantId of frame.visitedDescendants) {
+        parentFrame.visitedDescendants.add(descendantId)
+      }
+    }
+    throw error
+  }
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
@@ -4203,15 +4228,6 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
 
   component.active = true
-  for (const descendantId of frame.visitedDescendants) {
-    const descendant = container.components.get(descendantId)
-    if (!descendant) {
-      continue
-    }
-    descendant.active = true
-    descendant.start = undefined
-    descendant.end = undefined
-  }
 
   pruneRemovedComponents(container, componentId, frame.visitedDescendants)
 
@@ -5146,9 +5162,7 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   if (!existingId) {
     frame.component.signalIds.push(signalId)
   }
-  const record = ensureSignalRecord(container, signalId, fallback)
-  recordSignalRead(record)
-  return record.handle
+  return ensureSignalRecord(container, signalId, fallback).handle
 }
 
 export const createDetachedRuntimeSignal = <T>(

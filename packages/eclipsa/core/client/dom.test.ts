@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { attr } from './dom.ts'
+import { attr, createComponent } from './dom.ts'
 import { createDetachedRuntimeSignal, type RuntimeContainer } from '../runtime.ts'
+import { Suspense } from '../suspense.ts'
 
 const createContainer = () =>
   ({
@@ -102,5 +103,20 @@ describe('core/client dom attr', () => {
       'style',
       'display:inline;opacity:0.5;fill:url(#linearGradient3);fill-opacity:1',
     )
+  })
+
+  it('preserves suspense components as render objects for runtime fallback handling', () => {
+    const rendered = createComponent(Suspense as any, {
+      children: ['done'],
+      fallback: ['loading'],
+    })()
+
+    expect(rendered).toMatchObject({
+      props: {
+        children: ['done'],
+        fallback: ['loading'],
+      },
+      type: Suspense,
+    })
   })
 })

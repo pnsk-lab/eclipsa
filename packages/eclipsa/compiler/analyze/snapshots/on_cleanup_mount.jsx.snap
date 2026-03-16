@@ -17,28 +17,33 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent } from "eclipsa/internal";
-import { component$, onCleanup, onMount } from "eclipsa";
-var analyze_input_default = component$(__eclipsaComponent(() => {
-  const value = "mounted";
-  onMount(() => {
-    console.log(value);
-    onCleanup(() => {
-      console.log(`cleanup:${value}`);
-    });
-  });
-  return <button>{value}</button>;
-}, "1hq6cj2", () => []));
-export { analyze_input_default as default };
+import { component$, onCleanup, onMount } from 'eclipsa'
 
-// ================= 1hq6cj2 (component) ==
-import { component$, onCleanup, onMount } from "eclipsa";
-export default __scope => {
-  const value = "mounted";
+export default component$(__eclipsaComponent(() => {
+  const value = 'mounted'
+
   onMount(() => {
-    console.log(value);
+    console.log(value)
     onCleanup(() => {
-      console.log(`cleanup:${value}`);
-    });
-  });
-  return <button>{value}</button>;
+      console.log(`cleanup:${value}`)
+    })
+  })
+
+  return <button>{value}</button>
+}, "1tn7zho", ()=>[]))
+
+
+// ================= 1tn7zho (component) ==
+import { component$, onCleanup, onMount } from 'eclipsa'
+export default (__scope) => {
+  const value = 'mounted'
+
+  onMount(() => {
+    console.log(value)
+    onCleanup(() => {
+      console.log(`cleanup:${value}`)
+    })
+  })
+
+  return <button>{value}</button>
 };

@@ -249,6 +249,13 @@ const isNotFoundError = (error: unknown) =>
   typeof error === 'object' &&
   (error as { __eclipsa_not_found__?: boolean }).__eclipsa_not_found__ === true
 
+const logDevServerError = (devServer: ViteDevServer, error: unknown) => {
+  if (error instanceof Error && typeof devServer.ssrFixStacktrace === 'function') {
+    devServer.ssrFixStacktrace(error)
+  }
+  console.error(error)
+}
+
 const isRedirectResponse = (
   response: unknown,
 ): response is { headers: { get(name: string): string | null }; status: number } =>
@@ -527,6 +534,9 @@ const createDevApp = async (init: DevAppInit) => {
         options,
       )
     } catch (error) {
+      if (!isNotFoundError(error)) {
+        logDevServerError(init.devServer, error)
+      }
       const fallback = isNotFoundError(error)
         ? findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'notFound')
         : findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'error')

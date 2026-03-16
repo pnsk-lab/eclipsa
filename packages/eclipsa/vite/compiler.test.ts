@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import os from 'node:os'
+import path from 'node:path'
+import * as fs from 'node:fs/promises'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { analyzeModule } from '../compiler/mod.ts'
-import { createResumeHmrUpdate } from './compiler.ts'
+import {
+  collectAppSymbols,
+  compileModuleForSSR,
+  createResumeHmrUpdate,
+  loadSymbolModuleForSSR,
+  resetCompilerCache,
+} from './compiler.ts'
 
 const analyze = async (source: string, filePath = '/tmp/example.tsx') => {
   const analyzed = await analyzeModule(source, filePath)
@@ -21,6 +30,10 @@ const findSymbolId = (source: Awaited<ReturnType<typeof analyze>>, prefix: strin
   [...source.hmrManifest.symbols.values()].find((entry) => entry.hmrKey.startsWith(prefix))?.id
 
 describe('createResumeHmrUpdate', () => {
+  beforeEach(() => {
+    resetCompilerCache()
+  })
+
   it('keeps stable HMR keys for default and named components', async () => {
     const previous = await analyze(`
       import { component$ } from "eclipsa";
@@ -285,6 +298,73 @@ describe('createResumeHmrUpdate', () => {
     expect(previousSymbolId ? update?.symbolUrlReplacements[previousSymbolId] : undefined).toMatch(
       /\?eclipsa-symbol=/,
     )
+  })
+
+  it('keeps app symbol ids stable between absolute app files and /app module transforms', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-compiler-'))
+    const appDir = path.join(root, 'app')
+    const filePath = path.join(appDir, '+page.tsx')
+    const source = `
+      import { component$, onVisible } from "eclipsa";
+      export default component$(() => {
+        onVisible(() => {
+          console.log("ready");
+        });
+        return <div>ready</div>;
+      });
+    `
+
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.writeFile(filePath, source)
+
+    try {
+      const symbols = await collectAppSymbols(root)
+      const lazySymbol = symbols.find((symbol) => symbol.kind === 'lazy')
+
+      expect(lazySymbol?.filePath).toBe('/app/+page.tsx')
+
+      const compiled = await compileModuleForSSR(source, '/app/+page.tsx')
+
+      expect(lazySymbol?.id).toBeTruthy()
+      expect(compiled).toContain(`__eclipsaLazy("${lazySymbol?.id}"`)
+    } finally {
+      await fs.rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('loads lazy symbol modules with valid import boundaries', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-symbol-'))
+    const appDir = path.join(root, 'app')
+    const filePath = path.join(appDir, '+page.tsx')
+    const source = `
+      import { component$, onVisible } from "eclipsa";
+      import { setupLandingScene } from "./landing-scene.ts";
+      export default component$(() => {
+        onVisible(() => {
+          setupLandingScene({ canvas: null });
+        });
+        return <div>ready</div>;
+      });
+    `
+
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.writeFile(filePath, source)
+
+    try {
+      const symbols = await collectAppSymbols(root)
+      const lazySymbol = symbols.find((symbol) => symbol.kind === 'lazy')
+
+      expect(lazySymbol?.code).toContain(`import { setupLandingScene } from "./landing-scene.ts";\n`)
+
+      const compiled = await loadSymbolModuleForSSR(
+        `/app/+page.tsx?eclipsa-symbol=${lazySymbol?.id}`,
+      )
+
+      expect(compiled).toContain('export default')
+      expect(compiled).toContain('setupLandingScene')
+    } finally {
+      await fs.rm(root, { force: true, recursive: true })
+    }
   })
 
   it('falls back to full reload when top-level component membership changes', async () => {

@@ -1,10 +1,33 @@
+# Dependencies and build outputs
 node_modules
+dist
+target
+packages/eclipsa/compiler/native/generated
+packages/eclipsa/npm
+packages/eclipsa/artifacts
+
+# Tool caches
 .vite
 .turbo
+coverage
+*.tsbuildinfo
+
+# Local environment files
 .env
-dist
-.contexts
+.env.*
+!.env.example
+
+# Temporary editor/OS files
+.DS_Store
+*.swp
+*.swo
+*.tmp
+
+# Test artifacts
 playwright-report
 test-results
 packages/e2e/playwright-report
 packages/e2e/test-results
+
+# Local reference material
+.contexts

@@ -12,30 +12,33 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, $ } from "eclipsa";
-var analyze_input_default = component$(__eclipsaComponent(() => {
-  const a = 0;
-  const add = __eclipsaLazy("3poia1", () => {
-    console.log(a);
-  }, () => [a]);
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>Add</button>;
-}, "rrw1ii", () => []));
-export { analyze_input_default as default };
+import { component$, useSignal, $ } from 'eclipsa'
+export default component$(__eclipsaComponent(() => {
+  const a = 0
+  const add = __eclipsaLazy("1eilolu", () => {
+    console.log(a)
+  }, ()=>[a])
 
-// ================= 3poia1 (lazy) ==
-export default __scope => {
-  console.log(__scope[0]);
-};
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", ()=>[add])}>Add</button>
+}, "7zrvvx", ()=>[]))
+
+
+// ================= 1eilolu (lazy) ==
+export default (__scope) => {
+    console.log(__scope[0])
+  };
 
 // ================= 1r40ykv (event) ==
-export default __scope => __scope[0]();
+export default (__scope) => __scope[0]();
 
-// ================= rrw1ii (component) ==
-import { __eclipsaLazy, __eclipsaEvent } from "eclipsa/internal";
-export default __scope => {
-  const a = 0;
-  const add = __eclipsaLazy("3poia1", () => {
-    console.log(a);
-  }, () => [a]);
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", () => [add])}>Add</button>;
+// ================= 7zrvvx (component) ==
+import { component$, useSignal, $ } from 'eclipsa'
+import { __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
+export default (__scope) => {
+  const a = 0
+  const add = __eclipsaLazy("1eilolu", () => {
+    console.log(a)
+  }, ()=>[a])
+
+  return <button onClick$={__eclipsaEvent("click", "1r40ykv", ()=>[add])}>Add</button>
 };

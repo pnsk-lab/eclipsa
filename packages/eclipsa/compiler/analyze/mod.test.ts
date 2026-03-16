@@ -79,4 +79,93 @@ describe('analyzeModule()', () => {
       'Projection slot prop "children" must be rendered directly as {props.children} inside JSX.',
     )
   })
+
+  it('does not mark intrinsic attribute props as projection slots', async () => {
+    const analyzed = await analyzeModule(`
+      import { component$ } from "eclipsa";
+      export const Logo = component$((props) => (
+        <svg class={props.class}>
+          <path />
+        </svg>
+      ));
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect(analyzed?.code).not.toContain('{ class: 1 }')
+  })
+
+  it('supports aliased eclipsa imports on the Rust analyze path', async () => {
+    const analyzed = await analyzeModule(`
+      import { component$ as view$, onVisible as visible } from "eclipsa";
+      export const Header = view$(() => {
+        visible(() => console.log("ready"));
+        return <h1>ready</h1>;
+      });
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaComponent')
+    expect(analyzed.code).toContain('__eclipsaLazy')
+    expect([...analyzed.hmrManifest.components.keys()]).toContain('component:Header')
+  })
+
+  it('emits symbol modules that accept __scope as the first runtime argument', async () => {
+    const analyzed = await analyzeModule(`
+      import { $, component$, onVisible, useWatch } from "eclipsa";
+
+      export default component$((props) => {
+        const count = props.count;
+        const handler = $((event) => {
+          console.log(count, event.type);
+        });
+
+        onVisible(() => {
+          console.log(count);
+        });
+
+        useWatch(() => {
+          console.log(count);
+        });
+
+        return <button onClick$={(event) => handler(event)}>{count}</button>;
+      });
+    `)
+
+    const symbols = [...analyzed.symbols.values()]
+    const component = symbols.find((symbol) => symbol.kind === 'component')
+    const event = symbols.find((symbol) => symbol.kind === 'event')
+    const lazySymbols = symbols.filter((symbol) => symbol.kind === 'lazy')
+    const watch = symbols.find((symbol) => symbol.kind === 'watch')
+
+    expect(component?.code).toMatch(/export default \(__scope, props\) =>/)
+    expect(event?.code).toMatch(/export default \(__scope, event\) =>/)
+    expect(lazySymbols.some((symbol) => /export default \(__scope, event\) =>/.test(symbol.code))).toBe(
+      true,
+    )
+    expect(lazySymbols.some((symbol) => /export default \(__scope\) =>/.test(symbol.code))).toBe(
+      true,
+    )
+    expect(watch?.code).toMatch(/export default \(__scope\) =>/)
+  })
+
+  it('keeps concrete local symbol ids in emitted component code while preserving HMR metadata', async () => {
+    const analyzed = await analyzeModule(`
+      import { component$, onVisible } from "eclipsa";
+
+      export default component$(() => {
+        onVisible(() => {
+          console.log("ready");
+        });
+
+        return <div>ready</div>;
+      });
+    `)
+
+    const component = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'component')
+    const lazy = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'lazy')
+    const hmrLazy = [...analyzed.hmrManifest.symbols.values()].find((symbol) => symbol.kind === 'lazy')
+
+    expect(component?.code).toContain(`__eclipsaLazy("${lazy?.id}"`)
+    expect(component?.code).not.toContain(hmrLazy?.hmrKey ?? 'component:default:lazy:slot')
+    expect(hmrLazy?.hmrKey).toBe('component:default:lazy:slot')
+  })
 })

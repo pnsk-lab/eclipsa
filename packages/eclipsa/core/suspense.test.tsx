@@ -3,7 +3,7 @@ import { component$ } from './component.ts'
 import { __eclipsaComponent } from './internal.ts'
 import { renderSSR, renderSSRAsync, renderSSRStream } from './ssr.ts'
 import { signal, useSignal } from './signal.ts'
-import { Suspense } from './suspense.ts'
+import { Suspense, isSuspenseType } from './suspense.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -210,5 +210,17 @@ describe('Suspense', () => {
     source.value = 3
 
     expect(doubled.value).toBe(6)
+  })
+
+  it('recognizes suspense boundaries across duplicated module instances', () => {
+    const duplicateSuspense = ((props: { children?: unknown }) => props.children ?? null) as ((
+      props: { children?: unknown },
+    ) => unknown) & {
+      [key: symbol]: true
+    }
+    duplicateSuspense[Symbol.for('eclipsa.suspense-type')] = true
+
+    expect(isSuspenseType(Suspense)).toBe(true)
+    expect(isSuspenseType(duplicateSuspense)).toBe(true)
   })
 })
