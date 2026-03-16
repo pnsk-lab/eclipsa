@@ -144,7 +144,7 @@ const requireOptionalBinding = (packageName: string) => {
 const requireWasiBinding = () => {
   return (
     requireGeneratedArtifact('eclipsa.wasi.cjs') ??
-    requireOptionalBinding('eclipsa-wasm32-wasi')
+    requireOptionalBinding('eclipsa-wasm32-wasip1-threads')
   )
 }
 
