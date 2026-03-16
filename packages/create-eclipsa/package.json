@@ -1,11 +1,34 @@
 {
   "name": "create-eclipsa",
-  "private": true,
+  "version": "0.1.0-alpha.0",
+  "license": "MIT",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/create-eclipsa"
+  },
   "bin": {
     "create-eclipsa": "./mod.ts"
   },
   "type": "module",
+  "publishConfig": {
+    "bin": {
+      "create-eclipsa": "./mod.mjs"
+    },
+    "exports": {
+      ".": {
+        "types": "./mod.d.mts",
+        "import": "./mod.mjs"
+      }
+    }
+  },
   "scripts": {
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "test": "vp test --run",
     "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
   }

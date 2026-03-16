@@ -1,6 +1,16 @@
 {
   "name": "eclipsa",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.0",
+  "license": "MIT",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/eclipsa"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -40,6 +50,46 @@
       "import": "./core/prod-client/mod.ts"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./mod.d.mts",
+        "import": "./mod.mjs"
+      },
+      "./vite": {
+        "types": "./vite/mod.d.mts",
+        "import": "./vite/mod.mjs"
+      },
+      "./jsx-runtime": {
+        "types": "./jsx/jsx-runtime.d.mts",
+        "import": "./jsx/jsx-runtime.mjs"
+      },
+      "./jsx-dev-runtime": {
+        "types": "./jsx/jsx-dev-runtime.d.mts",
+        "import": "./jsx/jsx-dev-runtime.mjs"
+      },
+      "./jsx": {
+        "types": "./jsx/mod.d.mts",
+        "import": "./jsx/mod.mjs"
+      },
+      "./internal": {
+        "types": "./core/internal.d.mts",
+        "import": "./core/internal.mjs"
+      },
+      "./client": {
+        "types": "./core/client/mod.d.mts",
+        "import": "./core/client/mod.mjs"
+      },
+      "./dev-client": {
+        "types": "./core/dev-client/mod.d.mts",
+        "import": "./core/dev-client/mod.mjs"
+      },
+      "./prod-client": {
+        "types": "./core/prod-client/mod.d.mts",
+        "import": "./core/prod-client/mod.mjs"
+      }
+    }
+  },
   "napi": {
     "binaryName": "eclipsa",
     "targets": [
@@ -57,7 +107,7 @@
   "scripts": {
     "artifacts": "bunx @napi-rs/cli artifacts --package-json-path ./package.json --output-dir ./compiler/native/generated --npm-dir ./npm --build-output-dir ./artifacts",
     "build": "bun run build:js && bun run build:native",
-    "build:js": "vp pack",
+    "build:js": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "build:native:dev": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa",
     "build:native": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa",
     "create:npm-dirs": "node -e \"require('node:fs').rmSync('./npm', { recursive: true, force: true })\" && bunx @napi-rs/cli create-npm-dirs --package-json-path ./package.json --npm-dir ./npm",
