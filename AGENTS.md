@@ -16,6 +16,7 @@ This file applies to the whole repository.
 - Keep resumable behavior and DOM-compiled client behavior aligned. Avoid reintroducing route-level full-body hydration.
 - You have to create a new test when you fix a bug or add a feature.
 - This project is before alpha, so any breaking change is allowed.
+- You have to remove dead code when you change a way to do something.
 
 ## Common Commands
 

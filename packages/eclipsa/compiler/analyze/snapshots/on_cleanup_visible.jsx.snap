@@ -17,38 +17,43 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, onCleanup, onVisible } from "eclipsa";
-var analyze_input_default = component$(__eclipsaComponent(() => {
-  const value = "visible";
-  onVisible(__eclipsaLazy("y19usd", () => {
-    console.log(value);
+import { component$, onCleanup, onVisible } from 'eclipsa'
+
+export default component$(__eclipsaComponent(() => {
+  const value = 'visible'
+
+  onVisible(__eclipsaLazy("5ugvuh", () => {
+    console.log(value)
     onCleanup(() => {
-      console.log(`cleanup:${value}`);
-    });
-  }, () => [value]));
-  return <button>{value}</button>;
-}, "1waxrep", () => []));
-export { analyze_input_default as default };
+      console.log(`cleanup:${value}`)
+    })
+  }, ()=>[value]))
 
-// ================= y19usd (lazy) ==
-import { component$, onCleanup, onVisible } from "eclipsa";
-export default __scope => {
-  console.log(__scope[0]);
-  onCleanup(() => {
-    console.log(`cleanup:${__scope[0]}`);
-  });
-};
+  return <button>{value}</button>
+}, "pxa3kp", ()=>[]))
 
-// ================= 1waxrep (component) ==
-import { component$, onCleanup, onVisible } from "eclipsa";
+
+// ================= 5ugvuh (lazy) ==
+import { component$, onCleanup, onVisible } from 'eclipsa'
+export default (__scope) => {
+    console.log(__scope[0])
+    onCleanup(() => {
+      console.log(`cleanup:${__scope[0]}`)
+    })
+  };
+
+// ================= pxa3kp (component) ==
+import { component$, onCleanup, onVisible } from 'eclipsa'
 import { __eclipsaLazy } from "eclipsa/internal";
-export default __scope => {
-  const value = "visible";
-  onVisible(__eclipsaLazy("y19usd", () => {
-    console.log(value);
+export default (__scope) => {
+  const value = 'visible'
+
+  onVisible(__eclipsaLazy("5ugvuh", () => {
+    console.log(value)
     onCleanup(() => {
-      console.log(`cleanup:${value}`);
-    });
-  }, () => [value]));
-  return <button>{value}</button>;
+      console.log(`cleanup:${value}`)
+    })
+  }, ()=>[value]))
+
+  return <button>{value}</button>
 };

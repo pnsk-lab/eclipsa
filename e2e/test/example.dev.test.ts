@@ -239,9 +239,34 @@ test.describe('example app in dev mode', () => {
 
     await page.getByRole('link', { name: 'Suspense' }).click()
     await expect(page).toHaveURL(/\/suspense$/)
-    await expect(page.getByTestId('suspense-value')).toHaveText('ready')
+    await expect(page.getByText('ready', { exact: true })).toBeVisible()
     await expect(page.getByTestId('suspense-fallback')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Suspense Playground' })).toBeVisible()
+  })
+
+  test('shows suspense fallback during Link navigation before resolved content', async ({ page }) => {
+    await page.goto('/')
+
+    await page.getByRole('link', { name: 'Suspense' }).click()
+    await expect(page).toHaveURL(/\/suspense$/)
+    await expect(page.getByRole('heading', { name: 'Suspense Playground' })).toBeVisible()
+    await expect(page.getByText('loading', { exact: true })).toBeVisible()
+    await expect(page.getByText('ready', { exact: true })).toBeVisible()
+    await expect(page.getByText('loading', { exact: true })).toHaveCount(0)
+  })
+
+  test('keeps layout state when navigating to suspense with Link', async ({ page }) => {
+    await page.goto('/')
+
+    await page.getByRole('button', { name: /^Layout count:\s*0$/ }).click()
+    await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+
+    await page.getByRole('link', { name: 'Suspense' }).click()
+
+    await expect(page).toHaveURL(/\/suspense$/)
+    await expect(page.getByRole('heading', { name: 'Suspense Playground' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+    await expect(page.getByText('ready', { exact: true })).toBeVisible()
   })
 
   test('navigates imperatively and updates the counter', async ({ page }) => {

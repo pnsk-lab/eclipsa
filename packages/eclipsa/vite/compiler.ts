@@ -19,7 +19,18 @@ interface AnalyzedEntry {
   source: string
 }
 
+interface ResumeHmrResolution {
+  isResumable: boolean
+  nextEntry: AnalyzedEntry
+  normalizedId: string
+  update: ResumeHmrUpdatePayload | null
+}
+
 const cache = new Map<string, AnalyzedEntry>()
+
+export const resetCompilerCache = () => {
+  cache.clear()
+}
 
 const stripQuery = (id: string) => {
   const queryIndex = id.indexOf('?')
@@ -28,6 +39,20 @@ const stripQuery = (id: string) => {
   }
   return id.slice(0, queryIndex)
 }
+
+const normalizeCompilerModuleId = (id: string) => {
+  const normalized = stripQuery(id).replaceAll('\\', '/')
+  if (normalized.startsWith('/app/')) {
+    return normalized
+  }
+  const appIndex = normalized.lastIndexOf('/app/')
+  if (appIndex >= 0) {
+    return normalized.slice(appIndex)
+  }
+  return normalized
+}
+
+const isAppModuleId = (id: string) => normalizeCompilerModuleId(id).startsWith('/app/')
 
 export const parseSymbolRequest = (id: string): { filePath: string; symbolId: string } | null => {
   const queryIndex = id.indexOf('?')
@@ -49,18 +74,23 @@ export const parseSymbolRequest = (id: string): { filePath: string; symbolId: st
 
 const loadAnalyzedModule = async (filePath: string, source?: string) => {
   const normalizedPath = stripQuery(filePath)
+  const normalizedId = normalizeCompilerModuleId(normalizedPath)
+  const cached = cache.get(normalizedId)
+  if (source == null && cached && isAppModuleId(normalizedPath)) {
+    return cached.analyzed
+  }
+
   const resolvedSource = source ?? (await fs.readFile(normalizedPath, 'utf8'))
-  const cached = cache.get(normalizedPath)
   if (cached?.source === resolvedSource) {
     return cached.analyzed
   }
 
-  const analyzed = await analyzeModule(resolvedSource, normalizedPath)
+  const analyzed = await analyzeModule(resolvedSource, normalizedId)
   if (!analyzed) {
-    throw new Error(`Failed to compile ${normalizedPath}.`)
+    throw new Error(`Failed to compile ${normalizedId}.`)
   }
 
-  cache.set(normalizedPath, {
+  cache.set(normalizedId, {
     analyzed,
     source: resolvedSource,
   })
@@ -69,7 +99,7 @@ const loadAnalyzedModule = async (filePath: string, source?: string) => {
 }
 
 const createAnalyzedEntry = async (filePath: string, source: string): Promise<AnalyzedEntry> => {
-  const analyzed = await analyzeModule(source, filePath)
+  const analyzed = await analyzeModule(source, normalizeCompilerModuleId(filePath))
   if (!analyzed) {
     throw new Error(`Failed to compile ${filePath}.`)
   }
@@ -78,6 +108,15 @@ const createAnalyzedEntry = async (filePath: string, source: string): Promise<An
     analyzed,
     source,
   }
+}
+
+const findCachedAnalyzedModuleBySymbolId = (symbolId: string) => {
+  for (const entry of cache.values()) {
+    if (entry.analyzed.symbols.has(symbolId)) {
+      return entry.analyzed
+    }
+  }
+  return null
 }
 
 const getComponentEntryById = (components: Map<string, ResumeHmrComponentEntry>, id: string) => {
@@ -271,8 +310,22 @@ export const resolveResumeHmrUpdate = async (options: {
   isResumable: boolean
   update: ResumeHmrUpdatePayload | null
 }> => {
+  const resolution = await inspectResumeHmrUpdate(options)
+  cache.set(resolution.normalizedId, resolution.nextEntry)
+  return {
+    isResumable: resolution.isResumable,
+    update: resolution.update,
+  }
+}
+
+export const inspectResumeHmrUpdate = async (options: {
+  filePath: string
+  root: string
+  source: string
+}): Promise<ResumeHmrResolution> => {
   const normalizedPath = stripQuery(options.filePath)
-  const previous = cache.get(normalizedPath)?.analyzed ?? null
+  const normalizedId = normalizeCompilerModuleId(normalizedPath)
+  const previous = cache.get(normalizedId)?.analyzed ?? null
   const nextEntry = await createAnalyzedEntry(normalizedPath, options.source)
   const update = createResumeHmrUpdate({
     filePath: normalizedPath,
@@ -280,9 +333,10 @@ export const resolveResumeHmrUpdate = async (options: {
     previous,
     root: options.root,
   })
-  cache.set(normalizedPath, nextEntry)
   return {
     isResumable: (previous?.symbols.size ?? 0) > 0 || nextEntry.analyzed.symbols.size > 0,
+    nextEntry,
+    normalizedId,
     update,
   }
 }
@@ -313,7 +367,7 @@ export const loadSymbolModuleForClient = async (id: string) => {
     return null
   }
 
-  const analyzed = await loadAnalyzedModule(parsed.filePath)
+  const analyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? (await loadAnalyzedModule(parsed.filePath))
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)
@@ -330,7 +384,7 @@ export const loadSymbolModuleForSSR = async (id: string) => {
     return null
   }
 
-  const analyzed = await loadAnalyzedModule(parsed.filePath)
+  const analyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? (await loadAnalyzedModule(parsed.filePath))
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)

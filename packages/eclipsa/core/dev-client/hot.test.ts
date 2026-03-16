@@ -63,4 +63,21 @@ describe('core/dev-client hot', () => {
     expect(getComponentMeta(wrapped)?.symbol).toBe('page-symbol')
     expect(getComponentMeta(wrapped)?.projectionSlots).toBeUndefined()
   })
+
+  it('unwraps already hot-wrapped components during updates', () => {
+    const registry = createHotRegistry()
+    const wrapped = defineHotComponent(makeComponent('before'), {
+      registry,
+      name: 'default',
+    })
+
+    const newRegistry = createHotRegistry()
+    defineHotComponent(wrapped, {
+      registry: newRegistry,
+      name: 'default',
+    })
+
+    expect(applyHotUpdate(registry, newRegistry)).toBe('updated')
+    expect(wrapped({})).toBe('before')
+  })
 })

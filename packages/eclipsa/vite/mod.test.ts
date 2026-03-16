@@ -33,6 +33,12 @@ const getHotUpdate = (plugin: Plugin) => {
 }
 
 describe('vite plugin hotUpdate', () => {
+  it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {
+    const plugin = getPlugin()
+
+    expect(plugin.enforce).toBe('pre')
+  })
+
   it('emits source-module HMR for non-resumable tsx modules', async () => {
     const plugin = getPlugin()
     const hotUpdate = getHotUpdate(plugin)
@@ -168,6 +174,86 @@ describe('vite plugin hotUpdate', () => {
     expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
     expect(send.mock.calls[0]?.[1]).toMatchObject({
       fileUrl: '/resumable-page.tsx',
+      fullReload: false,
+    })
+  })
+
+  it('suppresses SSR full reloads without consuming the client resumable diff', async () => {
+    const plugin = getPlugin()
+    const hotUpdate = getHotUpdate(plugin)
+    const filePath = '/tmp/ssr-resumable-page.tsx'
+    const previousSource = `
+      import { component$, useSignal } from "eclipsa";
+      export default component$(() => {
+        const count = useSignal(0);
+        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+      });
+    `
+    const nextSource = `
+      import { component$, useSignal } from "eclipsa";
+      export default component$(() => {
+        const count = useSignal(0);
+        return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
+      });
+    `
+    const send = vi.fn()
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const ssrResult = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'ssr',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/ssr-resumable-page.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    const clientResult = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/ssr-resumable-page.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(ssrResult).toEqual([])
+    expect(clientResult).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/ssr-resumable-page.tsx',
       fullReload: false,
     })
   })

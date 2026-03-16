@@ -2,10 +2,16 @@ import type { Component } from '../component.ts'
 import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
 import type { JSX } from '../../jsx/jsx-runtime.ts'
 
+const HOT_COMPONENT_TARGET_KEY = Symbol.for('eclipsa.hot-component-target')
+
 interface ViteHotContext {
   off(event: string, listener: (data: { url: string }) => void): void
   on(event: string, listener: (data: { url: string }) => void): void
 }
+
+const unwrapHotComponent = (Component: Component): Component =>
+  ((Component as Component & { [HOT_COMPONENT_TARGET_KEY]?: Component })[HOT_COMPONENT_TARGET_KEY] ??
+    Component) as Component
 
 export const initHot = (
   hot: ViteHotContext | undefined,
@@ -49,19 +55,22 @@ interface ComponentMetaInput {
   name: string
 }
 export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
-  const current = { value: Component }
+  const current = { value: unwrapHotComponent(Component) }
   const componentMeta = getComponentMeta(Component)
 
   meta.registry.components.set(meta.name, {
     update(newComponent) {
-      current.value = newComponent
+      current.value = unwrapHotComponent(newComponent)
     },
-    Component,
+    Component: current.value,
   })
 
-  const HotComponent = (props: unknown) => {
+  const HotComponent = ((props: unknown) => {
     return current.value(props)
+  }) as Component & {
+    [HOT_COMPONENT_TARGET_KEY]?: Component
   }
+  HotComponent[HOT_COMPONENT_TARGET_KEY] = current.value
   if (!componentMeta) {
     return HotComponent
   }

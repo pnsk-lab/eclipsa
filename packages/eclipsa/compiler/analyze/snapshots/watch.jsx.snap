@@ -20,62 +20,50 @@ export default component$(() => {
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaWatch } from "eclipsa/internal";
-import { component$, useSignal, useWatch } from "eclipsa";
-var analyze_input_default = component$(__eclipsaComponent(() => {
-  const tracked = useSignal(0);
-  const dynamic = useSignal("a");
-  const explicit = useSignal("b");
-  useWatch(__eclipsaWatch("1wpyu3h", () => {
-    console.log(dynamic.value);
-  }, () => [dynamic]));
-  useWatch(__eclipsaWatch("ssc4fm", () => {
-    console.log(explicit.value);
-  }, () => [explicit, tracked]), [tracked, () => explicit.value]);
-  return <button>{tracked.value}</button>;
-}, "8tojhg", () => []));
-export { analyze_input_default as default };
+import { component$, useSignal, useWatch } from 'eclipsa'
 
-// ================= 1wpyu3h (watch) ==
-export default (__scope, __phase) => {
-  if (__phase === "track") {
-    return;
-  }
-  console.log(__scope[0].value);
-};
+export default component$(__eclipsaComponent(() => {
+  const tracked = useSignal(0)
+  const dynamic = useSignal('a')
+  const explicit = useSignal('b')
 
-// ================= ssc4fm (watch) ==
-import { getSignalMeta } from "eclipsa/internal";
-export default (__scope, __phase) => {
-  if (__phase === "track") {
-    const __dependencies = [__scope[1], () => __scope[0].value];
-    for (const __dependency of __dependencies) {
-      if (typeof __dependency === "function") {
-        __dependency();
-        continue;
-      }
-      const __signalMeta = getSignalMeta(__dependency);
-      if (!__signalMeta) {
-        throw new TypeError("useWatch dependencies must be signals or getter functions.");
-      }
-      __dependency.value;
-    }
-    return;
-  }
-  console.log(__scope[0].value);
-};
+  useWatch(__eclipsaWatch("159qphd", () => {
+    console.log(dynamic.value)
+  }, ()=>[dynamic]))
 
-// ================= 8tojhg (component) ==
-import { component$, useSignal, useWatch } from "eclipsa";
+  useWatch(__eclipsaWatch("1dd4kme", () => {
+    console.log(explicit.value)
+  }, ()=>[explicit]), [tracked, () => explicit.value])
+
+  return <button>{tracked.value}</button>
+}, "pe0h1p", ()=>[]))
+
+
+// ================= 159qphd (watch) ==
+export default (__scope) => {
+    console.log(__scope[0].value)
+  };
+
+// ================= 1dd4kme (watch) ==
+export default (__scope) => {
+    console.log(__scope[0].value)
+  };
+
+// ================= pe0h1p (component) ==
+import { component$, useSignal, useWatch } from 'eclipsa'
 import { __eclipsaWatch } from "eclipsa/internal";
-export default __scope => {
-  const tracked = useSignal(0);
-  const dynamic = useSignal("a");
-  const explicit = useSignal("b");
-  useWatch(__eclipsaWatch("1wpyu3h", () => {
-    console.log(dynamic.value);
-  }, () => [dynamic]));
-  useWatch(__eclipsaWatch("ssc4fm", () => {
-    console.log(explicit.value);
-  }, () => [explicit, tracked]), [tracked, () => explicit.value]);
-  return <button>{tracked.value}</button>;
+export default (__scope) => {
+  const tracked = useSignal(0)
+  const dynamic = useSignal('a')
+  const explicit = useSignal('b')
+
+  useWatch(__eclipsaWatch("159qphd", () => {
+    console.log(dynamic.value)
+  }, ()=>[dynamic]))
+
+  useWatch(__eclipsaWatch("1dd4kme", () => {
+    console.log(explicit.value)
+  }, ()=>[explicit]), [tracked, () => explicit.value])
+
+  return <button>{tracked.value}</button>
 };

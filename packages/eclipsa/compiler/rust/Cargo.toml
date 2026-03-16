@@ -1,0 +1,26 @@
+[package]
+name = "eclipsa_compiler"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3.8.3", default-features = false, features = ["napi4"] }
+napi-derive = "3.5.2"
+oxc_allocator = "0.96.0"
+oxc_ast = "0.96.0"
+oxc_ast_visit = "0.96.0"
+oxc_codegen = "0.96.0"
+oxc_semantic = "0.96.0"
+oxc_parser = "0.96.0"
+oxc_span = "0.96.0"
+oxc_transformer = "0.96.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+xxhash-rust = { version = "0.8.15", features = ["xxh32"] }
+
+[build-dependencies]
+napi-build = "2.3.1"

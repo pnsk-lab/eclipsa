@@ -753,6 +753,56 @@ describe('createDevFetch', () => {
       ok: true,
     })
   })
+
+  it('logs route render failures with a fixed stack before returning a 500 response', async () => {
+    const error = new Error('boom')
+    const ssrFixStacktrace = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {
+        ssrFixStacktrace,
+      } as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            throw error
+          }
+          if (id === 'eclipsa') {
+            return {}
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+
+    expect(response?.status).toBe(500)
+    await expect(response?.text()).resolves.toBe('Internal Server Error')
+    expect(ssrFixStacktrace).toHaveBeenCalledWith(error)
+    expect(consoleError).toHaveBeenCalledWith(error)
+    consoleError.mockRestore()
+  })
 })
 
 describe('shouldInvalidateDevApp', () => {
