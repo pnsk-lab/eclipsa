@@ -70,6 +70,30 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Verify trusted publishing runtime
+        shell: bash
+        run: |
+          node -e "
+          const parse = (version) => version.replace(/^v/, '').split('.').map(Number);
+          const gte = (left, right) => {
+            for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+              const a = left[i] ?? 0;
+              const b = right[i] ?? 0;
+              if (a > b) return true;
+              if (a < b) return false;
+            }
+            return true;
+          };
+          const nodeVersion = process.versions.node;
+          const npmVersion = require('child_process').execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
+          if (!gte(parse(nodeVersion), parse('22.14.0'))) {
+            throw new Error(\`Trusted publishing requires Node 22.14.0+, got \${nodeVersion}\`);
+          }
+          if (!gte(parse(npmVersion), parse('11.5.1'))) {
+            throw new Error(\`Trusted publishing requires npm 11.5.1+, got \${npmVersion}\`);
+          }
+          "
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -79,19 +103,13 @@ jobs:
         run: |
           case "$PACKAGE_KEY" in
             eclipsa)
-              package_json_path="packages/eclipsa/package.json"
-              publish_dir="packages/eclipsa/dist"
-              build_command="bun run --filter eclipsa build"
+              package_dir="packages/eclipsa"
               ;;
             create-eclipsa)
-              package_json_path="packages/create-eclipsa/package.json"
-              publish_dir="packages/create-eclipsa"
-              build_command=""
+              package_dir="packages/create-eclipsa"
               ;;
             image)
-              package_json_path="packages/image/package.json"
-              publish_dir="packages/image"
-              build_command=""
+              package_dir="packages/image"
               ;;
             *)
               echo "Unsupported package: $PACKAGE_KEY"
@@ -99,13 +117,20 @@ jobs:
               ;;
           esac
 
+          package_json_path="$package_dir/package.json"
+          publish_dir="$package_dir/dist"
+          publish_package_json_path="$publish_dir/package.json"
+          build_command="bun run --filter ./$package_dir build"
+
           if [ ! -r "$package_json_path" ]; then
             echo "package.json not found or not readable: $package_json_path"
             exit 1
           fi
 
+          echo "package_dir=$package_dir" >> "$GITHUB_OUTPUT"
           echo "package_json_path=$package_json_path" >> "$GITHUB_OUTPUT"
           echo "publish_dir=$publish_dir" >> "$GITHUB_OUTPUT"
+          echo "publish_package_json_path=$publish_package_json_path" >> "$GITHUB_OUTPUT"
           echo "build_command=$build_command" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release metadata
@@ -155,16 +180,41 @@ jobs:
           const version = process.argv[2];
           const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
           pkg.version = version;
-          if (pkg.private === true) {
-            pkg.private = false;
-          }
           fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
           " '${{ steps.package.outputs.package_json_path }}' '${{ steps.metadata.outputs.version }}'
 
       - name: Build package
-        if: steps.package.outputs.build_command != ''
         shell: bash
         run: ${{ steps.package.outputs.build_command }}
+
+      - name: Verify dist package metadata
+        shell: bash
+        run: |
+          publish_package_json_path='${{ steps.package.outputs.publish_package_json_path }}'
+
+          if [ ! -r "$publish_package_json_path" ]; then
+            echo "dist package.json not found or not readable: $publish_package_json_path"
+            exit 1
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const packageJsonPath = process.argv[1];
+          const expectedVersion = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+          if (pkg.private !== false) {
+            throw new Error(\`Expected private=false in \${packageJsonPath}\`);
+          }
+          if (pkg.version !== expectedVersion) {
+            throw new Error(\`Expected version \${expectedVersion} in \${packageJsonPath}, got \${pkg.version}\`);
+          }
+          if (!pkg.repository) {
+            throw new Error(\`Expected repository in \${packageJsonPath}\`);
+          }
+          if (!pkg.exports) {
+            throw new Error(\`Expected exports in \${packageJsonPath}\`);
+          }
+          " "$publish_package_json_path" '${{ steps.metadata.outputs.version }}'
 
       - name: Pack package tarball
         id: pack
@@ -197,8 +247,6 @@ jobs:
           fi
 
           "${publish_args[@]}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit and push version update
         id: version_commit
