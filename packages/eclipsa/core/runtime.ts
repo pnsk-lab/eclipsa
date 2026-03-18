@@ -45,12 +45,14 @@ import {
   ROUTE_PREFETCH_ATTR,
   ROUTE_PREFLIGHT_REQUEST_HEADER,
   ROUTE_REPLACE_ATTR,
+  normalizeNavigateInput,
   type LinkPrefetchMode,
   type Navigate,
   type NavigateOptions,
   type RouteManifest,
   type RouteModuleManifest,
   type RouteParams,
+  type RouteTarget,
 } from './router-shared.ts'
 
 const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
@@ -1464,12 +1466,13 @@ const isRouterSignalId = (id: string) =>
   id === ROUTER_CURRENT_PATH_SIGNAL_ID || id === ROUTER_IS_NAVIGATING_SIGNAL_ID
 
 const createStandaloneNavigate = (): Navigate => {
-  const navigate = (async (href: string, options?: NavigateOptions) => {
+  const navigate = (async (input: string | RouteTarget, options?: NavigateOptions) => {
     if (typeof window === 'undefined') {
       return
     }
-    const url = new URL(href, window.location.href)
-    if (options?.replace) {
+    const normalized = normalizeNavigateInput(input, options)
+    const url = new URL(normalized.href, window.location.href)
+    if (normalized.replace) {
       window.location.replace(url.href)
       return
     }
@@ -1545,9 +1548,10 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   }
 
   container.router = router
-  router.navigate = setNavigateMeta((async (href: string, options?: NavigateOptions) => {
-    await navigateContainer(container, href, {
-      mode: options?.replace ? 'replace' : 'push',
+  router.navigate = setNavigateMeta((async (input: string | RouteTarget, options?: NavigateOptions) => {
+    const normalized = normalizeNavigateInput(input, options)
+    await navigateContainer(container, normalized.href, {
+      mode: normalized.replace ? 'replace' : 'push',
     })
   }) as Navigate)
 

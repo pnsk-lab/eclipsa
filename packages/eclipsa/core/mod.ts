@@ -11,6 +11,17 @@ export * from './snapshot.ts'
 export * from './ssr.ts'
 export * from './suspense.ts'
 export { RESUME_FINAL_STATE_ELEMENT_ID } from './runtime.ts'
-export type { LinkPrefetchMode, Navigate, NavigateOptions } from './router-shared.ts'
+export {
+  buildRoutePath,
+  createRouteHref,
+} from './router-shared.ts'
+export type {
+  LinkPrefetchMode,
+  Navigate,
+  NavigateOptions,
+  RoutePathParams,
+  RouteSearchParamsInput,
+  RouteTarget,
+} from './router-shared.ts'
 export * from './types.ts'
 export * from './flow/mod.ts'

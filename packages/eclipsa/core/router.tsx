@@ -4,8 +4,12 @@ import {
   ROUTE_LINK_ATTR,
   ROUTE_PREFETCH_ATTR,
   ROUTE_REPLACE_ATTR,
+  createRouteHref,
   type LinkPrefetchMode,
   type Navigate,
+  type RouteSearchParamsInput,
+  type RouteTarget,
+  type RoutePathParams,
   type RouteParams,
 } from './router-shared.ts'
 import {
@@ -14,12 +18,30 @@ import {
   useRuntimeRouteParams,
 } from './runtime.ts'
 
-export interface LinkProps extends Record<string, unknown> {
+interface LinkBaseProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
-  href: string
   prefetch?: LinkPrefetchMode | boolean
   replace?: boolean
 }
+
+interface LinkHrefProps {
+  href: string
+  hash?: never
+  params?: never
+  search?: never
+  to?: never
+}
+
+interface LinkRouteTargetProps<Path extends string = string> {
+  hash?: string
+  href?: never
+  params?: RoutePathParams<Path>
+  search?: RouteSearchParamsInput
+  to: Path
+}
+
+export type LinkProps<Path extends string = string> = LinkBaseProps &
+  (LinkHrefProps | LinkRouteTargetProps<Path>)
 
 const normalizeLinkPrefetchMode = (
   prefetch: LinkProps['prefetch'],
@@ -34,6 +56,19 @@ const normalizeLinkPrefetchMode = (
     return 'none'
   }
   return prefetch
+}
+
+const resolveLinkHref = (props: LinkProps) => {
+  if ('href' in props && typeof props.href === 'string') {
+    return props.href
+  }
+
+  return createRouteHref({
+    to: props.to,
+    params: props.params as RoutePathParams<string> | undefined,
+    search: props.search,
+    hash: props.hash,
+  } as RouteTarget)
 }
 
 const appendClientChildren = (parent: Element, value: unknown) => {
@@ -63,6 +98,7 @@ const createClientLinkNode = (props: LinkProps) => {
   const anchor = document.createElement('a')
   anchor.setAttribute(ROUTE_LINK_ATTR, '')
   const prefetchMode = normalizeLinkPrefetchMode(props.prefetch)
+  const resolvedHref = resolveLinkHref(props)
 
   if (props.replace) {
     anchor.setAttribute(ROUTE_REPLACE_ATTR, 'true')
@@ -76,6 +112,11 @@ const createClientLinkNode = (props: LinkProps) => {
       name === 'children' ||
       name === 'prefetch' ||
       name === 'replace' ||
+      name === 'href' ||
+      name === 'to' ||
+      name === 'params' ||
+      name === 'search' ||
+      name === 'hash' ||
       value === false ||
       value === undefined ||
       value === null
@@ -102,6 +143,7 @@ const createClientLinkNode = (props: LinkProps) => {
     anchor.setAttribute(name, String(value))
   }
 
+  anchor.setAttribute('href', resolvedHref)
   appendClientChildren(anchor, props.children)
   return anchor
 }
@@ -114,6 +156,7 @@ export const Link = component$((props: LinkProps) => {
   const prefetchMode = normalizeLinkPrefetchMode(props.prefetch)
   const nextProps: Record<string, unknown> = {
     ...props,
+    href: resolveLinkHref(props),
     [ROUTE_LINK_ATTR]: '',
   }
 
@@ -125,6 +168,10 @@ export const Link = component$((props: LinkProps) => {
   }
   delete nextProps.prefetch
   delete nextProps.replace
+  delete nextProps.to
+  delete nextProps.params
+  delete nextProps.search
+  delete nextProps.hash
 
   return {
     isStatic: true,
