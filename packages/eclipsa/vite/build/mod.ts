@@ -130,9 +130,12 @@ const createPageRouteEntries = (routes: Awaited<ReturnType<typeof createRoutes>>
 
 const renderAppModule = (
   actions: Array<{ filePath: string; id: string }>,
+  appHooksClientUrl: string | null,
+  appHooksServerUrl: string | null,
   loaders: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
   routeManifest: RouteManifest,
+  serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
   stylesheetUrls: string[],
 ) => {
@@ -140,13 +143,18 @@ const renderAppModule = (
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
   const actionTable = createActionTable(actions)
   const loaderTable = createLoaderTable(loaders)
+  const serializedAppHooksManifest = JSON.stringify({
+    client: appHooksClientUrl,
+  })
+  const serializedAppHooksServerUrl = JSON.stringify(appHooksServerUrl)
   const serializedSymbolUrls = JSON.stringify(symbolUrls)
   const serializedRouteManifest = JSON.stringify(routeManifest)
+  const serializedServerHooksUrl = JSON.stringify(serverHooksUrl)
   const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, composeRouteMetadata, deserializeValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, primeActionState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, serializeResumePayload } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -157,13 +165,24 @@ ${loaderTable}
 };
 const routes = ${serializedRoutes};
 const pageRouteEntries = ${serializedPageRouteEntries};
+const appHooksManifest = ${serializedAppHooksManifest};
+const appHooksServerUrl = ${serializedAppHooksServerUrl};
 const routeManifest = ${serializedRouteManifest};
+const serverHooksUrl = ${serializedServerHooksUrl};
 const symbolUrls = ${serializedSymbolUrls};
 const stylesheetUrls = ${serializedStylesheetUrls};
 const RESUME_PAYLOAD_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_RESUME_PAYLOAD__')};
+const APP_HOOKS_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_APP_HOOKS__')};
 const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
+const ROUTE_ERROR_PROP = "__eclipsa_route_error";
 const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
+const hooksPromise = (async () => {
+  const appHooks = appHooksServerUrl ? await import(appHooksServerUrl) : {};
+  const serverHooks = serverHooksUrl ? await import(serverHooksUrl) : {};
+  await serverHooks.init?.();
+  return { appHooks, serverHooks };
+})();
 
 const normalizeRoutePath = (pathname) => {
   const normalizedPath = pathname.trim() || "/";
@@ -292,6 +311,65 @@ const isRedirectResponse = (response) =>
   response.status < 400 &&
   !!response.headers.get("location");
 
+const toPublicErrorValue = async (hooks, c, error, event) => {
+  const publicError = await runHandleError(
+    {
+      handleError: hooks.handleError,
+    },
+    {
+      context: c,
+      error,
+      event,
+    },
+  );
+  return markPublicError(error, publicError);
+};
+
+const prepareRequestContext = (c, hooks) => {
+  attachRequestFetch(c, createRequestFetch(c, hooks.handleFetch));
+  return c;
+};
+
+const reroutePathname = (hooks, request, pathname, baseUrl) =>
+  normalizeRoutePath(resolveReroute(hooks.reroute, request, pathname, baseUrl));
+
+const resolveRequest = async (c, handler) => {
+  const { appHooks, serverHooks } = await hooksPromise;
+  const requestContext = prepareRequestContext(c, serverHooks);
+  const execute = (nextContext = requestContext) =>
+    withServerRequestContext(
+      nextContext,
+      {
+        handleError: serverHooks.handleError,
+        transport: appHooks.transport,
+      },
+      () => handler(nextContext, appHooks, serverHooks),
+    );
+
+  if (!serverHooks.handle) {
+    return execute(requestContext);
+  }
+
+  return withServerRequestContext(
+    requestContext,
+    {
+      handleError: serverHooks.handleError,
+      transport: appHooks.transport,
+    },
+    () => serverHooks.handle(requestContext, (nextContext) => execute(nextContext ?? requestContext)),
+  );
+};
+
+const resolveRequestRoute = (hooks, request, url) => {
+  const requestPathname = normalizeRoutePath(new URL(url).pathname);
+  const resolvedPathname = reroutePathname(hooks, request, requestPathname, url);
+  return {
+    match: matchRoute(resolvedPathname),
+    requestPathname,
+    resolvedPathname,
+  };
+};
+
 const loadRouteMiddlewares = async (route) =>
   Promise.all(
     route.middlewares.map(async (middlewareUrl) => {
@@ -391,12 +469,23 @@ const createRouteProps = (params, props) => {
   return nextProps;
 };
 
-const createRouteElement = (pathname, params, Page, Layouts) => {
+const attachRouteError = (props, error) => {
+  Object.defineProperty(props, ROUTE_ERROR_PROP, {
+    configurable: true,
+    enumerable: false,
+    value: error,
+    writable: true,
+  });
+  return props;
+};
+
+const createRouteElement = (pathname, params, Page, Layouts, error) => {
   if (Layouts.length === 0) {
-    return jsxDEV(Page, createRouteProps(params, {}), null, false, {});
+    return jsxDEV(Page, attachRouteError(createRouteProps(params, {}), error), null, false, {});
   }
 
   const route = {
+    error,
     layouts: Layouts.map((renderer) => ({ renderer })),
     page: { renderer: Page },
     params,
@@ -405,7 +494,7 @@ const createRouteElement = (pathname, params, Page, Layouts) => {
   let children = null;
   for (let index = Layouts.length - 1; index >= 0; index -= 1) {
     const Layout = Layouts[index];
-    children = jsxDEV(Layout, createRouteProps(params, { children: createRouteSlot(route, index + 1) }), null, false, {});
+    children = jsxDEV(Layout, attachRouteError(createRouteProps(params, { children: createRouteSlot(route, index + 1) }), error), null, false, {});
   }
   return children;
 };
@@ -439,7 +528,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     },
   );
   const document = SSRRoot({
-    children: createRouteElement(pathname, params, Page, Layouts),
+    children: createRouteElement(pathname, params, Page, Layouts, options?.routeError),
     head: {
       type: Fragment,
       isStatic: true,
@@ -476,6 +565,15 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               type: "script",
               isStatic: true,
               props: {
+                children: APP_HOOKS_PLACEHOLDER,
+                id: APP_HOOKS_ELEMENT_ID,
+                type: "application/eclipsa-app-hooks+json",
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
                 dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
               },
             },
@@ -499,9 +597,13 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     symbols: symbolUrls,
   });
   const shellHtml = replaceHeadPlaceholder(
-    replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
-    ROUTE_MANIFEST_PLACEHOLDER,
-    escapeJSONScriptText(JSON.stringify(routeManifest)),
+    replaceHeadPlaceholder(
+      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+      ROUTE_MANIFEST_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(routeManifest)),
+    ),
+    APP_HOOKS_PLACEHOLDER,
+    escapeJSONScriptText(JSON.stringify(appHooksManifest)),
   );
   const { prefix, suffix } = splitHtmlForStreaming(shellHtml);
   const encoder = new TextEncoder();
@@ -546,28 +648,35 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 };
 
 const renderMatchedPage = async (match, c, options) => {
+  const { appHooks, serverHooks } = await hooksPromise;
   const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
+  const resolvedPathname = reroutePathname(appHooks, c.req.raw, pathname, c.req.url);
   try {
     return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page, 200, options);
   } catch (error) {
-    const fallback = isNotFoundError(error) ? findSpecialRoute(pathname, "notFound") : findSpecialRoute(pathname, "error");
+    const publicError = await toPublicErrorValue(serverHooks, c, error, "page");
+    const fallback = isNotFoundError(error) ? findSpecialRoute(resolvedPathname, "notFound") : findSpecialRoute(resolvedPathname, "error");
     const kind = isNotFoundError(error) ? "notFound" : "error";
     const moduleUrl = fallback?.route?.[kind];
     if (!fallback || !moduleUrl) {
       return c.text(isNotFoundError(error) ? "Not Found" : "Internal Server Error", isNotFoundError(error) ? 404 : 500);
     }
-    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500, options);
+    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500, {
+      ...options,
+      routeError: publicError,
+    });
   }
 };
 
 const resolveRoutePreflight = async (href, c) => {
+  const { appHooks } = await hooksPromise;
   const requestUrl = new URL(c.req.url);
   const targetUrl = new URL(href, requestUrl);
   if (targetUrl.origin !== requestUrl.origin) {
     return c.json({ document: true, ok: false });
   }
 
-  const target = resolvePreflightTarget(normalizeRoutePath(targetUrl.pathname));
+  const target = resolvePreflightTarget(reroutePathname(appHooks, new Request(targetUrl.href), normalizeRoutePath(targetUrl.pathname), targetUrl.href));
   if (!target) {
     return c.json({ ok: true });
   }
@@ -576,7 +685,7 @@ const resolveRoutePreflight = async (href, c) => {
   headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, "1");
   let response;
   try {
-    response = await fetch(targetUrl.href, {
+    response = await c.var.fetch(targetUrl.href, {
       headers,
       redirect: "manual",
     });

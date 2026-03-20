@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono'
 import type { MiddlewareHandler, Next } from 'hono/types'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
+import * as fs from 'node:fs/promises'
 import {
   ROUTE_MANIFEST_ELEMENT_ID,
   ROUTE_PREFLIGHT_ENDPOINT,
@@ -9,6 +10,19 @@ import {
   type RouteParams,
 } from '../../core/router-shared.ts'
 import type { SSRRootProps } from '../../core/types.ts'
+import {
+  APP_HOOKS_ELEMENT_ID,
+  attachRequestFetch,
+  createRequestFetch,
+  markPublicError,
+  resolveReroute,
+  runHandleError,
+  type AppContext,
+  type AppHooksModule,
+  type PublicError,
+  type ServerHooksModule,
+  withServerRequestContext,
+} from '../../core/hooks.ts'
 import { Fragment, jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
 import {
   composeRouteMetadata,
@@ -32,6 +46,7 @@ import {
 } from '../compiler.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
+const ROUTE_ERROR_PROP = '__eclipsa_route_error'
 interface DevAppDeps {
   collectAppActions(root: string): Promise<{ id: string; filePath: string }[]>
   collectAppLoaders(root: string): Promise<{ id: string; filePath: string }[]>
@@ -52,6 +67,15 @@ interface DevAppInit {
 export interface DevFetchController {
   fetch(req: Request): Promise<Response | undefined>
   invalidate(): void
+}
+
+const fileExists = async (filePath: string) => {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 const toAppRelativePath = (root: string, filePath: string) => {
@@ -82,6 +106,7 @@ export const shouldInvalidateDevApp = (
 
 const RESUME_PAYLOAD_PLACEHOLDER = '__ECLIPSA_RESUME_PAYLOAD__'
 const ROUTE_MANIFEST_PLACEHOLDER = '__ECLIPSA_ROUTE_MANIFEST__'
+const APP_HOOKS_PLACEHOLDER = '__ECLIPSA_APP_HOOKS__'
 
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
   html.replace(placeholder, value)
@@ -111,6 +136,7 @@ const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 
 const createRouteSlot = (
   route: {
+    error?: unknown
     layouts: Array<{ renderer: (props: unknown) => unknown }>
     page: { renderer: (props: unknown) => unknown }
     params: RouteParams
@@ -150,12 +176,21 @@ const createRouteElement = (
   params: RouteParams,
   Page: (props: unknown) => unknown,
   Layouts: Array<(props: unknown) => unknown>,
+  error?: unknown,
 ): any => {
   if (Layouts.length === 0) {
-    return jsxDEV(Page as any, createRouteProps(params, {}), null, false, {})
+    const nextProps = createRouteProps(params, {})
+    Object.defineProperty(nextProps, ROUTE_ERROR_PROP, {
+      configurable: true,
+      enumerable: false,
+      value: error,
+      writable: true,
+    })
+    return jsxDEV(Page as any, nextProps, null, false, {})
   }
 
   const route = {
+    error,
     layouts: Layouts.map((renderer) => ({
       renderer,
     })),
@@ -168,11 +203,18 @@ const createRouteElement = (
   let children: unknown = null
   for (let index = Layouts.length - 1; index >= 0; index -= 1) {
     const Layout = Layouts[index]!
+    const nextProps = createRouteProps(params, {
+      children: createRouteSlot(route, index + 1),
+    })
+    Object.defineProperty(nextProps, ROUTE_ERROR_PROP, {
+      configurable: true,
+      enumerable: false,
+      value: error,
+      writable: true,
+    })
     children = jsxDEV(
       Layout as any,
-      createRouteProps(params, {
-        children: createRouteSlot(route, index + 1),
-      }),
+      nextProps,
       null,
       false,
       {},
@@ -256,6 +298,39 @@ const logDevServerError = (devServer: ViteDevServer, error: unknown) => {
   console.error(error)
 }
 
+const toPublicErrorValue = async (
+  devServer: ViteDevServer,
+  hooks: ServerHooksModule,
+  c: AppContext,
+  error: unknown,
+  event: Parameters<typeof runHandleError>[1]['event'],
+) => {
+  const publicError = await runHandleError(
+    {
+      handleError: hooks.handleError,
+    },
+    {
+      context: c,
+      error,
+      event,
+    },
+  )
+  if (!isNotFoundError(error)) {
+    logDevServerError(devServer, error)
+  }
+  return markPublicError(error, publicError)
+}
+
+const loadOptionalHookModule = async <T extends object>(
+  runner: ModuleRunner,
+  filePath: string,
+): Promise<Partial<T>> => {
+  if (!(await fileExists(filePath))) {
+    return {}
+  }
+  return (await runner.import(filePath)) as Partial<T>
+}
+
 const isRedirectResponse = (
   response: unknown,
 ): response is { headers: { get(name: string): string | null }; status: number } =>
@@ -295,6 +370,58 @@ const createDevApp = async (init: DevAppInit) => {
   const routeManifest = createRouteManifest(routes, (entry) =>
     deps.createDevModuleUrl(init.resolvedConfig.root, entry),
   )
+  const appHooksPath = path.join(init.resolvedConfig.root, 'app/+hooks.ts')
+  const serverHooksPath = path.join(init.resolvedConfig.root, 'app/+hooks.server.ts')
+  const appHooks = (await loadOptionalHookModule<AppHooksModule>(init.runner, appHooksPath)) as AppHooksModule
+  const serverHooks = (await loadOptionalHookModule<ServerHooksModule>(
+    init.runner,
+    serverHooksPath,
+  )) as ServerHooksModule
+  const appHooksManifest = {
+    client: (await fileExists(appHooksPath)) ? '/app/+hooks.ts' : null,
+  }
+
+  await serverHooks.init?.()
+
+  const prepareRequestContext = <E extends Context>(c: E) => {
+    attachRequestFetch(
+      c as unknown as AppContext,
+      createRequestFetch(c as unknown as AppContext, serverHooks.handleFetch),
+    )
+    return c as unknown as AppContext
+  }
+
+  const reroutePathname = (request: Request | null, pathname: string, baseUrl: string) =>
+    normalizeRoutePath(resolveReroute(appHooks.reroute, request, pathname, baseUrl))
+
+  const resolveRequest = async (
+    c: AppContext,
+    handler: (requestContext: AppContext) => Promise<Response>,
+  ) => {
+    const requestContext = prepareRequestContext(c)
+    const execute = (nextContext = requestContext) =>
+      withServerRequestContext(
+        nextContext,
+        {
+          handleError: serverHooks.handleError,
+          transport: appHooks.transport,
+        },
+        () => handler(nextContext),
+      )
+
+    if (!serverHooks.handle) {
+      return execute(requestContext)
+    }
+
+    return withServerRequestContext(
+      requestContext,
+      {
+        handleError: serverHooks.handleError,
+        transport: appHooks.transport,
+      },
+      () => serverHooks.handle!(requestContext, (nextContext) => execute(nextContext ?? requestContext)),
+    )
+  }
 
   const loadRouteMiddlewares = async (route: RouteEntry): Promise<MiddlewareHandler[]> =>
     await Promise.all(
@@ -311,7 +438,7 @@ const createDevApp = async (init: DevAppInit) => {
 
   const composeRouteMiddlewares = async <T>(
     route: RouteEntry,
-    c: Context,
+    c: AppContext,
     params: RouteParams,
     handler: () => Promise<T>,
   ): Promise<T | Response> => {
@@ -353,11 +480,11 @@ const createDevApp = async (init: DevAppInit) => {
     return null
   }
 
-  const invokeRouteServer = async (filePath: string, c: Context, params: RouteParams) => {
+  const invokeRouteServer = async (filePath: string, c: AppContext, params: RouteParams) => {
     applyRequestParams(c, params)
     const mod = await init.runner.import(filePath)
     const methodHandler = mod[c.req.method] as
-      | ((context: Context) => Response | Promise<Response>)
+      | ((context: AppContext) => Response | Promise<Response>)
       | undefined
     if (typeof methodHandler === 'function') {
       return methodHandler(c)
@@ -375,11 +502,12 @@ const createDevApp = async (init: DevAppInit) => {
     route: RouteEntry,
     pathname: string,
     params: RouteParams,
-    c: Context,
+    c: AppContext,
     modulePath: string,
     status = 200,
     options?: {
       prepare?: (container: any) => void | Promise<void>
+      routeError?: unknown
     },
   ) => {
     const [
@@ -416,7 +544,7 @@ const createDevApp = async (init: DevAppInit) => {
     )
 
     const document = SSRRoot({
-      children: createRouteElement(pathname, params, Page, Layouts) as SSRRootProps['children'],
+      children: createRouteElement(pathname, params, Page, Layouts, options?.routeError) as SSRRootProps['children'],
       head: {
         type: Fragment,
         isStatic: true,
@@ -439,6 +567,15 @@ const createDevApp = async (init: DevAppInit) => {
                 children: ROUTE_MANIFEST_PLACEHOLDER,
                 id: ROUTE_MANIFEST_ELEMENT_ID,
                 type: 'application/eclipsa-route-manifest+json',
+              },
+            },
+            {
+              type: 'script',
+              isStatic: true,
+              props: {
+                children: APP_HOOKS_PLACEHOLDER,
+                id: APP_HOOKS_ELEMENT_ID,
+                type: 'application/eclipsa-app-hooks+json',
               },
             },
             {
@@ -474,9 +611,13 @@ const createDevApp = async (init: DevAppInit) => {
       symbols: symbolUrls,
     })
     const shellHtml = replaceHeadPlaceholder(
-      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
-      ROUTE_MANIFEST_PLACEHOLDER,
-      escapeJSONScriptText(JSON.stringify(routeManifest)),
+      replaceHeadPlaceholder(
+        replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+        ROUTE_MANIFEST_PLACEHOLDER,
+        escapeJSONScriptText(JSON.stringify(routeManifest)),
+      ),
+      APP_HOOKS_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(appHooksManifest)),
     )
     const { prefix, suffix } = splitHtmlForStreaming(shellHtml)
     const encoder = new TextEncoder()
@@ -518,15 +659,18 @@ const createDevApp = async (init: DevAppInit) => {
 
   const renderMatchedPage = async (
     match: { params: RouteParams; route: RouteEntry },
-    c: Context,
+    c: AppContext,
     options?: {
       prepare?: (container: any) => void | Promise<void>
+      routeError?: unknown
     },
   ) => {
+    const requestPathname = normalizeRoutePath(new URL(c.req.url).pathname)
+    const resolvedPathname = reroutePathname(c.req.raw, requestPathname, c.req.url)
     try {
       return await renderRouteResponse(
         match.route,
-        normalizeRoutePath(new URL(c.req.url).pathname),
+        requestPathname,
         match.params,
         c,
         match.route.page!.filePath,
@@ -534,12 +678,10 @@ const createDevApp = async (init: DevAppInit) => {
         options,
       )
     } catch (error) {
-      if (!isNotFoundError(error)) {
-        logDevServerError(init.devServer, error)
-      }
+      const publicError = await toPublicErrorValue(init.devServer, serverHooks, c, error, 'page')
       const fallback = isNotFoundError(error)
-        ? findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'notFound')
-        : findSpecialRoute(routes, normalizeRoutePath(new URL(c.req.url).pathname), 'error')
+        ? findSpecialRoute(routes, resolvedPathname, 'notFound')
+        : findSpecialRoute(routes, resolvedPathname, 'error')
       const module = fallback?.route[isNotFoundError(error) ? 'notFound' : 'error']
       if (!fallback || !module) {
         return c.text(
@@ -549,24 +691,29 @@ const createDevApp = async (init: DevAppInit) => {
       }
       return renderRouteResponse(
         fallback.route,
-        normalizeRoutePath(new URL(c.req.url).pathname),
+        requestPathname,
         fallback.params,
         c,
         module.filePath,
         isNotFoundError(error) ? 404 : 500,
-        options,
+        {
+          ...options,
+          routeError: publicError,
+        },
       )
     }
   }
 
-  const resolveRoutePreflight = async (href: string, c: Context) => {
+  const resolveRoutePreflight = async (href: string, c: AppContext) => {
     const requestUrl = new URL(c.req.url)
     const targetUrl = new URL(href, requestUrl)
     if (targetUrl.origin !== requestUrl.origin) {
       return c.json({ document: true, ok: false })
     }
 
-    const target = resolvePreflightTarget(normalizeRoutePath(targetUrl.pathname))
+    const target = resolvePreflightTarget(
+      reroutePathname(new Request(targetUrl.href), normalizeRoutePath(targetUrl.pathname), targetUrl.href),
+    )
     if (!target) {
       return c.json({ ok: true })
     }
@@ -575,7 +722,7 @@ const createDevApp = async (init: DevAppInit) => {
     headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, '1')
     let response: Response
     try {
-      response = await fetch(targetUrl.href, {
+      response = await c.var.fetch(targetUrl.href, {
         headers,
         redirect: 'manual',
       })
@@ -601,134 +748,154 @@ const createDevApp = async (init: DevAppInit) => {
     return c.json({ document: true, ok: false })
   }
 
-  app.post('/__eclipsa/action/:id', async (c) => {
-    const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
-    const id = c.req.param('id')
-    const modulePath = actionModules.get(id)
-    if (!modulePath) {
-      return c.text('Not Found', 404)
+  const resolveRequestRoute = (request: Request, url: string) => {
+    const requestPathname = normalizeRoutePath(new URL(url).pathname)
+    const resolvedPathname = reroutePathname(request, requestPathname, url)
+    return {
+      match: matchRoute(routes, resolvedPathname),
+      requestPathname,
+      resolvedPathname,
     }
-    if (!hasAction(id)) {
-      await init.runner.import(modulePath)
-    }
-    return executeAction(id, c)
-  })
+  }
 
-  app.get('/__eclipsa/loader/:id', async (c) => {
-    const [{ executeLoader, hasLoader }] = await Promise.all([init.runner.import('eclipsa')])
-    const id = c.req.param('id')
-    const modulePath = loaderModules.get(id)
-    if (!modulePath) {
-      return c.text('Not Found', 404)
-    }
-    if (!hasLoader(id)) {
-      await init.runner.import(modulePath)
-    }
-    return executeLoader(id, c)
-  })
+  app.post('/__eclipsa/action/:id', async (c) =>
+    resolveRequest(c as AppContext, async (requestContext) => {
+      const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
+      const id = requestContext.req.param('id')
+      const modulePath = actionModules.get(id)
+      if (!modulePath) {
+        return requestContext.text('Not Found', 404)
+      }
+      if (!hasAction(id)) {
+        await init.runner.import(modulePath)
+      }
+      return executeAction(id, requestContext)
+    }),
+  )
 
-  app.get(ROUTE_PREFLIGHT_ENDPOINT, async (c) => {
-    const href = c.req.query('href')
-    if (!href) {
-      return c.json({ document: true, ok: false }, 400)
-    }
-    return resolveRoutePreflight(href, c)
-  })
+  app.get('/__eclipsa/loader/:id', async (c) =>
+    resolveRequest(c as AppContext, async (requestContext) => {
+      const [{ executeLoader, hasLoader }] = await Promise.all([init.runner.import('eclipsa')])
+      const id = requestContext.req.param('id')
+      const modulePath = loaderModules.get(id)
+      if (!modulePath) {
+        return requestContext.text('Not Found', 404)
+      }
+      if (!hasLoader(id)) {
+        await init.runner.import(modulePath)
+      }
+      return executeLoader(id, requestContext)
+    }),
+  )
 
-  app.all('*', async (c) => {
-    const pathname = normalizeRoutePath(new URL(c.req.url).pathname)
-    const match = matchRoute(routes, pathname)
+  app.get(ROUTE_PREFLIGHT_ENDPOINT, async (c) =>
+    resolveRequest(c as AppContext, async (requestContext) => {
+      const href = requestContext.req.query('href')
+      if (!href) {
+        return requestContext.json({ document: true, ok: false }, 400)
+      }
+      return resolveRoutePreflight(href, requestContext)
+    }),
+  )
 
-    if (!match) {
-      const fallback = findSpecialRoute(routes, pathname, 'notFound')
-      if (fallback?.route.notFound) {
-        return composeRouteMiddlewares(fallback.route, c, fallback.params, async () =>
-          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
-            ? c.body(null, 204)
-            : renderRouteResponse(
-                fallback.route,
-                pathname,
-                fallback.params,
-                c,
-                fallback.route.notFound!.filePath,
-                404,
-              ),
+  app.all('*', async (c) =>
+    resolveRequest(c as AppContext, async (requestContext) => {
+      const { match, requestPathname, resolvedPathname } = resolveRequestRoute(
+        requestContext.req.raw,
+        requestContext.req.url,
+      )
+
+      if (!match) {
+        const fallback = findSpecialRoute(routes, resolvedPathname, 'notFound')
+        if (fallback?.route.notFound) {
+          return composeRouteMiddlewares(fallback.route, requestContext, fallback.params, async () =>
+            requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+              ? requestContext.body(null, 204)
+              : renderRouteResponse(
+                  fallback.route,
+                  requestPathname,
+                  fallback.params,
+                  requestContext,
+                  fallback.route.notFound!.filePath,
+                  404,
+                ),
+          )
+        }
+        return requestContext.text('Not Found', 404)
+      }
+
+      if ((requestContext.req.method === 'GET' || requestContext.req.method === 'HEAD') && match.route.page) {
+        return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+            ? requestContext.body(null, 204)
+            : renderMatchedPage(match, requestContext),
         )
       }
-      return c.text('Not Found', 404)
-    }
 
-    if ((c.req.method === 'GET' || c.req.method === 'HEAD') && match.route.page) {
-      return composeRouteMiddlewares(match.route, c, match.params, async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-      )
-    }
-
-    if (c.req.method === 'POST' && match.route.page) {
-      return composeRouteMiddlewares(match.route, c, match.params, async () => {
-        const [
-          {
-            ACTION_CONTENT_TYPE,
-            deserializeValue,
-            executeAction,
-            getNormalizedActionInput,
-            getActionFormSubmissionId,
-            hasAction,
-            primeActionState,
-          },
-        ] = await Promise.all([init.runner.import('eclipsa')])
-        const actionId = await getActionFormSubmissionId(c)
-        if (!actionId) {
-          return match.route.server
-            ? invokeRouteServer(match.route.server.filePath, c, match.params)
-            : renderMatchedPage(match, c)
-        }
-        const modulePath = actionModules.get(actionId)
-        if (!modulePath) {
-          return c.text('Not Found', 404)
-        }
-        if (!hasAction(actionId)) {
-          await init.runner.import(modulePath)
-        }
-        const input = await getNormalizedActionInput(c)
-        const response = await executeAction(actionId, c)
-        const contentType = response.headers.get('content-type') ?? ''
-        if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
-          return response
-        }
-        const body = (await response.json()) as
-          | { error: unknown; ok: false }
-          | { ok: true; value: unknown }
-        return renderMatchedPage(match, c, {
-          prepare(container) {
-            primeActionState(container, actionId, {
-              error: body.ok ? undefined : deserializeValue(body.error),
-              input,
-              result: body.ok ? deserializeValue(body.value) : undefined,
-            })
-          },
+      if (requestContext.req.method === 'POST' && match.route.page) {
+        return composeRouteMiddlewares(match.route, requestContext, match.params, async () => {
+          const [
+            {
+              ACTION_CONTENT_TYPE,
+              deserializePublicValue,
+              executeAction,
+              getNormalizedActionInput,
+              getActionFormSubmissionId,
+              hasAction,
+              primeActionState,
+            },
+          ] = await Promise.all([init.runner.import('eclipsa')])
+          const actionId = await getActionFormSubmissionId(requestContext)
+          if (!actionId) {
+            return match.route.server
+              ? invokeRouteServer(match.route.server.filePath, requestContext, match.params)
+              : renderMatchedPage(match, requestContext)
+          }
+          const modulePath = actionModules.get(actionId)
+          if (!modulePath) {
+            return requestContext.text('Not Found', 404)
+          }
+          if (!hasAction(actionId)) {
+            await init.runner.import(modulePath)
+          }
+          const input = await getNormalizedActionInput(requestContext)
+          const response = await executeAction(actionId, requestContext)
+          const contentType = response.headers.get('content-type') ?? ''
+          if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
+            return response
+          }
+          const body = (await response.json()) as
+            | { error: unknown; ok: false }
+            | { ok: true; value: unknown }
+          return renderMatchedPage(match, requestContext, {
+            prepare(container) {
+              primeActionState(container, actionId, {
+                error: body.ok ? undefined : deserializePublicValue(body.error as any),
+                input,
+                result: body.ok ? deserializePublicValue(body.value as any) : undefined,
+              })
+            },
+          })
         })
-      })
-    }
+      }
 
-    if (match.route.server) {
-      return composeRouteMiddlewares(match.route, c, match.params, async () =>
-        invokeRouteServer(match.route.server!.filePath, c, match.params),
-      )
-    }
+      if (match.route.server) {
+        return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
+          invokeRouteServer(match.route.server!.filePath, requestContext, match.params),
+        )
+      }
 
-    if (match.route.page) {
-      return composeRouteMiddlewares(match.route, c, match.params, async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-      )
-    }
+      if (match.route.page) {
+        return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+            ? requestContext.body(null, 204)
+            : renderMatchedPage(match, requestContext),
+        )
+      }
 
-    return c.text('Not Found', 404)
-  })
+      return requestContext.text('Not Found', 404)
+    }),
+  )
 
   return app
 }

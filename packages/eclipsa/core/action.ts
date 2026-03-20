@@ -1,13 +1,15 @@
 import type { JSX } from '../jsx/types.ts'
 import { component$ } from './component.ts'
-import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
-  deserializeValue,
-  serializeValue,
+  type AppContext,
+  deserializePublicValue,
+  serializePublicValue,
   type SerializedReference,
   type SerializedValue,
-} from './serialize.ts'
+  transformCurrentPublicError,
+  type WithAppEnv,
+} from './hooks.ts'
 import {
   createDetachedRuntimeSignal,
   ensureRuntimeElementId,
@@ -87,18 +89,18 @@ type MiddlewareEnv<T> = T extends {
   readonly __eclipsa_action_env__?: infer MiddlewareEnv
 }
   ? Exclude<MiddlewareEnv, undefined> extends Env
-    ? Exclude<MiddlewareEnv, undefined>
+    ? WithAppEnv<Exclude<MiddlewareEnv, undefined>>
     : {}
   : T extends MiddlewareHandler<infer MiddlewareEnv, any, any>
-    ? MiddlewareEnv
-    : {}
+    ? WithAppEnv<MiddlewareEnv>
+    : WithAppEnv<Env>
 
 type ActionEnv<Middlewares extends readonly ActionMiddleware<any>[]> =
   Middlewares extends readonly [infer Head, ...infer Tail]
     ? Tail extends readonly ActionMiddleware<any>[]
       ? MiddlewareEnv<Head> & ActionEnv<Tail>
       : MiddlewareEnv<Head>
-    : {}
+    : WithAppEnv<Env>
 type MiddlewareActionInput<T> = T extends {
   readonly [ACTION_INPUT_TYPE]?: infer Input
 }
@@ -148,7 +150,7 @@ export interface ActionValidatorMiddleware<Input, Output> extends ActionMiddlewa
   readonly [ACTION_INPUT_TYPE]?: Input
 }
 export type ActionHandler<E extends Env = Env, Output = unknown> = (
-  c: Context<E>,
+  c: AppContext<E>,
 ) => Output | Promise<Output>
 
 type ActionUse<Middlewares extends readonly ActionMiddleware<any>[], Output> = () => ActionHandle<
@@ -308,8 +310,8 @@ const normalizeFormSubmissionInput = (value: unknown) => {
   )
 }
 
-const getActionInputCache = (c: Context<any>) => {
-  const record = c as Context<any> & {
+const getActionInputCache = (c: AppContext<any>) => {
+  const record = c as AppContext<any> & {
     [ACTION_INPUT_CACHE_KEY]?: Promise<unknown>
   }
   if (!record[ACTION_INPUT_CACHE_KEY]) {
@@ -340,13 +342,13 @@ const getActionInputCache = (c: Context<any>) => {
 }
 
 const createActionRefScope = (container: RuntimeContainer | null) =>
-  container ? serializeValue({ container: container.id }) : undefined
+  container ? serializePublicValue({ container: container.id }) : undefined
 
 const readActionRefContainerId = (reference: SerializedReference) => {
   if (!reference.data) {
     return null
   }
-  const decoded = deserializeValue(reference.data)
+  const decoded = deserializePublicValue(reference.data)
   if (!decoded || typeof decoded !== 'object') {
     return null
   }
@@ -355,7 +357,7 @@ const readActionRefContainerId = (reference: SerializedReference) => {
 }
 
 const serializeActionClientValue = (container: RuntimeContainer | null, value: unknown) =>
-  serializeValue(value, {
+  serializePublicValue(value, {
     serializeReference(candidate) {
       const signalId = getRuntimeSignalId(candidate)
       if (signalId) {
@@ -379,7 +381,7 @@ const serializeActionClientValue = (container: RuntimeContainer | null, value: u
   })
 
 const deserializeActionServerValue = (value: SerializedValue) =>
-  deserializeValue(value, {
+  deserializePublicValue(value, {
     deserializeReference(reference) {
       const containerId = readActionRefContainerId(reference)
       if (reference.kind === 'signal') {
@@ -401,7 +403,7 @@ const deserializeActionServerValue = (value: SerializedValue) =>
   })
 
 const deserializeActionClientValue = (container: RuntimeContainer | null, value: SerializedValue) =>
-  deserializeValue(value, {
+  deserializePublicValue(value, {
     deserializeReference(reference) {
       if (!container) {
         throw new TypeError('Action references require an active runtime container.')
@@ -441,7 +443,7 @@ const isOpaqueDomRef = (value: unknown): value is OpaqueDomRef =>
   typeof (value as Record<string, unknown>).token === 'string'
 
 const serializeActionServerValue = (value: unknown) =>
-  serializeValue(value, {
+  serializePublicValue(value, {
     serializeReference(candidate) {
       if (isOpaqueSignalRef(candidate)) {
         return {
@@ -449,7 +451,7 @@ const serializeActionServerValue = (value: unknown) =>
           data:
             candidate.containerId === null
               ? undefined
-              : serializeValue({
+              : serializePublicValue({
                   container: candidate.containerId,
                 }),
           kind: 'signal',
@@ -462,7 +464,7 @@ const serializeActionServerValue = (value: unknown) =>
           data:
             candidate.containerId === null
               ? undefined
-              : serializeValue({
+              : serializePublicValue({
                   container: candidate.containerId,
                 }),
           kind: 'dom',
@@ -682,7 +684,7 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
 }
 
 const composeMiddlewares = async (
-  c: Context<any>,
+  c: AppContext<any>,
   middlewares: ActionMiddleware<any>[],
   handler: ActionHandler<any, unknown>,
 ): Promise<Response | unknown> => {
@@ -759,15 +761,15 @@ const createHandleSignal = <T>(
   return createDetachedRuntimeSignal(container, `$action:${id}:${key}`, initialValue)
 }
 
-const readActionSubmissionInput = async (c: Context<any>) => {
+const readActionSubmissionInput = async (c: AppContext<any>) => {
   const cached = await getActionInputCache(c)
   const actionVars = c.var as Record<string, unknown>
   return normalizeFormSubmissionInput(actionVars.__e_action_raw_input ?? cached)
 }
 
-export const getNormalizedActionInput = (c: Context<any>) => readActionSubmissionInput(c)
+export const getNormalizedActionInput = (c: AppContext<any>) => readActionSubmissionInput(c)
 
-export const getActionFormSubmissionId = async (c: Context<any>) => {
+export const getActionFormSubmissionId = async (c: AppContext<any>) => {
   const input = await getActionInputCache(c)
   if (!isFormDataValue(input)) {
     return null
@@ -778,7 +780,7 @@ export const getActionFormSubmissionId = async (c: Context<any>) => {
 
 export const executeActionSubmission = async (
   id: string,
-  c: Context<any>,
+  c: AppContext<any>,
 ): Promise<ActionExecutionResult> => {
   const action = getActionRegistry().get(id)
   if (!action) {
@@ -898,7 +900,7 @@ export const validator = <Schema extends StandardSchemaV1<any, any>>(
     } catch (error) {
       return c.json(
         {
-          error: serializeValue({
+          error: serializePublicValue({
             issues: [
               {
                 message:
@@ -918,7 +920,7 @@ export const validator = <Schema extends StandardSchemaV1<any, any>>(
     if ('issues' in validated) {
       return c.json(
         {
-          error: serializeValue({
+          error: serializePublicValue({
             issues: validated.issues,
           }),
           ok: false,
@@ -1002,14 +1004,15 @@ export function registerAction(
 
 export const hasAction = (id: string) => getActionRegistry().has(id)
 
-export const executeAction = async (id: string, c: Context<any>) => {
+export const executeAction = async (id: string, c: AppContext<any>) => {
   try {
     const result = await executeActionSubmission(id, c)
     return result.kind === 'response' ? result.response : toActionResponse(result.value)
   } catch (error) {
+    const publicError = await transformCurrentPublicError(error, 'action')
     return new Response(
       JSON.stringify({
-        error: toSerializedActionError(error),
+        error: toSerializedActionError(publicError),
         ok: false,
       } satisfies ActionJsonFailure),
       {

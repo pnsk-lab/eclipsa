@@ -1,4 +1,5 @@
 import type { Plugin } from 'vite'
+import * as fs from 'node:fs/promises'
 import { cwd } from 'node:process'
 import path from 'node:path'
 import { collectRouteModules, collectRouteServerModules, createRoutes } from './utils/routing.ts'
@@ -7,10 +8,23 @@ import { collectAppActions, collectAppLoaders, collectAppSymbols } from './compi
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
 import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
 
+const fileExists = async (filePath: string) => {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const createConfig =
   (options: ResolvedEclipsaPluginOptions): Plugin['config'] =>
   async (userConfig) => {
     const root = userConfig.root ?? cwd()
+    const appHooksPath = path.join(root, 'app/+hooks.ts')
+    const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
+    const hasAppHooks = await fileExists(appHooksPath)
+    const hasServerHooks = await fileExists(serverHooksPath)
     const nitroEnabled = hasNitroPlugin(userConfig.plugins)
     const routes = await createRoutes(root)
     const routeModules = collectRouteModules(routes)
@@ -21,6 +35,7 @@ export const createConfig =
 
     const clientInput = Object.fromEntries([
       ['client_boot', path.join(root, 'app/+client.dev.tsx')],
+      ...(hasAppHooks ? [['app_hooks', appHooksPath] as const] : []),
       ...symbols.map((symbol) => [
         `symbol__${symbol.id}`,
         `${symbol.filePath}?eclipsa-symbol=${symbol.id}`,
@@ -32,6 +47,8 @@ export const createConfig =
       ['server_entry', path.join(root, 'app/+server-entry.ts')],
       ['ssr_root', path.join(root, 'app/+ssr-root.tsx')],
       ['eclipsa_runtime', path.join(root, '../packages/eclipsa/vite/build/runtime.ts')],
+      ...(hasAppHooks ? [['app_hooks', appHooksPath] as const] : []),
+      ...(hasServerHooks ? [['server_hooks', serverHooksPath] as const] : []),
       ...actions.map((action) => [`action__${action.id}`, action.filePath]),
       ...loaders.map((loader) => [`loader__${loader.id}`, loader.filePath]),
       ...routeModules.map((entry) => [entry.entryName, entry.filePath]),

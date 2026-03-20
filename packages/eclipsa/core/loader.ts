@@ -1,6 +1,13 @@
 import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
-import { deserializeValue, serializeValue, type SerializedValue } from './serialize.ts'
+import {
+  type AppContext,
+  deserializePublicValue,
+  serializePublicValue,
+  transformCurrentPublicError,
+  type WithAppEnv,
+} from './hooks.ts'
+import { type SerializedValue } from './serialize.ts'
 import { registerLoaderHook, setLoaderHandleMeta, setLoaderHookMeta } from './internal.ts'
 import {
   createDetachedRuntimeSignal,
@@ -17,18 +24,18 @@ type MiddlewareEnv<T> = T extends {
   readonly __eclipsa_loader_env__?: infer MiddlewareEnv
 }
   ? Exclude<MiddlewareEnv, undefined> extends Env
-    ? Exclude<MiddlewareEnv, undefined>
+    ? WithAppEnv<Exclude<MiddlewareEnv, undefined>>
     : {}
   : T extends MiddlewareHandler<infer MiddlewareEnv, any, any>
-    ? MiddlewareEnv
-    : {}
+    ? WithAppEnv<MiddlewareEnv>
+    : WithAppEnv<Env>
 
 type LoaderEnv<Middlewares extends readonly LoaderMiddleware<any>[]> =
   Middlewares extends readonly [infer Head, ...infer Tail]
     ? Tail extends readonly LoaderMiddleware<any>[]
       ? MiddlewareEnv<Head> & LoaderEnv<Tail>
       : MiddlewareEnv<Head>
-    : {}
+    : WithAppEnv<Env>
 
 export interface LoaderHandle<Output> {
   readonly data: Output | undefined
@@ -42,7 +49,7 @@ export interface LoaderMiddleware<E extends Env = Env> extends MiddlewareHandler
 }
 
 export type LoaderHandler<E extends Env = Env, Output = unknown> = (
-  c: Context<E>,
+  c: AppContext<E>,
 ) => Output | Promise<Output>
 
 type LoaderUse<
@@ -155,7 +162,7 @@ const getLoaderRegistry = () => {
 }
 
 const composeMiddlewares = async (
-  c: Context<any>,
+  c: AppContext<any>,
   middlewares: LoaderMiddleware<any>[],
   handler: LoaderHandler<any, unknown>,
 ): Promise<Response | unknown> => {
@@ -183,15 +190,15 @@ const composeMiddlewares = async (
 
 const toSerializedLoaderError = (error: unknown): SerializedValue => {
   if (error instanceof Error) {
-    return serializeValue({
+    return serializePublicValue({
       message: error.message,
       name: error.name,
     })
   }
   try {
-    return serializeValue(error)
+    return serializePublicValue(error)
   } catch {
-    return serializeValue({
+    return serializePublicValue({
       message: 'Loader failed.',
     })
   }
@@ -243,9 +250,9 @@ const parseJsonLoaderResponse = async (response: Response) => {
     throw new TypeError('Malformed loader response.')
   }
   if (!body.ok) {
-    throw deserializeValue(body.error)
+    throw deserializePublicValue(body.error)
   }
-  return deserializeValue(body.value)
+  return deserializePublicValue(body.value)
 }
 
 const invokeLoader = async (id: string) => {
@@ -258,7 +265,7 @@ const invokeLoader = async (id: string) => {
   return parseJsonLoaderResponse(response)
 }
 
-const resolveLoader = async (id: string, c: Context<any>) => {
+const resolveLoader = async (id: string, c: AppContext<any>) => {
   const loader = getLoaderRegistry().get(id)
   if (!loader) {
     throw new Error(`Unknown loader ${id}.`)
@@ -336,12 +343,12 @@ export function registerLoader(
 
 export const hasLoader = (id: string) => getLoaderRegistry().has(id)
 
-export const executeLoader = async (id: string, c: Context<any>) => {
+export const executeLoader = async (id: string, c: AppContext<any>) => {
   try {
     return new Response(
       JSON.stringify({
         ok: true,
-        value: serializeValue(await resolveLoader(id, c)),
+        value: serializePublicValue(await resolveLoader(id, c)),
       } satisfies LoaderJsonSuccess),
       {
         headers: {
@@ -350,9 +357,10 @@ export const executeLoader = async (id: string, c: Context<any>) => {
       },
     )
   } catch (error) {
+    const publicError = await transformCurrentPublicError(error, 'loader')
     return new Response(
       JSON.stringify({
-        error: toSerializedLoaderError(error),
+        error: toSerializedLoaderError(publicError),
         ok: false,
       } satisfies LoaderJsonFailure),
       {
@@ -368,7 +376,7 @@ export const executeLoader = async (id: string, c: Context<any>) => {
 export const primeLoaderState = async (
   container: RuntimeContainer,
   id: string,
-  c: Context<any>,
+  c: AppContext<any>,
 ) => {
   const value = await resolveLoader(id, c)
   updateLoaderSnapshot(container, id, {
@@ -379,7 +387,7 @@ export const primeLoaderState = async (
   return value
 }
 
-export const resolvePendingLoaders = async (container: RuntimeContainer, c: Context<any>) => {
+export const resolvePendingLoaders = async (container: RuntimeContainer, c: AppContext<any>) => {
   const pendingIds = consumePendingSsrLoaderIds(container)
   if (pendingIds.length === 0) {
     return false

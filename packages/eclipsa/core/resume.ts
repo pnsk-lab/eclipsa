@@ -9,6 +9,12 @@ import {
   registerResumeContainer,
   type ResumePayload,
 } from './runtime.ts'
+import {
+  APP_HOOKS_ELEMENT_ID,
+  registerClientHooks,
+  type AppHooksManifest,
+  type AppHooksModule,
+} from './hooks.ts'
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID, type RouteManifest } from './router-shared.ts'
 
@@ -35,6 +41,16 @@ const getRouteManifest = (doc: Document): RouteManifest => {
   return JSON.parse(elem.textContent) as RouteManifest
 }
 
+const getAppHooksManifest = (doc: Document): AppHooksManifest => {
+  const elem = doc.getElementById(APP_HOOKS_ELEMENT_ID)
+  if (!elem?.textContent) {
+    return {
+      client: null,
+    }
+  }
+  return JSON.parse(elem.textContent) as AppHooksManifest
+}
+
 const initResumeHmr = (hot: ViteHotContext | undefined) => {
   if (!hot) {
     return
@@ -57,6 +73,17 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
 
   if (!payload) {
     return
+  }
+
+  const appHooksManifest = getAppHooksManifest(doc)
+  if (appHooksManifest.client) {
+    const module = (await import(/* @vite-ignore */ appHooksManifest.client)) as AppHooksModule
+    registerClientHooks({
+      reroute: module.reroute,
+      transport: module.transport,
+    })
+  } else {
+    registerClientHooks({})
   }
 
   const container = createResumeContainer(root, payload, {

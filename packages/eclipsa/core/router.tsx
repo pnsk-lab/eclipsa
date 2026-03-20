@@ -10,6 +10,7 @@ import {
 } from './router-shared.ts'
 import {
   notFound as throwRouteNotFound,
+  useRuntimeRouteError,
   useRuntimeNavigate,
   useRuntimeRouteParams,
 } from './runtime.ts'
@@ -136,5 +137,7 @@ export const Link = component$((props: LinkProps) => {
 export const useNavigate = (): Navigate => useRuntimeNavigate()
 
 export const useRouteParams = (): RouteParams => useRuntimeRouteParams()
+
+export const useRouteError = <T = unknown>(): T | undefined => useRuntimeRouteError() as T | undefined
 
 export const notFound = (): never => throwRouteNotFound()

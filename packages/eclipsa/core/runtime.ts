@@ -4,12 +4,12 @@ import { isSSRAttrValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts
 import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import {
-  deserializeValue,
-  escapeJSONScriptText,
-  serializeValue,
+  deserializePublicValue,
+  serializePublicValue,
   type SerializedReference,
   type SerializedValue,
-} from './serialize.ts'
+} from './hooks.ts'
+import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
 import {
   ROUTE_METADATA_HEAD_ATTR,
@@ -66,6 +66,7 @@ const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
 const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
 const ROUTE_NOT_FOUND_KEY = Symbol.for('eclipsa.route-not-found')
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
+const ROUTE_ERROR_PROP = '__eclipsa_route_error'
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
@@ -347,6 +348,7 @@ interface LoadedRouteModule {
 
 interface LoadedRoute {
   entry: RouteModuleManifest
+  error: unknown
   layouts: LoadedRouteModule[]
   params: RouteParams
   pathname: string
@@ -1037,7 +1039,7 @@ const preloadResumableValue = async (
 }
 
 const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): SerializedValue =>
-  serializeValue(value, {
+  serializePublicValue(value, {
     serializeReference(candidate) {
       const signalMeta = getSignalMeta(candidate)
       if (signalMeta) {
@@ -1089,7 +1091,7 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
       if (isRouteSlot(candidate)) {
         return {
           __eclipsa_type: 'ref',
-          data: serializeValue(candidate.startLayoutIndex),
+            data: serializePublicValue(candidate.startLayoutIndex),
           kind: 'route-slot',
           token: candidate.pathname,
         }
@@ -1126,7 +1128,7 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
   })
 
 const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedValue): unknown =>
-  deserializeValue(value, {
+  deserializePublicValue(value, {
     deserializeReference(reference) {
       if (reference.kind === 'navigate') {
         return ensureRouterState(container).navigate
@@ -1160,7 +1162,8 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
         return loaderHook
       }
       if (reference.kind === 'route-slot') {
-        const startLayoutIndex = reference.data === undefined ? 0 : deserializeValue(reference.data)
+        const startLayoutIndex =
+          reference.data === undefined ? 0 : deserializePublicValue(reference.data)
         if (typeof startLayoutIndex !== 'number' || !Number.isInteger(startLayoutIndex)) {
           throw new TypeError('Route slot references require an integer start layout index.')
         }
@@ -3091,12 +3094,14 @@ export const getRuntimeContainer = () => getCurrentContainer()
 export const serializeContainerValue = (
   container: RuntimeContainer | null,
   value: unknown,
-): SerializedValue => (container ? serializeRuntimeValue(container, value) : serializeValue(value))
+): SerializedValue =>
+  container ? serializeRuntimeValue(container, value) : serializePublicValue(value)
 
 export const deserializeContainerValue = (
   container: RuntimeContainer | null,
   value: SerializedValue,
-): unknown => (container ? deserializeRuntimeValue(container, value) : deserializeValue(value))
+): unknown =>
+  container ? deserializeRuntimeValue(container, value) : deserializePublicValue(value)
 
 export const renderClientInsertable = (
   value: unknown,
@@ -3218,6 +3223,12 @@ const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
       configurable: true,
       enumerable: false,
       value: route.params,
+      writable: true,
+    })
+    Object.defineProperty(nextProps, ROUTE_ERROR_PROP, {
+      configurable: true,
+      enumerable: false,
+      value: route.error,
       writable: true,
     })
     return nextProps
@@ -3593,6 +3604,7 @@ const loadResolvedRoute = async (
   let route!: LoadedRoute
   route = {
     entry: matched.entry,
+    error: undefined,
     layouts,
     params: matched.params,
     pathname: normalizedPath,
@@ -5191,6 +5203,17 @@ export const useRuntimeRouteParams = (): RouteParams => {
   }
   const container = getCurrentContainer()
   return container?.router?.currentRoute?.params ?? EMPTY_ROUTE_PARAMS
+}
+
+export const useRuntimeRouteError = (): unknown => {
+  const frame = getCurrentFrame()
+  if (frame?.component.props && typeof frame.component.props === 'object') {
+    const candidate = (frame.component.props as Record<string, unknown>)[ROUTE_ERROR_PROP]
+    if (candidate !== undefined) {
+      return candidate
+    }
+  }
+  return getCurrentContainer()?.router?.currentRoute?.error
 }
 
 export const notFound = (): never => {
