@@ -1,6 +1,4 @@
-import { component$ } from 'eclipsa'
-
-export default component$(() => {
+export default () => {
   return (
     <main>
       <h2>SVG HMR Probe</h2>
@@ -21,4 +19,4 @@ export default component$(() => {
       </svg>
     </main>
   )
-})
+}

@@ -1,5 +1,4 @@
 import type { JSX } from '../jsx/types.ts'
-import { component$ } from './component.ts'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
   type AppContext,
@@ -1115,7 +1114,7 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
         }
       }
 
-      const Form = component$((props: ActionFormProps) => {
+      const Form = (props: ActionFormProps) => {
         if (typeof document !== 'undefined') {
           return createActionFormNode(id, props) as unknown as JSX.Element
         }
@@ -1144,7 +1143,7 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
           props: nextProps,
           type: 'form',
         } satisfies JSX.Element
-      })
+      }
       const actionHandle = setActionHandleMeta(
         {
           Form,

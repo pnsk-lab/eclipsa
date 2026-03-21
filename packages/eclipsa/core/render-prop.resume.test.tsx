@@ -1,29 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { component$ } from './component.ts'
 import { __eclipsaComponent } from './internal.ts'
 import { renderSSR } from './ssr.ts'
 
-const Projected = component$(
-  __eclipsaComponent(
-    (props: { label: string }) => <span>{props.label}</span>,
-    'projected-symbol',
-    () => [],
-    { label: 1 },
-  ),
+const Projected = __eclipsaComponent(
+  (props: { label: string }) => <span>{props.label}</span>,
+  'projected-symbol',
+  () => [],
+  { label: 1 },
 )
 
-const Probe = component$(
-  __eclipsaComponent(
-    (props: { aa?: unknown; children?: unknown }) => (
-      <section>
-        <div>{props.aa}</div>
-        <div>{props.children}</div>
-      </section>
-    ),
-    'probe-symbol',
-    () => [],
-    { aa: 1, children: 1 },
+const Probe = __eclipsaComponent(
+  (props: { aa?: unknown; children?: unknown }) => (
+    <section>
+      <div>{props.aa}</div>
+      <div>{props.children}</div>
+    </section>
   ),
+  'probe-symbol',
+  () => [],
+  { aa: 1, children: 1 },
 )
 
 describe('render props resume payload', () => {

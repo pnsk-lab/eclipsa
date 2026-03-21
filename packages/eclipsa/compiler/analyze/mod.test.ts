@@ -37,7 +37,7 @@ describe('analyzeModule()', () => {
     }
   })
 
-  it('rejects useSignal() outside component$()', async () => {
+  it('rejects useSignal() outside a component', async () => {
     await expect(
       analyzeModule(`
         import { useSignal } from "eclipsa";
@@ -45,20 +45,19 @@ describe('analyzeModule()', () => {
         export default count;
       `),
     ).rejects.toThrowError(
-      'useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).',
+      'useSignal() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).',
     )
   })
 
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
-      import { component$ } from "eclipsa";
-      export const Probe = component$((props) => (
+      export const Probe = (props) => (
         <section>
           <div>{props.aa}</div>
           <div>{props.children}</div>
           <span>{props.aa}</span>
         </section>
-      ));
+      );
     `)
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
@@ -69,11 +68,10 @@ describe('analyzeModule()', () => {
   it('rejects non-direct uses of projection slot props', async () => {
     await expect(
       analyzeModule(`
-        import { component$ } from "eclipsa";
-        export default component$((props) => {
+        export default (props) => {
           const forwarded = props.children;
           return <div>{props.children}</div>;
-        });
+        };
       `),
     ).rejects.toThrowError(
       'Projection slot prop "children" must be rendered directly as {props.children} inside JSX.',
@@ -82,25 +80,24 @@ describe('analyzeModule()', () => {
 
   it('does not mark intrinsic attribute props as projection slots', async () => {
     const analyzed = await analyzeModule(`
-      import { component$ } from "eclipsa";
-      export const Logo = component$((props) => (
+      export const Logo = (props) => (
         <svg class={props.class}>
           <path />
         </svg>
-      ));
+      );
     `)
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
     expect(analyzed?.code).not.toContain('{ class: 1 }')
   })
 
-  it('supports aliased eclipsa imports on the Rust analyze path', async () => {
+  it('auto-detects PascalCase component declarations on the Rust analyze path', async () => {
     const analyzed = await analyzeModule(`
-      import { component$ as view$, onVisible as visible } from "eclipsa";
-      export const Header = view$(() => {
+      import { onVisible as visible } from "eclipsa";
+      export const Header = () => {
         visible(() => console.log("ready"));
         return <h1>ready</h1>;
-      });
+      };
     `)
 
     expect(analyzed.code).toContain('__eclipsaComponent')
@@ -108,11 +105,37 @@ describe('analyzeModule()', () => {
     expect([...analyzed.hmrManifest.components.keys()]).toContain('component:Header')
   })
 
+  it('does not capture type-only component signature references', async () => {
+    const analyzed = await analyzeModule(`
+      type Props = {
+        href: string;
+      };
+
+      export const Link = (_props: Props) => <a href="/ready">ready</a>;
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect(analyzed?.code).toContain('()=>[]')
+    expect(analyzed?.code).not.toContain('()=>[Props]')
+  })
+
+  it('analyzes the built-in Link component without capturing top-level helpers', async () => {
+    const analyzeDir = path.dirname(fileURLToPath(import.meta.url))
+    const routerPath = path.resolve(analyzeDir, '../../core/router.tsx')
+    const tsx = await fs.readFile(routerPath, 'utf8')
+
+    const analyzed = await analyzeModule(tsx)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect(analyzed?.code).not.toContain('()=>[LinkProps]')
+    expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:Link')
+  })
+
   it('emits symbol modules that accept __scope as the first runtime argument', async () => {
     const analyzed = await analyzeModule(`
-      import { $, component$, onVisible, useWatch } from "eclipsa";
+      import { $, onVisible, useWatch } from "eclipsa";
 
-      export default component$((props) => {
+      export default (props) => {
         const count = props.count;
         const handler = $((event) => {
           console.log(count, event.type);
@@ -127,7 +150,7 @@ describe('analyzeModule()', () => {
         });
 
         return <button onClick$={(event) => handler(event)}>{count}</button>;
-      });
+      };
     `)
 
     const symbols = [...analyzed.symbols.values()]
@@ -149,15 +172,15 @@ describe('analyzeModule()', () => {
 
   it('keeps concrete local symbol ids in emitted component code while preserving HMR metadata', async () => {
     const analyzed = await analyzeModule(`
-      import { component$, onVisible } from "eclipsa";
+      import { onVisible } from "eclipsa";
 
-      export default component$(() => {
+      export default () => {
         onVisible(() => {
           console.log("ready");
         });
 
         return <div>ready</div>;
-      });
+      };
     `)
 
     const component = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'component')

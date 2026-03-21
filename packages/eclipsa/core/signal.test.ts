@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
-import { component$ } from './component.ts'
 import { __eclipsaComponent } from './internal.ts'
 import { onCleanup, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
@@ -97,7 +96,7 @@ const withFakeNodeGlobal = <T>(fn: () => T) => {
 }
 
 const renderComponent = (render: () => string) => {
-  const App = component$(__eclipsaComponent(render, 'component-signal-test', () => []))
+  const App = __eclipsaComponent(render, 'component-signal-test', () => [])
   const container = createContainer()
   withRuntimeContainer(container, () => {
     renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)

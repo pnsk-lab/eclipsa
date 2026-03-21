@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { component$ } from './component.ts'
 import { __eclipsaComponent } from './internal.ts'
 import { renderSSR, renderSSRAsync, renderSSRStream } from './ssr.ts'
 import { signal, useSignal } from './signal.ts'
@@ -9,32 +8,28 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('Suspense', () => {
   it('resolves async computed signals during async SSR', async () => {
-    const App = component$(
-      __eclipsaComponent(
-        () => {
-          const ReadValue = component$(
-            __eclipsaComponent(
-              () => {
-                const value = useSignal.computed(async () => {
-                  await wait(0)
-                  return 'ready'
-                })
-                return <p>{value.value}</p>
-              },
-              'suspense-read-value',
-              () => [],
-            ),
-          )
+    const App = __eclipsaComponent(
+      () => {
+        const ReadValue = __eclipsaComponent(
+          () => {
+            const value = useSignal.computed(async () => {
+              await wait(0)
+              return 'ready'
+            })
+            return <p>{value.value}</p>
+          },
+          'suspense-read-value',
+          () => [],
+        )
 
-          return (
-            <Suspense fallback={<p>loading</p>}>
-              <ReadValue />
-            </Suspense>
-          )
-        },
-        'suspense-test-app',
-        () => [],
-      ),
+        return (
+          <Suspense fallback={<p>loading</p>}>
+            <ReadValue />
+          </Suspense>
+        )
+      },
+      'suspense-test-app',
+      () => [],
     )
 
     const { html } = await renderSSRAsync(() => <App />)
@@ -44,32 +39,28 @@ describe('Suspense', () => {
   })
 
   it('streams suspense fallbacks before resolved boundary content', async () => {
-    const App = component$(
-      __eclipsaComponent(
-        () => {
-          const ReadValue = component$(
-            __eclipsaComponent(
-              () => {
-                const value = useSignal.computed(async () => {
-                  await wait(0)
-                  return 'ready'
-                })
-                return <p>{value.value}</p>
-              },
-              'suspense-stream-value',
-              () => [],
-            ),
-          )
+    const App = __eclipsaComponent(
+      () => {
+        const ReadValue = __eclipsaComponent(
+          () => {
+            const value = useSignal.computed(async () => {
+              await wait(0)
+              return 'ready'
+            })
+            return <p>{value.value}</p>
+          },
+          'suspense-stream-value',
+          () => [],
+        )
 
-          return (
-            <Suspense fallback={<p>loading</p>}>
-              <ReadValue />
-            </Suspense>
-          )
-        },
-        'suspense-stream-app',
-        () => [],
-      ),
+        return (
+          <Suspense fallback={<p>loading</p>}>
+            <ReadValue />
+          </Suspense>
+        )
+      },
+      'suspense-stream-app',
+      () => [],
     )
 
     const { html, chunks } = await renderSSRStream(() => <App />)
@@ -91,33 +82,29 @@ describe('Suspense', () => {
   it('does not reuse resolved async signal snapshots across SSR requests', async () => {
     let invocationCount = 0
 
-    const App = component$(
-      __eclipsaComponent(
-        () => {
-          const ReadValue = component$(
-            __eclipsaComponent(
-              () => {
-                const value = useSignal.computed(async () => {
-                  invocationCount += 1
-                  await wait(0)
-                  return `ready-${invocationCount}`
-                })
-                return <p>{value.value}</p>
-              },
-              'suspense-request-value',
-              () => [],
-            ),
-          )
+    const App = __eclipsaComponent(
+      () => {
+        const ReadValue = __eclipsaComponent(
+          () => {
+            const value = useSignal.computed(async () => {
+              invocationCount += 1
+              await wait(0)
+              return `ready-${invocationCount}`
+            })
+            return <p>{value.value}</p>
+          },
+          'suspense-request-value',
+          () => [],
+        )
 
-          return (
-            <Suspense fallback={<p>loading</p>}>
-              <ReadValue />
-            </Suspense>
-          )
-        },
-        'suspense-request-app',
-        () => [],
-      ),
+        return (
+          <Suspense fallback={<p>loading</p>}>
+            <ReadValue />
+          </Suspense>
+        )
+      },
+      'suspense-request-app',
+      () => [],
     )
 
     const first = await renderSSRAsync(() => <App />)
@@ -136,48 +123,44 @@ describe('Suspense', () => {
       releaseSlowRequest = resolve
     })
 
-    const App = component$(
-      __eclipsaComponent(
-        ({ blockSlow, label }: { blockSlow: boolean; label: string }) => {
-          const ReadValue = component$(
-            __eclipsaComponent(
-              () => {
-                const fastValue = useSignal.computed(async () => {
-                  fastInvocationCount += 1
-                  await wait(0)
-                  return `${label}-fast-${fastInvocationCount}`
-                })
-                const slowValue = useSignal.computed(async () => {
-                  slowInvocationCount += 1
-                  if (blockSlow) {
-                    await slowRequestGate
-                  } else {
-                    await wait(0)
-                  }
-                  return `${label}-slow-${slowInvocationCount}`
-                })
+    const App = __eclipsaComponent(
+      ({ blockSlow, label }: { blockSlow: boolean; label: string }) => {
+        const ReadValue = __eclipsaComponent(
+          () => {
+            const fastValue = useSignal.computed(async () => {
+              fastInvocationCount += 1
+              await wait(0)
+              return `${label}-fast-${fastInvocationCount}`
+            })
+            const slowValue = useSignal.computed(async () => {
+              slowInvocationCount += 1
+              if (blockSlow) {
+                await slowRequestGate
+              } else {
+                await wait(0)
+              }
+              return `${label}-slow-${slowInvocationCount}`
+            })
 
-                return (
-                  <div>
-                    <p>{fastValue.value}</p>
-                    <p>{slowValue.value}</p>
-                  </div>
-                )
-              },
-              'suspense-concurrent-request-value',
-              () => [],
-            ),
-          )
+            return (
+              <div>
+                <p>{fastValue.value}</p>
+                <p>{slowValue.value}</p>
+              </div>
+            )
+          },
+          'suspense-concurrent-request-value',
+          () => [],
+        )
 
-          return (
-            <Suspense fallback={<p>loading</p>}>
-              <ReadValue />
-            </Suspense>
-          )
-        },
-        'suspense-concurrent-request-app',
-        () => [],
-      ),
+        return (
+          <Suspense fallback={<p>loading</p>}>
+            <ReadValue />
+          </Suspense>
+        )
+      },
+      'suspense-concurrent-request-app',
+      () => [],
     )
 
     const first = renderSSRAsync(() => <App blockSlow label="first" />)

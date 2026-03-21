@@ -1,4 +1,4 @@
-import { component$, For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
+import { For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
 import { ProjectedContent } from './ProjectedContent.tsx'
 import { RenderPropProbe } from './RenderPropProbe.tsx'
 
@@ -9,7 +9,7 @@ export const metadata = {
   title: 'Home | E2E',
 }
 
-export default component$(() => {
+export default () => {
   const todos = useSignal<string[]>(['ToDo1'])
   const inputting = useSignal('')
   const navigate = useNavigate()
@@ -65,4 +65,4 @@ export default component$(() => {
       </ul>
     </div>
   )
-})
+}

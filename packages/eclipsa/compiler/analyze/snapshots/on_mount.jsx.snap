@@ -1,7 +1,7 @@
 // ================= ENTRY (on_mount.jsx) ==
-import { component$, onMount } from 'eclipsa'
+import { onMount } from 'eclipsa'
 
-export default component$(() => {
+export default (() => {
   const value = 'mounted'
 
   onMount(() => {
@@ -9,14 +9,14 @@ export default component$(() => {
   })
 
   return <button>{value}</button>
-})
+});
 
 
 // ================= analyzed ==
 import { __eclipsaComponent } from "eclipsa/internal";
-import { component$, onMount } from 'eclipsa'
+import { onMount } from 'eclipsa'
 
-export default component$(__eclipsaComponent(() => {
+export default (__eclipsaComponent(() => {
   const value = 'mounted'
 
   onMount(() => {
@@ -24,11 +24,11 @@ export default component$(__eclipsaComponent(() => {
   })
 
   return <button>{value}</button>
-}, "12cvs17", ()=>[]))
+}, "12cvs17", ()=>[]));
 
 
 // ================= 12cvs17 (component) ==
-import { component$, onMount } from 'eclipsa'
+import { onMount } from 'eclipsa'
 export default (__scope) => {
   const value = 'mounted'
 

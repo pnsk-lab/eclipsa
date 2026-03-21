@@ -36,14 +36,12 @@ describe('createResumeHmrUpdate', () => {
 
   it('keeps stable HMR keys for default and named components', async () => {
     const previous = await analyze(`
-      import { component$ } from "eclipsa";
-      export const Header = component$(() => <h1>old</h1>);
-      export default component$(() => <div>page</div>);
+            export const Header = () => <h1>old</h1>;
+      export default () => <div>page</div>;
     `)
     const next = await analyze(`
-      import { component$ } from "eclipsa";
-      export const Header = component$(() => <h1>new</h1>);
-      export default component$(() => <div>page</div>);
+            export const Header = () => <h1>new</h1>;
+      export default () => <div>page</div>;
     `)
 
     const previousKeys = [...previous.hmrManifest.components.keys()]
@@ -59,21 +57,21 @@ describe('createResumeHmrUpdate', () => {
   it('treats event body edits as symbol URL replacements without forcing rerender', async () => {
     const previous = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/event-change.tsx',
     )
     const next = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/event-change.tsx',
     )
@@ -107,21 +105,21 @@ describe('createResumeHmrUpdate', () => {
   it('rerenders the changed component when its JSX changes', async () => {
     const previous = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/component-change.tsx',
     )
     const next = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button><span>{count.value}</span></button>;
-      });
+      };
     `,
       '/tmp/component-change.tsx',
     )
@@ -142,23 +140,23 @@ describe('createResumeHmrUpdate', () => {
   it('escalates capture changes to owner rerender', async () => {
     const previous = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         const label = useSignal("a");
         return <button onClick$={() => { count.value += 1; }}>{label.value}</button>;
-      });
+      };
     `,
       '/tmp/capture-change.tsx',
     )
     const next = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         const label = useSignal("a");
         return <button onClick$={() => { count.value += label.value.length; }}>{label.value}</button>;
-      });
+      };
     `,
       '/tmp/capture-change.tsx',
     )
@@ -178,24 +176,24 @@ describe('createResumeHmrUpdate', () => {
   it('marks local symbol graph changes for owner rerender', async () => {
     const previous = await analyze(
       `
-      import { component$, useSignal, useWatch } from "eclipsa";
-      export default component$(() => {
+      import { useSignal, useWatch } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         useWatch(() => { count.value; });
         return <button>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/watch-change.tsx',
     )
     const next = await analyze(
       `
-      import { component$, useSignal, useWatch } from "eclipsa";
-      export default component$(() => {
+      import { useSignal, useWatch } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         useWatch(() => { count.value; });
         useWatch(() => { console.log(count.value); });
         return <button>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/watch-change.tsx',
     )
@@ -215,21 +213,21 @@ describe('createResumeHmrUpdate', () => {
   it('registers URLs for newly added event symbols while rerendering the owner', async () => {
     const previous = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/new-event.tsx',
     )
     const next = await analyze(
       `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
-      });
+      };
     `,
       '/tmp/new-event.tsx',
     )
@@ -257,27 +255,27 @@ describe('createResumeHmrUpdate', () => {
   it('treats onVisible callbacks as lazy symbol URL replacements', async () => {
     const previous = await analyze(
       `
-      import { component$, onVisible } from "eclipsa";
-      export default component$(() => {
+      import { onVisible } from "eclipsa";
+      export default () => {
         const label = "ready";
         onVisible(() => {
           console.log(label);
         });
         return <div>{label}</div>;
-      });
+      };
     `,
       '/tmp/on-visible.tsx',
     )
     const next = await analyze(
       `
-      import { component$, onVisible } from "eclipsa";
-      export default component$(() => {
+      import { onVisible } from "eclipsa";
+      export default () => {
         const label = "ready";
         onVisible(() => {
           console.log(label.toUpperCase());
         });
         return <div>{label}</div>;
-      });
+      };
     `,
       '/tmp/on-visible.tsx',
     )
@@ -305,13 +303,13 @@ describe('createResumeHmrUpdate', () => {
     const appDir = path.join(root, 'app')
     const filePath = path.join(appDir, '+page.tsx')
     const source = `
-      import { component$, onVisible } from "eclipsa";
-      export default component$(() => {
+      import { onVisible } from "eclipsa";
+      export default () => {
         onVisible(() => {
           console.log("ready");
         });
         return <div>ready</div>;
-      });
+      };
     `
 
     await fs.mkdir(appDir, { recursive: true })
@@ -337,14 +335,14 @@ describe('createResumeHmrUpdate', () => {
     const appDir = path.join(root, 'app')
     const filePath = path.join(appDir, '+page.tsx')
     const source = `
-      import { component$, onVisible } from "eclipsa";
+      import { onVisible } from "eclipsa";
       import { setupLandingScene } from "./landing-scene.ts";
-      export default component$(() => {
+      export default () => {
         onVisible(() => {
           setupLandingScene({ canvas: null });
         });
         return <div>ready</div>;
-      });
+      };
     `
 
     await fs.mkdir(appDir, { recursive: true })
@@ -370,16 +368,14 @@ describe('createResumeHmrUpdate', () => {
   it('falls back to full reload when top-level component membership changes', async () => {
     const previous = await analyze(
       `
-      import { component$ } from "eclipsa";
-      export default component$(() => <div>ready</div>);
+            export default () => <div>ready</div>;
     `,
       '/tmp/full-reload.tsx',
     )
     const next = await analyze(
       `
-      import { component$ } from "eclipsa";
-      export const Header = component$(() => <h1>new</h1>);
-      export default component$(() => <div>ready</div>);
+            export const Header = () => <h1>new</h1>;
+      export default () => <div>ready</div>;
     `,
       '/tmp/full-reload.tsx',
     )

@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
-import { component$ } from './component.ts'
 import { __eclipsaLoader } from './loader.ts'
 import { renderSSRAsync } from './ssr.ts'
 
@@ -8,10 +7,10 @@ const useProfile = __eclipsaLoader('profile-ssr', [], async () => ({
   ready: true,
 }))
 
-const App = component$(() => {
+const App = () => {
   const profile = useProfile()
   return <div>{profile.data?.ready ? 'ready' : 'pending'}</div>
-})
+}
 
 describe('SSR loader discovery', () => {
   it('resolves component-local loaders during SSR and persists them into the payload', async () => {

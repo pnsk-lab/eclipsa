@@ -239,6 +239,7 @@ interface ComponentState {
   props: unknown
   projectionSlots: Record<string, number> | null
   reuseExistingDomOnActivate?: boolean
+  reuseProjectionSlotDomOnActivate?: boolean
   scopeId: string
   signalIds: string[]
   start?: Comment
@@ -256,6 +257,7 @@ interface RenderFrame {
   projectionState: {
     counters: Map<string, number>
     reuseExistingDom: boolean
+    reuseProjectionSlotDom: boolean
   }
   visitedDescendants: Set<string>
   mode: 'client' | 'ssr'
@@ -1309,6 +1311,19 @@ const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> 
 const hasProjectionSlotValue = (props: Record<string, unknown>, name: string) =>
   Object.prototype.hasOwnProperty.call(props, name)
 
+const shouldWrapProjectionSlotValue = (value: unknown): boolean => {
+  if (value === null || value === undefined || value === false) {
+    return false
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => shouldWrapProjectionSlotValue(entry))
+  }
+  if (typeof value === 'function') {
+    return true
+  }
+  return typeof value === 'object'
+}
+
 const createRenderProps = (
   componentId: string,
   meta: ComponentMeta,
@@ -1331,10 +1346,14 @@ const createRenderProps = (
         if (!hasProjectionSlotValue(props, name)) {
           return undefined
         }
+        const value = props[name]
+        if (!shouldWrapProjectionSlotValue(value)) {
+          return value
+        }
         const current = counters.get(name) ?? 0
         counters.set(name, current + 1)
         const occurrence = totalOccurrences > 0 ? current % totalOccurrences : current
-        return createProjectionSlot(componentId, name, occurrence, props[name])
+        return createProjectionSlot(componentId, name, occurrence, value)
       },
     })
   }
@@ -1514,6 +1533,9 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     if (component?.active) {
       continue
     }
+    if (component) {
+      component.reuseProjectionSlotDomOnActivate = true
+    }
     container.dirty.add(componentId)
   }
 }
@@ -1663,6 +1685,7 @@ const createFrame = (
   mode: RenderFrame['mode'],
   options?: {
     reuseExistingDom?: boolean
+    reuseProjectionSlotDom?: boolean
   },
 ): RenderFrame => ({
   childCursor: 0,
@@ -1673,6 +1696,7 @@ const createFrame = (
   projectionState: {
     counters: new Map(),
     reuseExistingDom: options?.reuseExistingDom ?? false,
+    reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
   },
   signalCursor: 0,
   visibleCursor: 0,
@@ -1712,6 +1736,7 @@ const getOrCreateComponentState = (
     props: {},
     projectionSlots: null,
     reuseExistingDomOnActivate: true,
+    reuseProjectionSlotDomOnActivate: false,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol,
@@ -2129,6 +2154,28 @@ const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Nod
   const currentNodes = getBoundaryChildren(start, end)
   const currentRanges = collectProjectionSlotRanges(currentNodes)
   const nextRanges = collectProjectionSlotRanges(nodes)
+  const preservedComponentIds = new Set<string>()
+
+  const collectComponentBoundaryIds = (roots: Node[]) => {
+    const ids = new Set<string>()
+    const visit = (node: Node) => {
+      if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
+        const matched = (node as Comment).data.match(/^ec:c:(.+):(start|end)$/)
+        if (matched) {
+          ids.add(matched[1]!)
+        }
+      }
+      for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
+        visit(child)
+      }
+    }
+
+    for (const root of roots) {
+      visit(root)
+    }
+
+    return ids
+  }
 
   for (const [key, nextRange] of nextRanges) {
     const currentRange = currentRanges.get(key)
@@ -2136,13 +2183,21 @@ const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Nod
       continue
     }
 
+    const movedRoots: Node[] = []
     let cursor = currentRange.start.nextSibling
     while (cursor && cursor !== currentRange.end) {
       const nextSibling = cursor.nextSibling
+      movedRoots.push(cursor)
       nextRange.end.parentNode?.insertBefore(cursor, nextRange.end)
       cursor = nextSibling
     }
+
+    for (const componentId of collectComponentBoundaryIds(movedRoots)) {
+      preservedComponentIds.add(componentId)
+    }
   }
+
+  return preservedComponentIds
 }
 
 const replaceBoundaryContents = (
@@ -2153,9 +2208,9 @@ const replaceBoundaryContents = (
     preserveProjectionSlots?: boolean
   },
 ) => {
-  if (options?.preserveProjectionSlots ?? true) {
-    preserveProjectionSlotContents(start, end, nodes)
-  }
+  const preservedComponentIds = options?.preserveProjectionSlots ?? true
+    ? preserveProjectionSlotContents(start, end, nodes)
+    : new Set<string>()
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
@@ -2165,6 +2220,8 @@ const replaceBoundaryContents = (
   for (const node of nodes) {
     end.parentNode?.insertBefore(node, end)
   }
+
+  return preservedComponentIds
 }
 
 interface FocusSnapshot {
@@ -2801,7 +2858,12 @@ const renderComponentToNodes = (
   }
   component.props = props
   component.projectionSlots = meta.projectionSlots ?? null
-  const frame = createFrame(container, component, mode)
+  const parentFrame = getCurrentFrame()
+  const shouldReuseProjectionSlotDom = parentFrame?.projectionState.reuseProjectionSlotDom ?? false
+  const frame = createFrame(container, component, mode, {
+    reuseExistingDom: shouldReuseProjectionSlotDom,
+    reuseProjectionSlotDom: shouldReuseProjectionSlotDom,
+  })
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
   const start = container.doc.createComment(`ec:c:${componentId}:start`)
@@ -2809,7 +2871,6 @@ const renderComponentToNodes = (
   component.start = start
   component.end = end
   const renderProps = createRenderProps(componentId, meta, props)
-  const parentFrame = getCurrentFrame()
   let rendered: Node[]
   try {
     rendered = pushFrame(frame, () => toMountedNodes(componentFn(renderProps), container))
@@ -4115,7 +4176,11 @@ export const renderClientComponent = <T>(componentFn: Component<T>, props: T): u
   component.start = undefined
   component.end = undefined
 
-  const frame = createFrame(container, component, 'client')
+  const shouldReuseProjectionSlotDom = parentFrame.projectionState.reuseProjectionSlotDom
+  const frame = createFrame(container, component, 'client', {
+    reuseExistingDom: shouldReuseProjectionSlotDom,
+    reuseProjectionSlotDom: shouldReuseProjectionSlotDom,
+  })
   const oldDescendants = collectDescendantIds(container, componentId)
   clearComponentSubscriptions(container, componentId)
   const renderProps =
@@ -4167,8 +4232,10 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     const oldDescendants = collectDescendantIds(container, componentId)
     const frame = createFrame(container, component, 'client', {
       reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
+      reuseProjectionSlotDom: component.reuseProjectionSlotDomOnActivate ?? false,
     })
     component.reuseExistingDomOnActivate = true
+    component.reuseProjectionSlotDomOnActivate = false
     const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
     const nodes = pushContainer(container, () =>
       pushFrame(frame, () =>
@@ -4177,14 +4244,15 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     )
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    replaceBoundaryContents(component.start, component.end, nodes, {
+    const preservedDescendants = replaceBoundaryContents(component.start, component.end, nodes, {
       preserveProjectionSlots: frame.projectionState.reuseExistingDom,
     })
     restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
     component.active = true
-    pruneRemovedComponents(container, componentId, frame.visitedDescendants)
+    const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
+    pruneRemovedComponents(container, componentId, keptDescendants)
     for (const descendantId of oldDescendants) {
-      if (frame.visitedDescendants.has(descendantId)) {
+      if (keptDescendants.has(descendantId)) {
         continue
       }
       clearComponentSubscriptions(container, descendantId)
@@ -4208,8 +4276,10 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   )
   const frame = createFrame(container, component, 'client', {
     reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
+    reuseProjectionSlotDom: component.reuseProjectionSlotDomOnActivate ?? false,
   })
   component.reuseExistingDomOnActivate = true
+  component.reuseProjectionSlotDomOnActivate = false
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => {
@@ -4231,7 +4301,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   )
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  replaceBoundaryContents(component.start, component.end, nodes, {
+  const preservedDescendants = replaceBoundaryContents(component.start, component.end, nodes, {
     preserveProjectionSlots: frame.projectionState.reuseExistingDom,
   })
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
@@ -4241,10 +4311,11 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
 
   component.active = true
 
-  pruneRemovedComponents(container, componentId, frame.visitedDescendants)
+  const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
+  pruneRemovedComponents(container, componentId, keptDescendants)
 
   for (const descendantId of oldDescendants) {
-    if (frame.visitedDescendants.has(descendantId)) {
+    if (keptDescendants.has(descendantId)) {
       continue
     }
     clearComponentSubscriptions(container, descendantId)
@@ -4384,6 +4455,7 @@ export const applyResumeHmrUpdate = async (
     }
     resetComponentVisibleStates(container, boundaryId)
     component.active = false
+    component.reuseProjectionSlotDomOnActivate = true
     container.dirty.add(boundaryId)
   }
 

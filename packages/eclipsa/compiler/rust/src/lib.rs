@@ -7,9 +7,9 @@ use napi::Error;
 use napi_derive::napi;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    CallExpression, ExportDefaultDeclaration, Expression, ImportDeclaration, ImportDeclarationSpecifier,
+    CallExpression, ExportDefaultDeclaration, ExportDefaultDeclarationKind, Expression,
     JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
-    JSXExpression, JSXFragment, ModuleExportName, Program,
+    JSXExpression, JSXFragment, JSXMemberExpressionObject, Program, VariableDeclarator,
 };
 use oxc_ast_visit::{walk, Visit};
 use oxc_codegen::Codegen;
@@ -310,7 +310,43 @@ fn normalize_jsx_text(value: &str) -> Option<String> {
 }
 
 fn is_component_name(name: &str) -> bool {
-    name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase())
+    name.chars().next().is_some_and(|ch| {
+        ch.to_ascii_lowercase() != ch || !ch.is_ascii_alphabetic()
+    }) || name.contains('.')
+}
+
+fn jsx_member_expression_object_to_string(object: &JSXMemberExpressionObject<'_>) -> Result<String, String> {
+    match object {
+        JSXMemberExpressionObject::IdentifierReference(identifier) => {
+            Ok(identifier.name.as_str().to_string())
+        }
+        JSXMemberExpressionObject::MemberExpression(expression) => Ok(format!(
+            "{}.{}",
+            jsx_member_expression_object_to_string(&expression.object)?,
+            expression.property.name.as_str(),
+        )),
+        JSXMemberExpressionObject::ThisExpression(_) => {
+            Err("this-based JSX elements are not supported by the optimizer.".to_string())
+        }
+    }
+}
+
+fn jsx_element_name_to_string(name: &JSXElementName<'_>) -> Result<String, String> {
+    match name {
+        JSXElementName::Identifier(identifier) => Ok(identifier.name.as_str().to_string()),
+        JSXElementName::IdentifierReference(identifier) => Ok(identifier.name.as_str().to_string()),
+        JSXElementName::NamespacedName(name) => {
+            Ok(format!("{}:{}", name.namespace.name.as_str(), name.name.name.as_str()))
+        }
+        JSXElementName::MemberExpression(expression) => Ok(format!(
+            "{}.{}",
+            jsx_member_expression_object_to_string(&expression.object)?,
+            expression.property.name.as_str(),
+        )),
+        JSXElementName::ThisExpression(_) => {
+            Err("this-based JSX elements are not supported by the optimizer.".to_string())
+        }
+    }
 }
 
 fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> Result<String, String> {
@@ -323,19 +359,7 @@ fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> Result<String, String>
 }
 
 fn get_jsx_element_name(name: &JSXElementName<'_>) -> Result<String, String> {
-    match name {
-        JSXElementName::Identifier(identifier) => Ok(identifier.name.as_str().to_string()),
-        JSXElementName::IdentifierReference(identifier) => Ok(identifier.name.as_str().to_string()),
-        JSXElementName::NamespacedName(name) => {
-            Ok(format!("{}:{}", name.namespace.name.as_str(), name.name.name.as_str()))
-        }
-        JSXElementName::MemberExpression(_) => {
-            Err("JSX member expressions are not supported by the optimizer.".to_string())
-        }
-        JSXElementName::ThisExpression(_) => {
-            Err("this-based JSX elements are not supported by the optimizer.".to_string())
-        }
-    }
+    jsx_element_name_to_string(name)
 }
 
 fn try_render_static_attr_expression(name: &str, expression: &Expression<'_>) -> Option<String> {
@@ -1299,11 +1323,21 @@ fn render_ssr_template_call(strings: &[String], values: &[String]) -> String {
     }
 }
 
+fn component_expression_span(expression: &Expression<'_>) -> Option<Span> {
+    match expression {
+        Expression::ArrowFunctionExpression(function) => Some(function.span),
+        Expression::FunctionExpression(function) => Some(function.span),
+        Expression::ParenthesizedExpression(expression) => {
+            component_expression_span(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
 fn wrap_hot_components(source: &str, id: &str) -> Result<String, String> {
     let allocator = Allocator::default();
     let program = parse_program(&allocator, source, source_type_for(id), id)?;
     let mut collector = HmrCollector {
-        component_local_name: None,
         export_default_depth: 0,
         replacements: Vec::new(),
         source,
@@ -1313,7 +1347,6 @@ fn wrap_hot_components(source: &str, id: &str) -> Result<String, String> {
 }
 
 struct HmrCollector<'s> {
-    component_local_name: Option<String>,
     export_default_depth: usize,
     replacements: Vec<Replacement>,
     source: &'s str,
@@ -1324,50 +1357,59 @@ impl<'s> HmrCollector<'s> {
         let (start, end) = span_range(span);
         &self.source[start..end]
     }
+
+    fn push_component_replacement(&mut self, span: Span, name: String) {
+        let original = self.slice(span);
+        let code = format!(
+            "{HMR_DEFINE_COMPONENT}({original}, {{ registry: {HMR_REGISTRY}, name: {name} }})"
+        );
+        let (start, end) = span_range(span);
+        self.replacements.push(Replacement { start, end, code });
+    }
 }
 
 impl<'a, 's> Visit<'a> for HmrCollector<'s> {
-    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
-        if declaration.source.value.as_str() == "eclipsa" {
-            if let Some(specifiers) = &declaration.specifiers {
-                for specifier in specifiers {
-                    let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier else {
-                        continue;
-                    };
-                    let imported_name = match &specifier.imported {
-                        ModuleExportName::IdentifierName(name) => name.name.as_str(),
-                        ModuleExportName::IdentifierReference(name) => name.name.as_str(),
-                        ModuleExportName::StringLiteral(name) => name.value.as_str(),
-                    };
-                    if imported_name == "component$" {
-                        self.component_local_name = Some(specifier.local.name.as_str().to_string());
-                    }
-                }
-            }
-        }
-        walk::walk_import_declaration(self, declaration);
-    }
-
     fn visit_export_default_declaration(&mut self, declaration: &ExportDefaultDeclaration<'a>) {
         self.export_default_depth += 1;
         walk::walk_export_default_declaration(self, declaration);
         self.export_default_depth -= 1;
+
+        let span = match &declaration.declaration {
+            ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => Some(function.span),
+            ExportDefaultDeclarationKind::FunctionExpression(function)
+            | ExportDefaultDeclarationKind::FunctionDeclaration(function) => Some(function.span),
+            ExportDefaultDeclarationKind::ParenthesizedExpression(expression) => {
+                component_expression_span(&expression.expression)
+            }
+            _ => None,
+        };
+        if let Some(span) = span {
+            self.push_component_replacement(span, js_string("default"));
+        }
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        walk::walk_variable_declarator(self, declarator);
+        let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+            return;
+        };
+        if !is_component_name(identifier.name.as_str()) {
+            return;
+        }
+        let Some(init) = &declarator.init else {
+            return;
+        };
+        let span = component_expression_span(init);
+        if let Some(span) = span {
+            self.push_component_replacement(span, js_string(identifier.name.as_str()));
+        }
     }
 
     fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
         if let Expression::Identifier(identifier) = &expression.callee {
-            if self.component_local_name.as_deref() == Some(identifier.name.as_str()) {
-                let original = self.slice(expression.span);
-                let name = if self.export_default_depth > 0 {
-                    js_string("default")
-                } else {
-                    "null".to_string()
-                };
-                let code = format!(
-                    "{HMR_DEFINE_COMPONENT}({original}, {{ registry: {HMR_REGISTRY}, name: {name} }})"
-                );
-                let (start, end) = span_range(expression.span);
-                self.replacements.push(Replacement { start, end, code });
+            if identifier.name.as_str() == "__eclipsaComponent" {
+                let name = if self.export_default_depth > 0 { js_string("default") } else { "null".to_string() };
+                self.push_component_replacement(expression.span, name);
                 return;
             }
         }

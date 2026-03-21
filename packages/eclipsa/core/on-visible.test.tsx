@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
-import { component$ } from './component.ts'
 import { __eclipsaComponent, __eclipsaLazy } from './internal.ts'
 import {
   applyResumeHmrUpdate,
@@ -299,24 +298,22 @@ const flushAsync = async () => {
 describe('onVisible', () => {
   it('does not run during SSR and serializes resumable visibility callbacks', () => {
     const visible = vi.fn()
-    const App = component$(
-      __eclipsaComponent(
-        () => {
-          onVisible(
-            __eclipsaLazy(
-              'visible-symbol',
-              () => {
-                visible()
-              },
-              () => [],
-            ),
-          )
+    const App = __eclipsaComponent(
+      () => {
+        onVisible(
+          __eclipsaLazy(
+            'visible-symbol',
+            () => {
+              visible()
+            },
+            () => [],
+          ),
+        )
 
-          return <button>ready</button>
-        },
-        'component-symbol',
-        () => [],
-      ),
+        return <button>ready</button>
+      },
+      'component-symbol',
+      () => [],
     )
 
     const { html, payload } = renderSSR(() => <App />)
@@ -473,12 +470,10 @@ describe('onVisible', () => {
       await flushAsync()
       expect(events).toEqual(['run'])
 
-      const Replacement = component$(
-        __eclipsaComponent(
-          () => <span>done</span>,
-          'replacement-symbol',
-          () => [],
-        ),
+      const Replacement = __eclipsaComponent(
+        () => <span>done</span>,
+        'replacement-symbol',
+        () => [],
       )
 
       container.rootChildCursor = 0
@@ -494,27 +489,25 @@ describe('onVisible', () => {
 
   it('restores signal refs before resumed visible callbacks run', async () => {
     const globalRecord = globalThis as Record<PropertyKey, unknown>
-    const App = component$(
-      __eclipsaComponent(
-        () => {
-          const ref = useSignal<HTMLElement | undefined>()
+    const App = __eclipsaComponent(
+      () => {
+        const ref = useSignal<HTMLElement | undefined>()
 
-          onVisible(
-            __eclipsaLazy(
-              'visible-ref-symbol',
-              () => {
-                globalRecord.__eclipsaVisibleRefTag =
-                  (ref.value as { tagName?: string } | undefined)?.tagName ?? null
-              },
-              () => [ref],
-            ),
-          )
+        onVisible(
+          __eclipsaLazy(
+            'visible-ref-symbol',
+            () => {
+              globalRecord.__eclipsaVisibleRefTag =
+                (ref.value as { tagName?: string } | undefined)?.tagName ?? null
+            },
+            () => [ref],
+          ),
+        )
 
-          return <div ref={ref}>ready</div>
-        },
-        'component-ref',
-        () => [],
-      ),
+        return <div ref={ref}>ready</div>
+      },
+      'component-ref',
+      () => [],
     )
 
     const { html, payload } = renderSSR(() => <App />)

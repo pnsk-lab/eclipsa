@@ -1,26 +1,26 @@
 // ================= ENTRY (component_eurl.jsx) ==
-import { component$, useSignal, $ } from 'eclipsa'
-export default component$(() => {
+import { useSignal, $ } from 'eclipsa'
+export default (() => {
   const a = 0
   const add = $(() => {
     console.log(a)
   })
 
   return <button onClick$={() => add()}>Add</button>
-})
+});
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, useSignal, $ } from 'eclipsa'
-export default component$(__eclipsaComponent(() => {
+import { useSignal, $ } from 'eclipsa'
+export default (__eclipsaComponent(() => {
   const a = 0
   const add = __eclipsaLazy("1eilolu", () => {
     console.log(a)
   }, ()=>[a])
 
   return <button onClick$={__eclipsaEvent("click", "1r40ykv", ()=>[add])}>Add</button>
-}, "7zrvvx", ()=>[]))
+}, "7zrvvx", ()=>[]));
 
 
 // ================= 1eilolu (lazy) ==
@@ -32,7 +32,7 @@ export default (__scope) => {
 export default (__scope) => __scope[0]();
 
 // ================= 7zrvvx (component) ==
-import { component$, useSignal, $ } from 'eclipsa'
+import { useSignal, $ } from 'eclipsa'
 import { __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
 export default (__scope) => {
   const a = 0

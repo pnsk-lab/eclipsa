@@ -132,18 +132,18 @@ describe('vite plugin hotUpdate', () => {
     const send = vi.fn()
     const filePath = '/tmp/resumable-page.tsx'
     const previousSource = `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
-      });
+      };
     `
     const nextSource = `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
-      });
+      };
     `
 
     await resolveResumeHmrUpdate({
@@ -183,18 +183,18 @@ describe('vite plugin hotUpdate', () => {
     const hotUpdate = getHotUpdate(plugin)
     const filePath = '/tmp/ssr-resumable-page.tsx'
     const previousSource = `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
-      });
+      };
     `
     const nextSource = `
-      import { component$, useSignal } from "eclipsa";
-      export default component$(() => {
+      import { useSignal } from "eclipsa";
+      export default () => {
         const count = useSignal(0);
         return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
-      });
+      };
     `
     const send = vi.fn()
 
@@ -264,12 +264,10 @@ describe('vite plugin hotUpdate', () => {
     const send = vi.fn()
     const filePath = '/tmp/resumable-style.tsx'
     const previousSource = `
-      import { component$ } from "eclipsa";
-      export default component$(() => <div class="bg-red-500">ready</div>);
+            export default () => <div class="bg-red-500">ready</div>;
     `
     const nextSource = `
-      import { component$ } from "eclipsa";
-      export default component$(() => <div class="bg-lime-500">ready</div>);
+            export default () => <div class="bg-lime-500">ready</div>;
     `
     const cssModule = {
       id: '/src/app/style.css',

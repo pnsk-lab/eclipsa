@@ -1,7 +1,7 @@
-import { component$, Link, Suspense } from 'eclipsa'
+import { Link, Suspense } from 'eclipsa'
 import { SuspenseValue } from './SuspenseValue.tsx'
 
-export default component$(() => {
+export default () => {
   return (
     <section>
       <h2>Suspense Playground</h2>
@@ -14,4 +14,4 @@ export default component$(() => {
       </Suspense>
     </section>
   )
-})
+}

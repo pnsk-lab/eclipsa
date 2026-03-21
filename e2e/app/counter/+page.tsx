@@ -1,6 +1,6 @@
-import { component$, Link, useNavigate, useSignal } from 'eclipsa'
+import { Link, useNavigate, useSignal } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const count = useSignal(0)
   const navigate = useNavigate()
 
@@ -24,4 +24,4 @@ export default component$(() => {
       </button>
     </div>
   )
-})
+}

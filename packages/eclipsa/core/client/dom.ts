@@ -54,6 +54,8 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
 
 const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
+const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
+  isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
@@ -111,7 +113,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   }
 
   effect(() => {
-    if (isSVG) {
+    if (shouldUseAttributeAssignment(elem, name, isSVG)) {
       elem.setAttribute(name, String(value()))
       return
     }

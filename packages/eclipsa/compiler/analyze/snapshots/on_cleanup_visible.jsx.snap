@@ -1,7 +1,7 @@
 // ================= ENTRY (on_cleanup_visible.jsx) ==
-import { component$, onCleanup, onVisible } from 'eclipsa'
+import { onCleanup, onVisible } from 'eclipsa'
 
-export default component$(() => {
+export default (() => {
   const value = 'visible'
 
   onVisible(() => {
@@ -12,14 +12,14 @@ export default component$(() => {
   })
 
   return <button>{value}</button>
-})
+});
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, onCleanup, onVisible } from 'eclipsa'
+import { onCleanup, onVisible } from 'eclipsa'
 
-export default component$(__eclipsaComponent(() => {
+export default (__eclipsaComponent(() => {
   const value = 'visible'
 
   onVisible(__eclipsaLazy("5ugvuh", () => {
@@ -30,11 +30,11 @@ export default component$(__eclipsaComponent(() => {
   }, ()=>[value]))
 
   return <button>{value}</button>
-}, "pxa3kp", ()=>[]))
+}, "pxa3kp", ()=>[]));
 
 
 // ================= 5ugvuh (lazy) ==
-import { component$, onCleanup, onVisible } from 'eclipsa'
+import { onCleanup, onVisible } from 'eclipsa'
 export default (__scope) => {
     console.log(__scope[0])
     onCleanup(() => {
@@ -43,7 +43,7 @@ export default (__scope) => {
   };
 
 // ================= pxa3kp (component) ==
-import { component$, onCleanup, onVisible } from 'eclipsa'
+import { onCleanup, onVisible } from 'eclipsa'
 import { __eclipsaLazy } from "eclipsa/internal";
 export default (__scope) => {
   const value = 'visible'

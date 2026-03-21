@@ -1,4 +1,3 @@
-import { component$ } from 'eclipsa'
 import { Image } from '@eclipsa/image'
 import hero from '../images/hero-image.ts'
 
@@ -6,7 +5,7 @@ export const metadata = {
   title: 'Image | /image',
 }
 
-export default component$(() => {
+export default () => {
   return (
     <main>
       <h1>Image Playground</h1>
@@ -19,4 +18,4 @@ export default component$(() => {
       />
     </main>
   )
-})
+}

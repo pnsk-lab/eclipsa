@@ -12,7 +12,7 @@ This file applies to `packages/eclipsa/` unless overridden.
 
 ## Important Invariants
 
-- `component$`, `$`, `useSignal`, `For`, `resumeContainer`, and `renderSSR` are the core public surface.
+- `$`, `useSignal`, `For`, `resumeContainer`, and `renderSSR` are the core public surface.
 - Client transforms and symbol transforms must stay consistent with runtime expectations.
 - Avoid falling back to full route hydration when making runtime changes.
 

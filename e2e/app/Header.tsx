@@ -1,6 +1,6 @@
-import { component$, Link } from 'eclipsa'
+import { Link } from 'eclipsa'
 
-export const Header = component$(() => (
+export const Header = () => (
   <div>
     <h1>Todo List</h1>
     <nav>
@@ -13,4 +13,4 @@ export const Header = component$(() => (
       <Link href="/suspense">Suspense</Link>
     </nav>
   </div>
-))
+)

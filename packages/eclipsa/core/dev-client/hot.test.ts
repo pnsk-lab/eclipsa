@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { applyHotUpdate, createHotRegistry, defineHotComponent } from './hot.ts'
-import { component$ } from '../component.ts'
 import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
 
 const makeComponent = (value: string) => ((_: unknown) => value) as any
@@ -47,12 +46,10 @@ describe('core/dev-client hot', () => {
 
   it('preserves component metadata on wrapped hot components', () => {
     const registry = createHotRegistry()
-    const Component = component$(
-      __eclipsaComponent(
-        () => 'value',
-        'page-symbol',
-        () => [],
-      ),
+    const Component = __eclipsaComponent(
+      () => 'value',
+      'page-symbol',
+      () => [],
     )
 
     const wrapped = defineHotComponent(Component, {

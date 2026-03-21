@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
-import { component$ } from './component.ts'
 import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
 import { onCleanup, onMount, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
@@ -137,15 +136,13 @@ describe('renderClientInsertable', () => {
     withFakeNodeGlobal(() => {
       let ref!: { value: HTMLElement | undefined }
 
-      const App = component$(
-        __eclipsaComponent(
-          () => {
-            ref = useSignal<HTMLElement | undefined>()
-            return jsxDEV('div', { ref }, null, false, {})
-          },
-          'component-ref',
-          () => [],
-        ),
+      const App = __eclipsaComponent(
+        () => {
+          ref = useSignal<HTMLElement | undefined>()
+          return jsxDEV('div', { ref }, null, false, {})
+        },
+        'component-ref',
+        () => [],
       )
 
       const container = createContainer()
@@ -162,35 +159,31 @@ describe('renderClientInsertable', () => {
 
   it('resets local signal ids and watch state when a component slot changes symbol', () => {
     withFakeNodeGlobal(() => {
-      const First = component$(
-        __eclipsaComponent(
-          () => {
-            const value = useSignal('first')
-            useWatch(
-              __eclipsaWatch(
-                'watch-first',
-                () => {
-                  value.value
-                },
-                () => [value],
-              ),
-            )
-            return value.value
-          },
-          'component-first',
-          () => [],
-        ),
+      const First = __eclipsaComponent(
+        () => {
+          const value = useSignal('first')
+          useWatch(
+            __eclipsaWatch(
+              'watch-first',
+              () => {
+                value.value
+              },
+              () => [value],
+            ),
+          )
+          return value.value
+        },
+        'component-first',
+        () => [],
       )
 
-      const Second = component$(
-        __eclipsaComponent(
-          () => {
-            const count = useSignal(0)
-            return count.value
-          },
-          'component-second',
-          () => [],
-        ),
+      const Second = __eclipsaComponent(
+        () => {
+          const count = useSignal(0)
+          return count.value
+        },
+        'component-second',
+        () => [],
       )
 
       const container = createContainer()
@@ -220,28 +213,24 @@ describe('renderClientInsertable', () => {
   it('runs onMount cleanup when a component slot changes symbol', async () => {
     await withFakeNodeGlobal(async () => {
       const events: string[] = []
-      const First = component$(
-        __eclipsaComponent(
-          () => {
-            onMount(() => {
-              events.push('mount')
-              onCleanup(() => {
-                events.push('cleanup')
-              })
+      const First = __eclipsaComponent(
+        () => {
+          onMount(() => {
+            events.push('mount')
+            onCleanup(() => {
+              events.push('cleanup')
             })
-            return 'first'
-          },
-          'component-mount-first',
-          () => [],
-        ),
+          })
+          return 'first'
+        },
+        'component-mount-first',
+        () => [],
       )
 
-      const Second = component$(
-        __eclipsaComponent(
-          () => 'second',
-          'component-mount-second',
-          () => [],
-        ),
+      const Second = __eclipsaComponent(
+        () => 'second',
+        'component-mount-second',
+        () => [],
       )
 
       const container = createContainer()
@@ -267,36 +256,32 @@ describe('renderClientInsertable', () => {
       let count!: { value: number }
       const events: string[] = []
 
-      const First = component$(
-        __eclipsaComponent(
-          () => {
-            count = useSignal(0)
-            useWatch(
-              __eclipsaWatch(
-                'watch-cleanup',
-                () => {
-                  const snapshot = count.value
-                  events.push(`run:${snapshot}`)
-                  onCleanup(() => {
-                    events.push(`cleanup:${snapshot}`)
-                  })
-                },
-                () => [count],
-              ),
-            )
-            return count.value
-          },
-          'component-watch-first',
-          () => [],
-        ),
+      const First = __eclipsaComponent(
+        () => {
+          count = useSignal(0)
+          useWatch(
+            __eclipsaWatch(
+              'watch-cleanup',
+              () => {
+                const snapshot = count.value
+                events.push(`run:${snapshot}`)
+                onCleanup(() => {
+                  events.push(`cleanup:${snapshot}`)
+                })
+              },
+              () => [count],
+            ),
+          )
+          return count.value
+        },
+        'component-watch-first',
+        () => [],
       )
 
-      const Second = component$(
-        __eclipsaComponent(
-          () => 'done',
-          'component-watch-second',
-          () => [],
-        ),
+      const Second = __eclipsaComponent(
+        () => 'done',
+        'component-watch-second',
+        () => [],
       )
 
       const container = createContainer()
@@ -363,26 +348,24 @@ describe('renderClientInsertable', () => {
 
   it('wraps projection slot insertions in stable marker comments during client renders', () => {
     withFakeNodeGlobal(() => {
-      const Probe = component$(
-        __eclipsaComponent(
-          (props: { aa?: unknown; children?: unknown }) =>
-            jsxDEV(
-              'section',
-              {
-                children: [
-                  jsxDEV('div', { children: props.aa }, null, false, {}),
-                  jsxDEV('div', { children: props.children }, null, false, {}),
-                  jsxDEV('div', { children: props.aa }, null, false, {}),
-                ],
-              },
-              null,
-              false,
-              {},
-            ),
-          'probe-symbol',
-          () => [],
-          { aa: 2, children: 1 },
-        ),
+      const Probe = __eclipsaComponent(
+        (props: { aa?: unknown; children?: unknown }) =>
+          jsxDEV(
+            'section',
+            {
+              children: [
+                jsxDEV('div', { children: props.aa }, null, false, {}),
+                jsxDEV('div', { children: props.children }, null, false, {}),
+                jsxDEV('div', { children: props.aa }, null, false, {}),
+              ],
+            },
+            null,
+            false,
+            {},
+          ),
+        'probe-symbol',
+        () => [],
+        { aa: 2, children: 1 },
       )
 
       const container = createContainer()
@@ -391,8 +374,8 @@ describe('renderClientInsertable', () => {
           jsxDEV(
             Probe as any,
             {
-              aa: 'prop content',
-              children: 'children content',
+              aa: jsxDEV('span', { children: 'prop content' }, null, false, {}),
+              children: jsxDEV('span', { children: 'children content' }, null, false, {}),
             },
             null,
             false,

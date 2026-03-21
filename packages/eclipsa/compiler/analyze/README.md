@@ -4,7 +4,7 @@ The analyze stage extracts resumable symbols and rewrites modules for the rest o
 
 ```tsx
 // +page.tsx
-export default component$(() => {
+export default () => {
   const count = useSignal(0)
   return <button onClick$={(evt) => count.value++}>Count: {count.value}</button>
 })

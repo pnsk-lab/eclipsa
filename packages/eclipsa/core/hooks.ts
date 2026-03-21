@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import type { Env } from 'hono/types'
-import { AsyncLocalStorage } from 'node:async_hooks'
+import type { AsyncLocalStorage } from 'node:async_hooks'
 import {
   deserializeValue,
   serializeValue,
@@ -28,7 +28,7 @@ export interface AppHooksManifest {
   client: string | null
 }
 
-export interface RequestFetch extends typeof fetch {}
+export type RequestFetch = typeof fetch
 
 export type BaseAppVariables = AppVariables & {
   fetch: RequestFetch
@@ -110,13 +110,44 @@ export interface ResolvedHooks<E extends Env = Env> {
 
 const PUBLIC_ERROR_KEY = Symbol.for('eclipsa.public-error')
 
-const requestContextStorage = new AsyncLocalStorage<{
+type RequestContextStore = {
   context: AppContext<any>
   handleError?: HandleError<any>
   transport?: Transport
-}>()
+}
+
+let requestContextStorage: AsyncLocalStorage<RequestContextStore> | null = null
 
 let clientHooks: AppHooksModule = {}
+
+const isBrowserRuntime = () => typeof window !== 'undefined' && typeof document !== 'undefined'
+
+type AsyncLocalStorageConstructor = new <T>() => AsyncLocalStorage<T>
+
+const getAsyncLocalStorageConstructor = (): AsyncLocalStorageConstructor | null => {
+  if (isBrowserRuntime() || typeof process === 'undefined') {
+    return null
+  }
+  const asyncHooks = (
+    process as typeof process & {
+      getBuiltinModule?: (id: string) => unknown
+    }
+  ).getBuiltinModule?.('node:async_hooks') as
+    | {
+        AsyncLocalStorage?: AsyncLocalStorageConstructor
+      }
+    | undefined
+  return typeof asyncHooks?.AsyncLocalStorage === 'function' ? asyncHooks.AsyncLocalStorage : null
+}
+
+const getRequestContextStorage = () => {
+  const AsyncLocalStorageCtor = getAsyncLocalStorageConstructor()
+  if (!AsyncLocalStorageCtor) {
+    return null
+  }
+  requestContextStorage ??= new AsyncLocalStorageCtor<RequestContextStore>()
+  return requestContextStorage
+}
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (!value || typeof value !== 'object') {
@@ -144,7 +175,7 @@ const normalizePublicError = (value: unknown): PublicError => {
   }
 }
 
-const getActiveTransport = () => requestContextStorage.getStore()?.transport ?? clientHooks.transport
+const getActiveTransport = () => getRequestContextStorage()?.getStore()?.transport ?? clientHooks.transport
 
 const serializeTransportReference = (value: unknown, transport: Transport): SerializedReference | null => {
   for (const [key, hook] of Object.entries(transport)) {
@@ -218,8 +249,12 @@ export const withServerRequestContext = <T>(
     transport?: Transport
   },
   fn: () => T,
-) =>
-  requestContextStorage.run(
+) => {
+  const storage = getRequestContextStorage()
+  if (!storage) {
+    return fn()
+  }
+  return storage.run(
     {
       context,
       handleError: hooks.handleError,
@@ -227,14 +262,15 @@ export const withServerRequestContext = <T>(
     },
     fn,
   )
+}
 
-export const getCurrentServerRequestContext = () => requestContextStorage.getStore()?.context ?? null
+export const getCurrentServerRequestContext = () => getRequestContextStorage()?.getStore()?.context ?? null
 
 export const transformCurrentPublicError = async (
   error: unknown,
   event: HandleErrorInput<any>['event'],
 ) => {
-  const store = requestContextStorage.getStore()
+  const store = getRequestContextStorage()?.getStore()
   const publicError = store
     ? await runHandleError(
         {

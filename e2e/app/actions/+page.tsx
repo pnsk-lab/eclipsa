@@ -1,7 +1,6 @@
 import {
   ACTION_FORM_FIELD,
   action$,
-  component$,
   loader$,
   useSignal,
   validator,
@@ -81,7 +80,7 @@ const useFormSumAction = action$(requestMeta, validator(sumSchema), async (c) =>
   }
 })
 
-export default component$(() => {
+export default () => {
   const left = useSignal('20')
   const right = useSignal('22')
   const lastResolved = useSignal('No result yet')
@@ -199,4 +198,4 @@ export default component$(() => {
       </section>
     </section>
   )
-})
+}

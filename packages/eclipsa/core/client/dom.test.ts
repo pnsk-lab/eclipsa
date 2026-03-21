@@ -105,6 +105,19 @@ describe('core/client dom attr', () => {
     )
   })
 
+  it('preserves data attributes during client rerenders', () => {
+    const setAttribute = vi.fn()
+    const elem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute,
+    }
+
+    attr(elem as unknown as Element, 'data-testid', () => 'probe-aa-0')
+
+    expect(setAttribute).toHaveBeenCalledWith('data-testid', 'probe-aa-0')
+  })
+
   it('preserves suspense components as render objects for runtime fallback handling', () => {
     const rendered = createComponent(Suspense as any, {
       children: ['done'],

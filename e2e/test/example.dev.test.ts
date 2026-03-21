@@ -9,7 +9,9 @@ const imagePagePath = fileURLToPath(new URL('../app/image/+page.tsx', import.met
 const imageHmrBeforeLabel = 'Responsive image metadata should survive navigation, resume, and HMR.'
 const imageHmrAfterLabel =
   'Responsive image metadata should survive navigation, resume, HMR, and page transitions.'
-
+const homePagePath = fileURLToPath(new URL('../app/+page.tsx', import.meta.url))
+const homeHmrBeforeLabel = 'Go to counter with navigate()'
+const homeHmrAfterLabel = 'Go to counter with navigate()!'
 const writeSourceAtomically = async (filePath: string, source: string) => {
   const tempPath = `${filePath}.tmp`
   await writeFile(tempPath, source)
@@ -437,6 +439,36 @@ test.describe('example app in dev mode', () => {
     } finally {
       await writeSourceAtomically(imagePagePath, originalSource)
       await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible()
+    }
+  })
+
+  test('does not duplicate projected component content across HMR updates', async ({ page }) => {
+    const originalHomeSource = await readFile(homePagePath, 'utf8')
+    const propA = page.getByTestId('probe-aa-0')
+    const propB = page.getByTestId('probe-aa-1')
+    const children = page.getByTestId('probe-children')
+
+    try {
+      await page.goto('/')
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
+
+      const updatedHomeSource = originalHomeSource.replace(homeHmrBeforeLabel, homeHmrAfterLabel)
+      expect(updatedHomeSource).not.toBe(originalHomeSource)
+      await writeSourceAtomically(homePagePath, updatedHomeSource)
+
+      await expect(page.getByRole('button', { name: homeHmrAfterLabel })).toBeVisible()
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
+    } finally {
+      await writeSourceAtomically(homePagePath, originalHomeSource)
+      await page.goto('/')
+      await expect(page.getByRole('button', { name: homeHmrBeforeLabel })).toBeVisible()
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
     }
   })
 })

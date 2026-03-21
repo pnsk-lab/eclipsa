@@ -8,9 +8,10 @@ use oxc_allocator::Allocator;
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, AssignmentTarget, CallExpression, ExportDefaultDeclarationKind, Expression,
+        Argument, ArrowFunctionExpression, AssignmentExpression, AssignmentTarget, CallExpression,
+        ExportDefaultDeclaration, ExportDefaultDeclarationKind, Expression, Function,
         ImportDeclarationSpecifier, JSXAttributeName, JSXElementName, JSXExpression, Program,
-        Statement,
+        Statement, TSType, TSTypeAnnotation, VariableDeclarator,
     },
 };
 use oxc_ast_visit::{Visit, walk};
@@ -131,7 +132,6 @@ pub struct AnalyzeResponse {
 #[derive(Debug)]
 struct ImportBindings {
     action_identifier: Option<String>,
-    component_identifier: Option<String>,
     lazy_identifier: Option<String>,
     loader_identifier: Option<String>,
     signal_identifier: Option<String>,
@@ -244,7 +244,6 @@ fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> String {
 fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
     let mut bindings = ImportBindings {
         action_identifier: None,
-        component_identifier: None,
         lazy_identifier: None,
         loader_identifier: None,
         signal_identifier: None,
@@ -274,7 +273,6 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
             let local = specifier.local.name.as_str().to_string();
             match imported {
                 "action$" => bindings.action_identifier = Some(local),
-                "component$" => bindings.component_identifier = Some(local),
                 "$" => bindings.lazy_identifier = Some(local),
                 "loader$" => bindings.loader_identifier = Some(local),
                 "onVisible" => bindings.visible_identifier = Some(local),
@@ -306,6 +304,34 @@ fn function_argument_scope(argument: &Argument<'_>) -> Option<ScopeId> {
         Argument::FunctionExpression(expression) => Some(expression.scope_id()),
         _ => None,
     }
+}
+
+fn function_expression_span(expression: &Expression<'_>) -> Option<Span> {
+    match expression {
+        Expression::ArrowFunctionExpression(function) => Some(function.span),
+        Expression::FunctionExpression(function) => Some(function.span),
+        Expression::ParenthesizedExpression(expression) => {
+            function_expression_span(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
+fn function_expression_scope(expression: &Expression<'_>) -> Option<ScopeId> {
+    match expression {
+        Expression::ArrowFunctionExpression(function) => Some(function.scope_id()),
+        Expression::FunctionExpression(function) => Some(function.scope_id()),
+        Expression::ParenthesizedExpression(expression) => {
+            function_expression_scope(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
+fn is_component_name(name: &str) -> bool {
+    name.chars().next().is_some_and(|ch| {
+        ch.to_ascii_lowercase() != ch || !ch.is_ascii_alphabetic()
+    }) || name.contains('.')
 }
 
 fn render_span_with_replacements(source: &str, span: Span, replacements: &[Replacement]) -> Result<String, String> {
@@ -417,13 +443,8 @@ struct ProjectionSlotCollector {
 }
 
 impl ProjectionSlotCollector {
-    fn collect(argument: &Argument<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
-        let params = match argument {
-            Argument::ArrowFunctionExpression(function) => &function.params.items,
-            Argument::FunctionExpression(function) => &function.params.items,
-            _ => return Ok(None),
-        };
-        let Some(first_param) = params.first() else {
+    fn collect_arrow(function: &ArrowFunctionExpression<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
+        let Some(first_param) = function.params.items.first() else {
             return Ok(None);
         };
         let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &first_param.pattern.kind else {
@@ -436,24 +457,45 @@ impl ProjectionSlotCollector {
             props_name: identifier.name.as_str().to_string(),
             total_counts: HashMap::new(),
         };
-        collector.visit_argument(argument);
+        collector.visit_arrow_function_expression(function);
+        collector.finalize()
+    }
 
-        if collector.direct_counts.is_empty() {
+    fn collect_function(function: &Function<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
+        let Some(first_param) = function.params.items.first() else {
+            return Ok(None);
+        };
+        let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &first_param.pattern.kind else {
+            return Ok(None);
+        };
+
+        let mut collector = Self {
+            direct_counts: HashMap::new(),
+            in_jsx_attribute: 0,
+            props_name: identifier.name.as_str().to_string(),
+            total_counts: HashMap::new(),
+        };
+        collector.visit_function(function, ScopeFlags::empty());
+        collector.finalize()
+    }
+
+    fn finalize(self) -> Result<Option<Vec<(String, usize)>>, String> {
+        if self.direct_counts.is_empty() {
             return Ok(None);
         }
 
-        for property in collector.direct_counts.keys() {
-            let direct = collector.direct_counts[property];
-            let total = collector.total_counts.get(property).copied().unwrap_or_default();
+        for property in self.direct_counts.keys() {
+            let direct = self.direct_counts[property];
+            let total = self.total_counts.get(property).copied().unwrap_or_default();
             if total > direct {
                 return Err(format!(
                     "Projection slot prop \"{}\" must be rendered directly as {{{}.{}}} inside JSX.",
-                    property, collector.props_name, property
+                    property, self.props_name, property
                 ));
             }
         }
 
-        let mut entries = collector.direct_counts.into_iter().collect::<Vec<_>>();
+        let mut entries = self.direct_counts.into_iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(Some(entries))
     }
@@ -487,8 +529,33 @@ impl<'a> Visit<'a> for ProjectionSlotCollector {
     }
 }
 
-fn collect_projection_slots_from_source(argument: &Argument<'_>, _source: &str) -> Result<Option<Vec<(String, usize)>>, String> {
-    ProjectionSlotCollector::collect(argument)
+fn collect_projection_slots_from_expression(expression: &Expression<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
+    match expression {
+        Expression::ArrowFunctionExpression(function) => ProjectionSlotCollector::collect_arrow(function),
+        Expression::FunctionExpression(function) => ProjectionSlotCollector::collect_function(function),
+        Expression::ParenthesizedExpression(expression) => {
+            collect_projection_slots_from_expression(&expression.expression)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn collect_projection_slots_from_export_default(
+    declaration: &ExportDefaultDeclarationKind<'_>,
+) -> Result<Option<Vec<(String, usize)>>, String> {
+    match declaration {
+        ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => {
+            ProjectionSlotCollector::collect_arrow(function)
+        }
+        ExportDefaultDeclarationKind::FunctionExpression(function)
+        | ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+            ProjectionSlotCollector::collect_function(function)
+        }
+        ExportDefaultDeclarationKind::ParenthesizedExpression(expression) => {
+            collect_projection_slots_from_expression(&expression.expression)
+        }
+        _ => Ok(None),
+    }
 }
 
 struct CaptureCollector<'a, 's> {
@@ -544,6 +611,82 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_jsx_expression(expression);
+        let mut captures = collector.capture_indices.into_iter().collect::<Vec<_>>();
+        captures.sort_by_key(|(_, index)| *index);
+        let mut import_spans = collector
+            .import_spans
+            .into_iter()
+            .map(|span| Span::new(span.start, span.end))
+            .collect::<Vec<_>>();
+        import_spans.sort_by_key(|span| span.start);
+        Ok((captures.into_iter().map(|(name, _)| name).collect(), import_spans))
+    }
+
+    fn collect_expression(
+        program: &'a Program<'a>,
+        semantic: &'s Semantic<'a>,
+        root_scope: ScopeId,
+        expression: &Expression<'a>,
+    ) -> Result<(Vec<String>, Vec<Span>), String> {
+        let mut collector = Self {
+            capture_indices: HashMap::new(),
+            current_scope_stack: Vec::new(),
+            function_scope: root_scope,
+            import_spans: HashSet::new(),
+            program,
+            semantic,
+        };
+        collector.visit_expression(expression);
+        let mut captures = collector.capture_indices.into_iter().collect::<Vec<_>>();
+        captures.sort_by_key(|(_, index)| *index);
+        let mut import_spans = collector
+            .import_spans
+            .into_iter()
+            .map(|span| Span::new(span.start, span.end))
+            .collect::<Vec<_>>();
+        import_spans.sort_by_key(|span| span.start);
+        Ok((captures.into_iter().map(|(name, _)| name).collect(), import_spans))
+    }
+
+    fn collect_arrow(
+        program: &'a Program<'a>,
+        semantic: &'s Semantic<'a>,
+        function: &ArrowFunctionExpression<'a>,
+    ) -> Result<(Vec<String>, Vec<Span>), String> {
+        let mut collector = Self {
+            capture_indices: HashMap::new(),
+            current_scope_stack: Vec::new(),
+            function_scope: function.scope_id(),
+            import_spans: HashSet::new(),
+            program,
+            semantic,
+        };
+        collector.visit_arrow_function_expression(function);
+        let mut captures = collector.capture_indices.into_iter().collect::<Vec<_>>();
+        captures.sort_by_key(|(_, index)| *index);
+        let mut import_spans = collector
+            .import_spans
+            .into_iter()
+            .map(|span| Span::new(span.start, span.end))
+            .collect::<Vec<_>>();
+        import_spans.sort_by_key(|span| span.start);
+        Ok((captures.into_iter().map(|(name, _)| name).collect(), import_spans))
+    }
+
+    fn collect_function(
+        program: &'a Program<'a>,
+        semantic: &'s Semantic<'a>,
+        function: &Function<'a>,
+    ) -> Result<(Vec<String>, Vec<Span>), String> {
+        let mut collector = Self {
+            capture_indices: HashMap::new(),
+            current_scope_stack: Vec::new(),
+            function_scope: function.scope_id(),
+            import_spans: HashSet::new(),
+            program,
+            semantic,
+        };
+        collector.visit_function(function, ScopeFlags::empty());
         let mut captures = collector.capture_indices.into_iter().collect::<Vec<_>>();
         captures.sort_by_key(|(_, index)| *index);
         let mut import_spans = collector
@@ -646,6 +789,10 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
         }
         self.add_capture(identifier.name.as_str());
     }
+
+    fn visit_ts_type_annotation(&mut self, _it: &TSTypeAnnotation<'a>) {}
+
+    fn visit_ts_type(&mut self, _it: &TSType<'a>) {}
 
     fn visit_jsx_element_name(&mut self, name: &JSXElementName<'a>) {
         if let JSXElementName::IdentifierReference(reference) = name {
@@ -841,6 +988,35 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         )
     }
 
+    fn collect_symbol_dependencies_from_expression(
+        &self,
+        expression: &Expression<'a>,
+    ) -> Result<(Vec<String>, Vec<Span>), String> {
+        let Some(root_scope) = function_expression_scope(expression) else {
+            return Err("Expected function expression.".to_string());
+        };
+        CaptureCollector::collect_expression(self.program, self.semantic, root_scope, expression)
+    }
+
+    fn collect_symbol_dependencies_from_export_default(
+        &self,
+        declaration: &ExportDefaultDeclarationKind<'a>,
+    ) -> Result<(Vec<String>, Vec<Span>), String> {
+        match declaration {
+            ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => {
+                CaptureCollector::collect_arrow(self.program, self.semantic, function)
+            }
+            ExportDefaultDeclarationKind::FunctionExpression(function)
+            | ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                CaptureCollector::collect_function(self.program, self.semantic, function)
+            }
+            ExportDefaultDeclarationKind::ParenthesizedExpression(expression) => {
+                self.collect_symbol_dependencies_from_expression(&expression.expression)
+            }
+            _ => Err("Expected function export default.".to_string()),
+        }
+    }
+
     fn add_resume_symbol(
         &mut self,
         symbol_id: String,
@@ -882,56 +1058,31 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         format!("()=>[{}]", captures.join(", "))
     }
 
-    fn register_component_if_needed(&mut self, expression: &CallExpression<'a>) {
-        let Some(component_identifier) = self.imports.component_identifier.as_deref() else {
-            return;
-        };
-        let Expression::Identifier(callee) = &expression.callee else {
-            return;
-        };
-        if callee.name.as_str() != component_identifier {
-            return;
-        }
-        let Some(argument) = expression.arguments.first() else {
-            return;
-        };
-        let Some(function_span) = function_argument_span(argument) else {
-            return;
-        };
-        let span_key = SpanKey::from_span(function_span);
-        if self.component_info_by_fn.contains_key(&span_key) {
-            return;
-        }
-
-        let mut base = "component:slot".to_string();
+    fn component_base_from_stack(&self) -> Option<String> {
         for marker in self.node_stack.iter().rev().skip(1) {
             match marker {
                 NodeMarker::ExportDefaultDeclaration => {
-                    base = "component:default".to_string();
-                    break;
+                    return Some("component:default".to_string());
                 }
                 NodeMarker::VariableDeclarator(Some(name))
-                | NodeMarker::AssignmentExpression(Some(name)) => {
-                    base = format!("component:{name}");
-                    break;
+                | NodeMarker::AssignmentExpression(Some(name))
+                    if is_component_name(name) =>
+                {
+                    return Some(format!("component:{name}"));
                 }
                 _ => {}
             }
         }
-        if base == "component:slot" {
-            let prefix = &self.source[..expression.span.start as usize];
-            let line = prefix.rsplit_once('\n').map(|(_, line)| line).unwrap_or(prefix).trim_end();
-            if line.ends_with("export default") || line.ends_with("export default(") {
-                base = "component:default".to_string();
-            } else if let Some((left, _)) = line.rsplit_once('=') {
-                let candidate = left.split_whitespace().last().unwrap_or_default();
-                if candidate.chars().next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
-                    && candidate.chars().all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                {
-                    base = format!("component:{candidate}");
-                }
-            }
+        None
+    }
+
+    fn register_component_if_needed(&mut self, span_key: SpanKey) {
+        if self.component_info_by_fn.contains_key(&span_key) {
+            return;
         }
+        let Some(base) = self.component_base_from_stack() else {
+            return;
+        };
         let count = self.component_counts.get(&base).copied().unwrap_or(0);
         self.component_counts.insert(base.clone(), count + 1);
         self.component_info_by_fn.insert(
@@ -941,6 +1092,126 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 local_symbol_keys: Vec::new(),
             },
         );
+    }
+
+    fn emit_component_symbol(
+        &mut self,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        projection_slots: Option<Vec<(String, usize)>>,
+    ) {
+        let raw_code = source_text(self.source, function_span);
+        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Component, raw_code);
+        let build = self
+            .build_symbol(function_span, captures.clone(), import_spans, true)
+            .unwrap();
+        let span_key = SpanKey::from_span(function_span);
+        let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
+        self.hmr_key_by_symbol_id
+            .insert(symbol_id.clone(), component_info.hmr_key.clone());
+        self.symbols.push((
+            symbol_id.clone(),
+            ResumeSymbol {
+                captures: build.captures.clone(),
+                code: build.code.clone(),
+                file_path: self.file_id.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+            },
+        ));
+        let signature = create_symbol_signature(&SymbolKind::Component, &build.signature_code);
+        self.hmr_symbols.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrSymbolEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+                owner_component_key: None,
+                signature: signature.clone(),
+            },
+        ));
+        self.hmr_components.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrComponentEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                local_symbol_keys: component_info.local_symbol_keys.clone(),
+                signature,
+            },
+        ));
+        self.used_helpers.insert(HELPER_COMPONENT.to_string());
+        let projection_literal = projection_slots
+            .map(|entries| {
+                let body = entries
+                    .into_iter()
+                    .map(|(name, count)| format!("{name}: {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(", {{ {body} }}")
+            })
+            .unwrap_or_default();
+        self.push_replacement(
+            function_span.start as usize,
+            function_span.end as usize,
+            format!(
+                "{HELPER_COMPONENT}({}, {}, {}{})",
+                render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
+                js_string(&symbol_id),
+                Self::build_capture_getter(&captures),
+                projection_literal,
+            ),
+        );
+    }
+
+    fn emit_component_symbol_for_expression(&mut self, expression: &Expression<'a>) {
+        let Some(function_span) = function_expression_span(expression) else {
+            return;
+        };
+        if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+            return;
+        }
+        let (captures, import_spans) = self.collect_symbol_dependencies_from_expression(expression).unwrap();
+        let projection_slots = match collect_projection_slots_from_expression(expression) {
+            Ok(value) => value,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        self.emit_component_symbol(function_span, captures, import_spans, projection_slots);
+    }
+
+    fn emit_component_symbol_for_export_default(
+        &mut self,
+        declaration: &ExportDefaultDeclarationKind<'a>,
+    ) {
+        let function_span = match declaration {
+            ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => function.span,
+            ExportDefaultDeclarationKind::FunctionExpression(function)
+            | ExportDefaultDeclarationKind::FunctionDeclaration(function) => function.span,
+            ExportDefaultDeclarationKind::ParenthesizedExpression(expression) => {
+                let Some(function_span) = function_expression_span(&expression.expression) else {
+                    return;
+                };
+                function_span
+            }
+            _ => return,
+        };
+        if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+            return;
+        }
+        let (captures, import_spans) = self.collect_symbol_dependencies_from_export_default(declaration).unwrap();
+        let projection_slots = match collect_projection_slots_from_export_default(declaration) {
+            Ok(value) => value,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        self.emit_component_symbol(function_span, captures, import_spans, projection_slots);
     }
 
     fn build_symbol(
@@ -1078,12 +1349,16 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         self.node_stack.push(marker);
 
         match kind {
-            AstKind::ArrowFunctionExpression(function) => self.current_functions.push(FunctionContext {
-                span_key: SpanKey::from_span(function.span),
-            }),
-            AstKind::Function(function) => self.current_functions.push(FunctionContext {
-                span_key: SpanKey::from_span(function.span),
-            }),
+            AstKind::ArrowFunctionExpression(function) => {
+                let span_key = SpanKey::from_span(function.span);
+                self.register_component_if_needed(span_key);
+                self.current_functions.push(FunctionContext { span_key });
+            }
+            AstKind::Function(function) => {
+                let span_key = SpanKey::from_span(function.span);
+                self.register_component_if_needed(span_key);
+                self.current_functions.push(FunctionContext { span_key });
+            }
             _ => {}
         }
     }
@@ -1110,7 +1385,6 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         if self.error.is_some() {
             return;
         }
-        self.register_component_if_needed(expression);
         walk::walk_call_expression(self, expression);
 
         let Expression::Identifier(callee) = &expression.callee else {
@@ -1126,7 +1400,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         {
             if !self.current_function_is_component() {
                 self.fail(
-                    "useSignal() can only be used while rendering a component$ and must be called at the top level of the component$ body (not inside nested functions).",
+                    "useSignal() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).",
                 );
             }
             return;
@@ -1355,91 +1629,33 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             return;
         }
 
-        if self
-            .imports
-            .component_identifier
-            .as_deref()
-            .is_some_and(|identifier| identifier == callee_name)
-        {
-            let Some(argument) = expression.arguments.first() else {
-                panic!("component$() expects a function expression.");
-            };
-            if !is_function_argument(argument) {
-                panic!("component$() expects a function expression.");
-            }
-            let function_span = function_argument_span(argument).unwrap();
-            let raw_code = source_text(self.source, function_span);
-            let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Component, raw_code);
-            let (captures, import_spans) = self.collect_symbol_dependencies(argument).unwrap();
-            let projection_slots = match collect_projection_slots_from_source(argument, self.source) {
-                Ok(value) => value,
-                Err(error) => {
-                    self.fail(error);
-                    return;
-                }
-            };
-            let build = self
-                .build_symbol(function_span, captures.clone(), import_spans, true)
-                .unwrap();
-            let span_key = SpanKey::from_span(function_span);
-            let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
-            self.hmr_key_by_symbol_id
-                .insert(symbol_id.clone(), component_info.hmr_key.clone());
-            self.symbols.push((
-                symbol_id.clone(),
-                ResumeSymbol {
-                    captures: build.captures.clone(),
-                    code: build.code.clone(),
-                    file_path: self.file_id.clone(),
-                    id: symbol_id.clone(),
-                    kind: SymbolKind::Component,
-                },
-            ));
-            let signature = create_symbol_signature(&SymbolKind::Component, &build.signature_code);
-            self.hmr_symbols.push((
-                component_info.hmr_key.clone(),
-                ResumeHmrSymbolEntry {
-                    captures: build.captures.clone(),
-                    hmr_key: component_info.hmr_key.clone(),
-                    id: symbol_id.clone(),
-                    kind: SymbolKind::Component,
-                    owner_component_key: None,
-                    signature: signature.clone(),
-                },
-            ));
-            self.hmr_components.push((
-                component_info.hmr_key.clone(),
-                ResumeHmrComponentEntry {
-                    captures: build.captures.clone(),
-                    hmr_key: component_info.hmr_key.clone(),
-                    id: symbol_id.clone(),
-                    local_symbol_keys: component_info.local_symbol_keys.clone(),
-                    signature,
-                },
-            ));
-            self.used_helpers.insert(HELPER_COMPONENT.to_string());
-            let projection_literal = projection_slots
-                .map(|entries| {
-                    let body = entries
-                        .into_iter()
-                        .map(|(name, count)| format!("{name}: {count}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(", {{ {body} }}")
-                })
-                .unwrap_or_default();
-            self.push_replacement(
-                function_span.start as usize,
-                function_span.end as usize,
-                format!(
-                    "{HELPER_COMPONENT}({}, {}, {}{})",
-                    render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-                    js_string(&symbol_id),
-                    Self::build_capture_getter(&captures),
-                    projection_literal,
-                ),
-            );
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if self.error.is_some() {
+            return;
         }
+        walk::walk_variable_declarator(self, declarator);
+        let Some(init) = declarator.init.as_ref() else {
+            return;
+        };
+        self.emit_component_symbol_for_expression(init);
+    }
+
+    fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        walk::walk_assignment_expression(self, expression);
+        self.emit_component_symbol_for_expression(&expression.right);
+    }
+
+    fn visit_export_default_declaration(&mut self, declaration: &ExportDefaultDeclaration<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        walk::walk_export_default_declaration(self, declaration);
+        self.emit_component_symbol_for_export_default(&declaration.declaration);
     }
 
     fn visit_jsx_attribute(&mut self, attribute: &oxc_ast::ast::JSXAttribute<'a>) {

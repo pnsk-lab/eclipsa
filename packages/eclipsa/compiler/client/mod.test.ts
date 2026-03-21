@@ -22,8 +22,7 @@ describe('compileClientModule', () => {
   it('injects HMR helpers only when enabled', async () => {
     const resultCode = await compileClientModule(
       `
-        import { component$ } from "eclipsa";
-        export default component$(() => <div />);
+                export default () => <div />;
       `,
       'mod.test.tsx',
       {

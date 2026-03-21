@@ -1,7 +1,7 @@
 // ================= ENTRY (on_visible.jsx) ==
-import { component$, onVisible } from 'eclipsa'
+import { onVisible } from 'eclipsa'
 
-export default component$(() => {
+export default (() => {
   const value = 'visible'
 
   onVisible(() => {
@@ -9,14 +9,14 @@ export default component$(() => {
   })
 
   return <button>{value}</button>
-})
+});
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, onVisible } from 'eclipsa'
+import { onVisible } from 'eclipsa'
 
-export default component$(__eclipsaComponent(() => {
+export default (__eclipsaComponent(() => {
   const value = 'visible'
 
   onVisible(__eclipsaLazy("1s0b9ti", () => {
@@ -24,7 +24,7 @@ export default component$(__eclipsaComponent(() => {
   }, ()=>[value]))
 
   return <button>{value}</button>
-}, "11f179", ()=>[]))
+}, "11f179", ()=>[]));
 
 
 // ================= 1s0b9ti (lazy) ==
@@ -33,7 +33,7 @@ export default (__scope) => {
   };
 
 // ================= 11f179 (component) ==
-import { component$, onVisible } from 'eclipsa'
+import { onVisible } from 'eclipsa'
 import { __eclipsaLazy } from "eclipsa/internal";
 export default (__scope) => {
   const value = 'visible'
