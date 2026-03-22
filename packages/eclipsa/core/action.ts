@@ -882,8 +882,8 @@ const createActionFormNode = (id: string, props: ActionFormProps) => {
   return form
 }
 
-export const action$: ActionFactory = (() => {
-  throw new Error('action$() must be compiled by the Eclipsa analyzer before it can run.')
+export const action: ActionFactory = (() => {
+  throw new Error('action() must be compiled by the Eclipsa analyzer before it can run.')
 }) as ActionFactory
 
 export const validator = <Schema extends StandardSchemaV1<any, any>>(

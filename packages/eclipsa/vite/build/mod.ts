@@ -27,6 +27,15 @@ const joinHonoPath = (left: string, right: string) => `${left}/${right}`.replace
 const toPublicAssetUrl = (root: string, filePath: string) =>
   `/${path.relative(root, filePath).split(path.sep).join('/')}`
 
+const fileExists = async (filePath: string) => {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const collectFiles = async (directory: string): Promise<string[]> => {
   const entries = await fs.readdir(directory, { withFileTypes: true })
   const files = await Promise.all(
@@ -956,6 +965,8 @@ export const build = async (
   options: ResolvedEclipsaPluginOptions,
 ) => {
   const root = userConfig.root ?? cwd()
+  const appHooksPath = path.join(root, 'app/+hooks.ts')
+  const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
   const routes = await createRoutes(root)
@@ -994,14 +1005,33 @@ export const build = async (
   await builder.build(builder.environments.client)
   await builder.build(builder.environments.ssr)
 
+  const appHooksClientUrl = (await fileExists(appHooksPath))
+    ? createBuildModuleUrl({ entryName: 'app_hooks', filePath: appHooksPath })
+    : null
+  const appHooksServerUrl = (await fileExists(appHooksPath))
+    ? createBuildServerModuleUrl({ entryName: 'app_hooks', filePath: appHooksPath })
+    : null
   const clientDir = path.join(root, 'dist/client')
+  const serverHooksUrl = (await fileExists(serverHooksPath))
+    ? createBuildServerModuleUrl({ entryName: 'server_hooks', filePath: serverHooksPath })
+    : null
   const stylesheetUrls = await collectClientStylesheetUrls(clientDir)
   const serverDir = path.join(root, 'dist/server')
   const appModulePath = path.join(root, 'dist/ssr/eclipsa_app.mjs')
   await fs.mkdir(path.dirname(appModulePath), { recursive: true })
   await fs.writeFile(
     appModulePath,
-    renderAppModule(actions, loaders, routes, routeManifest, symbolUrls, stylesheetUrls),
+    renderAppModule(
+      actions,
+      appHooksClientUrl,
+      appHooksServerUrl,
+      loaders,
+      routes,
+      routeManifest,
+      serverHooksUrl,
+      symbolUrls,
+      stylesheetUrls,
+    ),
   )
 
   const staticPageRouteSet = new Set(staticPageRoutes.map((route) => route.routePath))

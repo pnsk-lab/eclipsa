@@ -135,14 +135,14 @@ describe('vite plugin hotUpdate', () => {
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 1; }}>{count.value}</button>;
       };
     `
     const nextSource = `
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 2; }}>{count.value}</button>;
       };
     `
 
@@ -186,14 +186,14 @@ describe('vite plugin hotUpdate', () => {
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 1; }}>{count.value}</button>;
       };
     `
     const nextSource = `
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 2; }}>{count.value}</button>;
       };
     `
     const send = vi.fn()

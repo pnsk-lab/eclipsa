@@ -15,7 +15,7 @@ describe('compileSSRModule', () => {
 
   it('keeps event-bound elements on the generic JSX path', async () => {
     const resultCode = await compileSSRModule(
-      `const view = <button onClick$={handleClick}>save</button>`,
+      `const view = <button onClick={handleClick}>save</button>`,
       'mod.test.tsx',
     )
 

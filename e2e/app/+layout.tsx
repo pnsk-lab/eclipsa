@@ -15,7 +15,7 @@ export default (props: { children?: unknown }) => {
       <p>Shared layout shell updated</p>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           layoutCount.value += 1
         }}
       >

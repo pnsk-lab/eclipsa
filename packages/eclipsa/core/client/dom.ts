@@ -52,7 +52,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   })
 }
 
-const EVENT_ATTR_REGEX = /^on[A-Z].+\$$/
+const EVENT_ATTR_REGEX = /^on[A-Z].+$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
 const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
   isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
@@ -61,7 +61,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
 
   if (EVENT_ATTR_REGEX.test(name)) {
-    const eventName = name[2].toLowerCase() + name.slice(3, -1)
+    const eventName = name[2].toLowerCase() + name.slice(3)
     const resolved = value()
     if (bindRuntimeEvent(elem, eventName, resolved)) {
       return
@@ -146,7 +146,8 @@ export const createComponent = (Component: Component, props: unknown) => {
     return () => jsxDEV(Component, props as Record<string, unknown>, null, false, {})
   }
   if (!getComponentMeta(Component)) {
-    return () => Component(props) as unknown as ClientElementLike
+    const render = Component as (props: unknown) => unknown
+    return () => render(props) as ClientElementLike
   }
   const elem = renderClientComponent(Component, props)
   return () => elem as ClientElementLike

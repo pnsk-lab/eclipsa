@@ -394,8 +394,8 @@ const createDevApp = async (init: DevAppInit) => {
   const reroutePathname = (request: Request | null, pathname: string, baseUrl: string) =>
     normalizeRoutePath(resolveReroute(appHooks.reroute, request, pathname, baseUrl))
 
-  const resolveRequest = async (
-    c: AppContext,
+  const resolveRequest = async <E extends Context>(
+    c: E,
     handler: (requestContext: AppContext) => Promise<Response>,
   ) => {
     const requestContext = prepareRequestContext(c)
@@ -759,9 +759,12 @@ const createDevApp = async (init: DevAppInit) => {
   }
 
   app.post('/__eclipsa/action/:id', async (c) =>
-    resolveRequest(c as AppContext, async (requestContext) => {
+    resolveRequest(c, async (requestContext) => {
       const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
       const id = requestContext.req.param('id')
+      if (!id) {
+        return requestContext.text('Not Found', 404)
+      }
       const modulePath = actionModules.get(id)
       if (!modulePath) {
         return requestContext.text('Not Found', 404)
@@ -774,9 +777,12 @@ const createDevApp = async (init: DevAppInit) => {
   )
 
   app.get('/__eclipsa/loader/:id', async (c) =>
-    resolveRequest(c as AppContext, async (requestContext) => {
+    resolveRequest(c, async (requestContext) => {
       const [{ executeLoader, hasLoader }] = await Promise.all([init.runner.import('eclipsa')])
       const id = requestContext.req.param('id')
+      if (!id) {
+        return requestContext.text('Not Found', 404)
+      }
       const modulePath = loaderModules.get(id)
       if (!modulePath) {
         return requestContext.text('Not Found', 404)
@@ -789,7 +795,7 @@ const createDevApp = async (init: DevAppInit) => {
   )
 
   app.get(ROUTE_PREFLIGHT_ENDPOINT, async (c) =>
-    resolveRequest(c as AppContext, async (requestContext) => {
+    resolveRequest(c, async (requestContext) => {
       const href = requestContext.req.query('href')
       if (!href) {
         return requestContext.json({ document: true, ok: false }, 400)
@@ -799,7 +805,7 @@ const createDevApp = async (init: DevAppInit) => {
   )
 
   app.all('*', async (c) =>
-    resolveRequest(c as AppContext, async (requestContext) => {
+    resolveRequest(c, async (requestContext) => {
       const { match, requestPathname, resolvedPathname } = resolveRequestRoute(
         requestContext.req.raw,
         requestContext.req.url,

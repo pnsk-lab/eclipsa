@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
 import { executeAction, registerAction, validator, type StandardSchemaV1 } from './action.ts'
+import type { AppContext } from './hooks.ts'
 import { serializeValue } from './serialize.ts'
 
 const createSchema = <T>(
@@ -19,7 +20,9 @@ const createSchema = <T>(
 
 const createActionApp = () => {
   const app = new Hono()
-  app.post('/__eclipsa/action/:id', (c) => executeAction(c.req.param('id'), c))
+  app.post('/__eclipsa/action/:id', (c) =>
+    executeAction(c.req.param('id'), c as unknown as AppContext),
+  )
   return app
 }
 

@@ -2489,7 +2489,7 @@ const htmlToNodes = (doc: Document, html: string) => {
   return Array.from(template.content.childNodes)
 }
 
-const EVENT_PROP_REGEX = /^on([A-Z].+)\$$/
+const EVENT_PROP_REGEX = /^on([A-Z].+)$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
 
 const resolveDangerouslySetInnerHTML = (value: unknown) =>
@@ -2632,8 +2632,11 @@ const registerEventBinding = (
   return `${descriptor.symbol}:${scopeId}`
 }
 
+const getRuntimeEventDescriptor = (value: unknown): EventDescriptor | LazyMeta | null =>
+  getEventMeta(value) ?? getLazyMeta(value)
+
 export const bindRuntimeEvent = (element: Element, eventName: string, value: unknown): boolean => {
-  const descriptor = getEventMeta(value)
+  const descriptor = getRuntimeEventDescriptor(value)
   if (!descriptor) {
     return false
   }
@@ -2760,7 +2763,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const value = resolved.props[name]
 
     if (eventName) {
-      const eventMeta = getEventMeta(value)
+      const eventMeta = getRuntimeEventDescriptor(value)
       if (!eventMeta || !container) {
         continue
       }
@@ -2915,7 +2918,7 @@ const applyElementProp = (
 ) => {
   const eventName = toEventName(name)
   if (eventName) {
-    const eventMeta = getEventMeta(value)
+    const eventMeta = getRuntimeEventDescriptor(value)
     if (!eventMeta) {
       return
     }

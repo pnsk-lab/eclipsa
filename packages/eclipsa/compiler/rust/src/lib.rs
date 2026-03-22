@@ -386,8 +386,10 @@ fn try_render_static_attr_expression(name: &str, expression: &Expression<'_>) ->
 }
 
 fn event_name_from_prop(name: &str) -> Option<String> {
-    let rest = name.strip_suffix('$')?;
-    let event = rest.strip_prefix("on")?;
+    if name.ends_with('$') {
+        return None;
+    }
+    let event = name.strip_prefix("on")?;
     let mut chars = event.chars();
     let first = chars.next()?;
     if !first.is_ascii_uppercase() {

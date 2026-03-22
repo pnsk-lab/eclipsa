@@ -1,7 +1,7 @@
 import {
   ACTION_FORM_FIELD,
-  action$,
-  loader$,
+  action,
+  loader,
   useSignal,
   validator,
   type MetadataContext,
@@ -40,7 +40,7 @@ const loaderMeta: LoaderMiddleware<{
   await next()
 }
 
-const useStatsLoader = loader$(loaderMeta, async (c) => {
+const useStatsLoader = loader(loaderMeta, async (c) => {
   return {
     label: 'loader-ready',
     traceId: c.var.traceId,
@@ -60,7 +60,7 @@ const sumSchema = z
     right: Number(value.right),
   }))
 
-const useSumAction = action$(requestMeta, validator(sumSchema), async (c) => {
+const useSumAction = action(requestMeta, validator(sumSchema), async (c) => {
   const total = c.var.input.left + c.var.input.right
   return {
     label: `${c.var.input.left} + ${c.var.input.right}`,
@@ -69,7 +69,7 @@ const useSumAction = action$(requestMeta, validator(sumSchema), async (c) => {
   }
 })
 
-const useFormSumAction = action$(requestMeta, validator(sumSchema), async (c) => {
+const useFormSumAction = action(requestMeta, validator(sumSchema), async (c) => {
   const left = c.var.input.left
   const right = c.var.input.right
   const total = left + right
@@ -111,7 +111,7 @@ export default () => {
         <p data-testid="loader-last">loader last: {lastLoaded.value}</p>
         <button
           type="button"
-          onClick$={async () => {
+          onClick={async () => {
             const result = await loader.load()
             lastLoaded.value = `${result.label} (${result.traceId})`
           }}
@@ -123,7 +123,7 @@ export default () => {
         Left
         <input
           name="left"
-          onInput$={(event: InputEvent) => {
+          onInput={(event: InputEvent) => {
             left.value = (event.currentTarget as HTMLInputElement).value
           }}
           value={left.value}
@@ -133,7 +133,7 @@ export default () => {
         Right
         <input
           name="right"
-          onInput$={(event: InputEvent) => {
+          onInput={(event: InputEvent) => {
             right.value = (event.currentTarget as HTMLInputElement).value
           }}
           value={right.value}
@@ -141,7 +141,7 @@ export default () => {
       </label>
       <button
         type="button"
-        onClick$={async () => {
+        onClick={async () => {
           const result = await action.action({
             left: left.value,
             right: right.value,
@@ -159,14 +159,14 @@ export default () => {
       </p>
       <section>
         <h3>Form Action</h3>
-        <p>Uses the same action$ transport through native form submission.</p>
+        <p>Uses the same action transport through native form submission.</p>
         <form data-e-action-form={formAction.formActionId} method="post">
           <input name={ACTION_FORM_FIELD} type="hidden" value={formAction.formActionId} />
           <label>
             Form Left
             <input
               name="left"
-              onInput$={(event: InputEvent) => {
+              onInput={(event: InputEvent) => {
                 formLeft.value = (event.currentTarget as HTMLInputElement).value
               }}
               value={formLeft.value}
@@ -176,7 +176,7 @@ export default () => {
             Form Right
             <input
               name="right"
-              onInput$={(event: InputEvent) => {
+              onInput={(event: InputEvent) => {
                 formRight.value = (event.currentTarget as HTMLInputElement).value
               }}
               value={formRight.value}

@@ -133,13 +133,13 @@ describe('analyzeModule()', () => {
 
   it('emits symbol modules that accept __scope as the first runtime argument', async () => {
     const analyzed = await analyzeModule(`
-      import { $, onVisible, useWatch } from "eclipsa";
+      import { onVisible, useWatch } from "eclipsa";
 
       export default (props) => {
         const count = props.count;
-        const handler = $((event) => {
+        const handler = async (event) => {
           console.log(count, event.type);
-        });
+        };
 
         onVisible(() => {
           console.log(count);
@@ -149,7 +149,7 @@ describe('analyzeModule()', () => {
           console.log(count);
         });
 
-        return <button onClick$={(event) => handler(event)}>{count}</button>;
+        return <button onClick={(event) => handler(event)}>{count}</button>;
       };
     `)
 
@@ -161,13 +161,94 @@ describe('analyzeModule()', () => {
 
     expect(component?.code).toMatch(/export default \(__scope, props\) =>/)
     expect(event?.code).toMatch(/export default \(__scope, event\) =>/)
-    expect(lazySymbols.some((symbol) => /export default \(__scope, event\) =>/.test(symbol.code))).toBe(
-      true,
-    )
+    expect(
+      lazySymbols.some((symbol) => /export default(?: async)? \(__scope, event\) =>/.test(symbol.code)),
+    ).toBe(true)
     expect(lazySymbols.some((symbol) => /export default \(__scope\) =>/.test(symbol.code))).toBe(
       true,
     )
     expect(watch?.code).toMatch(/export default \(__scope\) =>/)
+  })
+
+  it('auto-wraps local async handlers so plain event props can reference them directly', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const ready = "ready";
+        const handler = async () => {
+          console.log(ready);
+        };
+
+        return <button onClick={handler}>{ready}</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaLazy')
+    expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
+    expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+  })
+
+  it('auto-wraps local sync handlers so plain event props can reference them directly', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const ready = "ready";
+        const handler = () => {
+          console.log(ready);
+        };
+
+        return <button onClick={handler}>{ready}</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaLazy')
+    expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
+    expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+  })
+
+  it('auto-wraps local function declarations when plain event props reference them directly', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const ready = "ready";
+
+        function handler() {
+          console.log(ready);
+        }
+
+        return <button onClick={handler}>{ready}</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaLazy')
+    expect(analyzed.code).toContain('return <button onClick={__eclipsaLazy(')
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+  })
+
+  it('rejects plain event handlers that are not component-local functions', async () => {
+    await expect(
+      analyzeModule(`
+        const handler = () => {
+          console.log("ready");
+        };
+
+        export default () => <button onClick={handler}>ready</button>;
+      `),
+    ).rejects.toThrowError(
+      'Unsupported plain event handler "handler" for "onClick". Use an inline function, a component-local function declaration, or a component-local const function value.',
+    )
+  })
+
+  it('rejects unsupported plain event handler expressions', async () => {
+    await expect(
+      analyzeModule(`
+        export default (props) => <button onClick={props.onClick}>ready</button>;
+      `),
+    ).rejects.toThrowError(
+      'Unsupported plain event handler for "onClick". Use an inline function, a component-local function declaration, or a component-local const function value.',
+    )
   })
 
   it('keeps concrete local symbol ids in emitted component code while preserving HMR metadata', async () => {

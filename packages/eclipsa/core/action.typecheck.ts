@@ -1,5 +1,5 @@
 import {
-  action$,
+  action,
   validator,
   type ActionFormProps,
   type ActionHandle,
@@ -45,7 +45,7 @@ const sumSchema = {
   },
 } satisfies StandardSchemaV1<{ left: string; right: string }, { left: number; right: number }>
 
-const useSum = action$(userMiddleware, validator(sumSchema), async (c) => {
+const useSum = action(userMiddleware, validator(sumSchema), async (c) => {
   type _Input = Expect<Equal<typeof c.var.input, { left: number; right: number }>>
   type _TraceId = Expect<Equal<typeof c.var.traceId, string>>
   type _User = Expect<Equal<typeof c.var.user, { id: string }>>
@@ -93,7 +93,7 @@ sumHandle.action()
 // @ts-expect-error Input type comes from schema input, not output.
 sumHandle.action({ left: 1, right: 2 })
 
-const usePing = action$(async () => 'pong')
+const usePing = action(async () => 'pong')
 
 type PingHandle = ReturnType<typeof usePing>
 type _Ping = Expect<Equal<PingHandle, ActionHandle<unknown, string>>>

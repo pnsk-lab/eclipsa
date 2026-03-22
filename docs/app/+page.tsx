@@ -1,8 +1,8 @@
-import { component$, Link, onVisible, useSignal } from 'eclipsa'
+import { Link, onVisible, useSignal } from 'eclipsa'
 import { setupLandingScene } from './landing-scene.ts'
 import { Logo } from '../components/logo.tsx'
 
-export default component$(() => {
+export default () => {
   const rootRef = useSignal<HTMLDivElement | undefined>()
   const canvasRef = useSignal<HTMLCanvasElement | undefined>()
 
@@ -258,4 +258,4 @@ export default component$(() => {
       </footer>
     </div>
   )
-})
+}

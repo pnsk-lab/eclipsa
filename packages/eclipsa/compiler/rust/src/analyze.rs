@@ -24,7 +24,7 @@ use crate::{Replacement, apply_replacements, js_string, parse_program, source_ty
 
 const INTERNAL_IMPORT: &str = "eclipsa/internal";
 const EVENT_PROP_REGEX_PREFIX: &str = "on";
-const EVENT_PROP_REGEX_SUFFIX: &str = "$";
+const DEPRECATED_EVENT_PROP_REGEX_SUFFIX: &str = "$";
 
 const HELPER_ACTION: &str = "__eclipsaAction";
 const HELPER_COMPONENT: &str = "__eclipsaComponent";
@@ -132,7 +132,9 @@ pub struct AnalyzeResponse {
 #[derive(Debug)]
 struct ImportBindings {
     action_identifier: Option<String>,
-    lazy_identifier: Option<String>,
+    deprecated_action_identifier: Option<String>,
+    deprecated_lazy_identifier: Option<String>,
+    deprecated_loader_identifier: Option<String>,
     loader_identifier: Option<String>,
     signal_identifier: Option<String>,
     visible_identifier: Option<String>,
@@ -220,10 +222,12 @@ fn create_indexed_key(base: &str, count: usize) -> String {
 }
 
 fn to_event_name(prop_name: &str) -> Option<String> {
-    if !prop_name.starts_with(EVENT_PROP_REGEX_PREFIX) || !prop_name.ends_with(EVENT_PROP_REGEX_SUFFIX) {
+    if !prop_name.starts_with(EVENT_PROP_REGEX_PREFIX)
+        || prop_name.ends_with(DEPRECATED_EVENT_PROP_REGEX_SUFFIX)
+    {
         return None;
     }
-    let middle = &prop_name[EVENT_PROP_REGEX_PREFIX.len()..prop_name.len() - EVENT_PROP_REGEX_SUFFIX.len()];
+    let middle = &prop_name[EVENT_PROP_REGEX_PREFIX.len()..];
     let mut chars = middle.chars();
     let first = chars.next()?;
     if !first.is_ascii_uppercase() {
@@ -244,7 +248,9 @@ fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> String {
 fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
     let mut bindings = ImportBindings {
         action_identifier: None,
-        lazy_identifier: None,
+        deprecated_action_identifier: None,
+        deprecated_lazy_identifier: None,
+        deprecated_loader_identifier: None,
         loader_identifier: None,
         signal_identifier: None,
         visible_identifier: None,
@@ -272,9 +278,11 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
             };
             let local = specifier.local.name.as_str().to_string();
             match imported {
-                "action$" => bindings.action_identifier = Some(local),
-                "$" => bindings.lazy_identifier = Some(local),
-                "loader$" => bindings.loader_identifier = Some(local),
+                "action" => bindings.action_identifier = Some(local),
+                "action$" => bindings.deprecated_action_identifier = Some(local),
+                "$" => bindings.deprecated_lazy_identifier = Some(local),
+                "loader" => bindings.loader_identifier = Some(local),
+                "loader$" => bindings.deprecated_loader_identifier = Some(local),
                 "onVisible" => bindings.visible_identifier = Some(local),
                 "useSignal" => bindings.signal_identifier = Some(local),
                 "useWatch" => bindings.watch_identifier = Some(local),
@@ -751,6 +759,18 @@ impl<'a, 's> CaptureCollector<'a, 's> {
                         | Expression::FunctionExpression(_)
                         | Expression::ClassExpression(_)
                 ) {
+                    let local_function = match init {
+                        Expression::ArrowFunctionExpression(_) => {
+                            self.semantic.symbol_scope(symbol_id) != self.program.scope_id()
+                        }
+                        Expression::FunctionExpression(_) => {
+                            self.semantic.symbol_scope(symbol_id) != self.program.scope_id()
+                        }
+                        _ => false,
+                    };
+                    if local_function {
+                        return Ok(());
+                    }
                     return Err(format!(
                         "Unsupported resumable capture \"{name}\". Functions and classes must not be captured directly."
                     ));
@@ -853,6 +873,7 @@ struct AnalyzeVisitor<'a, 's> {
     hmr_key_by_symbol_id: HashMap<String, String>,
     hmr_symbols: Vec<(String, ResumeHmrSymbolEntry)>,
     imports: ImportBindings,
+    lazy_symbol_ids_by_span: HashMap<SpanKey, String>,
     file_id: String,
     loaders: Vec<(String, SymbolRef)>,
     node_stack: Vec<NodeMarker>,
@@ -884,6 +905,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             hmr_key_by_symbol_id: HashMap::new(),
             hmr_symbols: Vec::new(),
             imports,
+            lazy_symbol_ids_by_span: HashMap::new(),
             file_id: file_id.to_string(),
             loaders: Vec::new(),
             node_stack: Vec::new(),
@@ -1058,7 +1080,153 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         format!("()=>[{}]", captures.join(", "))
     }
 
+    fn plain_event_handler_error(attribute_name: &str, handler_name: Option<&str>) -> String {
+        let label = handler_name
+            .map(|name| format!(" \"{name}\""))
+            .unwrap_or_default();
+        format!(
+            "Unsupported plain event handler{label} for \"{attribute_name}\". Use an inline function, a component-local function declaration, or a component-local const function value."
+        )
+    }
+
+    fn ensure_lazy_symbol_for_function(
+        &mut self,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+    ) -> String {
+        let span_key = SpanKey::from_span(function_span);
+        if let Some(symbol_id) = self.lazy_symbol_ids_by_span.get(&span_key) {
+            return symbol_id.clone();
+        }
+
+        let raw_code = source_text(self.source, function_span);
+        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Lazy, raw_code);
+        let build = self
+            .build_symbol(function_span, captures.clone(), import_spans, false)
+            .unwrap();
+        let owner = self.current_owner_component_key();
+        let base = format!("{}:lazy:slot", owner.clone().unwrap_or_else(|| "file".to_string()));
+        let hmr_key = self.next_owned_symbol_key(base);
+        if owner.is_some() {
+            self.push_owner_local_symbol_key(&hmr_key);
+        }
+        self.used_helpers.insert(HELPER_LAZY.to_string());
+        self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Lazy, build);
+        self.lazy_symbol_ids_by_span.insert(span_key, symbol_id.clone());
+        symbol_id
+    }
+
+    fn emit_lazy_symbol_from_function(
+        &mut self,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+    ) -> String {
+        let symbol_id = self.ensure_lazy_symbol_for_function(function_span, captures.clone(), import_spans);
+        format!(
+            "{HELPER_LAZY}({}, {}, {})",
+            js_string(&symbol_id),
+            render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
+            Self::build_capture_getter(&captures),
+        )
+    }
+
+    fn maybe_emit_local_lazy_symbol(&mut self, expression: &Expression<'a>) {
+        if self.current_owner_component_key().is_none() {
+            return;
+        }
+        let Some(function_span) = function_expression_span(expression) else {
+            return;
+        };
+        if self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+            return;
+        }
+        if let Expression::ParenthesizedExpression(expression) = expression {
+            self.maybe_emit_local_lazy_symbol(&expression.expression);
+            return;
+        }
+        let (captures, import_spans) = self.collect_symbol_dependencies_from_expression(expression).unwrap();
+        let replacement_code =
+            self.emit_lazy_symbol_from_function(function_span, captures, import_spans);
+        self.push_replacement(
+            function_span.start as usize,
+            function_span.end as usize,
+            replacement_code,
+        );
+    }
+
+    fn resolve_plain_event_handler_identifier(
+        &mut self,
+        attribute_name: &str,
+        container: &oxc_ast::ast::JSXExpressionContainer<'a>,
+        identifier: &oxc_ast::ast::IdentifierReference<'a>,
+    ) {
+        let reference = self.semantic.scoping().get_reference(identifier.reference_id());
+        let Some(symbol_id) = reference.symbol_id() else {
+            self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+            return;
+        };
+        let flags = self.semantic.scoping().symbol_flags(symbol_id);
+        let symbol_scope = self.semantic.symbol_scope(symbol_id);
+        if flags.is_import() || symbol_scope == self.program.scope_id() {
+            self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+            return;
+        }
+
+        match self.semantic.symbol_declaration(symbol_id).kind() {
+            AstKind::VariableDeclarator(variable) => {
+                if !flags.is_const_variable() {
+                    self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+                    return;
+                }
+                let Some(init) = variable.init.as_ref() else {
+                    self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+                    return;
+                };
+                let Some(function_span) = function_expression_span(init) else {
+                    self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+                    return;
+                };
+                if self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+                    self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+                    return;
+                }
+                let (captures, import_spans) =
+                    self.collect_symbol_dependencies_from_expression(init).unwrap();
+                let replacement_code =
+                    self.emit_lazy_symbol_from_function(function_span, captures, import_spans);
+                self.push_replacement(
+                    function_span.start as usize,
+                    function_span.end as usize,
+                    replacement_code,
+                );
+            }
+            AstKind::Function(function) => {
+                if self.component_info_by_fn.contains_key(&SpanKey::from_span(function.span)) {
+                    self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+                    return;
+                }
+                let (captures, import_spans) =
+                    CaptureCollector::collect_function(self.program, self.semantic, function).unwrap();
+                let replacement_code =
+                    self.emit_lazy_symbol_from_function(function.span, captures, import_spans);
+                self.push_replacement(
+                    container.span.start as usize,
+                    container.span.end as usize,
+                    format!("{{{replacement_code}}}"),
+                );
+            }
+            _ => {
+                self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
+            }
+        }
+    }
+
     fn component_base_from_stack(&self) -> Option<String> {
+        if !self.current_functions.is_empty() {
+            return None;
+        }
         for marker in self.node_stack.iter().rev().skip(1) {
             match marker {
                 NodeMarker::ExportDefaultDeclaration => {
@@ -1408,38 +1576,13 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
 
         if self
             .imports
-            .lazy_identifier
+            .deprecated_lazy_identifier
             .as_deref()
             .is_some_and(|identifier| identifier == callee_name)
         {
-            let Some(argument) = expression.arguments.first() else {
-                panic!("$() expects a function expression.");
-            };
-            if !is_function_argument(argument) {
-                panic!("$() expects a function expression.");
-            }
-            let function_span = function_argument_span(argument).unwrap();
-            let raw_code = source_text(self.source, function_span);
-            let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Lazy, raw_code);
-            let (captures, import_spans) = self.collect_symbol_dependencies(argument).unwrap();
-            let build = self
-                .build_symbol(function_span, captures.clone(), import_spans, false)
-                .unwrap();
-            let owner = self.current_owner_component_key();
-            let base = format!("{}:lazy:slot", owner.clone().unwrap_or_else(|| "file".to_string()));
-            let hmr_key = self.next_owned_symbol_key(base);
-            if owner.is_some() {
-                self.push_owner_local_symbol_key(&hmr_key);
-            }
-            self.used_helpers.insert(HELPER_LAZY.to_string());
-            self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Lazy, build);
-            let replacement_code = format!(
-                "{HELPER_LAZY}({}, {}, {})",
-                js_string(&symbol_id),
-                render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-                Self::build_capture_getter(&captures),
+            self.fail(
+                "$() has been removed. Declare an async function and reference it directly, or pass a plain event handler.",
             );
-            self.push_replacement(expression.span.start as usize, expression.span.end as usize, replacement_code);
             return;
         }
 
@@ -1456,26 +1599,9 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                 panic!("onVisible() expects a function expression as the first argument.");
             }
             let function_span = function_argument_span(argument).unwrap();
-            let raw_code = source_text(self.source, function_span);
-            let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Lazy, raw_code);
             let (captures, import_spans) = self.collect_symbol_dependencies(argument).unwrap();
-            let build = self
-                .build_symbol(function_span, captures.clone(), import_spans, false)
-                .unwrap();
-            let owner = self.current_owner_component_key();
-            let base = format!("{}:lazy:slot", owner.clone().unwrap_or_else(|| "file".to_string()));
-            let hmr_key = self.next_owned_symbol_key(base);
-            if owner.is_some() {
-                self.push_owner_local_symbol_key(&hmr_key);
-            }
-            self.used_helpers.insert(HELPER_LAZY.to_string());
-            self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Lazy, build);
-            let replacement_code = format!(
-                "{HELPER_LAZY}({}, {}, {})",
-                js_string(&symbol_id),
-                render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-                Self::build_capture_getter(&captures),
-            );
+            let replacement_code =
+                self.emit_lazy_symbol_from_function(function_span, captures, import_spans);
             self.push_replacement(function_span.start as usize, function_span.end as usize, replacement_code);
             return;
         }
@@ -1519,18 +1645,28 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
 
         if self
             .imports
+            .deprecated_action_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            self.fail("action$() has been removed. Use action() instead.");
+            return;
+        }
+
+        if self
+            .imports
             .action_identifier
             .as_deref()
             .is_some_and(|identifier| identifier == callee_name)
         {
             if !self.current_functions.is_empty() {
-                panic!("action$() must be declared at module scope so the server can register it exactly once.");
+                panic!("action() must be declared at module scope so the server can register it exactly once.");
             }
             let Some(argument) = expression.arguments.last() else {
-                panic!("action$() expects the last argument to be a function.");
+                panic!("action() expects the last argument to be a function.");
             };
             if !is_function_argument(argument) {
-                panic!("action$() expects the last argument to be a function.");
+                panic!("action() expects the last argument to be a function.");
             }
             let function_span = function_argument_span(argument).unwrap();
             let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Action, source_text(self.source, function_span));
@@ -1575,18 +1711,28 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
 
         if self
             .imports
+            .deprecated_loader_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            self.fail("loader$() has been removed. Use loader() instead.");
+            return;
+        }
+
+        if self
+            .imports
             .loader_identifier
             .as_deref()
             .is_some_and(|identifier| identifier == callee_name)
         {
             if !self.current_functions.is_empty() {
-                panic!("loader$() must be declared at module scope so the server can register it exactly once.");
+                panic!("loader() must be declared at module scope so the server can register it exactly once.");
             }
             let Some(argument) = expression.arguments.last() else {
-                panic!("loader$() expects the last argument to be a function.");
+                panic!("loader() expects the last argument to be a function.");
             };
             if !is_function_argument(argument) {
-                panic!("loader$() expects the last argument to be a function.");
+                panic!("loader() expects the last argument to be a function.");
             }
             let function_span = function_argument_span(argument).unwrap();
             let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Loader, source_text(self.source, function_span));
@@ -1636,10 +1782,14 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             return;
         }
         walk::walk_variable_declarator(self, declarator);
+        if self.error.is_some() {
+            return;
+        }
         let Some(init) = declarator.init.as_ref() else {
             return;
         };
         self.emit_component_symbol_for_expression(init);
+        self.maybe_emit_local_lazy_symbol(init);
     }
 
     fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
@@ -1647,7 +1797,11 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             return;
         }
         walk::walk_assignment_expression(self, expression);
+        if self.error.is_some() {
+            return;
+        }
         self.emit_component_symbol_for_expression(&expression.right);
+        self.maybe_emit_local_lazy_symbol(&expression.right);
     }
 
     fn visit_export_default_declaration(&mut self, declaration: &ExportDefaultDeclaration<'a>) {
@@ -1655,6 +1809,9 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             return;
         }
         walk::walk_export_default_declaration(self, declaration);
+        if self.error.is_some() {
+            return;
+        }
         self.emit_component_symbol_for_export_default(&declaration.declaration);
     }
 
@@ -1664,7 +1821,18 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         }
         walk::walk_jsx_attribute(self, attribute);
 
-        let event_name = match to_event_name(&get_jsx_attribute_name(&attribute.name)) {
+        let attribute_name = get_jsx_attribute_name(&attribute.name);
+        if attribute_name.starts_with(EVENT_PROP_REGEX_PREFIX)
+            && attribute_name.ends_with(DEPRECATED_EVENT_PROP_REGEX_SUFFIX)
+        {
+            self.fail(format!(
+                "Event prop \"{attribute_name}\" has been removed. Use \"{}\" instead.",
+                &attribute_name[..attribute_name.len() - DEPRECATED_EVENT_PROP_REGEX_SUFFIX.len()]
+            ));
+            return;
+        }
+
+        let event_name = match to_event_name(&attribute_name) {
             Some(name) => name,
             None => return,
         };
@@ -1674,51 +1842,85 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         let oxc_ast::ast::JSXAttributeValue::ExpressionContainer(container) = value else {
             return;
         };
-        if !matches!(
-            container.expression,
-            oxc_ast::ast::JSXExpression::ArrowFunctionExpression(_)
-                | oxc_ast::ast::JSXExpression::FunctionExpression(_)
-        ) {
-            return;
-        }
-
-        let (function_span, root_scope) = match &container.expression {
+        match &container.expression {
             oxc_ast::ast::JSXExpression::ArrowFunctionExpression(function) => {
-                (function.span, function.scope_id())
+                let function_span = function.span;
+                let symbol_id = create_symbol_id(
+                    &self.file_id,
+                    &SymbolKind::Event,
+                    source_text(self.source, function_span),
+                );
+                let (captures, import_spans) = self
+                    .collect_jsx_symbol_dependencies(&container.expression, function.scope_id())
+                    .unwrap();
+                let build = self
+                    .build_symbol(function_span, captures.clone(), import_spans, false)
+                    .unwrap();
+                let owner = self.current_owner_component_key();
+                let base = format!(
+                    "{}:event:{}",
+                    owner.clone().unwrap_or_else(|| "file".to_string()),
+                    event_name
+                );
+                let hmr_key = self.next_owned_symbol_key(base);
+                if owner.is_some() {
+                    self.push_owner_local_symbol_key(&hmr_key);
+                }
+                self.used_helpers.insert(HELPER_EVENT.to_string());
+                self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Event, build);
+                self.push_replacement(
+                    container.span.start as usize,
+                    container.span.end as usize,
+                    format!(
+                        "{{{HELPER_EVENT}({}, {}, {})}}",
+                        js_string(&event_name),
+                        js_string(&symbol_id),
+                        Self::build_capture_getter(&captures),
+                    ),
+                );
             }
             oxc_ast::ast::JSXExpression::FunctionExpression(function) => {
-                (function.span, function.scope_id())
+                let function_span = function.span;
+                let symbol_id = create_symbol_id(
+                    &self.file_id,
+                    &SymbolKind::Event,
+                    source_text(self.source, function_span),
+                );
+                let (captures, import_spans) = self
+                    .collect_jsx_symbol_dependencies(&container.expression, function.scope_id())
+                    .unwrap();
+                let build = self
+                    .build_symbol(function_span, captures.clone(), import_spans, false)
+                    .unwrap();
+                let owner = self.current_owner_component_key();
+                let base = format!(
+                    "{}:event:{}",
+                    owner.clone().unwrap_or_else(|| "file".to_string()),
+                    event_name
+                );
+                let hmr_key = self.next_owned_symbol_key(base);
+                if owner.is_some() {
+                    self.push_owner_local_symbol_key(&hmr_key);
+                }
+                self.used_helpers.insert(HELPER_EVENT.to_string());
+                self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Event, build);
+                self.push_replacement(
+                    container.span.start as usize,
+                    container.span.end as usize,
+                    format!(
+                        "{{{HELPER_EVENT}({}, {}, {})}}",
+                        js_string(&event_name),
+                        js_string(&symbol_id),
+                        Self::build_capture_getter(&captures),
+                    ),
+                );
             }
-            _ => unreachable!(),
-        };
-        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Event, source_text(self.source, function_span));
-        let (captures, import_spans) = self
-            .collect_jsx_symbol_dependencies(&container.expression, root_scope)
-            .unwrap();
-        let build = self
-            .build_symbol(function_span, captures.clone(), import_spans, false)
-            .unwrap();
-        let owner = self.current_owner_component_key();
-        let base = format!(
-            "{}:event:{}",
-            owner.clone().unwrap_or_else(|| "file".to_string()),
-            event_name
-        );
-        let hmr_key = self.next_owned_symbol_key(base);
-        if owner.is_some() {
-            self.push_owner_local_symbol_key(&hmr_key);
+            oxc_ast::ast::JSXExpression::Identifier(identifier) => {
+                self.resolve_plain_event_handler_identifier(&attribute_name, container, identifier);
+            }
+            _ => {
+                self.fail(Self::plain_event_handler_error(&attribute_name, None));
+            }
         }
-        self.used_helpers.insert(HELPER_EVENT.to_string());
-        self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Event, build);
-        self.push_replacement(
-            container.span.start as usize,
-            container.span.end as usize,
-            format!(
-                "{{{HELPER_EVENT}({}, {}, {})}}",
-                js_string(&event_name),
-                js_string(&symbol_id),
-                Self::build_capture_getter(&captures),
-            ),
-        );
     }
 }

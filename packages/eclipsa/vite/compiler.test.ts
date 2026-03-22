@@ -60,7 +60,7 @@ describe('createResumeHmrUpdate', () => {
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 1; }}>{count.value}</button>;
       };
     `,
       '/tmp/event-change.tsx',
@@ -70,7 +70,7 @@ describe('createResumeHmrUpdate', () => {
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 2; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 2; }}>{count.value}</button>;
       };
     `,
       '/tmp/event-change.tsx',
@@ -144,7 +144,7 @@ describe('createResumeHmrUpdate', () => {
       export default () => {
         const count = useSignal(0);
         const label = useSignal("a");
-        return <button onClick$={() => { count.value += 1; }}>{label.value}</button>;
+        return <button onClick={() => { count.value += 1; }}>{label.value}</button>;
       };
     `,
       '/tmp/capture-change.tsx',
@@ -155,7 +155,7 @@ describe('createResumeHmrUpdate', () => {
       export default () => {
         const count = useSignal(0);
         const label = useSignal("a");
-        return <button onClick$={() => { count.value += label.value.length; }}>{label.value}</button>;
+        return <button onClick={() => { count.value += label.value.length; }}>{label.value}</button>;
       };
     `,
       '/tmp/capture-change.tsx',
@@ -226,7 +226,7 @@ describe('createResumeHmrUpdate', () => {
       import { useSignal } from "eclipsa";
       export default () => {
         const count = useSignal(0);
-        return <button onClick$={() => { count.value += 1; }}>{count.value}</button>;
+        return <button onClick={() => { count.value += 1; }}>{count.value}</button>;
       };
     `,
       '/tmp/new-event.tsx',

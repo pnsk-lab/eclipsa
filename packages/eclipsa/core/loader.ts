@@ -206,13 +206,13 @@ const toSerializedLoaderError = (error: unknown): SerializedValue => {
 
 const normalizeLoaderValue = (value: unknown) => {
   if (value instanceof Response) {
-    throw new TypeError('loader$() handlers and middlewares must resolve to data, not Response.')
+    throw new TypeError('loader() handlers and middlewares must resolve to data, not Response.')
   }
   if (typeof ReadableStream !== 'undefined' && value instanceof ReadableStream) {
-    throw new TypeError('loader$() does not support ReadableStream results.')
+    throw new TypeError('loader() does not support ReadableStream results.')
   }
   if (value && typeof value === 'object' && Symbol.asyncIterator in value) {
-    throw new TypeError('loader$() does not support async iterable results.')
+    throw new TypeError('loader() does not support async iterable results.')
   }
   return value
 }
@@ -273,8 +273,8 @@ const resolveLoader = async (id: string, c: AppContext<any>) => {
   return normalizeLoaderValue(await composeMiddlewares(c, loader.middlewares, loader.handler))
 }
 
-export const loader$: LoaderFactory = (() => {
-  throw new Error('loader$() must be compiled by the Eclipsa analyzer before it can run.')
+export const loader: LoaderFactory = (() => {
+  throw new Error('loader() must be compiled by the Eclipsa analyzer before it can run.')
 }) as LoaderFactory
 
 export function registerLoader<Output>(
@@ -421,7 +421,7 @@ export const __eclipsaLoader = <const Middlewares extends readonly LoaderMiddlew
       const initialState = container?.loaderStates.get(id)
       if (typeof window === 'undefined' && !initialState?.loaded) {
         if (!container) {
-          throw new Error(`loader$("${id}") was used during SSR before it was preloaded.`)
+          throw new Error(`loader("${id}") was used during SSR before it was preloaded.`)
         }
         markPendingSsrLoader(container, id)
         throw SSR_PENDING_LOADER_ERROR

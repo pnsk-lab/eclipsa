@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { getCurrentServerRequestContext, withServerRequestContext } from './hooks.ts'
 
 const restoreBrowserGlobals = () => {
-  delete (globalThis as typeof globalThis & { document?: Document }).document
-  delete (globalThis as typeof globalThis & { window?: Window & typeof globalThis }).window
+  Reflect.deleteProperty(globalThis, 'document')
+  Reflect.deleteProperty(globalThis, 'window')
 }
 
 describe('server request context', () => {

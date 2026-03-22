@@ -7,7 +7,7 @@ export const RenderPropProbe = (props: { aa?: unknown; children?: unknown }) => 
     <section>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           probeCount.value += 1
         }}
       >

@@ -1,4 +1,4 @@
-import { loader$, type LoaderHandle, type LoaderMiddleware } from './loader.ts'
+import { loader, type LoaderHandle, type LoaderMiddleware } from './loader.ts'
 
 type Equal<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2 ? true : false
@@ -17,7 +17,7 @@ const requestMeta: LoaderMiddleware<{
   await next()
 }
 
-const useProfile = loader$(requestMeta, async (c) => {
+const useProfile = loader(requestMeta, async (c) => {
   type _TraceId = Expect<Equal<typeof c.var.traceId, string>>
   type _User = Expect<Equal<typeof c.var.user, { id: string }>>
 
@@ -40,10 +40,10 @@ type _Handle = Expect<
 
 declare const profileHandle: ProfileHandle
 profileHandle.load()
-// @ts-expect-error loader$ does not accept client input.
+// @ts-expect-error loader does not accept client input.
 profileHandle.load('value')
 
-const usePing = loader$(async () => 'pong')
+const usePing = loader(async () => 'pong')
 
 type PingHandle = ReturnType<typeof usePing>
 type _Ping = Expect<Equal<PingHandle, LoaderHandle<string>>>

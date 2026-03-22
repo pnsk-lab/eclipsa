@@ -14,6 +14,19 @@ export default () => {
   const inputting = useSignal('')
   const navigate = useNavigate()
 
+  const handleInput = (e: InputEvent) => {
+    inputting.value = (e.currentTarget as HTMLInputElement).value
+  }
+
+  const addTodo = () => {
+    todos.value = [...todos.value, inputting.value]
+    inputting.value = ''
+  }
+
+  function goToCounter() {
+    void navigate('/counter')
+  }
+
   useWatch(() => {
     console.log('todos changed', inputting.value)
   })
@@ -35,26 +48,9 @@ export default () => {
       <p>
         <Link href="/image">Open image route</Link>
       </p>
-      <input
-        onInput$={(e: InputEvent) => {
-          inputting.value = (e.currentTarget as HTMLInputElement).value
-        }}
-        value={inputting.value}
-      />
-      <button
-        onClick$={() => {
-          todos.value = [...todos.value, inputting.value]
-          inputting.value = ''
-        }}
-      >
-        Add
-      </button>
-      <button
-        type="button"
-        onClick$={() => {
-          void navigate('/counter')
-        }}
-      >
+      <input onInput={handleInput} value={inputting.value} />
+      <button onClick={addTodo}>Add</button>
+      <button type="button" onClick={goToCounter}>
         Go to counter with navigate()
       </button>
       <RenderPropProbe aa={<ProjectedContent label="Prop component content" />}>

@@ -11,12 +11,12 @@ export default () => {
       <p>
         <Link href="/">Back home with Link</Link>
       </p>
-      <button type="button" onClick$={() => count.value++}>
+      <button type="button" onClick={() => count.value++}>
         Count: {count.value}
       </button>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           void navigate('/')
         }}
       >

@@ -1,9 +1,9 @@
-import { useSignal, $ } from 'eclipsa'
+import { useSignal } from 'eclipsa'
 export default (() => {
   const a = 0
-  const add = $(() => {
+  const add = async () => {
     console.log(a)
-  })
+  }
 
-  return <button onClick$={() => add()}>Add</button>
+  return <button onClick={add}>Add</button>
 });
