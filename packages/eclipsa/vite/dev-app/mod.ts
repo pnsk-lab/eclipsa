@@ -29,6 +29,7 @@ import {
   renderRouteMetadataHead,
   type RouteMetadataExport,
 } from '../../core/metadata.ts'
+import { primeLocationState } from '../../core/runtime.ts'
 import {
   createDevModuleUrl,
   createRouteManifest,
@@ -606,7 +607,10 @@ const createDevApp = async (init: DevAppInit) => {
 
     applyRequestParams(c, params)
     const { html, payload, chunks } = await renderSSRStream(() => document, {
-      prepare: options?.prepare,
+      prepare(container: any) {
+        primeLocationState(container, c.req.url)
+        return options?.prepare?.(container)
+      },
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
       symbols: symbolUrls,
     })

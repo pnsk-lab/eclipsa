@@ -1,8 +1,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@300;500;700&family=Urbanist:wght@300;400;500;700&display=swap');
 @import 'tailwindcss';
+@plugin "@egoist/tailwindcss-icons";
 
 @theme {
   --font-space-grotesk: 'Space Grotesk', sans-serif;
   --font-archivo-black: 'Archivo Black', sans-serif;
   --font-urbanist: 'Urbanist', sans-serif;
+}
+
+.markdown-content {
+  @apply p-1 text-base/7 font-normal text-zinc-700;
+}
+.markdown-content :not(pre) > code {
+  @apply bg-black/80 text-purple-100 px-1 text-sm py-0.5 rounded-lg mx-0.5;
+}
+.markdown-content pre {
+  @apply px-6 py-5 rounded-2xl text-sm my-4;
+}
+.markdown-content {
+  & h1 {
+    @apply text-3xl/10 font-semibold text-zinc-700;
+  }
+  & p {
+    @apply text-base/7 my-4 text-zinc-700;
+  }
 }

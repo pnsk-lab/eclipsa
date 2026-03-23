@@ -17,6 +17,7 @@ describe('vite build runtime exports', () => {
       hasLoader: expect.any(Function),
       jsxDEV: expect.any(Function),
       primeActionState: expect.any(Function),
+      primeLocationState: expect.any(Function),
       renderRouteMetadataHead: expect.any(Function),
       renderSSRAsync: expect.any(Function),
       resolvePendingLoaders: expect.any(Function),

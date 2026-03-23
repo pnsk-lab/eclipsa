@@ -16,7 +16,20 @@ export interface Navigate {
 
 export type LinkPrefetchMode = 'focus' | 'hover' | 'intent' | 'none'
 
+export interface RouteLocation {
+  readonly hash: string
+  readonly href: string
+  readonly pathname: string
+  readonly search: string
+}
+
 export type RouteParams = Record<string, string | string[] | undefined>
+
+export interface StaticPath {
+  params: RouteParams
+}
+
+export type GetStaticPaths = () => StaticPath[] | Promise<StaticPath[]>
 
 export interface RoutePathSegment {
   kind: 'static' | 'required' | 'optional' | 'rest'

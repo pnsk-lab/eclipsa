@@ -4,24 +4,26 @@ import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
 import { resolveResumeHmrUpdate } from './compiler.ts'
 import { eclipsa } from './mod.ts'
 
-const getPlugin = (): Plugin => {
+const getPlugins = (): Plugin[] => {
   const plugin = eclipsa()
   if (!Array.isArray(plugin)) {
     throw new Error('Expected eclipsa() to return a plugin array')
   }
-  const result = plugin[0] as Plugin
-  const configResolved =
-    typeof result.configResolved === 'function'
-      ? result.configResolved
-      : result.configResolved?.handler
-  configResolved?.call(
-    {} as any,
-    {
-      isProduction: false,
-      root: '/tmp',
-    } as any,
-  )
-  return result
+  const results = plugin as Plugin[]
+  for (const result of results) {
+    const configResolved =
+      typeof result.configResolved === 'function'
+        ? result.configResolved
+        : result.configResolved?.handler
+    configResolved?.call(
+      {} as any,
+      {
+        isProduction: false,
+        root: '/tmp',
+      } as any,
+    )
+  }
+  return results
 }
 
 const getHotUpdate = (plugin: Plugin) => {
@@ -34,13 +36,20 @@ const getHotUpdate = (plugin: Plugin) => {
 
 describe('vite plugin hotUpdate', () => {
   it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {
-    const plugin = getPlugin()
+    const [plugin] = getPlugins()
 
     expect(plugin.enforce).toBe('pre')
   })
 
+  it('runs HMR after other plugins so CSS generators can observe original modules', () => {
+    const [, hmrPlugin] = getPlugins()
+
+    expect(hmrPlugin.name).toBe('vite-plugin-eclipsa:hmr')
+    expect(hmrPlugin.enforce).toBe('post')
+  })
+
   it('emits source-module HMR for non-resumable tsx modules', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
 
@@ -78,7 +87,7 @@ describe('vite plugin hotUpdate', () => {
   })
 
   it('preserves css hot-update modules when handling non-resumable tsx updates', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
     const cssModule = {
@@ -126,8 +135,121 @@ describe('vite plugin hotUpdate', () => {
     })
   })
 
+  it('preserves css requests even when Vite classifies the stylesheet module as js', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const cssLikeJsModule = {
+      file: '/src/app/style.css',
+      id: '/src/app/style.css',
+      type: 'js',
+      url: '/src/app/style.css',
+    }
+    const tsxModule = {
+      id: '/src/non-resumable.tsx',
+      type: 'js',
+      url: '/src/non-resumable.tsx',
+    }
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+          moduleGraph: {
+            getModulesByFile() {
+              return new Set([
+                {
+                  type: 'js',
+                  url: '/src/non-resumable.tsx',
+                },
+              ])
+            },
+          },
+        },
+      } as any,
+      {
+        file: '/tmp/non-resumable.tsx',
+        modules: [
+          {
+            type: 'js',
+            url: '/src/non-resumable.tsx',
+          },
+          cssLikeJsModule,
+        ],
+        read: () => 'export const value = <div>plain</div>;',
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([cssLikeJsModule])
+    expect(send).toHaveBeenCalledWith('update-client', {
+      url: '/src/non-resumable.tsx',
+    })
+  })
+
+  it('collects css-like modules from the module graph when the changed tsx module has none directly', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const cssLikeJsModule = {
+      file: '/src/app/style.css',
+      id: '/src/app/style.css',
+      type: 'js',
+      url: '/src/app/style.css',
+    }
+    const tsxModule = {
+      id: '/src/non-resumable.tsx',
+      type: 'js',
+      url: '/src/non-resumable.tsx',
+    }
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+          moduleGraph: {
+            getModulesByFile() {
+              return new Set([
+                {
+                  type: 'js',
+                  url: '/src/non-resumable.tsx',
+                },
+              ])
+            },
+            idToModuleMap: new Map([
+              ['/src/non-resumable.tsx', tsxModule],
+              ['/src/app/style.css', cssLikeJsModule],
+            ]),
+          },
+        },
+      } as any,
+      {
+        file: '/tmp/non-resumable.tsx',
+        modules: [
+          {
+            type: 'js',
+            url: '/src/non-resumable.tsx',
+          },
+        ],
+        read: () => 'export const value = <div>plain</div>;',
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([cssLikeJsModule])
+    expect(send).toHaveBeenCalledWith('update-client', {
+      url: '/src/non-resumable.tsx',
+    })
+  })
+
   it('emits resumable HMR payloads for resumable tsx modules', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
     const filePath = '/tmp/resumable-page.tsx'
@@ -179,7 +301,7 @@ describe('vite plugin hotUpdate', () => {
   })
 
   it('suppresses SSR full reloads without consuming the client resumable diff', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const filePath = '/tmp/ssr-resumable-page.tsx'
     const previousSource = `
@@ -259,7 +381,7 @@ describe('vite plugin hotUpdate', () => {
   })
 
   it('preserves css hot-update modules when handling resumable tsx updates', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
     const filePath = '/tmp/resumable-style.tsx'
@@ -310,7 +432,7 @@ describe('vite plugin hotUpdate', () => {
   })
 
   it('leaves non-tsx updates to Vite', async () => {
-    const plugin = getPlugin()
+    const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
 

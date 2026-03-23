@@ -49,6 +49,7 @@ import {
   type Navigate,
   type NavigateOptions,
   type RouteManifest,
+  type RouteLocation,
   type RouteModuleManifest,
   type RouteParams,
 } from './router-shared.ts'
@@ -61,6 +62,7 @@ const STANDALONE_SIGNAL_ID_KEY = Symbol.for('eclipsa.standalone-signal-id')
 const ACTION_FORM_ATTR = 'data-e-action-form'
 const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
 const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
+const ROUTER_CURRENT_URL_SIGNAL_ID = '$router:url'
 const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
 const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
 const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
@@ -71,6 +73,7 @@ const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
 export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
+export const SCOPED_STYLE_ATTR = 'data-e-scope'
 const ROOT_COMPONENT_ID = '$root'
 const SUSPENSE_COMPONENT_SYMBOL = '$suspense'
 const ROUTE_SLOT_TYPE = 'route-slot'
@@ -261,9 +264,15 @@ interface RenderFrame {
   }
   visitedDescendants: Set<string>
   mode: 'client' | 'ssr'
+  scopedStyles: ScopedStyleEntry[]
   signalCursor: number
   visibleCursor: number
   watchCursor: number
+}
+
+interface ScopedStyleEntry {
+  attributes: Record<string, unknown>
+  cssText: string
 }
 
 interface RouterEventState {
@@ -275,9 +284,11 @@ interface RouterEventState {
 interface RouterState {
   currentPath: { value: string }
   currentRoute: LoadedRoute | null
+  currentUrl: { value: string }
   defaultTitle: string
   isNavigating: { value: boolean }
   loadedRoutes: Map<string, LoadedRoute>
+  location: RouteLocation
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
@@ -541,6 +552,76 @@ const getCurrentFrame = (): RenderFrame | null => {
   return stack.length > 0 ? stack[stack.length - 1] : null
 }
 
+const hasScopedStyles = (frame: RenderFrame | null) => !!frame && frame.scopedStyles.length > 0
+
+const getScopedStyleRootSelector = (scopeId: string) =>
+  `[${SCOPED_STYLE_ATTR}="${escapeAttr(scopeId)}"]`
+
+const wrapScopedStyleCss = (scopeId: string, cssText: string) =>
+  `@scope (${getScopedStyleRootSelector(scopeId)}) {\n${cssText}\n}`
+
+const renderScopedStyleString = (scopeId: string, style: ScopedStyleEntry) => {
+  const attrParts = Object.entries(style.attributes)
+    .filter(([, value]) => value !== false && value !== undefined && value !== null)
+    .map(([name, value]) => (value === true ? name : `${name}="${escapeAttr(String(value))}"`))
+  const attrs = attrParts.length > 0 ? ` ${attrParts.join(' ')}` : ''
+  return `<style${attrs}>${escapeText(wrapScopedStyleCss(scopeId, style.cssText))}</style>`
+}
+
+const renderScopedStyleNode = (
+  container: RuntimeContainer,
+  scopeId: string,
+  style: ScopedStyleEntry,
+) => {
+  const element = createElementNode(container.doc!, 'style')
+  for (const [name, value] of Object.entries(style.attributes)) {
+    if (value === false || value === undefined || value === null) {
+      continue
+    }
+    if (value === true) {
+      element.setAttribute(name, '')
+      continue
+    }
+    element.setAttribute(name, String(value))
+  }
+  element.appendChild(container.doc!.createTextNode(wrapScopedStyleCss(scopeId, style.cssText)))
+  return element
+}
+
+const renderFrameScopedStylesToString = (frame: RenderFrame) =>
+  frame.scopedStyles.map((style) => renderScopedStyleString(frame.component.scopeId, style)).join('')
+
+const renderFrameScopedStylesToNodes = (frame: RenderFrame, container: RuntimeContainer) =>
+  frame.scopedStyles.map((style) => renderScopedStyleNode(container, frame.component.scopeId, style))
+
+export const registerRuntimeScopedStyle = (
+  cssText: string,
+  attributes: Record<string, unknown> = {},
+): void => {
+  const frame = getCurrentFrame()
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
+    throw new Error('useStyleScoped() can only be used while rendering a component.')
+  }
+
+  if (cssText.length === 0) {
+    return
+  }
+
+  const existing = frame.scopedStyles.find(
+    (entry) =>
+      entry.cssText === cssText &&
+      JSON.stringify(entry.attributes) === JSON.stringify(attributes),
+  )
+  if (existing) {
+    return
+  }
+
+  frame.scopedStyles.push({
+    attributes: { ...attributes },
+    cssText,
+  })
+}
+
 const normalizeRoutePath = (pathname: string) => {
   const normalizedPath = pathname.trim() || '/'
   const withLeadingSlash = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
@@ -549,6 +630,38 @@ const normalizeRoutePath = (pathname: string) => {
   }
   return withLeadingSlash
 }
+
+const parseLocationHref = (href: string) => new URL(href, 'http://localhost')
+
+const createStandaloneLocation = (): RouteLocation => ({
+  get hash() {
+    return typeof window === 'undefined' ? '' : window.location.hash
+  },
+  get href() {
+    return typeof window === 'undefined' ? '/' : window.location.href
+  },
+  get pathname() {
+    return typeof window === 'undefined' ? '/' : normalizeRoutePath(window.location.pathname)
+  },
+  get search() {
+    return typeof window === 'undefined' ? '' : window.location.search
+  },
+})
+
+const createRouterLocation = (router: RouterState): RouteLocation => ({
+  get hash() {
+    return parseLocationHref(router.currentUrl.value).hash
+  },
+  get href() {
+    return router.currentUrl.value
+  },
+  get pathname() {
+    return normalizeRoutePath(parseLocationHref(router.currentUrl.value).pathname)
+  },
+  get search() {
+    return parseLocationHref(router.currentUrl.value).search
+  },
+})
 
 const EMPTY_ROUTE_PARAMS = Object.freeze({}) as RouteParams
 
@@ -596,17 +709,16 @@ const matchRouteSegments = (
         [segment.value]: undefined,
       })
     }
-    case 'rest':
-      return matchRouteSegments(
-        segments,
-        pathnameSegments,
-        segments.length,
-        pathnameSegments.length,
-        {
-          ...params,
-          [segment.value]: pathnameSegments.slice(pathIndex),
-        },
-      )
+    case 'rest': {
+      const rest = pathnameSegments.slice(pathIndex)
+      if (rest.length === 0) {
+        return null
+      }
+      return matchRouteSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
+        ...params,
+        [segment.value]: rest,
+      })
+    }
   }
 }
 
@@ -1483,7 +1595,9 @@ const ensureSignalRecord = <T>(
 }
 
 const isRouterSignalId = (id: string) =>
-  id === ROUTER_CURRENT_PATH_SIGNAL_ID || id === ROUTER_IS_NAVIGATING_SIGNAL_ID
+  id === ROUTER_CURRENT_PATH_SIGNAL_ID ||
+  id === ROUTER_CURRENT_URL_SIGNAL_ID ||
+  id === ROUTER_IS_NAVIGATING_SIGNAL_ID
 
 const createStandaloneNavigate = (): Navigate => {
   const navigate = (async (href: string, options?: NavigateOptions) => {
@@ -1507,6 +1621,10 @@ const createStandaloneNavigate = (): Navigate => {
   })
 
   return setNavigateMeta(navigate)
+}
+
+export const primeLocationState = (container: RuntimeContainer, href: string | URL) => {
+  writeRouterLocation(ensureRouterState(container), href)
 }
 
 const recordSignalRead = (record: SignalRecord) => {
@@ -1540,6 +1658,12 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
   }
 }
 
+const writeRouterLocation = (router: RouterState, href: string | URL) => {
+  const url = href instanceof URL ? href : parseLocationHref(href)
+  router.currentPath.value = normalizeRoutePath(url.pathname)
+  router.currentUrl.value = url.href
+}
+
 const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
   if (container.router) {
     if (manifest) {
@@ -1553,15 +1677,22 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     ROUTER_CURRENT_PATH_SIGNAL_ID,
     normalizeRoutePath(container.doc?.location.pathname ?? '/'),
   ).handle as { value: string }
+  const currentUrl = ensureSignalRecord(
+    container,
+    ROUTER_CURRENT_URL_SIGNAL_ID,
+    container.doc?.location.href ?? currentPath.value,
+  ).handle as { value: string }
   const isNavigating = ensureSignalRecord(container, ROUTER_IS_NAVIGATING_SIGNAL_ID, false)
     .handle as { value: boolean }
 
   const router: RouterState = {
     currentPath,
     currentRoute: null,
+    currentUrl,
     defaultTitle: container.doc?.title ?? '',
     isNavigating,
     loadedRoutes: new Map(),
+    location: undefined as unknown as RouteLocation,
     manifest: [],
     navigate: undefined as unknown as Navigate,
     prefetchedLoaders: new Map(),
@@ -1570,6 +1701,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   }
 
   container.router = router
+  router.location = createRouterLocation(router)
   router.navigate = setNavigateMeta((async (href: string, options?: NavigateOptions) => {
     await navigateContainer(container, href, {
       mode: options?.replace ? 'replace' : 'push',
@@ -1698,6 +1830,7 @@ const createFrame = (
     reuseExistingDom: options?.reuseExistingDom ?? false,
     reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
   },
+  scopedStyles: [],
   signalCursor: 0,
   visibleCursor: 0,
   visitedDescendants: new Set(),
@@ -2743,13 +2876,18 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
+    return `<!--ec:c:${componentId}:start-->${renderFrameScopedStylesToString(frame)}${body}<!--ec:c:${componentId}:end-->`
   }
 
   const attrParts: string[] = []
   const container = getCurrentContainer()
+  const frame = getCurrentFrame()
   let hasInnerHTML = false
   let innerHTML: string | null = null
+
+  if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
+    attrParts.push(`${SCOPED_STYLE_ATTR}="${escapeAttr(frame.component.scopeId)}"`)
+  }
 
   for (const name in resolved.props) {
     if (!Object.hasOwn(resolved.props, name)) {
@@ -2907,7 +3045,7 @@ const renderComponentToNodes = (
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
 
-  return [start, ...rendered, end]
+  return [start, ...renderFrameScopedStylesToNodes(frame, container), ...rendered, end]
 }
 
 const applyElementProp = (
@@ -3036,6 +3174,10 @@ export const renderClientNodes = (
   }
 
   const element = createElementNode(container.doc, resolved.type)
+  const frame = getCurrentFrame()
+  if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
+    element.setAttribute(SCOPED_STYLE_ATTR, frame.component.scopeId)
+  }
   let hasInnerHTML = false
   for (const [name, descriptor] of Object.entries(
     Object.getOwnPropertyDescriptors(resolved.props),
@@ -4056,7 +4198,7 @@ const navigateContainer = async (
       router.currentRoute = notFoundRoute
       applyRouteMetadata(doc, notFoundRoute, url, router.defaultTitle)
       commitBrowserNavigation(doc, url, mode)
-      router.currentPath.value = pathname
+      writeRouterLocation(router, url)
       return
     }
     fallbackDocumentNavigation(doc, url, mode)
@@ -4066,6 +4208,7 @@ const navigateContainer = async (
   if (pathname === router.currentPath.value) {
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
+      writeRouterLocation(router, url)
     }
     return
   }
@@ -4121,7 +4264,7 @@ const navigateContainer = async (
     router.currentRoute = nextRoute
     applyRouteMetadata(doc, nextRoute, url, router.defaultTitle)
     commitBrowserNavigation(doc, url, mode)
-    router.currentPath.value = pathname
+    writeRouterLocation(router, url)
   } catch (error) {
     if (sequence === router.sequence) {
       const fallbackRoute = isRouteNotFoundError(error)
@@ -4136,7 +4279,7 @@ const navigateContainer = async (
         router.currentRoute = fallbackRoute
         applyRouteMetadata(doc, fallbackRoute, url, router.defaultTitle)
         commitBrowserNavigation(doc, url, mode)
-        router.currentPath.value = pathname
+        writeRouterLocation(router, url)
         return
       }
       fallbackDocumentNavigation(doc, url, mode)
@@ -4911,7 +5054,7 @@ export const createResumeContainer = (
   restoreRegisteredRpcHandles(container)
 
   const router = ensureRouterState(container)
-  router.currentPath.value = normalizeRoutePath(doc.location.pathname)
+  writeRouterLocation(router, doc.location.href)
   router.isNavigating.value = false
   scheduleVisibleCallbacksCheck(container)
 
@@ -5266,6 +5409,14 @@ export const useRuntimeNavigate = (): Navigate => {
     return createStandaloneNavigate()
   }
   return ensureRouterState(container).navigate
+}
+
+export const useRuntimeLocation = (): RouteLocation => {
+  const container = getCurrentContainer()
+  if (!container) {
+    return createStandaloneLocation()
+  }
+  return ensureRouterState(container).location
 }
 
 export const useRuntimeRouteParams = (): RouteParams => {

@@ -1,6 +1,6 @@
-import { transform } from '@ox-content/napi'
 import fg from 'fast-glob'
 import * as fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import YAML from 'yaml'
 import type { StandardSchemaIssue, StandardSchemaV1 } from 'eclipsa'
@@ -42,6 +42,8 @@ interface CreateContentRuntimeOptions {
 }
 
 const MARKDOWN_EXTENSION_RE = /\.md$/i
+const require = createRequire(import.meta.url)
+let markdownTransform: typeof import('@ox-content/napi').transform | null = null
 
 export class ContentCollectionError extends Error {
   constructor(message: string) {
@@ -266,10 +268,30 @@ const createContentRenderer = (html: string) => (props: Omit<ContentComponentPro
   type: props.as ?? 'article',
 })
 
+const resolveOxContentNapiPath = () => {
+  const resolvePaths = [
+    process.cwd(),
+    path.join(process.cwd(), 'node_modules', '@eclipsa', 'content'),
+  ]
+  try {
+    return require.resolve('@ox-content/napi', { paths: resolvePaths })
+  } catch {
+    return '@ox-content/napi'
+  }
+}
+
+const loadMarkdownTransform = async () => {
+  markdownTransform ??= (
+    require(resolveOxContentNapiPath()) as typeof import('@ox-content/napi')
+  ).transform
+  return markdownTransform
+}
+
 const renderMarkdown = async (
   entry: BaseContentEntry,
   markdownOptions: ContentMarkdownOptions | undefined,
 ): Promise<RenderedContent> => {
+  const transform = await loadMarkdownTransform()
   const result = transform(entry.body, {
     autolinks: true,
     footnotes: true,
