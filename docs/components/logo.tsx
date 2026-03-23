@@ -1,4 +1,4 @@
-import type { JSX } from 'eclipsa/jsx'
+import type { JSX } from 'eclipsa'
 
 export const Logo = (props: { class?: string }): JSX.Element => {
   return (

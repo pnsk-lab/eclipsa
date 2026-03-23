@@ -17,6 +17,16 @@ import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
 const preserveCssHotModules = <T extends { type?: string }>(modules: T[]) =>
   modules.filter((module) => module.type === 'css')
 
+const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
+
+const registerDevAppInvalidator = (server: Record<PropertyKey, unknown>, invalidate: () => void) => {
+  const existing = server[DEV_APP_INVALIDATORS_KEY]
+  const invalidators =
+    existing instanceof Set ? existing : new Set<() => void>()
+  invalidators.add(invalidate)
+  server[DEV_APP_INVALIDATORS_KEY] = invalidators
+}
+
 const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
   let config: ResolvedConfig
 
@@ -43,6 +53,10 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
           devApp.invalidate()
         }
       }
+
+      registerDevAppInvalidator(server as unknown as Record<PropertyKey, unknown>, () => {
+        devApp.invalidate()
+      })
 
       server.watcher.on('add', (filePath) => {
         invalidateDevApp(filePath, 'add')

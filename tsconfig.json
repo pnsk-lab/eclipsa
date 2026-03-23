@@ -21,5 +21,6 @@
     "example/**/*.tsx",
     "example/**/*.d.ts",
     "e2e/playwright.config.ts"
-  ]
+  ],
+  "exclude": ["**/dist/**", "**/node_modules/**", ".contexts/**"]
 }

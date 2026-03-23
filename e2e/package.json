@@ -13,6 +13,7 @@
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@eclipsa/content": "workspace:*",
     "@eclipsa/image": "workspace:*",
     "eclipsa": "workspace:*",
     "zod": "^4.3.6"

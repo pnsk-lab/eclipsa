@@ -1,6 +1,6 @@
-import { component$, useSignal } from 'eclipsa'
+import { useSignal } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const count = useSignal(0)
 
   return (
@@ -9,7 +9,7 @@ export default component$(() => {
       <p>The starter is wired for Node SSR and resumable client updates.</p>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           count.value += 1
         }}
       >
@@ -17,4 +17,4 @@ export default component$(() => {
       </button>
     </main>
   )
-})
+}
