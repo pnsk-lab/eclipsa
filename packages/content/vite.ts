@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { Plugin, PluginOption, ResolvedConfig, ViteDevServer } from 'vite'
 
 const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
+const CONTENT_HMR_EVENT = 'eclipsa:content-update'
 const VIRTUAL_RUNTIME_ID = 'virtual:eclipsa-content:runtime'
 const RESOLVED_VIRTUAL_RUNTIME_ID = '\0eclipsa-content:runtime'
 const CONTENT_CONFIG_PATH = 'app/content.config.ts'
@@ -122,6 +123,18 @@ export const getEntry = runtime.getEntry;
 export const render = runtime.render;
 `
 
+const handleInvalidation = (server: ViteDevServer, root: string, filePath: string) => {
+  if (!shouldInvalidateForFile(root, filePath)) {
+    return false
+  }
+  invalidateVirtualRuntime(server)
+  invalidateRegisteredDevApps(server)
+  ;(server as ViteDevServer & { ws?: { send?: (event: string, payload?: unknown) => void } }).ws?.send?.(
+    CONTENT_HMR_EVENT,
+  )
+  return true
+}
+
 const contentPlugin = (): Plugin => {
   let config: ResolvedConfig
 
@@ -131,22 +144,10 @@ const contentPlugin = (): Plugin => {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
-    configureServer(server) {
-      const handleInvalidation = (filePath: string) => {
-        if (!shouldInvalidateForFile(config.root, filePath)) {
-          return
-        }
-        invalidateVirtualRuntime(server)
-        invalidateRegisteredDevApps(server)
-        ;(server as ViteDevServer & { ws?: { send?: (payload: unknown) => void } }).ws?.send?.({
-          path: '*',
-          type: 'full-reload',
-        })
+    hotUpdate(options) {
+      if (handleInvalidation(options.server, config.root, options.file)) {
+        return []
       }
-
-      server.watcher.on('add', handleInvalidation)
-      server.watcher.on('change', handleInvalidation)
-      server.watcher.on('unlink', handleInvalidation)
     },
     resolveId(id) {
       if (id === VIRTUAL_RUNTIME_ID) {

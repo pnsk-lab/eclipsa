@@ -25,6 +25,14 @@ const getPlugin = (): Plugin => {
   return plugin[0] as Plugin
 }
 
+const getHotUpdate = (plugin: Plugin) => {
+  const hook = plugin.hotUpdate
+  if (typeof hook === 'function') {
+    return hook
+  }
+  return hook?.handler
+}
+
 afterEach(async () => {
   await Promise.all(createdRoots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })))
 })
@@ -103,7 +111,7 @@ export const posts = defineCollection({ loader: { load: () => [] } })
     expect(code).not.toContain('zod')
   })
 
-  it('invalidates registered dev apps and triggers a full reload for markdown changes', async () => {
+  it('invalidates registered dev apps and emits a content HMR event for markdown changes', async () => {
     const root = await createTempRoot()
     const plugin = getPlugin()
     const configResolved =
@@ -114,40 +122,34 @@ export const posts = defineCollection({ loader: { load: () => [] } })
       root,
     } as any)
 
-    const handlers = new Map<string, (filePath: string) => void>()
     const invalidate = vi.fn()
     const send = vi.fn()
-    const configureServer =
-      typeof plugin.configureServer === 'function'
-        ? plugin.configureServer
-        : plugin.configureServer?.handler
+    const hotUpdate = getHotUpdate(plugin)
 
-    await configureServer?.call({} as any, {
-      [DEV_APP_INVALIDATORS_KEY]: new Set([invalidate]),
-      environments: {
-        ssr: {
-          moduleGraph: {
-            getModuleById: vi.fn(),
-            invalidateModule: vi.fn(),
+    const result = await hotUpdate?.call({} as any, {
+      file: path.join(root, 'app', 'content', 'docs', 'guide', 'page.md'),
+      modules: [],
+      read: () => '',
+      server: {
+        [DEV_APP_INVALIDATORS_KEY]: new Set([invalidate]),
+        environments: {
+          ssr: {
+            moduleGraph: {
+              getModuleById: vi.fn(),
+              invalidateModule: vi.fn(),
+            },
           },
         },
-      },
-      watcher: {
-        on(event: string, handler: (filePath: string) => void) {
-          handlers.set(event, handler)
+        ws: {
+          send,
         },
       },
-      ws: {
-        send,
-      },
+      timestamp: Date.now(),
+      type: 'update',
     } as any)
 
-    handlers.get('change')?.(path.join(root, 'app', 'content', 'docs', 'guide', 'page.md'))
-
     expect(invalidate).toHaveBeenCalledTimes(1)
-    expect(send).toHaveBeenCalledWith({
-      path: '*',
-      type: 'full-reload',
-    })
+    expect(send).toHaveBeenCalledWith('eclipsa:content-update')
+    expect(result).toEqual([])
   })
 })

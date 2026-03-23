@@ -1,5 +1,6 @@
 mod analyze;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::panic::{self, AssertUnwindSafe};
 
@@ -401,15 +402,35 @@ fn event_name_from_prop(name: &str) -> Option<String> {
     Some(output)
 }
 
-fn build_node_lookup(base: &str, path: &[usize]) -> (String, String) {
-    let mut marker = base.to_string();
-    let mut parent = base.to_string();
-    for (index, item) in path.iter().enumerate() {
-        marker = format!("{marker}.childNodes[{item}]");
-        if path.len() > 1 && index + 2 == path.len() {
-            parent = marker.clone();
-        }
+fn collect_node_lookup_paths(path: &[usize]) -> Vec<Vec<usize>> {
+    let mut prefixes = Vec::new();
+    for index in 0..path.len() {
+        prefixes.push(path[..=index].to_vec());
     }
+    prefixes
+}
+
+fn build_node_lookup(
+    base: &str,
+    path: &[usize],
+    cached_nodes: &BTreeMap<Vec<usize>, String>,
+) -> (String, String) {
+    if path.is_empty() {
+        return (base.to_string(), base.to_string());
+    }
+
+    let marker = cached_nodes
+        .get(path)
+        .cloned()
+        .unwrap_or_else(|| base.to_string());
+    let parent = if path.len() > 1 {
+        cached_nodes
+            .get(&path[..path.len() - 1])
+            .cloned()
+            .unwrap_or_else(|| base.to_string())
+    } else {
+        base.to_string()
+    };
     (parent, marker)
 }
 
@@ -518,15 +539,53 @@ impl<'s> ClientCompiler<'s> {
         let template_id = self.next_template_id();
         self.templates.push((template_id.clone(), template_html));
         let mut body = format!("var _cloned = {template_id}();");
+        let mut lookup_paths = Vec::new();
+
+        for insert in &inserts {
+            let path = match insert {
+                ClientInsertOp::Apply { path, .. } => path,
+                ClientInsertOp::Component { path, .. } => path,
+            };
+            for prefix in collect_node_lookup_paths(path) {
+                if !lookup_paths.contains(&prefix) {
+                    lookup_paths.push(prefix);
+                }
+            }
+        }
+
+        for attr in &attrs {
+            for prefix in collect_node_lookup_paths(&attr.path) {
+                if !lookup_paths.contains(&prefix) {
+                    lookup_paths.push(prefix);
+                }
+            }
+        }
+
+        lookup_paths.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
+
+        let mut cached_nodes = BTreeMap::new();
+        for (index, path) in lookup_paths.iter().enumerate() {
+            let variable = format!("__eclipsaNode{index}");
+            let lookup = if path.len() == 1 {
+                format!("_cloned.childNodes[{}]", path[0])
+            } else {
+                let parent = cached_nodes
+                    .get(&path[..path.len() - 1])
+                    .expect("parent lookup should be cached before children");
+                format!("{parent}.childNodes[{}]", path[path.len() - 1])
+            };
+            body.push_str(&format!("var {variable} = {lookup};"));
+            cached_nodes.insert(path.clone(), variable);
+        }
 
         for insert in inserts {
             match insert {
                 ClientInsertOp::Apply { expr, path } => {
-                    let (parent, marker) = build_node_lookup("_cloned", &path);
+                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
                     body.push_str(&format!("{CLIENT_INSERT}(() => {expr}, {parent}, {marker});"));
                 }
                 ClientInsertOp::Component { component, path, props } => {
-                    let (parent, marker) = build_node_lookup("_cloned", &path);
+                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
                     body.push_str(&format!(
                         "{CLIENT_INSERT}({CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
                     ));
@@ -535,7 +594,7 @@ impl<'s> ClientCompiler<'s> {
         }
 
         for attr in attrs {
-            let (_, marker) = build_node_lookup("_cloned", &attr.path);
+            let (_, marker) = build_node_lookup("_cloned", &attr.path, &cached_nodes);
             body.push_str(&format!(
                 "{CLIENT_ATTR}({marker}, {}, () => {});",
                 js_string(&attr.name),

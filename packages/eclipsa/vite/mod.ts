@@ -17,7 +17,7 @@ import {
   parseSymbolRequest,
   resolveResumeHmrUpdate,
 } from './compiler.ts'
-import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
+import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from '../core/resume-hmr.ts'
 
 const isCssRequest = (value: string | undefined) => {
   if (!value) {

@@ -17,7 +17,7 @@ class FakeNode {
   nodeType = 0
   parentNode: FakeNode | null = null
 
-  get nextSibling() {
+  get nextSibling(): FakeNode | null {
     if (!this.parentNode) {
       return null
     }

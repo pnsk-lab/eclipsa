@@ -41,6 +41,7 @@ import {
   type SignalMeta,
 } from './internal.ts'
 import {
+  ROUTE_DATA_ENDPOINT,
   ROUTE_LINK_ATTR,
   ROUTE_PREFETCH_ATTR,
   ROUTE_PREFLIGHT_REQUEST_HEADER,
@@ -121,7 +122,7 @@ interface ResumeVisiblePayload {
   symbol: string
 }
 
-interface ResumeLoaderPayload {
+export interface ResumeLoaderPayload {
   data: SerializedValue
   error: SerializedValue
   loaded: boolean
@@ -293,7 +294,7 @@ interface RouterState {
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
-  routePrefetches: Map<string, Promise<void>>
+  routePrefetches: Map<string, Promise<RoutePrefetchResult>>
   sequence: number
 }
 
@@ -388,6 +389,27 @@ type RoutePreflightResult =
   | RoutePreflightSuccess
   | RoutePreflightRedirect
   | RoutePreflightDocumentFallback
+
+interface RouteDataSuccess {
+  finalHref: string
+  finalPathname: string
+  kind: 'page' | 'not-found'
+  loaders: Record<string, ResumeLoaderPayload>
+  ok: true
+}
+
+interface RouteDataRedirect {
+  location: string
+  ok: false
+}
+
+interface RouteDataDocumentFallback {
+  document: true
+  ok: false
+}
+
+type RouteDataResponse = RouteDataSuccess | RouteDataRedirect | RouteDataDocumentFallback
+type RoutePrefetchResult = RouteDataResponse
 
 interface RouteSlotValue {
   __eclipsa_type: typeof ROUTE_SLOT_TYPE
@@ -4162,12 +4184,13 @@ const updateSharedLayoutBoundary = async (
   boundary.props = {
     children: createRouteElement(next, sharedLayoutCount),
   }
+  const nextChildren = (boundary.props as { children: unknown }).children
   const focusSnapshot = captureBoundaryFocus(container.doc!, slotRange.start, slotRange.end)
   const { nodes, visitedDescendants } = renderRouteSubtreeForProjectionSlot(
     container,
     boundary,
     routeChildIndex,
-    boundary.props.children,
+    nextChildren,
   )
   replaceProjectionSlotContents(slotRange.start, slotRange.end, nodes)
   restoreBoundaryFocus(container.doc!, slotRange.start, slotRange.end, focusSnapshot)
@@ -4210,31 +4233,14 @@ const fallbackDocumentNavigation = (doc: Document, url: URL, mode: NavigationMod
   doc.defaultView.location.assign(url.href)
 }
 
-const parseResumePayloadFromHtml = (html: string): ResumePayload | null => {
-  if (typeof DOMParser === 'undefined') {
-    return null
-  }
-  const parsed = new DOMParser().parseFromString(html, 'text/html')
-  const payloadNode =
-    parsed.getElementById(RESUME_FINAL_STATE_ELEMENT_ID) ??
-    parsed.getElementById(RESUME_STATE_ELEMENT_ID)
-  if (!payloadNode?.textContent) {
-    return null
-  }
-  return JSON.parse(payloadNode.textContent) as ResumePayload
-}
-
 const cachePrefetchedLoaders = (
   container: RuntimeContainer,
   url: URL,
-  payload: ResumePayload | null,
+  loaders: Record<string, ResumeLoaderPayload>,
 ) => {
-  if (!payload) {
-    return
-  }
   const router = ensureRouterState(container)
   const snapshots = new Map<string, LoaderSnapshot>()
-  for (const [id, loaderPayload] of Object.entries(payload.loaders ?? {})) {
+  for (const [id, loaderPayload] of Object.entries(loaders)) {
     snapshots.set(id, {
       data: deserializeRuntimeValue(container, loaderPayload.data),
       error: deserializeRuntimeValue(container, loaderPayload.error),
@@ -4256,6 +4262,56 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
       error: snapshot.error,
       loaded: snapshot.loaded,
     })
+  }
+}
+
+const requestRouteData = async (href: string): Promise<RouteDataResponse> => {
+  try {
+    const baseUrl = typeof window === 'undefined' ? 'http://localhost' : window.location.href
+    const requestUrl = new URL(href, baseUrl)
+    const endpointUrl = new URL(ROUTE_DATA_ENDPOINT, requestUrl)
+    endpointUrl.searchParams.set('href', requestUrl.href)
+    const response = await fetch(endpointUrl.href)
+    if (response.status < 200 || response.status >= 300) {
+      return {
+        document: true,
+        ok: false,
+      }
+    }
+
+    const body = (await response.json()) as RouteDataResponse
+    if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
+      return {
+        document: true,
+        ok: false,
+      }
+    }
+    if (body.ok) {
+      if (
+        typeof body.finalHref !== 'string' ||
+        typeof body.finalPathname !== 'string' ||
+        (body.kind !== 'page' && body.kind !== 'not-found') ||
+        !body.loaders ||
+        typeof body.loaders !== 'object'
+      ) {
+        return {
+          document: true,
+          ok: false,
+        }
+      }
+      return body
+    }
+    if ('location' in body && typeof body.location === 'string') {
+      return body
+    }
+    if ('document' in body && body.document) {
+      return body
+    }
+  } catch {}
+
+  return {
+    document: true,
+    ok: false,
   }
 }
 
@@ -4368,26 +4424,27 @@ const prefetchRoute = async (container: RuntimeContainer, href: string) => {
 
   const prefetchPromise = (async () => {
     try {
-      const response = await fetch(requestUrl.href)
-      if (response.status < 200 || response.status >= 300) {
-        return
+      const result = await requestRouteData(requestUrl.href)
+      if (!result.ok) {
+        return result
       }
 
-      const finalUrl = new URL(response.url || requestUrl.href, requestUrl.href)
+      const finalUrl = new URL(result.finalHref, requestUrl.href)
       if (finalUrl.origin !== requestUrl.origin) {
-        return
+        return {
+          document: true,
+          ok: false,
+        } satisfies RoutePrefetchResult
       }
 
-      const contentType = response.headers.get('content-type') ?? ''
-      const html = contentType.includes('text/html') ? await response.text() : ''
-      await prefetchResolvedRouteModules(container, normalizeRoutePath(finalUrl.pathname), finalUrl)
-      cachePrefetchedLoaders(
-        container,
-        new URL(`${finalUrl.pathname}${finalUrl.search}`, requestUrl.origin),
-        html ? parseResumePayloadFromHtml(html) : null,
-      )
+      await prefetchResolvedRouteModules(container, result.finalPathname, finalUrl)
+      cachePrefetchedLoaders(container, finalUrl, result.loaders)
+      return result
     } catch {
-      return
+      return {
+        document: true,
+        ok: false,
+      } satisfies RoutePrefetchResult
     }
   })()
 
@@ -4399,6 +4456,7 @@ const navigateContainer = async (
   container: RuntimeContainer,
   href: string,
   options?: {
+    force?: boolean
     redirectDepth?: number
     mode?: NavigationMode
   },
@@ -4409,6 +4467,7 @@ const navigateContainer = async (
   }
 
   const mode = options?.mode ?? 'push'
+  const force = options?.force ?? false
   const redirectDepth = options?.redirectDepth ?? 0
   const url = new URL(href, doc.location.href)
   if (url.origin !== doc.location.origin) {
@@ -4424,14 +4483,37 @@ const navigateContainer = async (
 
   const currentHref = `${doc.location.pathname}${doc.location.search}${doc.location.hash}`
   const nextHref = `${url.pathname}${url.search}${url.hash}`
-  if (nextHref === currentHref) {
+  if (!force && nextHref === currentHref) {
+    return
+  }
+
+  const pendingPrefetch = router.routePrefetches.get(routePrefetchKey(url))
+  const prefetched = pendingPrefetch ? await pendingPrefetch : null
+  if (prefetched && !prefetched.ok) {
+    if ('location' in prefetched) {
+      if (redirectDepth >= 8) {
+        fallbackDocumentNavigation(doc, new URL(prefetched.location, doc.location.href), mode)
+        return
+      }
+      const redirectUrl = new URL(prefetched.location, doc.location.href)
+      if (redirectUrl.origin !== doc.location.origin) {
+        fallbackDocumentNavigation(doc, redirectUrl, mode)
+        return
+      }
+      await navigateContainer(container, redirectUrl.href, {
+        mode,
+        redirectDepth: redirectDepth + 1,
+      })
+      return
+    }
+    fallbackDocumentNavigation(doc, url, mode)
     return
   }
 
   const shouldPreflight =
     (matched?.entry.page && matched.entry.hasMiddleware) ||
     (!!specialPreflightTarget?.entry.notFound && specialPreflightTarget.entry.hasMiddleware)
-  if (shouldPreflight) {
+  if (shouldPreflight && !prefetched) {
     const preflight = await requestRoutePreflight(url.href)
     if (!preflight.ok) {
       if ('location' in preflight) {
@@ -4472,7 +4554,7 @@ const navigateContainer = async (
     return
   }
 
-  if (pathname === router.currentPath.value) {
+  if (!force && pathname === router.currentPath.value) {
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
       writeRouterLocation(router, url)
@@ -4480,12 +4562,11 @@ const navigateContainer = async (
     return
   }
 
-  const pendingPrefetch = router.routePrefetches.get(routePrefetchKey(url))
-  if (pendingPrefetch) {
-    await pendingPrefetch
-  }
   resetRouteLoaderState(container)
-  applyPrefetchedLoaders(container, url)
+  applyPrefetchedLoaders(
+    container,
+    prefetched?.ok ? new URL(prefetched.finalHref, doc.location.href) : url,
+  )
   const sequence = ++router.sequence
   router.isNavigating.value = true
 
@@ -4557,6 +4638,30 @@ const navigateContainer = async (
     if (sequence === router.sequence) {
       router.isNavigating.value = false
     }
+  }
+}
+
+export const refreshRouteContainer = async (container: RuntimeContainer) => {
+  const doc = container.doc
+  if (!doc) {
+    return false
+  }
+  const url = new URL(doc.location.href)
+  const router = ensureRouterState(container)
+  const key = routePrefetchKey(url)
+  router.prefetchedLoaders.delete(key)
+  router.routePrefetches.delete(key)
+  await prefetchRoute(container, url.href)
+  await navigateContainer(container, url.href, {
+    force: true,
+    mode: 'replace',
+  })
+  return true
+}
+
+export const refreshRegisteredRouteContainers = async () => {
+  for (const container of getResumeContainers()) {
+    await refreshRouteContainer(container)
   }
 }
 

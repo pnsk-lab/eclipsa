@@ -11,7 +11,12 @@ import type {
   RoutePathSegment,
   StaticPath,
 } from '../../core/router-shared.ts'
-import { ROUTE_MANIFEST_ELEMENT_ID, ROUTE_PREFLIGHT_ENDPOINT } from '../../core/router-shared.ts'
+import {
+  ROUTE_DATA_ENDPOINT,
+  ROUTE_DATA_REQUEST_HEADER,
+  ROUTE_MANIFEST_ELEMENT_ID,
+  ROUTE_PREFLIGHT_ENDPOINT,
+} from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
   createBuildServerModuleUrl,
@@ -41,6 +46,19 @@ const fileExists = async (filePath: string) => {
   } catch {
     return false
   }
+}
+
+const getRequestUrl = (request: Request) => {
+  const url = new URL(request.url)
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
+  const proto = request.headers.get('x-forwarded-proto')
+  if (host) {
+    url.host = host
+  }
+  if (proto) {
+    url.protocol = `${proto}:`
+  }
+  return url
 }
 
 const collectFiles = async (directory: string): Promise<string[]> => {
@@ -380,7 +398,7 @@ const renderAppModule = (
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -402,6 +420,7 @@ const APP_HOOKS_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_APP_HOOKS__')};
 const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
 const ROUTE_ERROR_PROP = "__eclipsa_route_error";
+const ROUTE_DATA_REQUEST_HEADER = ${JSON.stringify(ROUTE_DATA_REQUEST_HEADER)};
 const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
 const hooksPromise = (async () => {
   const appHooks = appHooksServerUrl ? await import(appHooksServerUrl) : {};
@@ -416,6 +435,19 @@ const normalizeRoutePath = (pathname) => {
   return withLeadingSlash.length > 1 && withLeadingSlash.endsWith("/")
     ? withLeadingSlash.slice(0, -1)
     : withLeadingSlash;
+};
+
+const getRequestUrl = (request) => {
+  const url = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto");
+  if (host) {
+    url.host = host;
+  }
+  if (proto) {
+    url.protocol = proto + ":";
+  }
+  return url;
 };
 
 const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0, params = {}) => {
@@ -762,7 +794,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
     {
       params,
-      url: new URL(c.req.url),
+      url: getRequestUrl(c.req.raw),
     },
   );
   const document = SSRRoot({
@@ -831,7 +863,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
   applyRequestParams(c, params);
   const { html, payload, chunks } = await renderSSRStream(() => document, {
     prepare(container) {
-      primeLocationState(container, c.req.url);
+      primeLocationState(container, getRequestUrl(c.req.raw));
       return options?.prepare?.(container);
     },
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
@@ -890,8 +922,9 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 
 const renderMatchedPage = async (match, c, options) => {
   const { appHooks, serverHooks } = await hooksPromise;
-  const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
-  const resolvedPathname = reroutePathname(appHooks, c.req.raw, pathname, c.req.url);
+  const requestUrl = getRequestUrl(c.req.raw);
+  const pathname = normalizeRoutePath(requestUrl.pathname);
+  const resolvedPathname = reroutePathname(appHooks, c.req.raw, pathname, requestUrl.href);
   try {
     return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page, 200, options);
   } catch (error) {
@@ -910,9 +943,92 @@ const renderMatchedPage = async (match, c, options) => {
   }
 };
 
+const renderRouteDataResponse = async (route, pathname, params, c, moduleUrl, kind) => {
+  const [pageModule, ...layoutModules] = await Promise.all([
+    import(moduleUrl),
+    ...route.layouts.map((layout) => import(layout)),
+  ]);
+  const Page = pageModule.default;
+  const Layouts = layoutModules.map((module) => module.default);
+
+  applyRequestParams(c, params);
+  const { payload } = await renderSSRAsync(() => createRouteElement(pathname, params, Page, Layouts, undefined), {
+    prepare(container) {
+      primeLocationState(container, getRequestUrl(c.req.raw));
+    },
+    resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
+    symbols: symbolUrls,
+  });
+
+  return c.json({
+    finalHref: getRequestUrl(c.req.raw).href,
+    finalPathname: pathname,
+    kind,
+    loaders: payload.loaders,
+    ok: true,
+  });
+};
+
+const renderRouteData = async (route, pathname, params, c, moduleUrl, kind) => {
+  const { appHooks } = await hooksPromise;
+  const requestUrl = getRequestUrl(c.req.raw);
+  const requestPathname = normalizeRoutePath(requestUrl.pathname);
+  const resolvedPathname = reroutePathname(appHooks, c.req.raw, requestPathname, requestUrl.href);
+  try {
+    return await renderRouteDataResponse(route, pathname, params, c, moduleUrl, kind);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      return c.json({ document: true, ok: false });
+    }
+    const fallback = findSpecialRoute(resolvedPathname, "notFound");
+    if (!fallback?.route?.notFound) {
+      return c.json({ document: true, ok: false });
+    }
+    try {
+      return await renderRouteDataResponse(
+        fallback.route,
+        requestPathname,
+        fallback.params,
+        c,
+        fallback.route.notFound,
+        "not-found",
+      );
+    } catch {
+      return c.json({ document: true, ok: false });
+    }
+  }
+};
+
+const resolveRouteData = async (href, c) => {
+  const requestUrl = getRequestUrl(c.req.raw);
+  const targetUrl = new URL(href, requestUrl);
+  if (targetUrl.origin !== requestUrl.origin) {
+    return c.json({ document: true, ok: false });
+  }
+  const headers = new Headers(c.req.raw.headers);
+  headers.set(ROUTE_DATA_REQUEST_HEADER, "1");
+  const response = await app.fetch(
+    new Request(targetUrl.href, {
+      headers,
+      method: "GET",
+      redirect: "manual",
+    }),
+  );
+  if (response.status >= 200 && response.status < 300) {
+    return response;
+  }
+  if (isRedirectResponse(response)) {
+    return c.json({
+      location: new URL(response.headers.get("location"), requestUrl).href,
+      ok: false,
+    });
+  }
+  return c.json({ document: true, ok: false });
+};
+
 const resolveRoutePreflight = async (href, c) => {
   const { appHooks } = await hooksPromise;
-  const requestUrl = new URL(c.req.url);
+  const requestUrl = getRequestUrl(c.req.raw);
   const targetUrl = new URL(href, requestUrl);
   if (targetUrl.origin !== requestUrl.origin) {
     return c.json({ document: true, ok: false });
@@ -955,7 +1071,7 @@ const resolveRoutePreflight = async (href, c) => {
 
 for (const pageRouteEntry of pageRouteEntries) {
   app.get(pageRouteEntry.path, async (c) => {
-    const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
+    const pathname = normalizeRoutePath(getRequestUrl(c.req.raw).pathname);
     const match = matchRoute(pathname);
     if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
       return c.text("Not Found", 404);
@@ -967,7 +1083,9 @@ for (const pageRouteEntry of pageRouteEntries) {
       async () =>
         c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
           ? c.body(null, 204)
-          : renderMatchedPage(match, c),
+          : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+            ? renderRouteData(match.route, pathname, match.params, c, match.route.page, "page")
+            : renderMatchedPage(match, c),
     );
   });
 }
@@ -1004,8 +1122,16 @@ app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) => {
   return resolveRoutePreflight(href, c);
 });
 
+app.get(${JSON.stringify(ROUTE_DATA_ENDPOINT)}, async (c) => {
+  const href = c.req.query("href");
+  if (!href) {
+    return c.json({ document: true, ok: false }, 400);
+  }
+  return resolveRouteData(href, c);
+});
+
 app.all("*", async (c) => {
-  const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
+  const pathname = normalizeRoutePath(getRequestUrl(c.req.raw).pathname);
   const match = matchRoute(pathname);
 
   if (!match) {
@@ -1017,8 +1143,10 @@ app.all("*", async (c) => {
         fallback.params,
         async () =>
           c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-            ? c.body(null, 204)
-            : renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404),
+          ? c.body(null, 204)
+          : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(fallback.route, pathname, fallback.params, c, fallback.route.notFound, "not-found")
+              : renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404),
       );
     }
     return c.text("Not Found", 404);
@@ -1029,10 +1157,12 @@ app.all("*", async (c) => {
       match.route,
       c,
       match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
+        async () =>
+          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? c.body(null, 204)
+            : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(match.route, pathname, match.params, c, match.route.page, "page")
+              : renderMatchedPage(match, c),
     );
   }
   if (c.req.method === "POST" && match.route.page) {
@@ -1278,6 +1408,13 @@ export const build = async (
     const result = await toSSG(app as any, fs, {
       beforeRequestHook(request: Request) {
         const routePath = normalizeRoutePath(decodeURIComponent(new URL(request.url).pathname))
+        if (
+          routePath === normalizeRoutePath(ROUTE_DATA_ENDPOINT) ||
+          routePath === normalizeRoutePath(ROUTE_PREFLIGHT_ENDPOINT) ||
+          routePath.startsWith('/__eclipsa/loader/')
+        ) {
+          return false
+        }
         const ssgParams = staticPrerenderTargets.dynamicParamsByPattern.get(routePath)
         if (ssgParams) {
           ;(request as Request & { ssgParams?: Record<string, string>[] }).ssgParams = ssgParams

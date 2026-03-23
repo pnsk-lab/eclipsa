@@ -1,6 +1,7 @@
 import {
   applyResumeHmrUpdateToRegisteredContainers,
   createResumeContainer,
+  refreshRegisteredRouteContainers,
   RESUME_FINAL_STATE_ELEMENT_ID,
   installResumeListeners,
   primeRouteModules,
@@ -18,7 +19,10 @@ import {
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID, type RouteManifest } from './router-shared.ts'
 
+const CONTENT_HMR_EVENT = 'eclipsa:content-update'
+
 interface ViteHotContext {
+  on(event: typeof CONTENT_HMR_EVENT, listener: () => void | Promise<void>): void
   on(event: string, listener: (data: ResumeHmrUpdatePayload) => void | Promise<void>): void
 }
 
@@ -59,6 +63,13 @@ const initResumeHmr = (hot: ViteHotContext | undefined) => {
   hot.on(RESUME_HMR_EVENT, async (payload) => {
     const result = await applyResumeHmrUpdateToRegisteredContainers(payload)
     if (result === 'reload') {
+      location.reload()
+    }
+  })
+  hot.on(CONTENT_HMR_EVENT, async () => {
+    try {
+      await refreshRegisteredRouteContainers()
+    } catch {
       location.reload()
     }
   })

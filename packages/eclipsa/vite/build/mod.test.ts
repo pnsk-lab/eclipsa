@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
 
@@ -20,7 +21,7 @@ vi.mock('hono/ssg', () => ({
 vi.mock('../utils/routing.ts', () => ({
   createBuildModuleUrl: vi.fn((entry: { entryName: string }) => `/entries/${entry.entryName}.js`),
   createBuildServerModuleUrl: vi.fn(
-    (entry: { entryName: string }) => `/entries/${entry.entryName}.mjs`,
+    (entry: { entryName: string }) => `./entries/${entry.entryName}.mjs`,
   ),
   createRouteManifest: mocks.createRouteManifest,
   createRoutes: mocks.createRoutes,
@@ -53,17 +54,14 @@ const createBuilder = () =>
     },
   }) as any
 
-const writeMinimalSsrEntries = async (root: string) => {
+const writeMinimalRuntimeEntry = async (
+  root: string,
+  options?: {
+    renderSSRAsyncSource?: string
+  },
+) => {
   const entriesDir = path.join(root, 'dist/ssr/entries')
-  const assetsDir = path.join(root, 'dist/client/assets')
-
   await fs.mkdir(entriesDir, { recursive: true })
-  await fs.mkdir(assetsDir, { recursive: true })
-  await fs.writeFile(
-    path.join(entriesDir, 'server_entry.mjs'),
-    'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
-  )
-  await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
   await fs.writeFile(
     path.join(entriesDir, 'eclipsa_runtime.mjs'),
     [
@@ -74,7 +72,8 @@ const writeMinimalSsrEntries = async (root: string) => {
       'export const hasAction = () => false;',
       'export const hasLoader = () => false;',
       'export const jsxDEV = () => ({});',
-      'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
+      options?.renderSSRAsyncSource ??
+        'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
       'export const renderSSRStream = async () => ({ chunks: (async function* () {})(), html: "<html><head></head><body></body></html>", payload: {} });',
       'export const resolvePendingLoaders = async () => undefined;',
       'export const serializeResumePayload = () => "{}";',
@@ -98,6 +97,20 @@ const writeMinimalSsrEntries = async (root: string) => {
       '',
     ].join('\n'),
   )
+}
+
+const writeMinimalSsrEntries = async (root: string) => {
+  const entriesDir = path.join(root, 'dist/ssr/entries')
+  const assetsDir = path.join(root, 'dist/client/assets')
+
+  await fs.mkdir(entriesDir, { recursive: true })
+  await fs.mkdir(assetsDir, { recursive: true })
+  await fs.writeFile(
+    path.join(entriesDir, 'server_entry.mjs'),
+    'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
+  )
+  await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
+  await writeMinimalRuntimeEntry(root)
 }
 
 const writeBuiltPageModule = async (root: string, entryName: string, source: string) => {
@@ -159,9 +172,7 @@ describe('build', () => {
     mocks.collectAppActions.mockResolvedValue([])
     mocks.collectAppLoaders.mockResolvedValue([])
     mocks.collectAppSymbols.mockResolvedValue([])
-    mocks.createRouteManifest.mockReturnValue({
-      routes: [],
-    })
+    mocks.createRouteManifest.mockReturnValue([])
     mocks.createRoutes.mockResolvedValue([createRootRoute()])
     mocks.toSSG.mockReset()
   })
@@ -180,6 +191,176 @@ describe('build', () => {
       'const pageRouteEntries = [{"path":"/","routeIndex":0}];',
     )
     expect(mocks.toSSG).not.toHaveBeenCalled()
+  })
+
+  it('serves route-data loader snapshots from the built node app', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      renderSSRAsyncSource:
+        'export const renderSSRAsync = async () => ({ html: "<html></html>", payload: { loaders: { profile: { data: { name: "Ada" }, error: null, loaded: true } } } });',
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(
+      new Request(
+        'http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      finalHref: 'http://127.0.0.1:4173/',
+      finalPathname: '/',
+      kind: 'page',
+      loaders: {
+        profile: {
+          data: { name: 'Ada' },
+          error: null,
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
+  it('returns middleware redirects from the built route-data endpoint', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-redirect-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(root, 'route__guarded__page', 'export default () => null;\n')
+    await writeBuiltPageModule(
+      root,
+      'special__guarded__middleware',
+      'export default (c) => c.redirect("/counter");\n',
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        middlewares: [
+          {
+            entryName: 'special__guarded__middleware',
+            filePath: '/tmp/app/guarded/+middleware.ts',
+          },
+        ],
+        page: {
+          entryName: 'route__guarded__page',
+          filePath: '/tmp/app/guarded/+page.tsx',
+        },
+        routePath: '/guarded',
+        segments: [{ kind: 'static', value: 'guarded' }],
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      location: 'http://localhost/counter',
+      ok: false,
+    })
+  })
+
+  it('serves not-found loader snapshots from the built route-data endpoint', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-not-found-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      renderSSRAsyncSource:
+        'export const renderSSRAsync = async () => ({ html: "<html></html>", payload: { loaders: { missing: { data: null, error: { message: "missing" }, loaded: true } } } });',
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+    await writeBuiltPageModule(root, 'special___not_found', 'export default () => null;\n')
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        notFound: {
+          entryName: 'special___not_found',
+          filePath: '/tmp/app/+not-found.tsx',
+        },
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      finalHref: 'http://localhost/missing',
+      finalPathname: '/missing',
+      kind: 'not-found',
+      loaders: {
+        missing: {
+          data: null,
+          error: { message: 'missing' },
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
+  it('returns document fallback when built route-data rendering throws notFound without a special route', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-document-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      renderSSRAsyncSource:
+        'export const renderSSRAsync = async () => { throw { __eclipsa_not_found__: true }; };',
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(
+      new Request(
+        'http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      document: true,
+      ok: false,
+    })
   })
 
   it('prerenders static routes while keeping the node server bundle for dynamic routes', async () => {

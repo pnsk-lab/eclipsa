@@ -93,6 +93,26 @@ describe('compileClientModule', () => {
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
   })
 
+  it('caches sibling node lookups before earlier inserts can shift child indices', async () => {
+    const resultCode = await compileClientModule(
+      `<div><Header /><p>Shared layout shell updated</p><button>Layout count: {count.value}</button><main>{props.children}</main></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[0\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[2\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[3\];/)
+    expect(resultCode).not.toContain(
+      '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
+    )
+    expect(resultCode).not.toContain(
+      '_insert(() => props.children, _cloned.childNodes[3], _cloned.childNodes[3].childNodes[0]);',
+    )
+  })
+
   it('normalizes multiline JSX text to match SSR output', async () => {
     const resultCode = await compileClientModule(
       `<label>

@@ -26,7 +26,7 @@ export default (props: { children?: unknown }) => {
           <Link
             class="transition-colors hover:text-white"
             data-interactive=""
-            href={`${import.meta.env.BASE_URL}docs/getting-started`}
+            href={`${import.meta.env.BASE_URL}docs/getting-started/overview`}
           >
             Docs
           </Link>

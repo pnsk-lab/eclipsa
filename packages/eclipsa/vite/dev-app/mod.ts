@@ -4,6 +4,8 @@ import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import type { ModuleRunner } from 'vite/module-runner'
 import * as fs from 'node:fs/promises'
 import {
+  ROUTE_DATA_ENDPOINT,
+  ROUTE_DATA_REQUEST_HEADER,
   ROUTE_MANIFEST_ELEMENT_ID,
   ROUTE_PREFLIGHT_ENDPOINT,
   ROUTE_PREFLIGHT_REQUEST_HEADER,
@@ -80,6 +82,19 @@ const fileExists = async (filePath: string) => {
   }
 }
 
+const getRequestUrl = (request: Request) => {
+  const url = new URL(request.url)
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
+  const proto = request.headers.get('x-forwarded-proto')
+  if (host) {
+    url.host = host
+  }
+  if (proto) {
+    url.protocol = `${proto}:`
+  }
+  return url
+}
+
 const toAppRelativePath = (root: string, filePath: string) => {
   const relativePath = path.relative(path.join(root, 'app'), filePath)
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
@@ -109,6 +124,14 @@ export const shouldInvalidateDevApp = (
 const RESUME_PAYLOAD_PLACEHOLDER = '__ECLIPSA_RESUME_PAYLOAD__'
 const ROUTE_MANIFEST_PLACEHOLDER = '__ECLIPSA_ROUTE_MANIFEST__'
 const APP_HOOKS_PLACEHOLDER = '__ECLIPSA_APP_HOOKS__'
+
+interface RouteDataResponse {
+  finalHref: string
+  finalPathname: string
+  kind: 'page' | 'not-found'
+  loaders: Record<string, unknown>
+  ok: true
+}
 
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
   html.replace(placeholder, value)
@@ -550,7 +573,7 @@ const createDevApp = async (init: DevAppInit) => {
       [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
       {
         params,
-        url: new URL(c.req.url),
+        url: getRequestUrl(c.req.raw),
       },
     )
 
@@ -618,7 +641,7 @@ const createDevApp = async (init: DevAppInit) => {
     applyRequestParams(c, params)
     const { html, payload, chunks } = await renderSSRStream(() => document, {
       prepare(container: any) {
-        primeLocationState(container, c.req.url)
+        primeLocationState(container, getRequestUrl(c.req.raw))
         return options?.prepare?.(container)
       },
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
@@ -679,8 +702,9 @@ const createDevApp = async (init: DevAppInit) => {
       routeError?: unknown
     },
   ) => {
-    const requestPathname = normalizeRoutePath(new URL(c.req.url).pathname)
-    const resolvedPathname = reroutePathname(c.req.raw, requestPathname, c.req.url)
+    const requestUrl = getRequestUrl(c.req.raw)
+    const requestPathname = normalizeRoutePath(requestUrl.pathname)
+    const resolvedPathname = reroutePathname(c.req.raw, requestPathname, requestUrl.href)
     try {
       return await renderRouteResponse(
         match.route,
@@ -718,8 +742,127 @@ const createDevApp = async (init: DevAppInit) => {
     }
   }
 
+  const renderRouteDataResponse = async (
+    route: RouteEntry,
+    pathname: string,
+    params: RouteParams,
+    c: AppContext,
+    modulePath: string,
+    kind: RouteDataResponse['kind'],
+  ) => {
+    const [
+      _primedModules,
+      modules,
+      { renderSSRAsync, resolvePendingLoaders },
+    ] = await Promise.all([
+      Promise.all([
+        fileExists(modulePath).then((exists) => (exists ? primeCompilerCache(modulePath) : undefined)),
+        ...route.layouts.map((layout) =>
+          fileExists(layout.filePath).then((exists) =>
+            exists ? primeCompilerCache(layout.filePath) : undefined,
+          ),
+        ),
+      ]),
+      Promise.all([
+        init.runner.import(modulePath),
+        ...route.layouts.map((layout) => init.runner.import(layout.filePath)),
+      ]),
+      init.runner.import('eclipsa'),
+    ])
+    const [pageModule, ...layoutModules] = modules as Array<{
+      default: (props: unknown) => unknown
+    }>
+    const { default: Page } = pageModule
+    const Layouts = layoutModules.map((module) => module.default)
+
+    applyRequestParams(c, params)
+    const { payload } = await renderSSRAsync(
+      () => createRouteElement(pathname, params, Page, Layouts, undefined),
+      {
+        prepare(container: any) {
+          primeLocationState(container, getRequestUrl(c.req.raw))
+        },
+        resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
+        symbols: symbolUrls,
+      },
+    )
+
+    return c.json({
+      finalHref: getRequestUrl(c.req.raw).href,
+      finalPathname: pathname,
+      kind,
+      loaders: payload.loaders,
+      ok: true,
+    } satisfies RouteDataResponse)
+  }
+
+  const renderRouteData = async (
+    route: RouteEntry,
+    pathname: string,
+    params: RouteParams,
+    c: AppContext,
+    modulePath: string,
+    kind: RouteDataResponse['kind'],
+  ) => {
+    const requestUrl = getRequestUrl(c.req.raw)
+    const requestPathname = normalizeRoutePath(requestUrl.pathname)
+    const resolvedPathname = reroutePathname(c.req.raw, requestPathname, requestUrl.href)
+    try {
+      return await renderRouteDataResponse(route, pathname, params, c, modulePath, kind)
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        return c.json({ document: true, ok: false })
+      }
+
+      const fallback = findSpecialRoute(routes, resolvedPathname, 'notFound')
+      if (!fallback?.route.notFound) {
+        return c.json({ document: true, ok: false })
+      }
+
+      try {
+        return await renderRouteDataResponse(
+          fallback.route,
+          requestPathname,
+          fallback.params,
+          c,
+          fallback.route.notFound.filePath,
+          'not-found',
+        )
+      } catch {
+        return c.json({ document: true, ok: false })
+      }
+    }
+  }
+
+  const resolveRouteData = async (href: string, c: AppContext) => {
+    const requestUrl = getRequestUrl(c.req.raw)
+    const targetUrl = new URL(href, requestUrl)
+    if (targetUrl.origin !== requestUrl.origin) {
+      return c.json({ document: true, ok: false })
+    }
+    const headers = new Headers(c.req.raw.headers)
+    headers.set(ROUTE_DATA_REQUEST_HEADER, '1')
+    const response = await app.fetch(
+      new Request(targetUrl.href, {
+        headers,
+        method: 'GET',
+        redirect: 'manual',
+      }),
+    )
+    if (response.status >= 200 && response.status < 300) {
+      return response
+    }
+    if (isRedirectResponse(response)) {
+      return c.json({
+        location: new URL(response.headers.get('location')!, requestUrl).href,
+        ok: false,
+      })
+    }
+    return c.json({ document: true, ok: false })
+  }
+
   const resolveRoutePreflight = async (href: string, c: AppContext) => {
-    const requestUrl = new URL(c.req.url)
+    const requestUrl = getRequestUrl(c.req.raw)
     const targetUrl = new URL(href, requestUrl)
     if (targetUrl.origin !== requestUrl.origin) {
       return c.json({ document: true, ok: false })
@@ -818,6 +961,16 @@ const createDevApp = async (init: DevAppInit) => {
     }),
   )
 
+  app.get(ROUTE_DATA_ENDPOINT, async (c) =>
+    resolveRequest(c, async (requestContext) => {
+      const href = requestContext.req.query('href')
+      if (!href) {
+        return requestContext.json({ document: true, ok: false }, 400)
+      }
+      return resolveRouteData(href, requestContext)
+    }),
+  )
+
   app.all('*', async (c) =>
     resolveRequest(c, async (requestContext) => {
       const { match, requestPathname, resolvedPathname } = resolveRequestRoute(
@@ -831,7 +984,16 @@ const createDevApp = async (init: DevAppInit) => {
           return composeRouteMiddlewares(fallback.route, requestContext, fallback.params, async () =>
             requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
               ? requestContext.body(null, 204)
-              : renderRouteResponse(
+              : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === '1'
+                ? renderRouteData(
+                    fallback.route,
+                    requestPathname,
+                    fallback.params,
+                    requestContext,
+                    fallback.route.notFound!.filePath,
+                    'not-found',
+                  )
+                : renderRouteResponse(
                   fallback.route,
                   requestPathname,
                   fallback.params,
@@ -845,10 +1007,20 @@ const createDevApp = async (init: DevAppInit) => {
       }
 
       if ((requestContext.req.method === 'GET' || requestContext.req.method === 'HEAD') && match.route.page) {
+        const page = match.route.page
         return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
           requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
             ? requestContext.body(null, 204)
-            : renderMatchedPage(match, requestContext),
+            : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === '1'
+              ? renderRouteData(
+                  match.route,
+                  requestPathname,
+                  match.params,
+                  requestContext,
+                  page.filePath,
+                  'page',
+                )
+              : renderMatchedPage(match, requestContext),
         )
       }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   applyResumeHmrSymbolReplacements,
   applyResumeHmrUpdate,
@@ -7,19 +7,29 @@ import {
   createResumeContainer,
   invalidateRuntimeSymbolCaches,
   markResumeHmrBoundaryDirty,
+  refreshRouteContainer,
   type RuntimeContainer,
 } from './runtime.ts'
 
 const createContainer = (overrides?: Partial<RuntimeContainer>) =>
   ({
+    actionStates: new Map(),
+    actions: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
     components: new Map(),
     dirty: new Set(),
     doc: undefined,
+    id: 'rt-test',
     imports: new Map(),
+    loaderStates: new Map(),
+    loaders: new Map(),
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,
     nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    router: null,
     rootChildCursor: 0,
     rootElement: undefined,
     scopes: new Map(),
@@ -540,5 +550,34 @@ describe('resume HMR runtime helpers', () => {
       globalThis.NodeFilter = originalNodeFilter
       globalRecord.Element = OriginalElement
     }
+  })
+
+  it('forces current-route refreshes even when the href has not changed', async () => {
+    const replace = vi.fn()
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace,
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/docs/getting-started',
+          origin: 'http://example.com',
+          pathname: '/docs/getting-started',
+          search: '',
+        },
+        title: 'Docs',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+    })
+
+    await refreshRouteContainer(container)
+
+    expect(replace).toHaveBeenCalledWith('http://example.com/docs/getting-started')
   })
 })

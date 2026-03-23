@@ -139,15 +139,18 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByText('Guarded page')).toBeVisible()
   })
 
-  test('prefetches route html on link intent and reuses prefetched loader state on navigation', async ({
+  test('prefetches route data on link intent and reuses prefetched loader state on navigation', async ({
     page,
   }) => {
-    const routeRequests: string[] = []
+    const routeDataRequests: string[] = []
     const loaderRequests: string[] = []
     page.on('request', (request) => {
       const url = new URL(request.url())
-      if (url.pathname === '/actions') {
-        routeRequests.push(url.pathname)
+      if (
+        url.pathname === '/__eclipsa/route-data' &&
+        new URL(url.searchParams.get('href')!, page.url()).pathname === '/actions'
+      ) {
+        routeDataRequests.push(request.url())
       }
       if (url.pathname.startsWith('/__eclipsa/loader/')) {
         loaderRequests.push(url.pathname)
@@ -155,25 +158,26 @@ test.describe('example app in dev mode', () => {
     })
 
     await page.goto('/')
-    routeRequests.length = 0
+    routeDataRequests.length = 0
     loaderRequests.length = 0
 
     await page.getByRole('link', { name: 'Open actions without prefetch' }).hover()
     await page.waitForTimeout(250)
-    expect(routeRequests).toHaveLength(0)
+    expect(routeDataRequests).toHaveLength(0)
 
     const actionsLink = page.getByRole('link', { name: 'Actions', exact: true })
 
     await actionsLink.hover()
-    await expect.poll(() => routeRequests.length).toBeGreaterThan(0)
+    await expect.poll(() => routeDataRequests.length).toBeGreaterThan(0)
 
-    routeRequests.length = 0
+    routeDataRequests.length = 0
     loaderRequests.length = 0
 
     await actionsLink.click()
 
     await expect(page).toHaveURL(/\/actions$/)
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
+    await expect.poll(() => routeDataRequests.length).toBe(0)
     await expect.poll(() => loaderRequests.length).toBe(0)
   })
 
@@ -229,7 +233,7 @@ test.describe('example app in dev mode', () => {
     await expect(image).toHaveAttribute('srcset', /240w.*480w.*960w.*1200w/)
     await expect(image).toHaveAttribute('sizes', '(min-width: 960px) 720px, 100vw')
 
-    await page.locator('main').getByRole('link', { name: 'Home', exact: true }).click()
+    await page.getByRole('link', { name: 'Home', exact: true }).click()
     await expect(page).toHaveURL(/\/$/)
 
     await page.getByRole('link', { name: 'Open image route' }).click()

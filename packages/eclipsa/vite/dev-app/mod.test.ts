@@ -754,6 +754,306 @@ describe('createDevFetch', () => {
     })
   })
 
+  it('returns prefetched loader snapshots from the route-data endpoint', async () => {
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/+page.tsx') {
+            return {
+              default() {
+                return null
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              renderSSRAsync: async () => ({
+                payload: {
+                  loaders: {
+                    profile: {
+                      data: { name: 'Ada' },
+                      error: null,
+                      loaded: true,
+                    },
+                  },
+                },
+              }),
+              resolvePendingLoaders: vi.fn(),
+            }
+          }
+          return {
+            default(props: any) {
+              return props ?? null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request('http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F'),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      finalHref: 'http://127.0.0.1:4173/',
+      finalPathname: '/',
+      kind: 'page',
+      loaders: {
+        profile: {
+          data: { name: 'Ada' },
+          error: null,
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
+  it('returns middleware redirects from the route-data endpoint without HTML', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__guarded__middleware',
+            filePath: '/tmp/app/guarded/+middleware.ts',
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__guarded__page',
+          filePath: '/tmp/app/guarded/+page.tsx',
+        },
+        routePath: '/guarded',
+        segments: [{ kind: 'static', value: 'guarded' }],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/guarded/+middleware.ts') {
+            return {
+              default(c: any) {
+                return c.redirect('/counter')
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              renderSSRAsync: vi.fn(),
+              resolvePendingLoaders: vi.fn(),
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      location: 'http://localhost/counter',
+      ok: false,
+    })
+  })
+
+  it('returns not-found loader snapshots from the route-data endpoint', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: {
+          entryName: 'special___not_found',
+          filePath: '/tmp/app/+not-found.tsx',
+        },
+        page: {
+          entryName: 'route__page',
+          filePath: '/tmp/app/+page.tsx',
+        },
+        routePath: '/',
+        segments: [],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/+not-found.tsx') {
+            return {
+              default() {
+                return null
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              renderSSRAsync: async () => ({
+                payload: {
+                  loaders: {
+                    missing: {
+                      data: null,
+                      error: { message: 'missing' },
+                      loaded: true,
+                    },
+                  },
+                },
+              }),
+              resolvePendingLoaders: vi.fn(),
+            }
+          }
+          return {
+            default(props: any) {
+              return props ?? null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      finalHref: 'http://localhost/missing',
+      finalPathname: '/missing',
+      kind: 'not-found',
+      loaders: {
+        missing: {
+          data: null,
+          error: { message: 'missing' },
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
+  it('returns document fallback when route-data loader rendering throws notFound without a special route', async () => {
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/+page.tsx') {
+            return {
+              default() {
+                return null
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              renderSSRAsync: async () => {
+                throw {
+                  __eclipsa_not_found__: true,
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+            }
+          }
+          return {
+            default(props: any) {
+              return props ?? null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request('http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F'),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      document: true,
+      ok: false,
+    })
+  })
+
   it('logs route render failures with a fixed stack before returning a 500 response', async () => {
     const error = new Error('boom')
     const ssrFixStacktrace = vi.fn()
