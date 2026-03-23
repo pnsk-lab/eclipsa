@@ -6,6 +6,11 @@ export const docs = defineCollection({
     base: './content/docs',
     pattern: '**/*.md',
   }),
+  markdown: {
+    highlight: {
+      theme: 'github-dark',
+    },
+  },
   schema: z.object({
     description: z.string(),
     order: z.number(),

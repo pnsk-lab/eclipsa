@@ -57,6 +57,10 @@ slug: guide/start-here
 # Getting Started
 
 Welcome to **content**.
+
+\`\`\`ts
+const answer = 42
+\`\`\`
 `,
     )
     await fs.writeFile(
@@ -101,6 +105,11 @@ order: 1
         base: './content/docs',
         pattern: '**/*.md',
       }),
+      markdown: {
+        highlight: {
+          theme: 'github-dark',
+        },
+      },
       schema,
     })
     const runtime = createContentRuntime({
@@ -125,6 +134,8 @@ order: 1
 
     const rendered = await runtime.render(entry!)
     expect(rendered.html).toContain('<h1>Getting Started</h1>')
+    expect(rendered.html).toContain('class="shiki')
+    expect(rendered.html).toContain('answer')
     expect(rendered.headings).toEqual([
       {
         depth: 1,

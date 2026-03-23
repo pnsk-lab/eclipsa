@@ -216,6 +216,10 @@ test.describe('example app in dev mode', () => {
     )
     await expect(page.getByTestId('content-headings')).toContainText('h1 :: getting-started')
     await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toBeVisible()
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toContainText(
+      "const greeting = 'highlighted content'",
+    )
 
     await page.locator('main').getByRole('link', { name: 'Home', exact: true }).click()
     await expect(page).toHaveURL(/\/$/)
@@ -223,6 +227,7 @@ test.describe('example app in dev mode', () => {
 
     await expect(page).toHaveURL(/\/content$/)
     await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toBeVisible()
   })
 
   test('keeps component-valued props and children rendered after client updates', async ({

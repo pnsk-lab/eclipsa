@@ -4,11 +4,13 @@ import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import YAML from 'yaml'
 import type { StandardSchemaIssue, StandardSchemaV1 } from 'eclipsa'
+import { highlightHtml } from './highlight.ts'
 import type { CollectionEntry, ContentFilter, ContentRuntimeModule } from './mod.ts'
 import { CONTENT_COLLECTION_MARKER } from './types.ts'
 import type {
   AnyCollection,
   BaseContentEntry,
+  ContentMarkdownOptions,
   ContentComponentProps,
   ContentEntryReference,
   ContentHeading,
@@ -29,6 +31,7 @@ interface ParsedFrontmatter {
 
 interface ResolvedManifest {
   collections: Map<AnyCollection, BaseContentEntry[]>
+  markdownByCollectionName: Map<string, ContentMarkdownOptions | undefined>
   entriesByCollection: Map<AnyCollection, Map<string, BaseContentEntry>>
 }
 
@@ -217,6 +220,7 @@ export const resolveCollections = async ({
 }: CreateContentRuntimeOptions): Promise<ResolvedManifest> => {
   const byCollection = new Map<AnyCollection, BaseContentEntry[]>()
   const entriesByCollection = new Map<AnyCollection, Map<string, BaseContentEntry>>()
+  const markdownByCollectionName = new Map<string, ContentMarkdownOptions | undefined>()
   const definedCollections = Object.entries(collectionsModule).filter(
     (entry): entry is [string, DefinedCollection<any>] => isDefinedCollection(entry[1]),
   )
@@ -244,9 +248,11 @@ export const resolveCollections = async ({
     }
     byCollection.set(definition, resolvedEntries)
     entriesByCollection.set(definition, entriesById)
+    markdownByCollectionName.set(collectionName, definition.markdown)
   }
   return {
     collections: byCollection,
+    markdownByCollectionName,
     entriesByCollection,
   }
 }
@@ -260,7 +266,10 @@ const createContentRenderer = (html: string) => (props: Omit<ContentComponentPro
   type: props.as ?? 'article',
 })
 
-const renderMarkdown = (entry: BaseContentEntry): RenderedContent => {
+const renderMarkdown = async (
+  entry: BaseContentEntry,
+  markdownOptions: ContentMarkdownOptions | undefined,
+): Promise<RenderedContent> => {
   const result = transform(entry.body, {
     autolinks: true,
     footnotes: true,
@@ -284,10 +293,11 @@ const renderMarkdown = (entry: BaseContentEntry): RenderedContent => {
         text: heading.text,
       }) satisfies ContentHeading,
   )
+  const html = await highlightHtml(result.html, markdownOptions?.highlight)
   return {
-    Content: createContentRenderer(result.html),
+    Content: createContentRenderer(html),
     headings,
-    html: result.html,
+    html,
   }
 }
 
@@ -343,7 +353,11 @@ export const createContentRuntime = ({
       if (cached) {
         return cached
       }
-      const rendered = renderMarkdown(entry)
+      const manifest = await getManifest()
+      const rendered = await renderMarkdown(
+        entry,
+        manifest.markdownByCollectionName.get(entry.collection),
+      )
       renderCache.set(key, rendered)
       return rendered
     },
