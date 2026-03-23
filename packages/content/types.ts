@@ -21,6 +21,14 @@ export interface ContentLoaderObject {
   ): ContentSourceEntry[] | Promise<ContentSourceEntry[]> | readonly ContentSourceEntry[]
 }
 
+export interface ContentHighlightOptions {
+  theme?: string
+}
+
+export interface ContentMarkdownOptions {
+  highlight?: boolean | ContentHighlightOptions
+}
+
 export interface GlobLoaderOptions {
   base: string
   pattern: string
@@ -36,6 +44,7 @@ export type ContentLoader = GlobLoader | ContentLoaderObject
 
 export interface ContentCollectionDefinition<Schema extends StandardSchemaV1<any, any> | undefined> {
   loader: ContentLoader
+  markdown?: ContentMarkdownOptions
   schema?: Schema
 }
 

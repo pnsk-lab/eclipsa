@@ -4,12 +4,19 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { cwd } from 'node:process'
 import { pathToFileURL } from 'node:url'
-import type { RouteManifest, RoutePathSegment } from '../../core/router-shared.ts'
+import type {
+  GetStaticPaths,
+  RouteManifest,
+  RouteParams,
+  RoutePathSegment,
+  StaticPath,
+} from '../../core/router-shared.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID, ROUTE_PREFLIGHT_ENDPOINT } from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
   createBuildServerModuleUrl,
   createRouteManifest,
+  normalizeRoutePath,
   createRoutes,
 } from '../utils/routing.ts'
 import {
@@ -67,9 +74,6 @@ const resolveRouteRenderMode = (
   output: ResolvedEclipsaPluginOptions['output'],
 ) => route.renderMode ?? (output === 'ssg' ? 'static' : 'dynamic')
 
-const isConcreteStaticRoute = (route: Awaited<ReturnType<typeof createRoutes>>[number]) =>
-  route.segments.every((segment) => segment.kind === 'static')
-
 export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
   let paths = ['']
 
@@ -94,6 +98,219 @@ export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
   }
 
   return [...new Set(paths.map((currentPath) => (currentPath === '' ? '/' : currentPath)))]
+}
+
+interface ResolvedStaticPathInfo {
+  concretePath: string
+  honoParams: Record<string, string>
+  honoPatternPath: string
+}
+
+interface ResolvedStaticPrerenderTargets {
+  concretePaths: Set<string>
+  dynamicParamsByPattern: Map<string, Record<string, string>[]>
+}
+
+const createStaticPathsError = (routePath: string, message: string) =>
+  new Error(`Invalid getStaticPaths() for route ${routePath}: ${message}`)
+
+const validatePathSegmentValue = (
+  routePath: string,
+  paramName: string,
+  value: string,
+  kind: 'optional' | 'required' | 'rest',
+) => {
+  if (value.length === 0) {
+    throw createStaticPathsError(routePath, `${kind} param "${paramName}" must not be empty.`)
+  }
+  if (value.includes('/')) {
+    throw createStaticPathsError(
+      routePath,
+      `${kind} param "${paramName}" must not contain "/".`,
+    )
+  }
+}
+
+export const resolveStaticPathInfo = (
+  routePath: string,
+  segments: RoutePathSegment[],
+  params: RouteParams,
+): ResolvedStaticPathInfo => {
+  const allowedParams = new Set(
+    segments.filter((segment) => segment.kind !== 'static').map((segment) => segment.value),
+  )
+
+  for (const key of Object.keys(params)) {
+    if (!allowedParams.has(key)) {
+      throw createStaticPathsError(routePath, `unknown param "${key}".`)
+    }
+  }
+
+  const concreteSegments: string[] = []
+  const honoPatternSegments: string[] = []
+  const honoParams: Record<string, string> = {}
+
+  for (const segment of segments) {
+    switch (segment.kind) {
+      case 'static':
+        concreteSegments.push(segment.value)
+        honoPatternSegments.push(segment.value)
+        break
+      case 'required': {
+        const value = params[segment.value]
+        if (typeof value !== 'string') {
+          throw createStaticPathsError(
+            routePath,
+            `required param "${segment.value}" must be a string.`,
+          )
+        }
+        validatePathSegmentValue(routePath, segment.value, value, 'required')
+        concreteSegments.push(value)
+        honoPatternSegments.push(`:${segment.value}`)
+        honoParams[segment.value] = value
+        break
+      }
+      case 'optional': {
+        const value = params[segment.value]
+        if (value === undefined) {
+          break
+        }
+        if (typeof value !== 'string') {
+          throw createStaticPathsError(
+            routePath,
+            `optional param "${segment.value}" must be a string when provided.`,
+          )
+        }
+        validatePathSegmentValue(routePath, segment.value, value, 'optional')
+        concreteSegments.push(value)
+        honoPatternSegments.push(`:${segment.value}`)
+        honoParams[segment.value] = value
+        break
+      }
+      case 'rest': {
+        const value = params[segment.value]
+        if (!Array.isArray(value)) {
+          throw createStaticPathsError(
+            routePath,
+            `rest param "${segment.value}" must be a string array.`,
+          )
+        }
+        if (value.length === 0) {
+          throw createStaticPathsError(
+            routePath,
+            `rest param "${segment.value}" must contain at least one segment.`,
+          )
+        }
+        for (const part of value) {
+          if (typeof part !== 'string') {
+            throw createStaticPathsError(
+              routePath,
+              `rest param "${segment.value}" must only contain strings.`,
+            )
+          }
+          validatePathSegmentValue(routePath, segment.value, part, 'rest')
+        }
+        concreteSegments.push(...value)
+        honoPatternSegments.push(`:${segment.value}{.+}`)
+        honoParams[segment.value] = value.join('/')
+        break
+      }
+    }
+  }
+
+  return {
+    concretePath: normalizeRoutePath(concreteSegments.join('/')),
+    honoParams,
+    honoPatternPath: normalizeRoutePath(honoPatternSegments.join('/')),
+  }
+}
+
+const resolveBuiltPageModulePath = (root: string, entryName: string) =>
+  path.join(root, 'dist', 'ssr', 'entries', `${entryName}.mjs`)
+
+const loadBuiltGetStaticPaths = async (root: string, entryName: string, routePath: string) => {
+  const modulePath = resolveBuiltPageModulePath(root, entryName)
+  const mod = (await import(`${pathToFileURL(modulePath).href}?t=${Date.now()}`)) as Partial<{
+    getStaticPaths: GetStaticPaths
+  }>
+  if (typeof mod.getStaticPaths !== 'function') {
+    throw createStaticPathsError(routePath, 'dynamic static routes must export getStaticPaths().')
+  }
+  return mod.getStaticPaths
+}
+
+const validateStaticPathsResult = (routePath: string, value: unknown): StaticPath[] => {
+  if (!Array.isArray(value)) {
+    throw createStaticPathsError(routePath, 'getStaticPaths() must return an array.')
+  }
+  return value as StaticPath[]
+}
+
+const resolveStaticPrerenderTargets = async (
+  root: string,
+  routes: Array<Awaited<ReturnType<typeof createRoutes>>[number]>,
+): Promise<ResolvedStaticPrerenderTargets> => {
+  const concretePaths = new Set<string>()
+  const dynamicParamsByPattern = new Map<string, Record<string, string>[]>()
+  const ownersByConcretePath = new Map<string, string>()
+
+  const registerConcretePath = (routePath: string, concretePath: string) => {
+    const existingOwner = ownersByConcretePath.get(concretePath)
+    if (existingOwner) {
+      throw createStaticPathsError(
+        routePath,
+        `duplicate concrete path "${concretePath}" conflicts with ${existingOwner}.`,
+      )
+    }
+    ownersByConcretePath.set(concretePath, routePath)
+  }
+
+  for (const route of routes) {
+    if (!route.page) {
+      continue
+    }
+
+    const hasDynamicSegment = route.segments.some((segment) => segment.kind !== 'static')
+    if (!hasDynamicSegment) {
+      registerConcretePath(route.routePath, route.routePath)
+      concretePaths.add(route.routePath)
+      continue
+    }
+
+    const getStaticPaths = await loadBuiltGetStaticPaths(root, route.page.entryName, route.routePath)
+    const staticPaths = validateStaticPathsResult(route.routePath, await getStaticPaths())
+
+    for (const [index, staticPath] of staticPaths.entries()) {
+      if (!staticPath || typeof staticPath !== 'object') {
+        throw createStaticPathsError(route.routePath, `entry ${index} must be an object.`)
+      }
+      if (
+        !('params' in staticPath) ||
+        !staticPath.params ||
+        typeof staticPath.params !== 'object' ||
+        Array.isArray(staticPath.params)
+      ) {
+        throw createStaticPathsError(route.routePath, `entry ${index} must include a params object.`)
+      }
+
+      const resolved = resolveStaticPathInfo(route.routePath, route.segments, staticPath.params)
+      registerConcretePath(route.routePath, resolved.concretePath)
+
+      if (resolved.honoPatternPath === resolved.concretePath) {
+        concretePaths.add(resolved.concretePath)
+        continue
+      }
+
+      const params = dynamicParamsByPattern.get(resolved.honoPatternPath) ?? []
+      params.push(resolved.honoParams)
+      dynamicParamsByPattern.set(resolved.honoPatternPath, params)
+    }
+  }
+
+  return {
+    concretePaths,
+    dynamicParamsByPattern,
+  }
 }
 
 const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
@@ -163,7 +380,7 @@ const renderAppModule = (
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -237,11 +454,16 @@ const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0
         [segment.value]: undefined,
       });
     }
-    case "rest":
+    case "rest": {
+      const rest = pathnameSegments.slice(pathIndex);
+      if (rest.length === 0) {
+        return null;
+      }
       return matchSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
         ...params,
-        [segment.value]: pathnameSegments.slice(pathIndex),
+        [segment.value]: rest,
       });
+    }
   }
 };
 
@@ -332,6 +554,13 @@ const toPublicErrorValue = async (hooks, c, error, event) => {
     },
   );
   return markPublicError(error, publicError);
+};
+
+const logServerError = (error) => {
+  if (error && typeof error === "object" && error.__eclipsa_not_found__ === true) {
+    return;
+  }
+  console.error(error);
 };
 
 const prepareRequestContext = (c, hooks) => {
@@ -601,7 +830,10 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 
   applyRequestParams(c, params);
   const { html, payload, chunks } = await renderSSRStream(() => document, {
-    prepare: options?.prepare,
+    prepare(container) {
+      primeLocationState(container, c.req.url);
+      return options?.prepare?.(container);
+    },
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
     symbols: symbolUrls,
   });
@@ -663,6 +895,7 @@ const renderMatchedPage = async (match, c, options) => {
   try {
     return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page, 200, options);
   } catch (error) {
+    logServerError(error);
     const publicError = await toPublicErrorValue(serverHooks, c, error, "page");
     const fallback = isNotFoundError(error) ? findSpecialRoute(resolvedPathname, "notFound") : findSpecialRoute(resolvedPathname, "error");
     const kind = isNotFoundError(error) ? "notFound" : "error";
@@ -976,12 +1209,6 @@ export const build = async (
   const dynamicPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'dynamic',
   )
-  const nonConcreteStaticRoute = staticPageRoutes.find((route) => !isConcreteStaticRoute(route))
-  if (nonConcreteStaticRoute) {
-    throw new Error(
-      `Static rendering currently requires a concrete route path. Remove dynamic segments from ${nonConcreteStaticRoute.routePath} or switch it to render = "dynamic".`,
-    )
-  }
   if (options.output === 'ssg') {
     const dynamicRoute = dynamicPageRoutes[0]
     if (dynamicRoute) {
@@ -1033,11 +1260,13 @@ export const build = async (
       stylesheetUrls,
     ),
   )
-
-  const staticPageRouteSet = new Set(staticPageRoutes.map((route) => route.routePath))
+  const staticPrerenderTargets = await resolveStaticPrerenderTargets(root, staticPageRoutes)
 
   const prerenderStaticRoutes = async () => {
-    if (staticPageRouteSet.size === 0) {
+    if (
+      staticPrerenderTargets.concretePaths.size === 0 &&
+      staticPrerenderTargets.dynamicParamsByPattern.size === 0
+    ) {
       return
     }
 
@@ -1048,8 +1277,13 @@ export const build = async (
     }
     const result = await toSSG(app as any, fs, {
       beforeRequestHook(request: Request) {
-        const routePath = new URL(request.url).pathname
-        return staticPageRouteSet.has(routePath) ? request : false
+        const routePath = normalizeRoutePath(decodeURIComponent(new URL(request.url).pathname))
+        const ssgParams = staticPrerenderTargets.dynamicParamsByPattern.get(routePath)
+        if (ssgParams) {
+          ;(request as Request & { ssgParams?: Record<string, string>[] }).ssgParams = ssgParams
+          return request
+        }
+        return staticPrerenderTargets.concretePaths.has(routePath) ? request : false
       },
       dir: clientDir,
     })

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { attr, createComponent } from './dom.ts'
+import { __eclipsaComponent } from '../internal.ts'
 import { createDetachedRuntimeSignal, type RuntimeContainer } from '../runtime.ts'
 import { Suspense } from '../suspense.ts'
 
@@ -130,6 +131,25 @@ describe('core/client dom attr', () => {
         fallback: ['loading'],
       },
       type: Suspense,
+    })
+  })
+
+  it('preserves resumable components as render objects so client rerenders keep boundary shape', () => {
+    const Child = __eclipsaComponent(
+      (_props: { label: string }) => null,
+      'component:child',
+      () => [],
+    )
+
+    const rendered = createComponent(Child as any, {
+      label: 'Overview',
+    })()
+
+    expect(rendered).toMatchObject({
+      props: {
+        label: 'Overview',
+      },
+      type: Child,
     })
   })
 })

@@ -49,5 +49,5 @@ export {
   renderSSRStream,
   serializeResumePayload,
 } from '../../core/ssr.ts'
-export { RESUME_FINAL_STATE_ELEMENT_ID } from '../../core/runtime.ts'
+export { RESUME_FINAL_STATE_ELEMENT_ID, primeLocationState } from '../../core/runtime.ts'
 export { Fragment, jsxDEV } from '../../jsx/jsx-dev-runtime.ts'

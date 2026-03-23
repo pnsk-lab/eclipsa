@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { __eclipsaComponent } from './internal.ts'
-import { Link, useNavigate } from './router.tsx'
-import { renderSSR } from './ssr.ts'
+import { Link, useLocation, useNavigate } from './router.tsx'
+import { primeLocationState } from './runtime.ts'
+import { renderSSR, renderSSRAsync } from './ssr.ts'
 
 describe('useNavigate', () => {
   it('tracks the internal navigating signal when isNavigating is read during render', () => {
@@ -20,6 +21,35 @@ describe('useNavigate', () => {
     expect(html).toContain('<button>idle</button>')
     expect(payload.signals['$router:isNavigating']).toBe(false)
     expect(payload.subscriptions['$router:isNavigating']).toEqual(['c0'])
+  })
+})
+
+describe('useLocation', () => {
+  it('tracks the current route location during render', async () => {
+    const App = __eclipsaComponent(
+      () => {
+        const location = useLocation()
+        return (
+          <p>
+            {location.pathname}|{location.search}|{location.hash}|{location.href}
+          </p>
+        )
+      },
+      'component-symbol',
+      () => [],
+    )
+
+    const { html, payload } = await renderSSRAsync(() => <App />, {
+      prepare(container) {
+        primeLocationState(container, 'https://example.com/docs?tab=api#hooks')
+      },
+    })
+
+    expect(html).toContain(
+      '<p>/docs|?tab=api|#hooks|https://example.com/docs?tab=api#hooks</p>',
+    )
+    expect(payload.signals['$router:url']).toBe('https://example.com/docs?tab=api#hooks')
+    expect(payload.subscriptions['$router:url']).toEqual(['c0'])
   })
 })
 

@@ -29,6 +29,7 @@ import {
   renderRouteMetadataHead,
   type RouteMetadataExport,
 } from '../../core/metadata.ts'
+import { primeLocationState } from '../../core/runtime.ts'
 import {
   createDevModuleUrl,
   createRouteManifest,
@@ -43,6 +44,7 @@ import {
   collectAppLoaders,
   collectAppSymbols,
   createDevSymbolUrl,
+  primeCompilerCache,
 } from '../compiler.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
@@ -511,6 +513,7 @@ const createDevApp = async (init: DevAppInit) => {
     },
   ) => {
     const [
+      _primedModules,
       modules,
       { default: SSRRoot },
       {
@@ -522,6 +525,14 @@ const createDevApp = async (init: DevAppInit) => {
         RESUME_FINAL_STATE_ELEMENT_ID,
       },
     ] = await Promise.all([
+      Promise.all([
+        fileExists(modulePath).then((exists) => (exists ? primeCompilerCache(modulePath) : undefined)),
+        ...route.layouts.map((layout) =>
+          fileExists(layout.filePath).then((exists) =>
+            exists ? primeCompilerCache(layout.filePath) : undefined,
+          ),
+        ),
+      ]),
       Promise.all([
         init.runner.import(modulePath),
         ...route.layouts.map((layout) => init.runner.import(layout.filePath)),
@@ -606,7 +617,10 @@ const createDevApp = async (init: DevAppInit) => {
 
     applyRequestParams(c, params)
     const { html, payload, chunks } = await renderSSRStream(() => document, {
-      prepare: options?.prepare,
+      prepare(container: any) {
+        primeLocationState(container, c.req.url)
+        return options?.prepare?.(container)
+      },
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
       symbols: symbolUrls,
     })

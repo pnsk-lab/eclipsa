@@ -4,14 +4,30 @@ export * from './hooks.ts'
 export * from './loader.ts'
 export * from './metadata.ts'
 export * from './route-middleware.ts'
-export { Link, notFound, useNavigate, useRouteError, useRouteParams, type LinkProps } from './router.tsx'
+export {
+  Link,
+  notFound,
+  useLocation,
+  useNavigate,
+  useRouteError,
+  useRouteParams,
+  type LinkProps,
+} from './router.tsx'
 export * from './resume.ts'
 export * from './serialize.ts'
 export * from './signal.ts'
 export * from './snapshot.ts'
 export * from './ssr.ts'
+export * from './style.ts'
 export * from './suspense.ts'
 export { RESUME_FINAL_STATE_ELEMENT_ID } from './runtime.ts'
-export type { LinkPrefetchMode, Navigate, NavigateOptions } from './router-shared.ts'
+export type {
+  GetStaticPaths,
+  LinkPrefetchMode,
+  Navigate,
+  NavigateOptions,
+  RouteLocation,
+  StaticPath,
+} from './router-shared.ts'
 export * from './types.ts'
 export * from './flow/mod.ts'

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   applyResumeHmrSymbolReplacements,
   applyResumeHmrUpdate,
+  bustRuntimeSymbolUrls,
   collectResumeHmrBoundaryIds,
   createResumeContainer,
+  invalidateRuntimeSymbolCaches,
+  markResumeHmrBoundaryDirty,
   type RuntimeContainer,
 } from './runtime.ts'
 
@@ -288,6 +291,68 @@ describe('resume HMR runtime helpers', () => {
 
     expect(result).toBe('updated')
     expect(container.symbols.get('next-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
+  })
+
+  it('forces HMR boundary remounts to rebuild slot content instead of reusing old DOM', () => {
+    const container = createContainer({
+      components: new Map([
+        [
+          'c0',
+          {
+            active: true,
+            didMount: false,
+            end: {} as Comment,
+            id: 'c0',
+            mountCleanupSlots: [],
+            parentId: '$root',
+            props: {},
+            projectionSlots: { children: 1 },
+            reuseExistingDomOnActivate: true,
+            reuseProjectionSlotDomOnActivate: true,
+            scopeId: 'scope-root',
+            signalIds: [],
+            start: {} as Comment,
+            symbol: 'layout-symbol',
+            visibleCount: 0,
+            watchCount: 0,
+          },
+        ],
+      ]),
+    })
+
+    expect(markResumeHmrBoundaryDirty(container, 'c0')).toBe(true)
+    expect(container.components.get('c0')?.active).toBe(false)
+    expect(container.components.get('c0')?.reuseExistingDomOnActivate).toBe(false)
+    expect(container.components.get('c0')?.reuseProjectionSlotDomOnActivate).toBe(false)
+    expect(container.dirty).toEqual(new Set(['c0']))
+  })
+
+  it('invalidates cached modules for rerendered symbols even when the symbol id stays stable', () => {
+    const container = createContainer({
+      imports: new Map([
+        ['stable-symbol', Promise.resolve({ default: () => null })],
+        ['other-symbol', Promise.resolve({ default: () => null })],
+      ]),
+    })
+
+    invalidateRuntimeSymbolCaches(container, ['stable-symbol'])
+
+    expect(container.imports.has('stable-symbol')).toBe(false)
+    expect(container.imports.has('other-symbol')).toBe(true)
+  })
+
+  it('cache-busts stable symbol URLs before rerendering unchanged symbol ids', () => {
+    const container = createContainer({
+      symbols: new Map([
+        ['stable-symbol', '/app/+page.tsx?eclipsa-symbol=stable-symbol'],
+      ]),
+    })
+
+    bustRuntimeSymbolUrls(container, ['stable-symbol'], 123)
+
+    expect(container.symbols.get('stable-symbol')).toBe(
+      '/app/+page.tsx?eclipsa-symbol=stable-symbol&t=123',
+    )
   })
 
   it('registers freshly added symbol URLs when the payload includes direct additions', () => {

@@ -185,6 +185,7 @@ describe('routing helpers', () => {
       params: { rest: ['a', 'b'] },
       route: routes[1],
     })
+    expect(matchRoute(routes, '/docs')).toBeNull()
     expect(matchRoute(routes, '/about')).toMatchObject({
       params: { lang: undefined },
       route: routes[2],

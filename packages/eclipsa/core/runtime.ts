@@ -49,6 +49,7 @@ import {
   type Navigate,
   type NavigateOptions,
   type RouteManifest,
+  type RouteLocation,
   type RouteModuleManifest,
   type RouteParams,
 } from './router-shared.ts'
@@ -61,6 +62,7 @@ const STANDALONE_SIGNAL_ID_KEY = Symbol.for('eclipsa.standalone-signal-id')
 const ACTION_FORM_ATTR = 'data-e-action-form'
 const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
 const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
+const ROUTER_CURRENT_URL_SIGNAL_ID = '$router:url'
 const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
 const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
 const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
@@ -71,6 +73,7 @@ const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
 export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
 export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
+export const SCOPED_STYLE_ATTR = 'data-e-scope'
 const ROOT_COMPONENT_ID = '$root'
 const SUSPENSE_COMPONENT_SYMBOL = '$suspense'
 const ROUTE_SLOT_TYPE = 'route-slot'
@@ -231,6 +234,7 @@ interface CleanupSlot {
 
 interface ComponentState {
   active: boolean
+  activateModeOnFlush?: 'patch' | 'replace'
   didMount: boolean
   end?: Comment
   id: string
@@ -261,9 +265,15 @@ interface RenderFrame {
   }
   visitedDescendants: Set<string>
   mode: 'client' | 'ssr'
+  scopedStyles: ScopedStyleEntry[]
   signalCursor: number
   visibleCursor: number
   watchCursor: number
+}
+
+interface ScopedStyleEntry {
+  attributes: Record<string, unknown>
+  cssText: string
 }
 
 interface RouterEventState {
@@ -275,9 +285,11 @@ interface RouterEventState {
 interface RouterState {
   currentPath: { value: string }
   currentRoute: LoadedRoute | null
+  currentUrl: { value: string }
   defaultTitle: string
   isNavigating: { value: boolean }
   loadedRoutes: Map<string, LoadedRoute>
+  location: RouteLocation
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
@@ -453,6 +465,37 @@ const getResolvedRuntimeSymbols = (container: RuntimeContainer) => {
   return created
 }
 
+export const invalidateRuntimeSymbolCaches = (
+  container: RuntimeContainer,
+  symbolIds: Iterable<string>,
+) => {
+  const resolved = getResolvedRuntimeSymbols(container)
+  for (const symbolId of symbolIds) {
+    container.imports.delete(symbolId)
+    resolved.delete(symbolId)
+  }
+}
+
+const withResumeHmrTimestamp = (url: string, timestamp: number) => {
+  const parsed = new URL(url, 'http://localhost')
+  parsed.searchParams.set('t', timestamp.toString())
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`
+}
+
+export const bustRuntimeSymbolUrls = (
+  container: RuntimeContainer,
+  symbolIds: Iterable<string>,
+  timestamp: number,
+) => {
+  for (const symbolId of symbolIds) {
+    const current = container.symbols.get(symbolId)
+    if (!current) {
+      continue
+    }
+    container.symbols.set(symbolId, withResumeHmrTimestamp(current, timestamp))
+  }
+}
+
 const isRenderObject = (value: unknown): value is RenderObject =>
   typeof value === 'object' && value !== null && 'type' in value && 'props' in value
 
@@ -541,6 +584,76 @@ const getCurrentFrame = (): RenderFrame | null => {
   return stack.length > 0 ? stack[stack.length - 1] : null
 }
 
+const hasScopedStyles = (frame: RenderFrame | null) => !!frame && frame.scopedStyles.length > 0
+
+const getScopedStyleRootSelector = (scopeId: string) =>
+  `[${SCOPED_STYLE_ATTR}="${escapeAttr(scopeId)}"]`
+
+const wrapScopedStyleCss = (scopeId: string, cssText: string) =>
+  `@scope (${getScopedStyleRootSelector(scopeId)}) {\n${cssText}\n}`
+
+const renderScopedStyleString = (scopeId: string, style: ScopedStyleEntry) => {
+  const attrParts = Object.entries(style.attributes)
+    .filter(([, value]) => value !== false && value !== undefined && value !== null)
+    .map(([name, value]) => (value === true ? name : `${name}="${escapeAttr(String(value))}"`))
+  const attrs = attrParts.length > 0 ? ` ${attrParts.join(' ')}` : ''
+  return `<style${attrs}>${escapeText(wrapScopedStyleCss(scopeId, style.cssText))}</style>`
+}
+
+const renderScopedStyleNode = (
+  container: RuntimeContainer,
+  scopeId: string,
+  style: ScopedStyleEntry,
+) => {
+  const element = createElementNode(container.doc!, 'style')
+  for (const [name, value] of Object.entries(style.attributes)) {
+    if (value === false || value === undefined || value === null) {
+      continue
+    }
+    if (value === true) {
+      element.setAttribute(name, '')
+      continue
+    }
+    element.setAttribute(name, String(value))
+  }
+  element.appendChild(container.doc!.createTextNode(wrapScopedStyleCss(scopeId, style.cssText)))
+  return element
+}
+
+const renderFrameScopedStylesToString = (frame: RenderFrame) =>
+  frame.scopedStyles.map((style) => renderScopedStyleString(frame.component.scopeId, style)).join('')
+
+const renderFrameScopedStylesToNodes = (frame: RenderFrame, container: RuntimeContainer) =>
+  frame.scopedStyles.map((style) => renderScopedStyleNode(container, frame.component.scopeId, style))
+
+export const registerRuntimeScopedStyle = (
+  cssText: string,
+  attributes: Record<string, unknown> = {},
+): void => {
+  const frame = getCurrentFrame()
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
+    throw new Error('useStyleScoped() can only be used while rendering a component.')
+  }
+
+  if (cssText.length === 0) {
+    return
+  }
+
+  const existing = frame.scopedStyles.find(
+    (entry) =>
+      entry.cssText === cssText &&
+      JSON.stringify(entry.attributes) === JSON.stringify(attributes),
+  )
+  if (existing) {
+    return
+  }
+
+  frame.scopedStyles.push({
+    attributes: { ...attributes },
+    cssText,
+  })
+}
+
 const normalizeRoutePath = (pathname: string) => {
   const normalizedPath = pathname.trim() || '/'
   const withLeadingSlash = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
@@ -549,6 +662,38 @@ const normalizeRoutePath = (pathname: string) => {
   }
   return withLeadingSlash
 }
+
+const parseLocationHref = (href: string) => new URL(href, 'http://localhost')
+
+const createStandaloneLocation = (): RouteLocation => ({
+  get hash() {
+    return typeof window === 'undefined' ? '' : window.location.hash
+  },
+  get href() {
+    return typeof window === 'undefined' ? '/' : window.location.href
+  },
+  get pathname() {
+    return typeof window === 'undefined' ? '/' : normalizeRoutePath(window.location.pathname)
+  },
+  get search() {
+    return typeof window === 'undefined' ? '' : window.location.search
+  },
+})
+
+const createRouterLocation = (router: RouterState): RouteLocation => ({
+  get hash() {
+    return parseLocationHref(router.currentUrl.value).hash
+  },
+  get href() {
+    return router.currentUrl.value
+  },
+  get pathname() {
+    return normalizeRoutePath(parseLocationHref(router.currentUrl.value).pathname)
+  },
+  get search() {
+    return parseLocationHref(router.currentUrl.value).search
+  },
+})
 
 const EMPTY_ROUTE_PARAMS = Object.freeze({}) as RouteParams
 
@@ -596,17 +741,16 @@ const matchRouteSegments = (
         [segment.value]: undefined,
       })
     }
-    case 'rest':
-      return matchRouteSegments(
-        segments,
-        pathnameSegments,
-        segments.length,
-        pathnameSegments.length,
-        {
-          ...params,
-          [segment.value]: pathnameSegments.slice(pathIndex),
-        },
-      )
+    case 'rest': {
+      const rest = pathnameSegments.slice(pathIndex)
+      if (rest.length === 0) {
+        return null
+      }
+      return matchRouteSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
+        ...params,
+        [segment.value]: rest,
+      })
+    }
   }
 }
 
@@ -686,6 +830,7 @@ const routeCacheKey = (
 ) => `${normalizeRoutePath(pathname)}::${variant}`
 
 const routePrefetchKey = (url: URL) => `${normalizeRoutePath(url.pathname)}${url.search}`
+const isLoaderSignalId = (id: string) => id.startsWith('$loader:')
 
 let currentEffect: ReactiveEffect | null = null
 let currentCleanupSlot: CleanupSlot | null = null
@@ -1483,7 +1628,9 @@ const ensureSignalRecord = <T>(
 }
 
 const isRouterSignalId = (id: string) =>
-  id === ROUTER_CURRENT_PATH_SIGNAL_ID || id === ROUTER_IS_NAVIGATING_SIGNAL_ID
+  id === ROUTER_CURRENT_PATH_SIGNAL_ID ||
+  id === ROUTER_CURRENT_URL_SIGNAL_ID ||
+  id === ROUTER_IS_NAVIGATING_SIGNAL_ID
 
 const createStandaloneNavigate = (): Navigate => {
   const navigate = (async (href: string, options?: NavigateOptions) => {
@@ -1509,6 +1656,10 @@ const createStandaloneNavigate = (): Navigate => {
   return setNavigateMeta(navigate)
 }
 
+export const primeLocationState = (container: RuntimeContainer, href: string | URL) => {
+  writeRouterLocation(ensureRouterState(container), href)
+}
+
 const recordSignalRead = (record: SignalRecord) => {
   if (currentEffect) {
     currentEffect.signals.add(record)
@@ -1530,14 +1681,22 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
   }
   for (const componentId of record.subscribers) {
     const component = container.components.get(componentId)
-    if (component?.active) {
+    if (!component?.start || !component.end) {
       continue
     }
-    if (component) {
-      component.reuseProjectionSlotDomOnActivate = true
+    component.active = false
+    if (component.activateModeOnFlush !== 'replace') {
+      component.activateModeOnFlush = 'patch'
     }
+    component.reuseProjectionSlotDomOnActivate = true
     container.dirty.add(componentId)
   }
+}
+
+const writeRouterLocation = (router: RouterState, href: string | URL) => {
+  const url = href instanceof URL ? href : parseLocationHref(href)
+  router.currentPath.value = normalizeRoutePath(url.pathname)
+  router.currentUrl.value = url.href
 }
 
 const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
@@ -1553,15 +1712,22 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     ROUTER_CURRENT_PATH_SIGNAL_ID,
     normalizeRoutePath(container.doc?.location.pathname ?? '/'),
   ).handle as { value: string }
+  const currentUrl = ensureSignalRecord(
+    container,
+    ROUTER_CURRENT_URL_SIGNAL_ID,
+    container.doc?.location.href ?? currentPath.value,
+  ).handle as { value: string }
   const isNavigating = ensureSignalRecord(container, ROUTER_IS_NAVIGATING_SIGNAL_ID, false)
     .handle as { value: boolean }
 
   const router: RouterState = {
     currentPath,
     currentRoute: null,
+    currentUrl,
     defaultTitle: container.doc?.title ?? '',
     isNavigating,
     loadedRoutes: new Map(),
+    location: undefined as unknown as RouteLocation,
     manifest: [],
     navigate: undefined as unknown as Navigate,
     prefetchedLoaders: new Map(),
@@ -1570,6 +1736,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   }
 
   container.router = router
+  router.location = createRouterLocation(router)
   router.navigate = setNavigateMeta((async (href: string, options?: NavigateOptions) => {
     await navigateContainer(container, href, {
       mode: options?.replace ? 'replace' : 'push',
@@ -1698,6 +1865,7 @@ const createFrame = (
     reuseExistingDom: options?.reuseExistingDom ?? false,
     reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
   },
+  scopedStyles: [],
   signalCursor: 0,
   visibleCursor: 0,
   visitedDescendants: new Set(),
@@ -2150,32 +2318,32 @@ const collectProjectionSlotRanges = (roots: Node[]) => {
   return ranges
 }
 
+const collectComponentBoundaryIds = (roots: Node[]) => {
+  const ids = new Set<string>()
+  const visit = (node: Node) => {
+    if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
+      const matched = (node as Comment).data.match(/^ec:c:(.+):(start|end)$/)
+      if (matched) {
+        ids.add(matched[1]!)
+      }
+    }
+    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
+      visit(child)
+    }
+  }
+
+  for (const root of roots) {
+    visit(root)
+  }
+
+  return ids
+}
+
 const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Node[]) => {
   const currentNodes = getBoundaryChildren(start, end)
   const currentRanges = collectProjectionSlotRanges(currentNodes)
   const nextRanges = collectProjectionSlotRanges(nodes)
   const preservedComponentIds = new Set<string>()
-
-  const collectComponentBoundaryIds = (roots: Node[]) => {
-    const ids = new Set<string>()
-    const visit = (node: Node) => {
-      if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
-        const matched = (node as Comment).data.match(/^ec:c:(.+):(start|end)$/)
-        if (matched) {
-          ids.add(matched[1]!)
-        }
-      }
-      for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
-        visit(child)
-      }
-    }
-
-    for (const root of roots) {
-      visit(root)
-    }
-
-    return ids
-  }
 
   for (const [key, nextRange] of nextRanges) {
     const currentRange = currentRanges.get(key)
@@ -2200,6 +2368,18 @@ const preserveProjectionSlotContents = (start: Comment, end: Comment, nodes: Nod
   return preservedComponentIds
 }
 
+const replaceProjectionSlotContents = (start: Comment, end: Comment, nodes: Node[]) => {
+  let cursor = start.nextSibling
+  while (cursor && cursor !== end) {
+    const next = cursor.nextSibling
+    cursor.remove()
+    cursor = next
+  }
+  for (const node of nodes) {
+    end.parentNode?.insertBefore(node, end)
+  }
+}
+
 const replaceBoundaryContents = (
   start: Comment,
   end: Comment,
@@ -2222,6 +2402,108 @@ const replaceBoundaryContents = (
   }
 
   return preservedComponentIds
+}
+
+const patchElementAttributes = (current: Element, next: Element) => {
+  const nextNames = new Set(next.getAttributeNames())
+
+  for (const name of current.getAttributeNames()) {
+    if (!nextNames.has(name)) {
+      current.removeAttribute(name)
+    }
+  }
+
+  for (const name of nextNames) {
+    const nextValue = next.getAttribute(name)
+    if (nextValue === null) {
+      current.removeAttribute(name)
+      continue
+    }
+    if (current.getAttribute(name) !== nextValue) {
+      current.setAttribute(name, nextValue)
+    }
+  }
+
+  if (isHTMLInputElementNode(current) && isHTMLInputElementNode(next)) {
+    if (current.checked !== next.checked) {
+      current.checked = next.checked
+    }
+  }
+  if ('value' in current && 'value' in next && current.value !== next.value) {
+    if (current.value !== next.value) {
+      current.value = next.value
+    }
+  }
+}
+
+const patchNodeInPlace = (current: Node, next: Node): boolean => {
+  if (current.nodeType !== next.nodeType) {
+    return false
+  }
+
+  if (current.nodeType === Node.TEXT_NODE && next.nodeType === Node.TEXT_NODE) {
+    if (current.textContent !== next.textContent) {
+      current.textContent = next.textContent
+    }
+    return true
+  }
+
+  if (current.nodeType === Node.COMMENT_NODE && next.nodeType === Node.COMMENT_NODE) {
+    const currentComment = current as Comment
+    const nextComment = next as Comment
+    const currentIsProjectionSlot = !!parseProjectionSlotMarker(currentComment.data)
+    const nextIsProjectionSlot = !!parseProjectionSlotMarker(nextComment.data)
+    const currentIsBoundaryMarker = /^ec:c:(.+):(start|end)$/.test(currentComment.data)
+    const nextIsBoundaryMarker = /^ec:c:(.+):(start|end)$/.test(nextComment.data)
+    if (currentIsProjectionSlot || nextIsProjectionSlot || currentIsBoundaryMarker || nextIsBoundaryMarker) {
+      return currentComment.data === nextComment.data
+    }
+    if (currentComment.data !== nextComment.data) {
+      currentComment.data = nextComment.data
+    }
+    return true
+  }
+
+  if (!isElementNode(current) || !isElementNode(next) || current.tagName !== next.tagName) {
+    return false
+  }
+
+  patchElementAttributes(current, next)
+
+  if (current.childNodes.length !== next.childNodes.length) {
+      return false
+    }
+
+  for (let index = 0; index < current.childNodes.length; index += 1) {
+    const currentChild = current.childNodes[index]
+    const nextChild = next.childNodes[index]
+    if (!currentChild || !nextChild || !patchNodeInPlace(currentChild, nextChild)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export const tryPatchBoundaryContentsInPlace = (
+  start: Comment,
+  end: Comment,
+  nextNodes: Node[],
+) => {
+  const currentNodes = getBoundaryChildren(start, end)
+  if (currentNodes.length !== nextNodes.length) {
+    return false
+  }
+
+  for (let index = 0; index < currentNodes.length; index += 1) {
+    const currentNode = currentNodes[index]
+    const nextNode = nextNodes[index]
+    if (!currentNode || !nextNode || !patchNodeInPlace(currentNode, nextNode)) {
+      return false
+    }
+  }
+
+  return true
 }
 
 interface FocusSnapshot {
@@ -2743,13 +3025,18 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
+    return `<!--ec:c:${componentId}:start-->${renderFrameScopedStylesToString(frame)}${body}<!--ec:c:${componentId}:end-->`
   }
 
   const attrParts: string[] = []
   const container = getCurrentContainer()
+  const frame = getCurrentFrame()
   let hasInnerHTML = false
   let innerHTML: string | null = null
+
+  if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
+    attrParts.push(`${SCOPED_STYLE_ATTR}="${escapeAttr(frame.component.scopeId)}"`)
+  }
 
   for (const name in resolved.props) {
     if (!Object.hasOwn(resolved.props, name)) {
@@ -2907,7 +3194,7 @@ const renderComponentToNodes = (
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
 
-  return [start, ...rendered, end]
+  return [start, ...renderFrameScopedStylesToNodes(frame, container), ...rendered, end]
 }
 
 const applyElementProp = (
@@ -3036,6 +3323,10 @@ export const renderClientNodes = (
   }
 
   const element = createElementNode(container.doc, resolved.type)
+  const frame = getCurrentFrame()
+  if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
+    element.setAttribute(SCOPED_STYLE_ATTR, frame.component.scopeId)
+  }
   let hasInnerHTML = false
   for (const [name, descriptor] of Object.entries(
     Object.getOwnPropertyDescriptors(resolved.props),
@@ -3712,7 +4003,7 @@ const findRouteComponentChain = (
   const [symbol, ...rest] = symbols
   const candidates = [...container.components.values()]
     .filter((component) => {
-      if (!component.active || component.symbol !== symbol) {
+      if (!component.start || !component.end || component.symbol !== symbol) {
         return false
       }
       if (parentId === null) {
@@ -3749,6 +4040,73 @@ const collectSharedLayoutBoundaryIds = (container: RuntimeContainer, route: Load
   return findRouteComponentChain(container, symbols)
 }
 
+const parseDirectChildIndex = (parentId: string, childId: string) => {
+  if (!childId.startsWith(`${parentId}.`)) {
+    return null
+  }
+  const remainder = childId.slice(parentId.length + 1)
+  if (remainder.length === 0 || remainder.includes('.')) {
+    return null
+  }
+  const parsed = Number(remainder)
+  return Number.isInteger(parsed) ? parsed : null
+}
+
+const renderRouteSubtreeForProjectionSlot = (
+  container: RuntimeContainer,
+  boundary: ComponentState,
+  childIndex: number,
+  source: unknown,
+) => {
+  const frame = createFrame(container, boundary, 'client', {
+    reuseExistingDom: false,
+    reuseProjectionSlotDom: false,
+  })
+  frame.childCursor = childIndex
+  const nodes = pushContainer(container, () =>
+    pushFrame(frame, () => renderClientInsertable(source, container)),
+  )
+  return {
+    nodes,
+    visitedDescendants: frame.visitedDescendants,
+  }
+}
+
+const markSidebarLikeDescendantsDirtyForPatch = (
+  container: RuntimeContainer,
+  boundaryId: string,
+  excludedRootId: string | null,
+) => {
+  for (const component of container.components.values()) {
+    if (!component.start || !component.end || !isDescendantOf(boundaryId, component.id)) {
+      continue
+    }
+    if (
+      excludedRootId &&
+      (component.id === excludedRootId || isDescendantOf(excludedRootId, component.id))
+    ) {
+      continue
+    }
+    if (component.projectionSlots?.children) {
+      continue
+    }
+    const parent = component.parentId ? container.components.get(component.parentId) : null
+    const isEligibleParent =
+      component.parentId === boundaryId ||
+      (!!parent?.projectionSlots && Object.keys(parent.projectionSlots).length > 0)
+    if (!isEligibleParent || !container.symbols.has(component.symbol)) {
+      continue
+    }
+    component.active = false
+    if (component.activateModeOnFlush !== 'replace') {
+      component.activateModeOnFlush = 'patch'
+    }
+    component.reuseExistingDomOnActivate = true
+    component.reuseProjectionSlotDomOnActivate = false
+    container.dirty.add(component.id)
+  }
+}
+
 const countSharedLayouts = (current: LoadedRoute | null, next: LoadedRoute) => {
   if (!current) {
     return 0
@@ -3779,17 +4137,50 @@ const updateSharedLayoutBoundary = async (
 
   const boundaryId = boundaryIds[sharedLayoutCount - 1]!
   const boundary = container.components.get(boundaryId)
-  if (!boundary) {
+  if (!boundary?.start || !boundary.end) {
+    return false
+  }
+  if ((boundary.projectionSlots?.children ?? 0) !== 1) {
+    return false
+  }
+
+  const slotRanges = collectProjectionSlotRanges(getBoundaryChildren(boundary.start, boundary.end))
+  const slotRange = slotRanges.get(`${boundaryId}:${encodeProjectionSlotName('children')}:0`)
+  if (!slotRange) {
+    return false
+  }
+  const currentRouteRootId =
+    [...collectComponentBoundaryIds(getBoundaryChildren(slotRange.start, slotRange.end))]
+      .filter((candidateId) => parseDirectChildIndex(boundaryId, candidateId) !== null)
+      .sort((left, right) => left.split('.').length - right.split('.').length)[0] ?? null
+  const routeChildIndex =
+    currentRouteRootId ? parseDirectChildIndex(boundaryId, currentRouteRootId) : null
+  if (routeChildIndex === null) {
     return false
   }
 
   boundary.props = {
     children: createRouteElement(next, sharedLayoutCount),
   }
-  boundary.active = false
-  boundary.reuseExistingDomOnActivate = false
-  container.dirty.add(boundaryId)
-  await flushDirtyComponents(container)
+  const focusSnapshot = captureBoundaryFocus(container.doc!, slotRange.start, slotRange.end)
+  const { nodes, visitedDescendants } = renderRouteSubtreeForProjectionSlot(
+    container,
+    boundary,
+    routeChildIndex,
+    boundary.props.children,
+  )
+  replaceProjectionSlotContents(slotRange.start, slotRange.end, nodes)
+  restoreBoundaryFocus(container.doc!, slotRange.start, slotRange.end, focusSnapshot)
+  if (currentRouteRootId) {
+    pruneRemovedComponents(container, currentRouteRootId, visitedDescendants)
+  }
+  markSidebarLikeDescendantsDirtyForPatch(container, boundaryId, currentRouteRootId)
+  if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
+    bindRouterLinks(container, boundary.start.parentNode as ParentNode)
+  }
+  if (container.dirty.size > 0) {
+    await flushDirtyComponents(container)
+  }
   return true
 }
 
@@ -3865,6 +4256,23 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
       error: snapshot.error,
       loaded: snapshot.loaded,
     })
+  }
+}
+
+const resetRouteLoaderState = (container: RuntimeContainer) => {
+  container.loaders.clear()
+  container.loaderStates.clear()
+
+  for (const [id, record] of [...container.signals.entries()]) {
+    if (!isLoaderSignalId(id)) {
+      continue
+    }
+    for (const effect of [...record.effects]) {
+      clearEffectSignals(effect)
+    }
+    record.effects.clear()
+    record.subscribers.clear()
+    container.signals.delete(id)
   }
 }
 
@@ -4052,11 +4460,12 @@ const navigateContainer = async (
       ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound')
       : null
     if (notFoundRoute) {
+      resetRouteLoaderState(container)
       renderRouteIntoRoot(container, notFoundRoute.render, `route:${pathname}:not-found`)
       router.currentRoute = notFoundRoute
       applyRouteMetadata(doc, notFoundRoute, url, router.defaultTitle)
       commitBrowserNavigation(doc, url, mode)
-      router.currentPath.value = pathname
+      writeRouterLocation(router, url)
       return
     }
     fallbackDocumentNavigation(doc, url, mode)
@@ -4066,6 +4475,7 @@ const navigateContainer = async (
   if (pathname === router.currentPath.value) {
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
+      writeRouterLocation(router, url)
     }
     return
   }
@@ -4074,6 +4484,7 @@ const navigateContainer = async (
   if (pendingPrefetch) {
     await pendingPrefetch
   }
+  resetRouteLoaderState(container)
   applyPrefetchedLoaders(container, url)
   const sequence = ++router.sequence
   router.isNavigating.value = true
@@ -4108,6 +4519,9 @@ const navigateContainer = async (
       return
     }
 
+    router.currentRoute = nextRoute
+    writeRouterLocation(router, url)
+
     const sharedLayoutCount = countSharedLayouts(currentRoute, nextRoute)
     const reusedLayout =
       currentRoute && sharedLayoutCount > 0
@@ -4118,10 +4532,8 @@ const navigateContainer = async (
       renderRouteIntoRoot(container, nextRoute.render, `route:${pathname}`)
     }
 
-    router.currentRoute = nextRoute
     applyRouteMetadata(doc, nextRoute, url, router.defaultTitle)
     commitBrowserNavigation(doc, url, mode)
-    router.currentPath.value = pathname
   } catch (error) {
     if (sequence === router.sequence) {
       const fallbackRoute = isRouteNotFoundError(error)
@@ -4136,7 +4548,7 @@ const navigateContainer = async (
         router.currentRoute = fallbackRoute
         applyRouteMetadata(doc, fallbackRoute, url, router.defaultTitle)
         commitBrowserNavigation(doc, url, mode)
-        router.currentPath.value = pathname
+        writeRouterLocation(router, url)
         return
       }
       fallbackDocumentNavigation(doc, url, mode)
@@ -4148,87 +4560,13 @@ const navigateContainer = async (
   }
 }
 
-export const renderClientComponent = <T>(componentFn: Component<T>, props: T): unknown => {
-  const container = getCurrentContainer()
-  const parentFrame = getCurrentFrame()
-  const meta = getComponentMeta(componentFn)
-
-  if (!container || !parentFrame || !meta) {
-    return componentFn(props)
-  }
-
-  const position = nextComponentPosition(container)
-  const componentId = createComponentId(container, position.parentId, position.childIndex)
-  const existing = container.components.get(componentId)
-  const symbolChanged = !!existing && existing.symbol !== meta.symbol
-  const component = getOrCreateComponentState(
-    container,
-    componentId,
-    meta.symbol,
-    position.parentId,
-  )
-  component.props =
-    props && typeof props === 'object'
-      ? evaluateProps(props as Record<string, unknown>)
-      : (props as unknown)
-  component.projectionSlots = meta.projectionSlots ?? null
-  if (!existing || symbolChanged) {
-    resetComponentForSymbolChange(container, component, meta)
-  }
-  component.active = true
-  component.start = undefined
-  component.end = undefined
-
-  const shouldReuseProjectionSlotDom = parentFrame.projectionState.reuseProjectionSlotDom
-  const frame = createFrame(container, component, 'client', {
-    reuseExistingDom: shouldReuseProjectionSlotDom,
-    reuseProjectionSlotDom: shouldReuseProjectionSlotDom,
-  })
-  const oldDescendants = collectDescendantIds(container, componentId)
-  clearComponentSubscriptions(container, componentId)
-  const renderProps =
-    component.props && typeof component.props === 'object'
-      ? createRenderProps(componentId, meta, component.props as Record<string, unknown>)
-      : component.props
-  let rendered: unknown
-  try {
-    rendered = pushFrame(frame, () => componentFn(renderProps as T))
-  } catch (error) {
-    if (isPendingSignalError(error)) {
-      parentFrame.visitedDescendants.add(componentId)
-      for (const descendantId of frame.visitedDescendants) {
-        parentFrame.visitedDescendants.add(descendantId)
-      }
-    }
-    throw error
-  }
-  pruneComponentVisibles(container, component, frame.visibleCursor)
-  pruneComponentWatches(container, component, frame.watchCursor)
-  pruneRemovedComponents(container, componentId, frame.visitedDescendants)
-
-  for (const descendantId of oldDescendants) {
-    if (frame.visitedDescendants.has(descendantId)) {
-      continue
-    }
-    clearComponentSubscriptions(container, descendantId)
-  }
-
-  parentFrame.visitedDescendants.add(componentId)
-  for (const descendantId of frame.visitedDescendants) {
-    parentFrame.visitedDescendants.add(descendantId)
-  }
-
-  scheduleMountCallbacks(container, component, frame.mountCallbacks)
-  scheduleVisibleCallbacksCheck(container)
-
-  return rendered
-}
-
 const activateComponent = async (container: RuntimeContainer, componentId: string) => {
   const component = container.components.get(componentId)
   if (!component?.start || !component.end || component.active) {
     return
   }
+  const activateMode = component.activateModeOnFlush ?? 'replace'
+  component.activateModeOnFlush = undefined
 
   if (component.symbol === SUSPENSE_COMPONENT_SYMBOL) {
     clearComponentSubscriptions(container, componentId)
@@ -4247,9 +4585,13 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     )
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    const preservedDescendants = replaceBoundaryContents(component.start, component.end, nodes, {
-      preserveProjectionSlots: frame.projectionState.reuseExistingDom,
-    })
+    const patched =
+      activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+    const preservedDescendants = patched
+      ? new Set<string>()
+      : replaceBoundaryContents(component.start, component.end, nodes, {
+          preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+        })
     restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
     component.active = true
     const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
@@ -4304,9 +4646,13 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   )
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  const preservedDescendants = replaceBoundaryContents(component.start, component.end, nodes, {
-    preserveProjectionSlots: frame.projectionState.reuseExistingDom,
-  })
+  const patched =
+    activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+  const preservedDescendants = patched
+    ? new Set<string>()
+    : replaceBoundaryContents(component.start, component.end, nodes, {
+        preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+      })
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
     bindRouterLinks(container, component.start.parentNode as ParentNode)
   }
@@ -4402,8 +4748,8 @@ export const applyResumeHmrSymbolReplacements = (
 
     for (const affectedId of affectedIds) {
       container.symbols.set(affectedId, url)
-      container.imports.delete(affectedId)
     }
+    invalidateRuntimeSymbolCaches(container, affectedIds)
 
     const nextSymbolId = parseSymbolIdFromUrl(url)
     if (!nextSymbolId) {
@@ -4429,8 +4775,22 @@ export const applyResumeHmrSymbolReplacements = (
     }
 
     container.symbols.set(nextSymbolId, url)
-    container.imports.delete(nextSymbolId)
+    invalidateRuntimeSymbolCaches(container, [nextSymbolId])
   }
+}
+
+export const markResumeHmrBoundaryDirty = (container: RuntimeContainer, boundaryId: string) => {
+  const component = container.components.get(boundaryId)
+  if (!component) {
+    return false
+  }
+  resetComponentVisibleStates(container, boundaryId)
+  component.active = false
+  component.activateModeOnFlush = 'replace'
+  component.reuseExistingDomOnActivate = false
+  component.reuseProjectionSlotDomOnActivate = false
+  container.dirty.add(boundaryId)
+  return true
 }
 
 export const applyResumeHmrUpdate = async (
@@ -4450,16 +4810,17 @@ export const applyResumeHmrUpdate = async (
   }
 
   applyResumeHmrSymbolReplacements(container, payload.symbolUrlReplacements)
+  const rerenderSymbolIds = [
+    ...payload.rerenderComponentSymbols,
+    ...payload.rerenderOwnerSymbols,
+  ]
+  bustRuntimeSymbolUrls(container, rerenderSymbolIds, Date.now())
+  invalidateRuntimeSymbolCaches(container, [
+    ...rerenderSymbolIds,
+  ])
 
   for (const boundaryId of boundaryIds) {
-    const component = container.components.get(boundaryId)
-    if (!component) {
-      continue
-    }
-    resetComponentVisibleStates(container, boundaryId)
-    component.active = false
-    component.reuseProjectionSlotDomOnActivate = true
-    container.dirty.add(boundaryId)
+    markResumeHmrBoundaryDirty(container, boundaryId)
   }
 
   if (container.dirty.size > 0) {
@@ -4911,7 +5272,7 @@ export const createResumeContainer = (
   restoreRegisteredRpcHandles(container)
 
   const router = ensureRouterState(container)
-  router.currentPath.value = normalizeRoutePath(doc.location.pathname)
+  writeRouterLocation(router, doc.location.href)
   router.isNavigating.value = false
   scheduleVisibleCallbacksCheck(container)
 
@@ -5266,6 +5627,14 @@ export const useRuntimeNavigate = (): Navigate => {
     return createStandaloneNavigate()
   }
   return ensureRouterState(container).navigate
+}
+
+export const useRuntimeLocation = (): RouteLocation => {
+  const container = getCurrentContainer()
+  if (!container) {
+    return createStandaloneLocation()
+  }
+  return ensureRouterState(container).location
 }
 
 export const useRuntimeRouteParams = (): RouteParams => {

@@ -5,7 +5,6 @@ import {
   assignRuntimeRef,
   bindRuntimeEvent,
   getRuntimeContainer,
-  renderClientComponent,
   renderClientInsertable,
 } from '../runtime.ts'
 import { effect } from '../signal.ts'
@@ -149,6 +148,5 @@ export const createComponent = (Component: Component, props: unknown) => {
     const render = Component as (props: unknown) => unknown
     return () => render(props) as ClientElementLike
   }
-  const elem = renderClientComponent(Component, props)
-  return () => elem as ClientElementLike
+  return () => jsxDEV(Component, props as Record<string, unknown>, null, false, {})
 }

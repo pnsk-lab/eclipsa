@@ -5,10 +5,12 @@ import {
   ROUTE_REPLACE_ATTR,
   type LinkPrefetchMode,
   type Navigate,
+  type RouteLocation,
   type RouteParams,
 } from './router-shared.ts'
 import {
   notFound as throwRouteNotFound,
+  useRuntimeLocation,
   useRuntimeRouteError,
   useRuntimeNavigate,
   useRuntimeRouteParams,
@@ -122,6 +124,8 @@ export const Link = (props: LinkProps) => {
 }
 
 export const useNavigate = (): Navigate => useRuntimeNavigate()
+
+export const useLocation = (): RouteLocation => useRuntimeLocation()
 
 export const useRouteParams = (): RouteParams => useRuntimeRouteParams()
 

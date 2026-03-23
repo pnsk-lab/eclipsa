@@ -17,6 +17,7 @@ This file applies to the whole repository.
 - You have to create a new test when you fix a bug or add a feature.
 - This project is before alpha, so any breaking change is allowed.
 - You have to remove dead code when you change a way to do something.
+- These rules can be broken if a user permits it.
 
 ## Common Commands
 

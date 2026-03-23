@@ -64,6 +64,7 @@ const registerDevAppInvalidator = (server: Record<PropertyKey, unknown>, invalid
 
 interface EclipsaPluginState {
   config?: ResolvedConfig
+  pendingSsrUpdates?: Map<string, ResumeHmrUpdatePayload>
 }
 
 interface HotModule {
@@ -84,6 +85,32 @@ const collectCssHotModules = (
     ]),
   ])
 
+const sendSsrHotEvent = (
+  pluginContext: PluginContextWithEnvironment,
+  options: HotUpdateContext,
+  event: string,
+  payload?: unknown,
+) => {
+  if (options.server?.ws) {
+    options.server.ws.send(event, payload)
+    return
+  }
+  pluginContext.environment.hot.send(event, payload)
+}
+
+const hasClientHotModuleForFile = (options: HotUpdateContext) => {
+  const clientModules = options.server?.environments?.client?.moduleGraph?.getModulesByFile(
+    options.file,
+  )
+  if (!clientModules) {
+    return false
+  }
+  for (const _module of clientModules) {
+    return true
+  }
+  return false
+}
+
 const handleHotUpdate = async (
   state: EclipsaPluginState,
   pluginContext: PluginContextWithEnvironment,
@@ -101,6 +128,23 @@ const handleHotUpdate = async (
       source,
     })
     if (resumableUpdate.isResumable) {
+      if (resumableUpdate.update) {
+        if (hasClientHotModuleForFile(options)) {
+          return collectCssHotModules(pluginContext, options)
+        }
+        const pendingSsrUpdate = state.pendingSsrUpdates?.get(options.file)
+        if (
+          pendingSsrUpdate &&
+          !pendingSsrUpdate.fullReload &&
+          resumableUpdate.update.fullReload &&
+          pendingSsrUpdate.fileUrl === resumableUpdate.update.fileUrl
+        ) {
+          return collectCssHotModules(pluginContext, options)
+        }
+        state.pendingSsrUpdates ??= new Map()
+        state.pendingSsrUpdates.set(options.file, resumableUpdate.update)
+        sendSsrHotEvent(pluginContext, options, RESUME_HMR_EVENT, resumableUpdate.update)
+      }
       return collectCssHotModules(pluginContext, options)
     }
     return
@@ -111,7 +155,10 @@ const handleHotUpdate = async (
     source,
   })
   if (resumableUpdate.isResumable) {
-    if (resumableUpdate.update) {
+    const pendingSsrUpdate = state.pendingSsrUpdates?.get(options.file)
+    if (pendingSsrUpdate) {
+      state.pendingSsrUpdates?.delete(options.file)
+    } else if (resumableUpdate.update) {
       pluginContext.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update)
     }
     return collectCssHotModules(pluginContext, options)
@@ -146,6 +193,18 @@ interface HotUpdateContext {
   file: string
   modules: HotModule[]
   read(): Promise<string> | string
+  server?: {
+    environments?: {
+      client?: {
+        moduleGraph?: {
+          getModulesByFile(file: string): Iterable<{ url: string }> | undefined
+        }
+      }
+    }
+    ws?: {
+      send(event: string, payload?: unknown): void
+    }
+  }
 }
 
 const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = {}): Plugin => {

@@ -42,6 +42,11 @@ const docs = defineCollection({
     base: './content/docs',
     pattern: '**/*.md',
   }),
+  markdown: {
+    highlight: {
+      theme: 'github-dark',
+    },
+  },
   schema,
 })
 

@@ -137,6 +137,48 @@ describe('createResumeHmrUpdate', () => {
     expect(update?.rerenderOwnerSymbols).toEqual([])
   })
 
+  it('rerenders the owner component when a child prop literal changes', async () => {
+    const previous = await analyze(
+      `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview" href="/docs/getting-started/overview" /></nav>;
+      };
+    `,
+      '/tmp/child-prop-change.tsx',
+    )
+    const next = await analyze(
+      `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview Changed" href="/docs/getting-started/overview" /></nav>;
+      };
+    `,
+      '/tmp/child-prop-change.tsx',
+    )
+
+    const update = createResumeHmrUpdate({
+      filePath: '/tmp/child-prop-change.tsx',
+      next,
+      previous,
+      root: '/tmp',
+    })
+    const defaultComponentId = findComponentId(previous, 'component:default')
+
+    expect(update?.fullReload).toBe(false)
+    expect(update?.rerenderComponentSymbols).toEqual(
+      defaultComponentId ? [defaultComponentId] : [],
+    )
+    expect(update?.rerenderOwnerSymbols).toEqual([])
+    expect(
+      defaultComponentId ? update?.symbolUrlReplacements[defaultComponentId] : undefined,
+    ).toMatch(/\?eclipsa-symbol=/)
+  })
+
   it('escalates capture changes to owner rerender', async () => {
     const previous = await analyze(
       `

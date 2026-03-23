@@ -16,6 +16,10 @@ const SYMBOL_QUERY = 'eclipsa-symbol'
 
 interface AnalyzedEntry {
   analyzed: AnalyzedModule
+  previous: {
+    analyzed: AnalyzedModule
+    source: string
+  } | null
   source: string
 }
 
@@ -27,9 +31,19 @@ interface ResumeHmrResolution {
 }
 
 const cache = new Map<string, AnalyzedEntry>()
+const servedSources = new Map<string, string>()
 
 export const resetCompilerCache = () => {
   cache.clear()
+  servedSources.clear()
+}
+
+export const primeCompilerCache = async (filePath: string, source?: string) => {
+  const normalizedPath = stripQuery(filePath)
+  const normalizedId = normalizeCompilerModuleId(normalizedPath)
+  const resolvedSource = source ?? (await fs.readFile(normalizedPath, 'utf8'))
+  servedSources.set(normalizedId, resolvedSource)
+  await loadAnalyzedModule(normalizedPath, resolvedSource)
 }
 
 const stripQuery = (id: string) => {
@@ -90,12 +104,19 @@ const loadAnalyzedModule = async (filePath: string, source?: string) => {
     throw new Error(`Failed to compile ${normalizedId}.`)
   }
 
-  cache.set(normalizedId, {
+  const entry = {
     analyzed,
+    previous: cached
+      ? {
+          analyzed: cached.analyzed,
+          source: cached.source,
+        }
+      : null,
     source: resolvedSource,
-  })
+  } satisfies AnalyzedEntry
+  cache.set(normalizedId, entry)
 
-  return analyzed
+  return entry.analyzed
 }
 
 const createAnalyzedEntry = async (filePath: string, source: string): Promise<AnalyzedEntry> => {
@@ -106,6 +127,7 @@ const createAnalyzedEntry = async (filePath: string, source: string): Promise<An
 
   return {
     analyzed,
+    previous: null,
     source,
   }
 }
@@ -325,14 +347,49 @@ export const inspectResumeHmrUpdate = async (options: {
 }): Promise<ResumeHmrResolution> => {
   const normalizedPath = stripQuery(options.filePath)
   const normalizedId = normalizeCompilerModuleId(normalizedPath)
-  const previous = cache.get(normalizedId)?.analyzed ?? null
-  const nextEntry = await createAnalyzedEntry(normalizedPath, options.source)
+  const cached = cache.get(normalizedId)
+  let nextEntry: AnalyzedEntry
+  if (cached?.source === options.source) {
+    nextEntry = cached
+  } else {
+    const createdEntry = await createAnalyzedEntry(normalizedPath, options.source)
+    nextEntry = {
+      ...createdEntry,
+      previous: cached
+        ? {
+            analyzed: cached.analyzed,
+            source: cached.source,
+          }
+        : null,
+    }
+  }
+  let previous =
+    cached?.source === options.source
+      ? nextEntry.previous?.analyzed ?? null
+      : cached?.analyzed ?? null
+  if (!previous) {
+    const servedSource = servedSources.get(normalizedId)
+    if (servedSource && servedSource !== options.source) {
+      const previousEntry = await createAnalyzedEntry(normalizedPath, servedSource)
+      previous = previousEntry.analyzed
+      if (!nextEntry.previous) {
+        nextEntry = {
+          ...nextEntry,
+          previous: {
+            analyzed: previousEntry.analyzed,
+            source: servedSource,
+          },
+        }
+      }
+    }
+  }
   const update = createResumeHmrUpdate({
     filePath: normalizedPath,
     next: nextEntry.analyzed,
     previous,
     root: options.root,
   })
+  servedSources.set(normalizedId, nextEntry.source)
   return {
     isResumable: (previous?.symbols.size ?? 0) > 0 || nextEntry.analyzed.symbols.size > 0,
     nextEntry,

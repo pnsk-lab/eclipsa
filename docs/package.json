@@ -8,15 +8,19 @@
     "deploy": "bun run build && wrangler deploy",
     "deploy:dry-run": "bun run build && wrangler deploy --dry-run",
     "start": "bun ./scripts/serve-static.ts",
-    "test": "bun x vitest run wrangler.test.ts app/landing-scene.test.ts",
+    "test": "bun x vitest run app/landing-scene.test.ts app/docs/content-page.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@eclipsa/content": "workspace:*",
+    "@iconify-json/tabler": "^1.2.31",
+    "clsx": "^2.1.1",
     "eclipsa": "workspace:*",
     "shiki": "^4.0.2",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
+    "@egoist/tailwindcss-icons": "^1.9.2",
     "@tailwindcss/vite": "^4.2.1",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1",
     "wrangler": "^4.73.0"

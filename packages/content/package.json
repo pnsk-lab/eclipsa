@@ -52,6 +52,7 @@
     "@ox-content/napi": "^0.17.0",
     "eclipsa": "workspace:*",
     "fast-glob": "^3.3.2",
+    "shiki": "^4.0.2",
     "yaml": "^2.8.1"
   },
   "peerDependencies": {

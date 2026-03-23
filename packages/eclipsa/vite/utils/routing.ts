@@ -261,11 +261,16 @@ const matchSegments = (
         [segment.value]: undefined,
       })
     }
-    case 'rest':
+    case 'rest': {
+      const rest = pathnameSegments.slice(pathIndex)
+      if (rest.length === 0) {
+        return null
+      }
       return matchSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
         ...params,
-        [segment.value]: pathnameSegments.slice(pathIndex),
+        [segment.value]: rest,
       })
+    }
   }
 }
 

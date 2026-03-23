@@ -131,6 +131,33 @@ describe('analyzeModule()', () => {
     expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:Link')
   })
 
+  it('inlines same-file top-level component helpers into resumable symbols', async () => {
+    const analyzed = await analyzeModule(`
+      const title = "ready";
+      const Item = () => <span>{title}</span>;
+
+      export default () => <Item />;
+    `)
+
+    const component = [...analyzed.symbols.values()].find(
+      (symbol) => symbol.kind === 'component' && symbol.code.includes('export default (__scope) => <Item />;'),
+    )
+
+    expect(component?.code).toContain('const Item = __eclipsaComponent(() => <span>{__scope[0]}</span>')
+    expect(component?.code).toContain('export default (__scope) => <Item />;')
+  })
+
+  it('analyzes the docs slug layout when it references a same-file helper component', async () => {
+    const analyzeDir = path.dirname(fileURLToPath(import.meta.url))
+    const layoutPath = path.resolve(analyzeDir, '../../../../docs/app/docs/[...slug]/+layout.tsx')
+    const tsx = await fs.readFile(layoutPath, 'utf8')
+
+    const analyzed = await analyzeModule(tsx, layoutPath)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:default')
+  })
+
   it('emits symbol modules that accept __scope as the first runtime argument', async () => {
     const analyzed = await analyzeModule(`
       import { onVisible, useWatch } from "eclipsa";

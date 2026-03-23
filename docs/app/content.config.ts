@@ -1,5 +1,4 @@
 import { defineCollection, glob } from '@eclipsa/content'
-import { z } from 'zod'
 
 export const docs = defineCollection({
   loader: glob({
@@ -9,11 +8,6 @@ export const docs = defineCollection({
   markdown: {
     highlight: {
       theme: 'github-dark',
-    },
-  },
-  schema: z.object({
-    description: z.string(),
-    order: z.number(),
-    title: z.string(),
-  }),
+    }
+  }
 })

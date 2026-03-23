@@ -24,6 +24,13 @@ vi.mock('../utils/routing.ts', () => ({
   ),
   createRouteManifest: mocks.createRouteManifest,
   createRoutes: mocks.createRoutes,
+  normalizeRoutePath: vi.fn((pathname: string) => {
+    const normalizedPath = pathname.trim() || '/'
+    const withLeadingSlash = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
+    return withLeadingSlash.length > 1 && withLeadingSlash.endsWith('/')
+      ? withLeadingSlash.slice(0, -1)
+      : withLeadingSlash
+  }),
 }))
 
 vi.mock('../compiler.ts', () => ({
@@ -35,7 +42,7 @@ vi.mock('../compiler.ts', () => ({
   createBuildSymbolUrl: vi.fn((id: string) => `/entries/symbol__${id}.js`),
 }))
 
-import { build, toHonoRoutePaths } from './mod.ts'
+import { build, resolveStaticPathInfo, toHonoRoutePaths } from './mod.ts'
 
 const createBuilder = () =>
   ({
@@ -45,6 +52,59 @@ const createBuilder = () =>
       ssr: { name: 'ssr' },
     },
   }) as any
+
+const writeMinimalSsrEntries = async (root: string) => {
+  const entriesDir = path.join(root, 'dist/ssr/entries')
+  const assetsDir = path.join(root, 'dist/client/assets')
+
+  await fs.mkdir(entriesDir, { recursive: true })
+  await fs.mkdir(assetsDir, { recursive: true })
+  await fs.writeFile(
+    path.join(entriesDir, 'server_entry.mjs'),
+    'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
+  )
+  await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
+  await fs.writeFile(
+    path.join(entriesDir, 'eclipsa_runtime.mjs'),
+    [
+      'export const Fragment = Symbol.for("fragment");',
+      'export const executeAction = async () => new Response(null, { status: 204 });',
+      'export const executeLoader = async () => new Response(null, { status: 204 });',
+      'export const escapeJSONScriptText = (value) => value;',
+      'export const hasAction = () => false;',
+      'export const hasLoader = () => false;',
+      'export const jsxDEV = () => ({});',
+      'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
+      'export const renderSSRStream = async () => ({ chunks: (async function* () {})(), html: "<html><head></head><body></body></html>", payload: {} });',
+      'export const resolvePendingLoaders = async () => undefined;',
+      'export const serializeResumePayload = () => "{}";',
+      'export const composeRouteMetadata = () => null;',
+      'export const renderRouteMetadataHead = () => [];',
+      'export const attachRequestFetch = () => undefined;',
+      'export const createRequestFetch = () => undefined;',
+      'export const deserializePublicValue = (value) => value;',
+      'export const getActionFormSubmissionId = async () => null;',
+      'export const getNormalizedActionInput = async () => null;',
+      'export const getStreamingResumeBootstrapScriptContent = () => "";',
+      'export const markPublicError = (_, value) => value;',
+      'export const primeActionState = () => undefined;',
+      'export const primeLocationState = () => undefined;',
+      'export const resolveReroute = (_, __, pathname) => pathname;',
+      'export const runHandleError = async () => ({ message: "error" });',
+      'export const withServerRequestContext = (_, __, fn) => fn();',
+      'export const APP_HOOKS_ELEMENT_ID = "e-app-hooks";',
+      'export const RESUME_FINAL_STATE_ELEMENT_ID = "e-resume-final";',
+      'export const ACTION_CONTENT_TYPE = "application/eclipsa-action+json";',
+      '',
+    ].join('\n'),
+  )
+}
+
+const writeBuiltPageModule = async (root: string, entryName: string, source: string) => {
+  const entriesDir = path.join(root, 'dist/ssr/entries')
+  await fs.mkdir(entriesDir, { recursive: true })
+  await fs.writeFile(path.join(entriesDir, `${entryName}.mjs`), source)
+}
 
 const createRootRoute = (): RouteEntry => ({
   error: null,
@@ -70,6 +130,27 @@ describe('toHonoRoutePaths', () => {
         { kind: 'required', value: 'slug' },
       ]),
     ).toEqual(['/docs/:slug', '/:lang/docs/:slug'])
+  })
+})
+
+describe('resolveStaticPathInfo', () => {
+  it('builds concrete paths for catch-all params', () => {
+    expect(
+      resolveStaticPathInfo(
+        '/docs/[...slug]',
+        [
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'slug' },
+        ],
+        { slug: ['guide', 'getting-started'] },
+      ),
+    ).toEqual({
+      concretePath: '/docs/guide/getting-started',
+      honoParams: {
+        slug: 'guide/getting-started',
+      },
+      honoPatternPath: '/docs/:slug{.+}',
+    })
   })
 })
 
@@ -104,32 +185,7 @@ describe('build', () => {
   it('prerenders static routes while keeping the node server bundle for dynamic routes', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-hybrid-'))
     const builder = createBuilder()
-    const entriesDir = path.join(root, 'dist/ssr/entries')
-    const assetsDir = path.join(root, 'dist/client/assets')
-
-    await fs.mkdir(entriesDir, { recursive: true })
-    await fs.mkdir(assetsDir, { recursive: true })
-    await fs.writeFile(
-      path.join(entriesDir, 'server_entry.mjs'),
-      'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
-    )
-    await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
-    await fs.writeFile(
-      path.join(entriesDir, 'eclipsa_runtime.mjs'),
-      [
-        'export const Fragment = Symbol.for("fragment");',
-        'export const executeAction = async () => new Response(null, { status: 204 });',
-        'export const executeLoader = async () => new Response(null, { status: 204 });',
-        'export const escapeJSONScriptText = (value) => value;',
-        'export const hasAction = () => false;',
-        'export const hasLoader = () => false;',
-        'export const jsxDEV = () => ({});',
-        'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
-        'export const resolvePendingLoaders = async () => undefined;',
-        'export const serializeResumePayload = () => "{}";',
-        '',
-      ].join('\n'),
-    )
+    await writeMinimalSsrEntries(root)
     mocks.createRoutes.mockResolvedValue([
       {
         ...createRootRoute(),
@@ -173,33 +229,8 @@ describe('build', () => {
   it('runs Hono toSSG for ssg output and skips non-page routes', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-'))
     const builder = createBuilder()
-    const entriesDir = path.join(root, 'dist/ssr/entries')
-    const assetsDir = path.join(root, 'dist/client/assets')
-
-    await fs.mkdir(entriesDir, { recursive: true })
-    await fs.mkdir(assetsDir, { recursive: true })
-    await fs.writeFile(
-      path.join(entriesDir, 'server_entry.mjs'),
-      'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
-    )
-    await fs.writeFile(path.join(assetsDir, 'layout.css'), 'body { color: white; }\n')
-    await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
-    await fs.writeFile(
-      path.join(entriesDir, 'eclipsa_runtime.mjs'),
-      [
-        'export const Fragment = Symbol.for("fragment");',
-        'export const executeAction = async () => new Response(null, { status: 204 });',
-        'export const executeLoader = async () => new Response(null, { status: 204 });',
-        'export const escapeJSONScriptText = (value) => value;',
-        'export const hasAction = () => false;',
-        'export const hasLoader = () => false;',
-        'export const jsxDEV = () => ({});',
-        'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
-        'export const resolvePendingLoaders = async () => undefined;',
-        'export const serializeResumePayload = () => "{}";',
-        '',
-      ].join('\n'),
-    )
+    await writeMinimalSsrEntries(root)
+    await fs.writeFile(path.join(root, 'dist/client/assets/layout.css'), 'body { color: white; }\n')
     mocks.toSSG.mockResolvedValue({
       files: ['index.html'],
       success: true,
@@ -265,27 +296,168 @@ describe('build', () => {
     )
   })
 
-  it('rejects static rendering for routes with dynamic segments', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-static-dynamic-segment-'))
+  it('prerenders dynamic static routes from getStaticPaths entries', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-dynamic-static-'))
     const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(
+      root,
+      'route__docs___slug____page',
+      [
+        'export const getStaticPaths = () => [{ params: { slug: ["getting-started"] } }];',
+        'export default () => null;',
+        '',
+      ].join('\n'),
+    )
     mocks.createRoutes.mockResolvedValue([
       {
         ...createRootRoute(),
         page: {
-          entryName: 'route__blog___slug___page',
-          filePath: '/tmp/app/blog/[slug]/+page.tsx',
+          entryName: 'route__docs___slug____page',
+          filePath: '/tmp/app/docs/[...slug]/+page.tsx',
         },
         renderMode: 'static',
-        routePath: '/blog/[slug]',
+        routePath: '/docs/[...slug]',
         segments: [
-          { kind: 'static', value: 'blog' },
-          { kind: 'required', value: 'slug' },
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'slug' },
+        ],
+      },
+    ])
+    mocks.toSSG.mockResolvedValue({
+      files: ['docs/getting-started.html'],
+      success: true,
+    })
+
+    await build(builder, { root }, { output: 'ssg' })
+
+    expect(mocks.toSSG).toHaveBeenCalledTimes(1)
+    const [, , options] = mocks.toSSG.mock.calls[0] as [
+      { fetch(request: Request): Promise<Response> },
+      typeof fs,
+      {
+        beforeRequestHook(request: Request): Request | false
+        dir: string
+      },
+    ]
+    const request = options.beforeRequestHook(new Request('http://localhost/docs/:slug{.+}'))
+    expect(request).toBeInstanceOf(Request)
+    if (!(request instanceof Request)) {
+      throw new Error('Expected dynamic static route to attach ssgParams.')
+    }
+    expect((request as Request & { ssgParams?: Record<string, string>[] }).ssgParams).toEqual([
+      {
+        slug: 'getting-started',
+      },
+    ])
+  })
+
+  it('rejects dynamic static routes without getStaticPaths', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-missing-paths-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(
+      root,
+      'route__docs___slug____page',
+      'export default () => null;\n',
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__docs___slug____page',
+          filePath: '/tmp/app/docs/[...slug]/+page.tsx',
+        },
+        renderMode: 'static',
+        routePath: '/docs/[...slug]',
+        segments: [
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'slug' },
         ],
       },
     ])
 
-    await expect(build(builder, { root }, { output: 'node' })).rejects.toThrow(
-      /Static rendering currently requires a concrete route path/,
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(/export getStaticPaths/)
+  })
+
+  it('rejects invalid getStaticPaths params', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-invalid-paths-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(
+      root,
+      'route__docs___slug____page',
+      [
+        'export const getStaticPaths = () => [{ params: { slug: "getting-started" } }];',
+        'export default () => null;',
+        '',
+      ].join('\n'),
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__docs___slug____page',
+          filePath: '/tmp/app/docs/[...slug]/+page.tsx',
+        },
+        renderMode: 'static',
+        routePath: '/docs/[...slug]',
+        segments: [
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'slug' },
+        ],
+      },
+    ])
+
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(
+      /rest param "slug" must be a string array/,
+    )
+  })
+
+  it('rejects duplicate concrete paths across static routes', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-duplicate-paths-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(
+      root,
+      'route__docs___slug____page',
+      [
+        'export const getStaticPaths = () => [{ params: { slug: ["about"] } }];',
+        'export default () => null;',
+        '',
+      ].join('\n'),
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__docs__about__page',
+          filePath: '/tmp/app/docs/about/+page.tsx',
+        },
+        renderMode: 'static',
+        routePath: '/docs/about',
+        segments: [
+          { kind: 'static', value: 'docs' },
+          { kind: 'static', value: 'about' },
+        ],
+      },
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__docs___slug____page',
+          filePath: '/tmp/app/docs/[...slug]/+page.tsx',
+        },
+        renderMode: 'static',
+        routePath: '/docs/[...slug]',
+        segments: [
+          { kind: 'static', value: 'docs' },
+          { kind: 'rest', value: 'slug' },
+        ],
+      },
+    ])
+
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(
+      /duplicate concrete path "\/docs\/about"/,
     )
   })
 })
