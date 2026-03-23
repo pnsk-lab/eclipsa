@@ -9,6 +9,13 @@ const imagePagePath = fileURLToPath(new URL('../app/image/+page.tsx', import.met
 const imageHmrBeforeLabel = 'Responsive image metadata should survive navigation, resume, and HMR.'
 const imageHmrAfterLabel =
   'Responsive image metadata should survive navigation, resume, HMR, and page transitions.'
+const contentMarkdownPath = fileURLToPath(
+  new URL('../app/content/docs/guide/getting-started.md', import.meta.url),
+)
+const contentBodyBeforeLabel = 'Content body before.'
+const contentBodyAfterLabel = 'Content body after.'
+const contentDescriptionBeforeLabel = 'Content description before'
+const contentDescriptionAfterLabel = 'Content description after'
 const homePagePath = fileURLToPath(new URL('../app/+page.tsx', import.meta.url))
 const homeHmrBeforeLabel = 'Go to counter with navigate()'
 const homeHmrAfterLabel = 'Go to counter with navigate()!'
@@ -187,7 +194,7 @@ test.describe('example app in dev mode', () => {
     await expect(image).toHaveAttribute('srcset', /240w.*480w.*960w.*1200w/)
     await expect(image).toHaveAttribute('sizes', '(min-width: 960px) 720px, 100vw')
 
-    await page.getByRole('link', { name: 'Home', exact: true }).click()
+    await page.locator('main').getByRole('link', { name: 'Home', exact: true }).click()
     await expect(page).toHaveURL(/\/$/)
 
     await page.getByRole('link', { name: 'Open image route' }).click()
@@ -195,6 +202,27 @@ test.describe('example app in dev mode', () => {
       'srcset',
       /240w.*480w.*960w.*1200w/,
     )
+  })
+
+  test('renders content collections on SSR and after Link navigation', async ({ page }) => {
+    await page.goto('/content')
+
+    await expect(page).toHaveTitle('Content | /content')
+    await expect(page.getByRole('heading', { name: 'Content Playground' })).toBeVisible()
+    await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+    await expect(page.getByTestId('content-entry-ids')).toContainText('guide/overview :: Overview')
+    await expect(page.getByTestId('content-entry-ids')).toContainText(
+      'guide/start-here :: Getting Started',
+    )
+    await expect(page.getByTestId('content-headings')).toContainText('h1 :: getting-started')
+    await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+
+    await page.locator('main').getByRole('link', { name: 'Home', exact: true }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await page.getByRole('link', { name: 'Open content route' }).click()
+
+    await expect(page).toHaveURL(/\/content$/)
+    await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
   })
 
   test('keeps component-valued props and children rendered after client updates', async ({
@@ -439,6 +467,29 @@ test.describe('example app in dev mode', () => {
     } finally {
       await writeSourceAtomically(imagePagePath, originalSource)
       await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible()
+    }
+  })
+
+  test('updates content routes after markdown and frontmatter HMR changes', async ({ page }) => {
+    const originalSource = await readFile(contentMarkdownPath, 'utf8')
+
+    try {
+      await page.goto('/content')
+      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+
+      const updatedSource = originalSource
+        .replace(contentDescriptionBeforeLabel, contentDescriptionAfterLabel)
+        .replace(contentBodyBeforeLabel, contentBodyAfterLabel)
+      expect(updatedSource).not.toBe(originalSource)
+      await writeSourceAtomically(contentMarkdownPath, updatedSource)
+
+      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionAfterLabel)
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel)
+    } finally {
+      await writeSourceAtomically(contentMarkdownPath, originalSource)
+      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
     }
   })
 

@@ -1,4 +1,9 @@
-import { createServerModuleRunner, type Plugin, type PluginOption, type ResolvedConfig } from 'vite'
+import {
+  createServerModuleRunner,
+  type Plugin,
+  type PluginOption,
+  type ResolvedConfig,
+} from 'vite'
 import { createDevFetch, shouldInvalidateDevApp } from './dev-app/mod.ts'
 import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
 import { createConfig } from './config.ts'
@@ -14,20 +19,148 @@ import {
 } from './compiler.ts'
 import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
 
-const preserveCssHotModules = <T extends { type?: string }>(modules: T[]) =>
-  modules.filter((module) => module.type === 'css')
+const isCssRequest = (value: string | undefined) => {
+  if (!value) {
+    return false
+  }
+  const normalized = value.replace(/[#?].*$/, '')
+  return normalized.endsWith('.css')
+}
 
-const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
-  let config: ResolvedConfig
+const preserveCssHotModules = <
+  T extends { file?: string; id?: string; type?: string; url?: string },
+>(
+  modules: T[],
+) =>
+  modules.filter(
+    (module) =>
+      module.type === 'css' ||
+      isCssRequest(module.id) ||
+      isCssRequest(module.url) ||
+      isCssRequest(module.file),
+  )
 
+const mergeUniqueHotModules = <T extends { file?: string; id?: string; url?: string }>(modules: T[]) => {
+  const seen = new Set<string>()
+  return modules.filter((module) => {
+    const key = module.id ?? module.file ?? module.url
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
+
+const registerDevAppInvalidator = (server: Record<PropertyKey, unknown>, invalidate: () => void) => {
+  const existing = server[DEV_APP_INVALIDATORS_KEY]
+  const invalidators =
+    existing instanceof Set ? existing : new Set<() => void>()
+  invalidators.add(invalidate)
+  server[DEV_APP_INVALIDATORS_KEY] = invalidators
+}
+
+interface EclipsaPluginState {
+  config?: ResolvedConfig
+}
+
+interface HotModule {
+  file?: string
+  id?: string
+  type?: string
+  url: string
+}
+
+const collectCssHotModules = (
+  pluginContext: PluginContextWithEnvironment,
+  options: HotUpdateContext,
+) =>
+  mergeUniqueHotModules([
+    ...preserveCssHotModules(options.modules),
+    ...preserveCssHotModules([
+      ...(pluginContext.environment.moduleGraph?.idToModuleMap?.values() ?? []),
+    ]),
+  ])
+
+const handleHotUpdate = async (
+  state: EclipsaPluginState,
+  pluginContext: PluginContextWithEnvironment,
+  options: HotUpdateContext,
+) => {
+  const config = state.config
+  if (!config || !options.file.endsWith('.tsx')) {
+    return
+  }
+  const source = await options.read()
+  if (pluginContext.environment.name !== 'client') {
+    const resumableUpdate = await inspectResumeHmrUpdate({
+      filePath: options.file,
+      root: config.root,
+      source,
+    })
+    if (resumableUpdate.isResumable) {
+      return collectCssHotModules(pluginContext, options)
+    }
+    return
+  }
+  const resumableUpdate = await resolveResumeHmrUpdate({
+    filePath: options.file,
+    root: config.root,
+    source,
+  })
+  if (resumableUpdate.isResumable) {
+    if (resumableUpdate.update) {
+      pluginContext.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update)
+    }
+    return collectCssHotModules(pluginContext, options)
+  }
+
+  const module =
+    options.modules[0] ??
+    [...(pluginContext.environment.moduleGraph?.getModulesByFile(options.file) ?? [])][0]
+  if (!module) {
+    return
+  }
+  pluginContext.environment.hot.send('update-client', {
+    url: module.url,
+  })
+  return collectCssHotModules(pluginContext, options)
+}
+
+interface PluginContextWithEnvironment {
+  environment: {
+    hot: {
+      send(event: string, payload?: unknown): void
+    }
+    moduleGraph?: {
+      idToModuleMap?: Map<string, HotModule>
+      getModulesByFile(file: string): Iterable<{ url: string }> | undefined
+    }
+    name: string
+  }
+}
+
+interface HotUpdateContext {
+  file: string
+  modules: HotModule[]
+  read(): Promise<string> | string
+}
+
+const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = {}): Plugin => {
   return {
     enforce: 'pre',
     name: 'vite-plugin-eclipsa',
     config: createConfig(resolveEclipsaPluginOptions(options)),
     configResolved(resolvedConfig) {
-      config = resolvedConfig
+      state.config = resolvedConfig
     },
     configureServer(server) {
+      const config = state.config
+      if (!config) {
+        throw new Error('Resolved Vite config is unavailable during configureServer().')
+      }
       const ssrEnv = server.environments.ssr
       const runner = createServerModuleRunner(ssrEnv, {
         hmr: false,
@@ -43,6 +176,10 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
           devApp.invalidate()
         }
       }
+
+      registerDevAppInvalidator(server as unknown as Record<PropertyKey, unknown>, () => {
+        devApp.invalidate()
+      })
 
       server.watcher.on('add', (filePath) => {
         invalidateDevApp(filePath, 'add')
@@ -64,45 +201,6 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
         next()
       })
     },
-    async hotUpdate(options) {
-      if (!options.file.endsWith('.tsx')) {
-        return
-      }
-      const source = await options.read()
-      if (this.environment.name !== 'client') {
-        const resumableUpdate = await inspectResumeHmrUpdate({
-          filePath: options.file,
-          root: config.root,
-          source,
-        })
-        if (resumableUpdate.isResumable) {
-          return preserveCssHotModules(options.modules)
-        }
-        return
-      }
-      const resumableUpdate = await resolveResumeHmrUpdate({
-        filePath: options.file,
-        root: config.root,
-        source,
-      })
-      if (resumableUpdate.isResumable) {
-        if (resumableUpdate.update) {
-          this.environment.hot.send(RESUME_HMR_EVENT, resumableUpdate.update)
-        }
-        return preserveCssHotModules(options.modules)
-      }
-
-      const module =
-        options.modules[0] ??
-        [...(this.environment.moduleGraph?.getModulesByFile(options.file) ?? [])][0]
-      if (!module) {
-        return
-      }
-      this.environment.hot.send('update-client', {
-        url: module.url,
-      })
-      return preserveCssHotModules(options.modules)
-    },
     async load(id) {
       if (!parseSymbolRequest(id)) {
         return null
@@ -114,6 +212,10 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
     async transform(code, id) {
       if (!id.endsWith('.tsx') || parseSymbolRequest(id)) {
         return
+      }
+      const config = state.config
+      if (!config) {
+        throw new Error('Resolved Vite config is unavailable during transform().')
       }
       const isClient = this.environment.name === 'client'
       return {
@@ -127,6 +229,21 @@ const eclipsaCore = (options: EclipsaPluginOptions = {}): Plugin => {
   }
 }
 
+const eclipsaHot = (state: EclipsaPluginState): Plugin => ({
+  enforce: 'post',
+  name: 'vite-plugin-eclipsa:hmr',
+  async hotUpdate(options) {
+    return handleHotUpdate(
+      state,
+      this as PluginContextWithEnvironment,
+      options as unknown as HotUpdateContext,
+    ) as any
+  },
+})
+
 export type { EclipsaPluginOptions } from './options.ts'
 
-export const eclipsa = (options?: EclipsaPluginOptions): PluginOption => [eclipsaCore(options)]
+export const eclipsa = (options?: EclipsaPluginOptions): PluginOption => {
+  const state: EclipsaPluginState = {}
+  return [eclipsaCore(state, options), eclipsaHot(state)]
+}
