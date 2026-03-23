@@ -177,6 +177,41 @@ test.describe('example app in dev mode', () => {
     await expect.poll(() => loaderRequests.length).toBe(0)
   })
 
+  test('updates loader-backed catch-all content inside a shared layout on Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/loader-nav/overview')
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('loader-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/inactive/)
+    await page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
+      ;(window as Window & { __loaderNavQuickStartLink?: Element }).__loaderNavQuickStartLink =
+        element
+    })
+
+    await page.getByRole('link', { name: /Quick Start/ }).click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'overview' })).toHaveCount(0)
+    await expect(page.getByTestId('loader-nav-overview-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' active')
+    await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/inactive/)
+    await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/active/)
+    await expect(
+      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
+        return (
+          element ===
+          (window as Window & { __loaderNavQuickStartLink?: Element }).__loaderNavQuickStartLink
+        )
+      }),
+    ).resolves.toBe(true)
+  })
+
   test('renders responsive image metadata and keeps it stable across navigation', async ({
     page,
   }) => {

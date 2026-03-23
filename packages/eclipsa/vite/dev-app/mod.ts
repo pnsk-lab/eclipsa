@@ -44,6 +44,7 @@ import {
   collectAppLoaders,
   collectAppSymbols,
   createDevSymbolUrl,
+  primeCompilerCache,
 } from '../compiler.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
@@ -512,6 +513,7 @@ const createDevApp = async (init: DevAppInit) => {
     },
   ) => {
     const [
+      _primedModules,
       modules,
       { default: SSRRoot },
       {
@@ -523,6 +525,14 @@ const createDevApp = async (init: DevAppInit) => {
         RESUME_FINAL_STATE_ELEMENT_ID,
       },
     ] = await Promise.all([
+      Promise.all([
+        fileExists(modulePath).then((exists) => (exists ? primeCompilerCache(modulePath) : undefined)),
+        ...route.layouts.map((layout) =>
+          fileExists(layout.filePath).then((exists) =>
+            exists ? primeCompilerCache(layout.filePath) : undefined,
+          ),
+        ),
+      ]),
       Promise.all([
         init.runner.import(modulePath),
         ...route.layouts.map((layout) => init.runner.import(layout.filePath)),

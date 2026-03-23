@@ -2,12 +2,37 @@ import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
 import { onCleanup, onMount, useSignal, useWatch } from './signal.ts'
-import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
+import {
+  renderClientInsertable,
+  tryPatchBoundaryContentsInPlace,
+  type RuntimeContainer,
+  withRuntimeContainer,
+} from './runtime.ts'
 
 class FakeNode {
+  static COMMENT_NODE = 8
+  static ELEMENT_NODE = 1
+  static TEXT_NODE = 3
   childNodes: FakeNode[] = []
   nodeType = 0
   parentNode: FakeNode | null = null
+
+  get nextSibling() {
+    if (!this.parentNode) {
+      return null
+    }
+    const index = this.parentNode.childNodes.indexOf(this)
+    return index >= 0 ? this.parentNode.childNodes[index + 1] ?? null : null
+  }
+
+  get textContent() {
+    return this.childNodes.map((child) => child.textContent ?? '').join('')
+  }
+
+  set textContent(value: string) {
+    this.childNodes = [new FakeText(value)]
+    this.childNodes[0]!.parentNode = this
+  }
 }
 
 class FakeText extends FakeNode {
@@ -15,12 +40,28 @@ class FakeText extends FakeNode {
     super()
     this.nodeType = 3
   }
+
+  override get textContent() {
+    return this.data
+  }
+
+  override set textContent(value: string) {
+    ;(this as { data: string }).data = value
+  }
 }
 
 class FakeComment extends FakeNode {
   constructor(readonly data: string) {
     super()
     this.nodeType = 8
+  }
+
+  override get textContent() {
+    return this.data
+  }
+
+  override set textContent(value: string) {
+    ;(this as { data: string }).data = value
   }
 }
 
@@ -41,6 +82,22 @@ class FakeElement extends FakeNode {
 
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value)
+  }
+
+  removeAttribute(name: string) {
+    this.attributes.delete(name)
+  }
+
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null
+  }
+
+  getAttributeNames() {
+    return [...this.attributes.keys()]
+  }
+
+  override get textContent() {
+    return this.childNodes.map((child) => child.textContent ?? '').join('')
   }
 }
 
@@ -86,18 +143,28 @@ const createContainer = () =>
   }) as RuntimeContainer
 
 const withFakeNodeGlobal = <T>(fn: () => T) => {
+  const OriginalElement = globalThis.Element
+  const OriginalHTMLElement = globalThis.HTMLElement
   const OriginalNode = globalThis.Node
+  globalThis.Element = FakeElement as unknown as typeof Element
+  globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
   globalThis.Node = FakeNode as unknown as typeof Node
   try {
     const result = fn()
     if (result instanceof Promise) {
       return result.finally(() => {
+        globalThis.Element = OriginalElement
+        globalThis.HTMLElement = OriginalHTMLElement
         globalThis.Node = OriginalNode
       }) as T
     }
+    globalThis.Element = OriginalElement
+    globalThis.HTMLElement = OriginalHTMLElement
     globalThis.Node = OriginalNode
     return result
   } catch (error) {
+    globalThis.Element = OriginalElement
+    globalThis.HTMLElement = OriginalHTMLElement
     globalThis.Node = OriginalNode
     throw error
   }
@@ -395,6 +462,56 @@ describe('renderClientInsertable', () => {
         'ec:s:c0:aa:1:end',
         'ec:c:c0:end',
       ])
+    })
+  })
+
+  it('patches stable-shape boundary contents in place for text and class changes', () => {
+    withFakeNodeGlobal(() => {
+      const parent = new FakeElement('div')
+      const start = new FakeComment('start')
+      const current = new FakeElement('a')
+      current.setAttribute('class', 'before')
+      current.appendChild(new FakeText('Overview'))
+      const end = new FakeComment('end')
+      parent.appendChild(start)
+      parent.appendChild(current)
+      parent.appendChild(end)
+
+      const next = new FakeElement('a')
+      next.setAttribute('class', 'after')
+      next.appendChild(new FakeText('Quick Start'))
+
+      expect(
+        tryPatchBoundaryContentsInPlace(
+          start as unknown as Comment,
+          end as unknown as Comment,
+          [next as unknown as Node],
+        ),
+      ).toBe(true)
+      expect(current.getAttribute('class')).toBe('after')
+      expect(current.textContent).toBe('Quick Start')
+    })
+  })
+
+  it('preserves equal resumable marker comments during in-place patches', () => {
+    withFakeNodeGlobal(() => {
+      const parent = new FakeElement('div')
+      const start = new FakeComment('start')
+      const current = new FakeComment('ec:c:c0:start')
+      const end = new FakeComment('end')
+      parent.appendChild(start)
+      parent.appendChild(current)
+      parent.appendChild(end)
+
+      const next = new FakeComment('ec:c:c0:start')
+
+      expect(
+        tryPatchBoundaryContentsInPlace(
+          start as unknown as Comment,
+          end as unknown as Comment,
+          [next as unknown as Node],
+        ),
+      ).toBe(true)
     })
   })
 })

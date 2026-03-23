@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Plugin } from 'vite'
 import { RESUME_HMR_EVENT } from '../core/resume-hmr.ts'
-import { resolveResumeHmrUpdate } from './compiler.ts'
+import { primeCompilerCache, resetCompilerCache, resolveResumeHmrUpdate } from './compiler.ts'
 import { eclipsa } from './mod.ts'
 
 const getPlugins = (): Plugin[] => {
@@ -34,7 +34,19 @@ const getHotUpdate = (plugin: Plugin) => {
   return hook?.handler
 }
 
+const getTransform = (plugin: Plugin) => {
+  const hook = plugin.transform
+  if (typeof hook === 'function') {
+    return hook
+  }
+  return hook?.handler
+}
+
 describe('vite plugin hotUpdate', () => {
+  beforeEach(() => {
+    resetCompilerCache()
+  })
+
   it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {
     const [plugin] = getPlugins()
 
@@ -300,7 +312,70 @@ describe('vite plugin hotUpdate', () => {
     })
   })
 
-  it('suppresses SSR full reloads without consuming the client resumable diff', async () => {
+  it('keeps client resumable updates on the environment hot channel even when ws is available', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const wsSend = vi.fn()
+    const filePath = '/tmp/client-resumable-page.tsx'
+    const previousSource = `
+      import { useSignal } from "eclipsa";
+      export default () => {
+        const count = useSignal(0);
+        return <button>{count.value}</button>;
+      };
+    `
+    const nextSource = `
+      import { useSignal } from "eclipsa";
+      export default () => {
+        const count = useSignal(0);
+        return <button><span>{count.value}</span></button>;
+      };
+    `
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/client-resumable-page.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {
+          ws: {
+            send: wsSend,
+          },
+        },
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/client-resumable-page.tsx',
+      fullReload: false,
+    })
+    expect(wsSend).not.toHaveBeenCalled()
+  })
+
+  it('defers resumable SSR payloads to the client when a client module graph entry exists', async () => {
     const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const filePath = '/tmp/ssr-resumable-page.tsx'
@@ -319,6 +394,7 @@ describe('vite plugin hotUpdate', () => {
       };
     `
     const send = vi.fn()
+    const wsSend = vi.fn()
 
     await resolveResumeHmrUpdate({
       filePath,
@@ -344,9 +420,30 @@ describe('vite plugin hotUpdate', () => {
           },
         ],
         read: () => nextSource,
-        server: {},
+        server: {
+          environments: {
+            client: {
+              moduleGraph: {
+                getModulesByFile() {
+                  return new Set([
+                    {
+                      url: '/src/ssr-resumable-page.tsx',
+                    },
+                  ])
+                },
+              },
+            },
+          },
+          ws: {
+            send: wsSend,
+          },
+        },
       } as any,
     )
+
+    expect(ssrResult).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+    expect(wsSend).not.toHaveBeenCalled()
 
     const clientResult = await hotUpdate?.call(
       {
@@ -370,13 +467,248 @@ describe('vite plugin hotUpdate', () => {
       } as any,
     )
 
-    expect(ssrResult).toEqual([])
     expect(clientResult).toEqual([])
     expect(send).toHaveBeenCalledTimes(1)
     expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
     expect(send.mock.calls[0]?.[1]).toMatchObject({
       fileUrl: '/ssr-resumable-page.tsx',
       fullReload: false,
+    })
+  })
+
+  it('emits resumable SSR payloads when the changed file has no client module graph entry', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const filePath = '/tmp/ssr-only-layout.tsx'
+    const previousSource = `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview" href="/docs" /></nav>;
+      };
+    `
+    const nextSource = `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview Changed" href="/docs" /></nav>;
+      };
+    `
+    const send = vi.fn()
+    const wsSend = vi.fn()
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'ssr',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [],
+        read: () => nextSource,
+        server: {
+          environments: {
+            client: {
+              moduleGraph: {
+                getModulesByFile() {
+                  return new Set()
+                },
+              },
+            },
+          },
+          ws: {
+            send: wsSend,
+          },
+        },
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+    expect(wsSend).toHaveBeenCalledTimes(1)
+    expect(wsSend.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(wsSend.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/ssr-only-layout.tsx',
+      fullReload: false,
+    })
+  })
+
+  it('uses the primed compiler cache to avoid first-edit full reloads for SSR-only route files', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const filePath = '/tmp/primed-ssr-only-layout.tsx'
+    const previousSource = `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview" href="/docs" /></nav>;
+      };
+    `
+    const nextSource = `
+      const PageLink = (props: { label: string; href: string }) => {
+        return <a href={props.href}>{props.label}</a>;
+      };
+      export default () => {
+        return <nav><PageLink label="Overview Changed" href="/docs" /></nav>;
+      };
+    `
+    const send = vi.fn()
+
+    await primeCompilerCache(filePath, previousSource)
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'ssr',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/primed-ssr-only-layout.tsx',
+      fullReload: false,
+    })
+  })
+
+  it('emits resumable full-reload payloads during SSR hot updates when no client diff is available', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const filePath = '/tmp/ssr-full-reload.tsx'
+    const previousSource = `
+      export default () => <div>ready</div>;
+    `
+    const nextSource = `
+      export const PageLink = () => <a href="/docs">Docs</a>;
+      export default () => <div><PageLink /></div>;
+    `
+    const send = vi.fn()
+    const wsSend = vi.fn()
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'ssr',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/ssr-full-reload.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {
+          ws: {
+            send: wsSend,
+          },
+        },
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+    expect(wsSend).toHaveBeenCalledTimes(1)
+    expect(wsSend.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(wsSend.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/ssr-full-reload.tsx',
+      fullReload: true,
+    })
+  })
+
+  it('retains resumable full-reload payloads after transform caches the next source', async () => {
+    const [transformPlugin, hmrPlugin] = getPlugins()
+    const transform = getTransform(transformPlugin)
+    const hotUpdate = getHotUpdate(hmrPlugin)
+    const send = vi.fn()
+    const filePath = '/tmp/full-reload.tsx'
+    const previousSource = `
+      export default () => <div>ready</div>;
+    `
+    const nextSource = `
+      export const PageLink = () => <a href="/docs">Docs</a>;
+      export default () => <div><PageLink /></div>;
+    `
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    await transform?.call(
+      {
+        environment: {
+          name: 'client',
+        },
+      } as any,
+      nextSource,
+      filePath,
+    )
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/full-reload.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/full-reload.tsx',
+      fullReload: true,
     })
   })
 
