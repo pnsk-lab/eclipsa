@@ -6,6 +6,7 @@ import { analyzeModule } from '../compiler/mod.ts'
 import {
   collectAppSymbols,
   compileModuleForSSR,
+  createDevSymbolUrl,
   createResumeHmrUpdate,
   loadSymbolModuleForSSR,
   resetCompilerCache,
@@ -402,6 +403,96 @@ describe('createResumeHmrUpdate', () => {
 
       expect(compiled).toContain('export default')
       expect(compiled).toContain('setupLandingScene')
+    } finally {
+      await fs.rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('keeps app-local symbol urls rooted at /app for relative import resolution', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-symbol-url-'))
+    const appDir = path.join(root, 'app')
+    const filePath = path.join(appDir, '+page.tsx')
+
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.writeFile(
+      filePath,
+      `
+        import { onVisible } from "eclipsa";
+        import { setupLandingScene } from "./landing-scene.ts";
+        export default () => {
+          onVisible(() => {
+            setupLandingScene({ canvas: null });
+          });
+          return <div>ready</div>;
+        };
+      `,
+    )
+
+    try {
+      const symbols = await collectAppSymbols(root)
+      const lazySymbol = symbols.find((symbol) => symbol.kind === 'lazy')
+
+      expect(lazySymbol?.filePath).toBe('/app/+page.tsx')
+      expect(lazySymbol?.id).toBeTruthy()
+      expect(
+        lazySymbol ? createDevSymbolUrl(root, lazySymbol.filePath, lazySymbol.id) : null,
+      ).toMatch(/^\/app\/\+page\.tsx\?eclipsa-symbol=/)
+    } finally {
+      await fs.rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('collects symbols from package-exported modules imported by app files', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-symbol-package-'))
+    const appDir = path.join(root, 'app')
+    const packageDir = path.join(root, 'node_modules', 'ui-kit')
+    const pagePath = path.join(appDir, '+page.tsx')
+    const packageEntryPath = path.join(packageDir, 'mod.ts')
+    const packageComponentPath = path.join(packageDir, 'nav.tsx')
+
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.mkdir(packageDir, { recursive: true })
+    await fs.writeFile(
+      path.join(packageDir, 'package.json'),
+      JSON.stringify(
+        {
+          exports: {
+            '.': './mod.ts',
+          },
+          name: 'ui-kit',
+          type: 'module',
+        },
+        null,
+        2,
+      ),
+    )
+    await fs.writeFile(packageEntryPath, `export { SharedNav } from './nav.tsx'\n`)
+    await fs.writeFile(
+      packageComponentPath,
+      `
+        export const SharedNav = () => <nav>shared nav</nav>;
+      `,
+    )
+    await fs.writeFile(
+      pagePath,
+      `
+        import { SharedNav } from "ui-kit";
+        export default () => <SharedNav />;
+      `,
+    )
+
+    try {
+      const symbols = await collectAppSymbols(root)
+      const shared = await analyzeModule(
+        await fs.readFile(packageComponentPath, 'utf8'),
+        packageComponentPath,
+      )
+      const sharedNavId = [...(shared?.symbols.values() ?? [])].find(
+        (symbol) => symbol.kind === 'component',
+      )?.id
+
+      expect(sharedNavId).toBeTruthy()
+      expect(symbols.some((symbol) => symbol.id === sharedNavId)).toBe(true)
     } finally {
       await fs.rm(root, { force: true, recursive: true })
     }

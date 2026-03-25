@@ -22,3 +22,24 @@ cd my-app
 bun install # or pnpm install, deno task install, yarn install, npm install
 bun dev # or pnpm dev, deno task dev, yarn dev, npm run dev
 ```
+
+Context is available from `eclipsa`:
+
+```tsx
+import { createContext, useContext } from 'eclipsa'
+
+const ThemeContext = createContext<'light' | 'dark'>()
+
+function ThemeLabel() {
+  const theme = useContext(ThemeContext)
+  return <p>Theme: {theme}</p>
+}
+
+export default function App() {
+  return (
+    <ThemeContext.Provider value="dark">
+      <ThemeLabel />
+    </ThemeContext.Provider>
+  )
+}
+```

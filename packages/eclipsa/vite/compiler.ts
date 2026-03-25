@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import fg from 'fast-glob'
+import ts from 'typescript'
 import {
   analyzeModule,
   compileClientModule,
@@ -153,6 +154,21 @@ const getComponentEntryById = (components: Map<string, ResumeHmrComponentEntry>,
 const sameStrings = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index])
 
+const createDevSourceUrl = (root: string, filePath: string) => {
+  const normalizedRoot = root.replaceAll('\\', '/').replace(/\/$/, '')
+  const normalizedFilePath = filePath.replaceAll('\\', '/')
+  if (normalizedFilePath.startsWith('/app/')) {
+    return normalizedFilePath
+  }
+  if (
+    normalizedFilePath === normalizedRoot ||
+    normalizedFilePath.startsWith(`${normalizedRoot}/`)
+  ) {
+    return `/${path.relative(root, filePath).replaceAll('\\', '/')}`
+  }
+  return `/@fs/${normalizedFilePath}`
+}
+
 const findOwnerComponentForSymbol = (
   oldSymbol: ResumeHmrSymbolEntry,
   components: Map<string, ResumeHmrComponentEntry>,
@@ -173,7 +189,7 @@ export const createResumeHmrUpdate = (options: {
   root: string
 }): ResumeHmrUpdatePayload | null => {
   const { filePath, next, previous, root } = options
-  const fileUrl = `/${path.relative(root, filePath).replaceAll('\\', '/')}`
+  const fileUrl = createDevSourceUrl(root, filePath)
   if (!previous) {
     return next.symbols.size > 0
       ? {
@@ -451,7 +467,7 @@ export const loadSymbolModuleForSSR = async (id: string) => {
 }
 
 export const createDevSymbolUrl = (root: string, filePath: string, symbolId: string) =>
-  `/${path.relative(root, filePath).replaceAll('\\', '/')}?${SYMBOL_QUERY}=${symbolId}`
+  `${createDevSourceUrl(root, filePath)}?${SYMBOL_QUERY}=${symbolId}`
 
 export const createBuildSymbolUrl = (symbolId: string) => `/entries/symbol__${symbolId}.js`
 
@@ -461,17 +477,98 @@ export const createBuildServerActionUrl = (actionId: string) =>
 export const createBuildServerLoaderUrl = (loaderId: string) =>
   `../ssr/entries/loader__${loaderId}.mjs`
 
+const ANALYZABLE_SOURCE_EXTENSIONS = new Set([
+  '.cjs',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.mts',
+  '.ts',
+  '.tsx',
+])
+
+const ANALYZABLE_APP_GLOB = '**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}'
+
+const moduleResolutionOptions: ts.CompilerOptions = {
+  allowImportingTsExtensions: true,
+  jsx: ts.JsxEmit.Preserve,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  resolvePackageJsonExports: true,
+  resolvePackageJsonImports: true,
+  target: ts.ScriptTarget.ESNext,
+}
+
+const moduleResolutionHost = ts.createCompilerHost(moduleResolutionOptions, true)
+
+const isAnalyzableSourceFile = (filePath: string) => {
+  const ext = path.extname(filePath)
+  return ANALYZABLE_SOURCE_EXTENSIONS.has(ext) && !filePath.endsWith('.d.ts')
+}
+
+const resolveImportedModule = (specifier: string, containingFile: string) =>
+  ts.resolveModuleName(
+    specifier,
+    containingFile,
+    moduleResolutionOptions,
+    moduleResolutionHost,
+  ).resolvedModule?.resolvedFileName ?? null
+
 export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
   const appDir = path.join(root, 'app')
-  const files = await fg(path.join(appDir, '**/*.tsx').replaceAll('\\', '/'))
-  const result: ResumeSymbol[] = []
+  const entryFiles = await fg(path.join(appDir, ANALYZABLE_APP_GLOB).replaceAll('\\', '/'))
+  const entryFileSet = new Set(entryFiles)
+  const pending = [...entryFiles]
+  const visited = new Set<string>()
+  const symbols = new Map<string, ResumeSymbol>()
 
-  for (const filePath of files) {
-    const analyzed = await loadAnalyzedModule(filePath)
-    result.push(...analyzed.symbols.values())
+  while (pending.length > 0) {
+    const next = pending.pop()
+    if (!next) {
+      continue
+    }
+
+    const filePath = stripQuery(next)
+    if (visited.has(filePath) || !isAnalyzableSourceFile(filePath)) {
+      continue
+    }
+    visited.add(filePath)
+
+    let source: string
+    try {
+      source = await fs.readFile(filePath, 'utf8')
+    } catch (error) {
+      if (entryFileSet.has(filePath)) {
+        throw error
+      }
+      continue
+    }
+
+    let analyzed: Awaited<ReturnType<typeof loadAnalyzedModule>>
+    try {
+      analyzed = await loadAnalyzedModule(filePath, source)
+    } catch (error) {
+      if (entryFileSet.has(filePath)) {
+        throw error
+      }
+      continue
+    }
+    for (const symbol of analyzed.symbols.values()) {
+      symbols.set(symbol.id, symbol)
+    }
+
+    const imports = ts.preProcessFile(source, true, true).importedFiles
+    for (const imported of imports) {
+      const resolvedFilePath = resolveImportedModule(imported.fileName, filePath)
+      if (!resolvedFilePath || !isAnalyzableSourceFile(resolvedFilePath)) {
+        continue
+      }
+      pending.push(resolvedFilePath)
+    }
   }
 
-  return result
+  return [...symbols.values()]
 }
 
 export const collectAppActions = async (

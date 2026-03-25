@@ -216,6 +216,81 @@ test.describe('example app in dev mode', () => {
     ).resolves.toBe(true)
   })
 
+  test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
+    await page.goto('/layout-location/overview')
+
+    await expect(page).toHaveURL(/\/layout-location\/overview$/)
+    await expect(page.getByRole('heading', { name: 'layout overview' })).toBeVisible()
+    await expect(page.getByTestId('layout-location-state')).toHaveText('overview-active')
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/overview/)
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/active/)
+
+    await page.getByRole('link', { name: 'Docs', exact: true }).click()
+
+    await expect(page).toHaveURL(/\/layout-location\/docs$/)
+    await expect(page.getByRole('heading', { name: 'layout docs' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'layout overview' })).toHaveCount(0)
+    await expect(page.getByTestId('layout-location-state')).toHaveText('docs-active')
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/docs/)
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/inactive/)
+  })
+
+  test('updates projection-slot sidebar link state inside a shared layout on Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/inactive/)
+
+    await page.getByRole('link', { name: 'Quick Start' }).click()
+
+    await expect(page).toHaveURL(/\/slot-nav\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/inactive/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/active/)
+
+    await page.getByRole('link', { name: 'Overview' }).click()
+
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/inactive/)
+  })
+
+  test('does not reload when repeatedly navigating projection-slot sidebar links inside a shared layout', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const key = '__slotNavLoadCount'
+      const current = Number(sessionStorage.getItem(key) ?? '0')
+      sessionStorage.setItem(key, String(current + 1))
+    })
+
+    await page.goto('/slot-nav/overview')
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
+      .toBe('1')
+
+    for (const target of ['Quick Start', 'Overview', 'Quick Start', 'Overview'] as const) {
+      await page.getByRole('link', { name: target }).click()
+      await expect(page.getByRole('heading', { name: target.toLowerCase().replace(' ', '-') })).toBeVisible()
+      await expect
+        .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
+        .toBe('1')
+    }
+  })
+
   test('renders responsive image metadata and keeps it stable across navigation', async ({
     page,
   }) => {

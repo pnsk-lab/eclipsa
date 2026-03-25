@@ -2,6 +2,7 @@ import {
   applyResumeHmrUpdateToRegisteredContainers,
   createResumeContainer,
   refreshRegisteredRouteContainers,
+  installResumeLinkListeners,
   RESUME_FINAL_STATE_ELEMENT_ID,
   installResumeListeners,
   primeRouteModules,
@@ -86,6 +87,11 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
     return
   }
 
+  const container = createResumeContainer(root, payload, {
+    routeManifest: getRouteManifest(doc),
+  })
+  installResumeLinkListeners(container)
+
   const appHooksManifest = getAppHooksManifest(doc)
   if (appHooksManifest.client) {
     const module = (await import(/* @vite-ignore */ appHooksManifest.client)) as AppHooksModule
@@ -97,9 +103,6 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
     registerClientHooks({})
   }
 
-  const container = createResumeContainer(root, payload, {
-    routeManifest: getRouteManifest(doc),
-  })
   await primeRouteModules(container)
   restoreRegisteredRpcHandles(container)
   registerResumeContainer(container)

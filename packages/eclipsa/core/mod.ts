@@ -1,5 +1,6 @@
 export * from './action.ts'
 export * from './component.ts'
+export * from './context.ts'
 export * from './hooks.ts'
 export * from './loader.ts'
 export * from './metadata.ts'

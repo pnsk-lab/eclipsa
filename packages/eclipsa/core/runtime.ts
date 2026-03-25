@@ -11,6 +11,7 @@ import {
 } from './hooks.ts'
 import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
+import { getContextProviderMeta } from './context.ts'
 import {
   ROUTE_METADATA_HEAD_ATTR,
   composeRouteMetadata,
@@ -56,6 +57,7 @@ import {
 } from './router-shared.ts'
 
 const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
+const CONTEXT_VALUE_STACK_KEY = Symbol.for('eclipsa.context-value-stack')
 const FRAME_STACK_KEY = Symbol.for('eclipsa.frame-stack')
 const DIRTY_FLUSH_PROMISE_KEY = Symbol.for('eclipsa.dirty-flush-promise')
 const ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY = Symbol.for('eclipsa.async-signal-snapshot-cache')
@@ -84,6 +86,7 @@ const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
 const RENDER_REFERENCE_KIND = 'render'
 const REF_SIGNAL_ATTR = 'data-e-ref'
 const STREAM_STATE_KEY = '__eclipsa_stream'
+const PENDING_RESUME_LINK_KEY = '__eclipsa_pending_route_link'
 type DomConstructorName =
   | 'Element'
   | 'HTMLElement'
@@ -170,6 +173,15 @@ interface SignalRecord<T = unknown> {
 }
 
 type CleanupCallback = () => void
+
+export type RuntimeContextToken<T = unknown> = symbol & {
+  __eclipsa_context_type__?: T
+}
+
+interface RuntimeContextValue {
+  token: RuntimeContextToken
+  value: unknown
+}
 
 const getDomContexts = (value: unknown): Array<Window | typeof globalThis> => {
   const contexts: Array<Window | typeof globalThis> = []
@@ -459,6 +471,11 @@ interface PendingLinkNavigation {
   state: RouterEventState
 }
 
+interface PendingResumeLinkNavigation {
+  href: string
+  replace: boolean
+}
+
 type NavigationMode = 'pop' | 'push' | 'replace'
 
 type RenderObject = Extract<
@@ -529,6 +546,17 @@ const getContainerStack = (): RuntimeContainer[] => {
   }
   const created: RuntimeContainer[] = []
   globalRecord[CONTAINER_STACK_KEY] = created
+  return created
+}
+
+const getContextValueStack = (): RuntimeContextValue[] => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const existing = globalRecord[CONTEXT_VALUE_STACK_KEY]
+  if (Array.isArray(existing)) {
+    return existing as RuntimeContextValue[]
+  }
+  const created: RuntimeContextValue[] = []
+  globalRecord[CONTEXT_VALUE_STACK_KEY] = created
   return created
 }
 
@@ -1004,7 +1032,19 @@ const createProjectionSlotMarker = (
   kind: 'start' | 'end',
 ) => `ec:s:${componentId}:${encodeProjectionSlotName(name)}:${occurrence}:${kind}`
 
+const COMPONENT_BOUNDARY_MARKER_REGEX = /^ec:c:(.+):(start|end)$/
 const PROJECTION_SLOT_MARKER_REGEX = /^ec:s:([^:]+):([^:]+):(\d+):(start|end)$/
+
+const parseComponentBoundaryMarker = (value: string) => {
+  const matched = value.match(COMPONENT_BOUNDARY_MARKER_REGEX)
+  if (!matched) {
+    return null
+  }
+  return {
+    id: matched[1],
+    kind: matched[2] as 'start' | 'end',
+  }
+}
 
 const parseProjectionSlotMarker = (value: string) => {
   const matched = value.match(PROJECTION_SLOT_MARKER_REGEX)
@@ -1792,6 +1832,23 @@ const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
 
 export const withRuntimeContainer = pushContainer
 
+const withRuntimeContextValue = <T>(
+  token: RuntimeContextToken,
+  value: unknown,
+  fn: () => T,
+): T => {
+  const stack = getContextValueStack()
+  stack.push({
+    token,
+    value,
+  })
+  try {
+    return fn()
+  } finally {
+    stack.pop()
+  }
+}
+
 const pushFrame = <T>(frame: RenderFrame, fn: () => T): T => {
   const stack = getFrameStack()
   stack.push(frame)
@@ -2458,6 +2515,88 @@ const patchElementAttributes = (current: Element, next: Element) => {
   }
 }
 
+type PatchSequenceUnit =
+  | { kind: 'node'; node: Node }
+  | { end: Comment; kind: 'opaque-range'; start: Comment; token: string }
+
+const getPatchOpaqueRangeToken = (node: Node, kind: 'start' | 'end') => {
+  if (!(typeof Comment !== 'undefined' ? node instanceof Comment : node.nodeType === 8)) {
+    return null
+  }
+
+  const comment = node as Comment
+  const projectionSlot = parseProjectionSlotMarker(comment.data)
+  if (projectionSlot?.kind === kind) {
+    return `projection-slot:${projectionSlot.key}`
+  }
+
+  return null
+}
+
+const collectPatchSequenceUnits = (nodes: Node[]): PatchSequenceUnit[] | null => {
+  const units: PatchSequenceUnit[] = []
+
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!
+    const token = getPatchOpaqueRangeToken(node, 'start')
+    if (!token) {
+      units.push({ kind: 'node', node })
+      continue
+    }
+
+    let endIndex = index + 1
+    while (endIndex < nodes.length) {
+      if (getPatchOpaqueRangeToken(nodes[endIndex]!, 'end') === token) {
+        break
+      }
+      endIndex += 1
+    }
+    if (endIndex >= nodes.length) {
+      return null
+    }
+
+    units.push({
+      end: nodes[endIndex]! as Comment,
+      kind: 'opaque-range',
+      start: node as Comment,
+      token,
+    })
+    index = endIndex
+  }
+
+  return units
+}
+
+const patchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Node[]) => {
+  const currentUnits = collectPatchSequenceUnits(currentNodes)
+  const nextUnits = collectPatchSequenceUnits(nextNodes)
+  if (!currentUnits || !nextUnits || currentUnits.length !== nextUnits.length) {
+    return false
+  }
+
+  for (let index = 0; index < currentUnits.length; index += 1) {
+    const currentUnit = currentUnits[index]!
+    const nextUnit = nextUnits[index]!
+    if (currentUnit.kind !== nextUnit.kind) {
+      return false
+    }
+    if (currentUnit.kind === 'opaque-range' && nextUnit.kind === 'opaque-range') {
+      if (currentUnit.token !== nextUnit.token) {
+        return false
+      }
+      continue
+    }
+    if (currentUnit.kind !== 'node' || nextUnit.kind !== 'node') {
+      return false
+    }
+    if (!patchNodeInPlace(currentUnit.node, nextUnit.node)) {
+      return false
+    }
+  }
+
+  return true
+}
+
 const patchNodeInPlace = (current: Node, next: Node): boolean => {
   if (current.nodeType !== next.nodeType) {
     return false
@@ -2475,8 +2614,8 @@ const patchNodeInPlace = (current: Node, next: Node): boolean => {
     const nextComment = next as Comment
     const currentIsProjectionSlot = !!parseProjectionSlotMarker(currentComment.data)
     const nextIsProjectionSlot = !!parseProjectionSlotMarker(nextComment.data)
-    const currentIsBoundaryMarker = /^ec:c:(.+):(start|end)$/.test(currentComment.data)
-    const nextIsBoundaryMarker = /^ec:c:(.+):(start|end)$/.test(nextComment.data)
+    const currentIsBoundaryMarker = !!parseComponentBoundaryMarker(currentComment.data)
+    const nextIsBoundaryMarker = !!parseComponentBoundaryMarker(nextComment.data)
     if (currentIsProjectionSlot || nextIsProjectionSlot || currentIsBoundaryMarker || nextIsBoundaryMarker) {
       return currentComment.data === nextComment.data
     }
@@ -2492,19 +2631,7 @@ const patchNodeInPlace = (current: Node, next: Node): boolean => {
 
   patchElementAttributes(current, next)
 
-  if (current.childNodes.length !== next.childNodes.length) {
-      return false
-    }
-
-  for (let index = 0; index < current.childNodes.length; index += 1) {
-    const currentChild = current.childNodes[index]
-    const nextChild = next.childNodes[index]
-    if (!currentChild || !nextChild || !patchNodeInPlace(currentChild, nextChild)) {
-      return false
-    }
-  }
-
-  return true
+  return patchNodeSequenceInPlace(Array.from(current.childNodes), Array.from(next.childNodes))
 }
 
 export const tryPatchBoundaryContentsInPlace = (
@@ -2513,19 +2640,7 @@ export const tryPatchBoundaryContentsInPlace = (
   nextNodes: Node[],
 ) => {
   const currentNodes = getBoundaryChildren(start, end)
-  if (currentNodes.length !== nextNodes.length) {
-    return false
-  }
-
-  for (let index = 0; index < currentNodes.length; index += 1) {
-    const currentNode = currentNodes[index]
-    const nextNode = nextNodes[index]
-    if (!currentNode || !nextNode || !patchNodeInPlace(currentNode, nextNode)) {
-      return false
-    }
-  }
-
-  return true
+  return patchNodeSequenceInPlace(currentNodes, nextNodes)
 }
 
 interface FocusSnapshot {
@@ -2548,6 +2663,19 @@ const getBoundaryChildren = (start: Comment, end: Comment) => {
   }
   return nodes
 }
+
+const collectProjectionSlotComponentIds = (roots: Node[]) => {
+  const preserved = new Set<string>()
+  for (const range of collectProjectionSlotRanges(roots).values()) {
+    for (const componentId of collectComponentBoundaryIds(getBoundaryChildren(range.start, range.end))) {
+      preserved.add(componentId)
+    }
+  }
+  return preserved
+}
+
+const collectPreservedProjectionSlotComponentIds = (start: Comment, end: Comment) =>
+  collectProjectionSlotComponentIds(getBoundaryChildren(start, end))
 
 const getNodePath = (root: Node, target: Node): number[] | null => {
   if (root === target) {
@@ -2908,7 +3036,12 @@ const renderSSRTemplateNode = (template: JSX.SSRTemplate) => {
 
 const resolveRenderable = (value: JSX.Element): JSX.Element => {
   let current = value
-  while (typeof current === 'function' && !getLazyMeta(current) && !getComponentMeta(current)) {
+  while (
+    typeof current === 'function' &&
+    !getLazyMeta(current) &&
+    !getComponentMeta(current) &&
+    !getContextProviderMeta(current)
+  ) {
     current = current()
   }
   return current
@@ -2983,6 +3116,23 @@ const renderProjectionSlotToNodes = (slot: ProjectionSlotValue, container: Runti
   return [start, ...renderClientInsertable(slot.source, container), end]
 }
 
+const renderContextProviderToString = (
+  token: RuntimeContextToken,
+  props: Record<string, unknown>,
+) =>
+  withRuntimeContextValue(token, props.value, () =>
+    renderStringNode((props.children ?? null) as JSX.Element | JSX.Element[]),
+  )
+
+const renderContextProviderToNodes = (
+  token: RuntimeContextToken,
+  props: Record<string, unknown>,
+  container: RuntimeContainer,
+) =>
+  withRuntimeContextValue(token, props.value, () =>
+    renderClientNodes((props.children ?? null) as JSX.Element | JSX.Element[], container),
+  )
+
 const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string => {
   if (Array.isArray(inputElementLike)) {
     return renderStringArray(inputElementLike)
@@ -3021,6 +3171,11 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   }
 
   if (typeof resolved.type === 'function') {
+    const providerMeta = getContextProviderMeta(resolved.type)
+    if (providerMeta) {
+      return renderContextProviderToString(providerMeta.token, evaluateProps(resolved.props))
+    }
+
     const container = getCurrentContainer()
     const componentFn = resolved.type as Component
     const meta = getComponentMeta(componentFn)
@@ -3178,6 +3333,8 @@ const renderComponentToNodes = (
   })
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
+  const previousStart = component.start
+  const previousEnd = component.end
   const start = container.doc.createComment(`ec:c:${componentId}:start`)
   const end = container.doc.createComment(`ec:c:${componentId}:end`)
   component.start = start
@@ -3197,10 +3354,16 @@ const renderComponentToNodes = (
   }
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  pruneRemovedComponents(container, componentId, frame.visitedDescendants)
+  const preservedDescendants = frame.projectionState.reuseExistingDom
+    && previousStart
+    && previousEnd
+    ? collectPreservedProjectionSlotComponentIds(previousStart, previousEnd)
+    : new Set<string>()
+  const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
+  pruneRemovedComponents(container, componentId, keptDescendants)
 
   for (const descendantId of oldDescendants) {
-    if (frame.visitedDescendants.has(descendantId)) {
+    if (keptDescendants.has(descendantId)) {
       continue
     }
     clearComponentSubscriptions(container, descendantId)
@@ -3208,7 +3371,7 @@ const renderComponentToNodes = (
 
   if (parentFrame) {
     parentFrame.visitedDescendants.add(componentId)
-    for (const descendantId of frame.visitedDescendants) {
+    for (const descendantId of keptDescendants) {
       parentFrame.visitedDescendants.add(descendantId)
     }
   }
@@ -3328,6 +3491,11 @@ export const renderClientNodes = (
 
   if (typeof resolved.type === 'function') {
     const evaluatedProps = evaluateProps(resolved.props)
+    const providerMeta = getContextProviderMeta(resolved.type)
+    if (providerMeta) {
+      return renderContextProviderToNodes(providerMeta.token, evaluatedProps, container)
+    }
+
     const componentFn = resolved.type as Component
     if (getComponentMeta(resolved.type)) {
       return withoutTrackedEffect(() =>
@@ -4197,10 +4365,20 @@ const updateSharedLayoutBoundary = async (
   if (currentRouteRootId) {
     pruneRemovedComponents(container, currentRouteRootId, visitedDescendants)
   }
-  markSidebarLikeDescendantsDirtyForPatch(container, boundaryId, currentRouteRootId)
+  boundary.active = false
+  if (boundary.activateModeOnFlush !== 'replace') {
+    boundary.activateModeOnFlush = 'patch'
+  }
+  boundary.reuseExistingDomOnActivate = true
+  boundary.reuseProjectionSlotDomOnActivate = true
+  container.dirty.add(boundaryId)
   if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
     bindRouterLinks(container, boundary.start.parentNode as ParentNode)
   }
+  if (container.dirty.size > 0) {
+    await flushDirtyComponents(container)
+  }
+  markSidebarLikeDescendantsDirtyForPatch(container, boundaryId, currentRouteRootId)
   if (container.dirty.size > 0) {
     await flushDirtyComponents(container)
   }
@@ -4668,7 +4846,7 @@ export const refreshRegisteredRouteContainers = async () => {
 const activateComponent = async (container: RuntimeContainer, componentId: string) => {
   const component = container.components.get(componentId)
   if (!component?.start || !component.end || component.active) {
-    return
+    return false
   }
   const activateMode = component.activateModeOnFlush ?? 'replace'
   component.activateModeOnFlush = undefined
@@ -4693,11 +4871,16 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     const patched =
       activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
     const preservedDescendants = patched
-      ? new Set<string>()
+      ? frame.projectionState.reuseExistingDom
+        ? collectPreservedProjectionSlotComponentIds(component.start, component.end)
+        : new Set<string>()
       : replaceBoundaryContents(component.start, component.end, nodes, {
           preserveProjectionSlots: frame.projectionState.reuseExistingDom,
         })
     restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+    if (patched && component.start.parentNode) {
+      bindComponentBoundaries(container, component.start.parentNode as ParentNode)
+    }
     component.active = true
     const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
     pruneRemovedComponents(container, componentId, keptDescendants)
@@ -4707,7 +4890,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       }
       clearComponentSubscriptions(container, descendantId)
     }
-    return
+    return patched
   }
 
   clearComponentSubscriptions(container, componentId)
@@ -4754,7 +4937,9 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const patched =
     activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
   const preservedDescendants = patched
-    ? new Set<string>()
+    ? frame.projectionState.reuseExistingDom
+      ? collectPreservedProjectionSlotComponentIds(component.start, component.end)
+      : new Set<string>()
     : replaceBoundaryContents(component.start, component.end, nodes, {
         preserveProjectionSlots: frame.projectionState.reuseExistingDom,
       })
@@ -4762,6 +4947,9 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     bindRouterLinks(container, component.start.parentNode as ParentNode)
   }
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+  if (patched && component.start.parentNode) {
+    bindComponentBoundaries(container, component.start.parentNode as ParentNode)
+  }
 
   component.active = true
 
@@ -4777,6 +4965,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   clearComponentSubscriptions(container, componentId)
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
+  return patched
 }
 
 const sortDirtyComponents = (ids: Iterable<string>) =>
@@ -4960,21 +5149,32 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
     while (container.dirty.size > 0) {
       const batch = sortDirtyComponents(container.dirty)
       container.dirty.clear()
+      const patchedAncestors = new Set<string>()
       const rerendered = new Set<string>()
       for (const componentId of batch) {
-        if (
-          [...rerendered].some(
-            (parentId) => componentId === parentId || isDescendantOf(parentId, componentId),
-          )
-        ) {
+        const rerenderedParent = [...rerendered].find(
+          (parentId) => componentId === parentId || isDescendantOf(parentId, componentId),
+        )
+        if (rerenderedParent) {
+          const component = container.components.get(componentId)
+          if (patchedAncestors.has(rerenderedParent) && component?.start?.parentNode && component.end?.parentNode) {
+            component.active = false
+            container.dirty.add(componentId)
+          }
           continue
         }
         const component = container.components.get(componentId)
         if (component?.active) {
           continue
         }
-        await activateComponent(container, componentId)
+        const preservesProjectionSlotDom =
+          (component?.activateModeOnFlush ?? 'replace') === 'patch' &&
+          (component?.reuseProjectionSlotDomOnActivate ?? false)
+        const patched = await activateComponent(container, componentId)
         rerendered.add(componentId)
+        if (preservesProjectionSlotDom && patched) {
+          patchedAncestors.add(componentId)
+        }
       }
     }
   })()
@@ -5328,7 +5528,24 @@ const getStreamState = (): StreamState => {
 }
 
 export const getStreamingResumeBootstrapScriptContent = () =>
-  '(()=>{const key="__eclipsa_stream";const state=window[key]??={pending:[]};state.enqueue=state.enqueue??function(chunk){this.pending.push(chunk);if(this.process){void this.process();}};})();'
+  `(()=>{const streamKey="${STREAM_STATE_KEY}";const stream=window[streamKey]??={pending:[]};stream.enqueue=stream.enqueue??function(chunk){this.pending.push(chunk);if(this.process){void this.process();}};const navKey="${PENDING_RESUME_LINK_KEY}";document.addEventListener("click",(event)=>{if(document.body?.getAttribute("data-e-resume")!=="paused")return;if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;let element=event.target instanceof Element?event.target:event.target instanceof Node?event.target.parentElement:null;while(element&&!(element instanceof HTMLAnchorElement)){element=element.parentElement;}if(!element||!element.hasAttribute("${ROUTE_LINK_ATTR}")||element.hasAttribute("download"))return;if(element.target&&element.target!=="_self")return;const href=element.getAttribute("href");if(!href)return;const url=new URL(href,window.location.href);if(url.origin!==window.location.origin)return;event.preventDefault();window[navKey]={href:url.href,replace:element.getAttribute("${ROUTE_REPLACE_ATTR}")==="true"};},{capture:true});})();`
+
+const takePendingResumeLinkNavigation = (): PendingResumeLinkNavigation | null => {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  const pending = globalRecord[PENDING_RESUME_LINK_KEY]
+  if (
+    !pending ||
+    typeof pending !== 'object' ||
+    typeof (pending as { href?: unknown }).href !== 'string'
+  ) {
+    return null
+  }
+  delete globalRecord[PENDING_RESUME_LINK_KEY]
+  return {
+    href: (pending as { href: string }).href,
+    replace: (pending as { replace?: unknown }).replace === true,
+  }
+}
 
 const installStreamedSuspenseController = (container: RuntimeContainer) => {
   const state = getStreamState()
@@ -5569,6 +5786,19 @@ const bindRouterLinks = (container: RuntimeContainer, root: ParentNode) => {
   }
 }
 
+export const installResumeLinkListeners = (container: RuntimeContainer) => {
+  if (!container.doc) {
+    return
+  }
+  bindRouterLinks(container, container.doc)
+  const pending = takePendingResumeLinkNavigation()
+  if (pending) {
+    void navigateContainer(container, pending.href, {
+      mode: pending.replace ? 'replace' : 'push',
+    })
+  }
+}
+
 const parseBinding = (value: string): { scopeId: string; symbolId: string } => {
   const separatorIndex = value.indexOf(':')
   if (separatorIndex < 0) {
@@ -5663,7 +5893,7 @@ export const installResumeListeners = (container: RuntimeContainer) => {
   if (!doc) {
     return () => {}
   }
-  bindRouterLinks(container, doc)
+  installResumeLinkListeners(container)
   installStreamedSuspenseController(container)
   ensureVisibilityListeners(container)
   scheduleVisibleCallbacksCheck(container)
@@ -5693,6 +5923,33 @@ export const installResumeListeners = (container: RuntimeContainer) => {
 
 export const renderString = (inputElementLike: JSX.Element | JSX.Element[]) =>
   renderStringNode(inputElementLike)
+
+export const hasActiveRuntimeComponent = () => {
+  const frame = getCurrentFrame()
+  return !!frame && frame.component.id !== ROOT_COMPONENT_ID
+}
+
+export const getRuntimeContextValue = (
+  token: RuntimeContextToken,
+): {
+  found: boolean
+  value: unknown
+} => {
+  const stack = getContextValueStack()
+  for (let index = stack.length - 1; index >= 0; index -= 1) {
+    const entry = stack[index]
+    if (entry?.token === token) {
+      return {
+        found: true,
+        value: entry.value,
+      }
+    }
+  }
+  return {
+    found: false,
+    value: undefined,
+  }
+}
 
 export const createStandaloneRuntimeSignal = <T>(fallback: T): { value: T } => {
   const globalRecord = globalThis as Record<PropertyKey, unknown>

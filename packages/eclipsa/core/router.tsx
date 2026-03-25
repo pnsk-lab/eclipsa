@@ -10,6 +10,7 @@ import {
 } from './router-shared.ts'
 import {
   notFound as throwRouteNotFound,
+  renderClientInsertable,
   useRuntimeLocation,
   useRuntimeRouteError,
   useRuntimeNavigate,
@@ -75,28 +76,8 @@ export const Link = (props: LinkProps) => {
       anchor.setAttribute(name, String(value))
     }
 
-    const pendingChildren = [props.children]
-    while (pendingChildren.length > 0) {
-      let resolved = pendingChildren.pop()
-      while (typeof resolved === 'function') {
-        resolved = resolved()
-      }
-
-      if (Array.isArray(resolved)) {
-        for (let index = resolved.length - 1; index >= 0; index -= 1) {
-          pendingChildren.push(resolved[index])
-        }
-        continue
-      }
-      if (resolved === null || resolved === undefined || resolved === false) {
-        continue
-      }
-      if (resolved instanceof Node) {
-        anchor.appendChild(resolved)
-        continue
-      }
-
-      anchor.appendChild(document.createTextNode(String(resolved)))
+    for (const child of renderClientInsertable(props.children ?? null)) {
+      anchor.appendChild(child)
     }
 
     return anchor as unknown as JSX.Element

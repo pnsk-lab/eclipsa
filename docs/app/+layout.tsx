@@ -13,14 +13,14 @@ export default (props: { children?: unknown }) => {
           loc.pathname === '/' ? "bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] text-white" : "",
         )}
       >
-        <a
+        <Link
           class="flex items-center gap-2 text-xl font-urbanist"
           data-interactive=""
           href="/"
         >
           <Logo class="w-5 h-5" />
           <span>eclipsa</span>
-        </a>
+        </Link>
 
         <div class="hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 md:flex">
           <Link
