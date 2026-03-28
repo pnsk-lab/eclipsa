@@ -223,6 +223,71 @@ test.describe('example app in dev mode', () => {
     ).resolves.toBe(true)
   })
 
+  test('keeps shared-layout loader-nav links stable across repeated Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/loader-nav/overview')
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
+      ;(
+        window as Window & {
+          __loaderNavOverviewLink?: Element
+        }
+      ).__loaderNavOverviewLink = element
+    })
+    await page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
+      ;(
+        window as Window & {
+          __loaderNavQuickStartLinkRoundTrip?: Element
+        }
+      ).__loaderNavQuickStartLinkRoundTrip = element
+    })
+
+    await page.locator('a[href="/loader-nav/quick-start"]').click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
+    await expect(
+      page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
+        return (
+          element ===
+          (window as Window & { __loaderNavOverviewLink?: Element }).__loaderNavOverviewLink
+        )
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
+        return (
+          element ===
+          (window as Window & { __loaderNavQuickStartLinkRoundTrip?: Element })
+            .__loaderNavQuickStartLinkRoundTrip
+        )
+      }),
+    ).resolves.toBe(true)
+
+    await page.locator('a[href="/loader-nav/overview"]').click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(
+      page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
+        return (
+          element ===
+          (window as Window & { __loaderNavOverviewLink?: Element }).__loaderNavOverviewLink
+        )
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
+        return (
+          element ===
+          (window as Window & { __loaderNavQuickStartLinkRoundTrip?: Element })
+            .__loaderNavQuickStartLinkRoundTrip
+        )
+      }),
+    ).resolves.toBe(true)
+  })
+
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
     await page.goto('/layout-location/overview')
 

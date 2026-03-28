@@ -10,7 +10,6 @@ import {
 } from './router-shared.ts'
 import {
   notFound as throwRouteNotFound,
-  renderClientInsertable,
   useRuntimeLocation,
   useRuntimeRouteError,
   useRuntimeNavigate,
@@ -33,55 +32,6 @@ export const Link = (props: LinkProps) => {
         : props.prefetch === false
           ? 'none'
           : props.prefetch
-
-  if (typeof document !== 'undefined') {
-    const anchor = document.createElement('a')
-    anchor.setAttribute(ROUTE_LINK_ATTR, '')
-
-    if (props.replace) {
-      anchor.setAttribute(ROUTE_REPLACE_ATTR, 'true')
-    }
-    if (prefetchMode) {
-      anchor.setAttribute(ROUTE_PREFETCH_ATTR, prefetchMode)
-    }
-
-    for (const [name, value] of Object.entries(props)) {
-      if (
-        name === 'children' ||
-        name === 'prefetch' ||
-        name === 'replace' ||
-        value === false ||
-        value === undefined ||
-        value === null
-      ) {
-        continue
-      }
-      if (name === 'class') {
-        anchor.className = String(value)
-        continue
-      }
-      if (name === 'style' && value && typeof value === 'object') {
-        anchor.setAttribute(
-          'style',
-          Object.entries(value as Record<string, unknown>)
-            .map(([styleName, styleValue]) => `${styleName}: ${styleValue}`)
-            .join('; '),
-        )
-        continue
-      }
-      if (value === true) {
-        anchor.setAttribute(name, '')
-        continue
-      }
-      anchor.setAttribute(name, String(value))
-    }
-
-    for (const child of renderClientInsertable(props.children ?? null)) {
-      anchor.appendChild(child)
-    }
-
-    return anchor as unknown as JSX.Element
-  }
 
   const nextProps: Record<string, unknown> = {
     ...props,

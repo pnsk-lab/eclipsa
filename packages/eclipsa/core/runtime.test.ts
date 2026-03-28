@@ -3,7 +3,8 @@ import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
 import { attr, insert } from './client/dom.ts'
 import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
-import { onCleanup, onMount, useSignal, useWatch } from './signal.ts'
+import { Link, useLocation } from './router.tsx'
+import { onCleanup, onMount, useComputed$, useSignal, useWatch } from './signal.ts'
 import {
   createDetachedRuntimeSignal,
   flushDirtyComponents,
@@ -92,10 +93,25 @@ class FakeComment extends FakeNode {
 class FakeElement extends FakeNode {
   attributes = new Map<string, string>()
   childNodes: FakeNode[] = []
+  namespaceURI = 'http://www.w3.org/1999/xhtml'
+  #className = ''
 
   constructor(readonly tagName: string) {
     super()
     this.nodeType = 1
+  }
+
+  get className() {
+    return this.#className
+  }
+
+  set className(value: string) {
+    this.#className = value
+    if (value.length === 0) {
+      this.attributes.delete('class')
+      return
+    }
+    this.attributes.set('class', value)
   }
 
   #detachFromCurrentParent(node: FakeNode) {
@@ -147,10 +163,18 @@ class FakeElement extends FakeNode {
   }
 
   setAttribute(name: string, value: string) {
+    if (name === 'class') {
+      this.className = value
+      return
+    }
     this.attributes.set(name, value)
   }
 
   removeAttribute(name: string) {
+    if (name === 'class') {
+      this.className = ''
+      return
+    }
     this.attributes.delete(name)
   }
 
@@ -185,6 +209,8 @@ const createContainer = () =>
   ({
     actions: new Map(),
     actionStates: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
     atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
@@ -945,6 +971,311 @@ describe('renderClientInsertable', () => {
         'ec:s:c0:aa:1:end',
         'ec:c:c0:end',
       ])
+    })
+  })
+
+  it('wraps route-slot children in projection slot markers during client renders', () => {
+    withFakeNodeGlobal(() => {
+      const Probe = __eclipsaComponent(
+        (props: { children?: unknown }) =>
+          jsxDEV('section', { children: props.children }, null, false, {}),
+        'probe-route-slot-symbol',
+        () => [],
+        { children: 1 },
+      )
+
+      const container = createContainer()
+      const page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
+      container.router = {
+        currentPath: { value: '/' },
+        currentRoute: null,
+        isNavigating: { value: false },
+        loadedRoutes: new Map([
+          [
+            '/::page',
+            {
+              entry: {} as any,
+              layouts: [],
+              page: { renderer: page },
+              params: {},
+              pathname: '/',
+              render: () => jsxDEV(page, {}, null, false, {}),
+            },
+          ],
+        ]),
+        manifest: [],
+        navigate: (async () => {}) as any,
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Probe as any,
+            {
+              children: {
+                __eclipsa_type: 'route-slot',
+                pathname: '/',
+                startLayoutIndex: 0,
+              },
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      expect(collectComments(nodes)).toEqual([
+        'ec:c:c0:start',
+        'ec:s:c0:children:0:start',
+        'ec:s:c0:children:0:end',
+        'ec:c:c0:end',
+      ])
+      expect(nodes[1]?.textContent).toContain('page content')
+    })
+  })
+
+  it('patches route-slot projection components on local signal writes without replacing their shell', async () => {
+    await withFakeNodeGlobal(async () => {
+      let open!: { value: boolean }
+
+      const ProbeBody = (props: { children?: unknown }) => {
+        open = useSignal(true)
+        return jsxDEV(
+          'section',
+          {
+            children: [
+              jsxDEV('button', { children: open.value ? 'open' : 'closed' }, null, false, {}),
+              jsxDEV('div', { children: props.children }, null, false, {}),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Probe = __eclipsaComponent(
+        ProbeBody,
+        'probe-route-slot-patch-symbol',
+        () => [],
+        { children: 1 },
+      )
+
+      const container = createContainer()
+      const page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
+      container.imports.set(
+        'probe-route-slot-patch-symbol',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            ProbeBody((propsOrArg as { children?: unknown } | undefined) ?? {}),
+        }),
+      )
+      container.router = {
+        currentPath: { value: '/' },
+        currentRoute: null,
+        isNavigating: { value: false },
+        loadedRoutes: new Map([
+          [
+            '/::page',
+            {
+              entry: {} as any,
+              layouts: [],
+              page: { renderer: page },
+              params: {},
+              pathname: '/',
+              render: () => jsxDEV(page, {}, null, false, {}),
+            },
+          ],
+        ]),
+        manifest: [],
+        navigate: (async () => {}) as any,
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const host = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Probe as any,
+            {
+              children: {
+                __eclipsa_type: 'route-slot',
+                pathname: '/',
+                startLayoutIndex: 0,
+              },
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        host.appendChild(node)
+      }
+
+      const shell = host.childNodes[1] as FakeElement | undefined
+      expect(shell).toBeInstanceOf(FakeElement)
+      expect(shell?.textContent).toContain('open')
+      expect(collectComments([shell!])).toEqual([
+        'ec:s:c0:children:0:start',
+        'ec:s:c0:children:0:end',
+      ])
+
+      ;(shell as FakeElement & { __debugMarker?: string }).__debugMarker = 'live'
+      open.value = false
+      await flushDirtyComponents(container)
+
+      const nextShell = host.childNodes[1] as FakeElement | undefined
+      expect(nextShell).toBe(shell)
+      expect((nextShell as FakeElement & { __debugMarker?: string }).__debugMarker).toBe('live')
+      expect(nextShell?.textContent).toContain('closed')
+      expect(nextShell?.textContent).toContain('page content')
+    })
+  })
+
+  it('keeps managed Link elements stable when route-location subscribers rerender', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(container, '$router:path', '/loader-nav/overview')
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/loader-nav/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const PageLinkBody = (props: { href: string; label: string; stateTestId: string }) => {
+        const location = useLocation()
+        const isActive = useComputed$(() => location.pathname === props.href)
+
+        return jsxDEV(
+          Link as any,
+          {
+            href: props.href,
+            class: isActive.value ? 'link active' : 'link inactive',
+            'data-testid': `${props.stateTestId}-link`,
+            children: [
+              jsxDEV(
+                'span',
+                {
+                  'data-testid': props.stateTestId,
+                  children: isActive.value ? ' active' : ' inactive',
+                },
+                null,
+                false,
+                {},
+              ),
+              jsxDEV(
+                'span',
+                {
+                  'data-testid': `${props.stateTestId}-label`,
+                  children: props.label,
+                },
+                null,
+                false,
+                {},
+              ),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const PageLink = __eclipsaComponent(
+        PageLinkBody,
+        'page-link-route-location-symbol',
+        () => [],
+        { label: 1 },
+      )
+
+      container.imports.set(
+        'page-link-route-location-symbol',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            PageLinkBody(
+              propsOrArg as { href: string; label: string; stateTestId: string },
+            ),
+        }),
+      )
+
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document = container.doc as Document
+      try {
+        const host = new FakeElement('div')
+        const nodes = withRuntimeContainer(container, () =>
+          renderClientInsertable(
+            jsxDEV(
+              PageLink as any,
+              {
+                href: '/loader-nav/quick-start',
+                label: 'Quick Start',
+                stateTestId: 'loader-nav-quick-start-state',
+              },
+              null,
+              false,
+              {},
+            ),
+            container,
+          ),
+        ) as unknown as FakeNode[]
+
+        for (const node of nodes) {
+          host.appendChild(node)
+        }
+
+        const link = host.childNodes[1] as FakeElement | undefined
+        expect(link).toBeInstanceOf(FakeElement)
+        expect(link?.className).toBe('link inactive')
+        ;(link as FakeElement & { __debugMarker?: string }).__debugMarker = 'live'
+
+        currentPath.value = '/loader-nav/quick-start'
+        currentUrl.value = 'http://local/loader-nav/quick-start'
+        await flushDirtyComponents(container)
+
+        const nextLink = host.childNodes[1] as FakeElement | undefined
+        expect(nextLink).toBe(link)
+        expect((nextLink as FakeElement & { __debugMarker?: string }).__debugMarker).toBe('live')
+        expect(nextLink?.className).toBe('link active')
+        expect(nextLink?.textContent).toContain(' active')
+      } finally {
+        globalThis.document = originalDocument
+      }
     })
   })
 

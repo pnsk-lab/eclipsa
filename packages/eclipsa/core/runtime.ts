@@ -1548,7 +1548,23 @@ const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> 
 const hasProjectionSlotValue = (props: Record<string, unknown>, name: string) =>
   Object.prototype.hasOwnProperty.call(props, name)
 
-const shouldWrapProjectionSlotValue = (value: unknown): boolean => {
+const shouldRenderProjectionSlotValue = (value: unknown): boolean => {
+  if (value === null || value === undefined || value === false) {
+    return false
+  }
+  if (isProjectionSlot(value)) {
+    return false
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => shouldRenderProjectionSlotValue(entry))
+  }
+  if (typeof value === 'function') {
+    return true
+  }
+  return typeof value === 'object'
+}
+
+const shouldPreserveProjectionSlotDom = (value: unknown): boolean => {
   if (value === null || value === undefined || value === false) {
     return false
   }
@@ -1556,7 +1572,7 @@ const shouldWrapProjectionSlotValue = (value: unknown): boolean => {
     return false
   }
   if (Array.isArray(value)) {
-    return value.some((entry) => shouldWrapProjectionSlotValue(entry))
+    return value.some((entry) => shouldPreserveProjectionSlotDom(entry))
   }
   if (typeof value === 'function') {
     return true
@@ -1584,7 +1600,7 @@ const hasDynamicProjectionSlotDom = (component: ComponentState) => {
   }
 
   return Object.keys(component.projectionSlots).some(
-    (name) => hasProjectionSlotValue(props, name) && shouldWrapProjectionSlotValue(props[name]),
+    (name) => hasProjectionSlotValue(props, name) && shouldPreserveProjectionSlotDom(props[name]),
   )
 }
 
@@ -1611,7 +1627,7 @@ const createRenderProps = (
           return undefined
         }
         const value = props[name]
-        if (!shouldWrapProjectionSlotValue(value)) {
+        if (!shouldRenderProjectionSlotValue(value)) {
           return value
         }
         const current = counters.get(name) ?? 0
@@ -1821,9 +1837,10 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
       continue
     }
     const hasProjectionSlotDom = hasDynamicProjectionSlotDom(component)
+    const nextActivateMode = hasProjectionSlotDom ? 'replace' : 'patch'
     component.active = false
     if (component.activateModeOnFlush !== 'replace') {
-      component.activateModeOnFlush = hasProjectionSlotDom ? 'replace' : 'patch'
+      component.activateModeOnFlush = nextActivateMode
     }
     component.reuseExistingDomOnActivate = !hasProjectionSlotDom
     component.reuseProjectionSlotDomOnActivate = !hasProjectionSlotDom
@@ -4454,6 +4471,32 @@ const markSidebarLikeDescendantsDirtyForPatch = (
   }
 }
 
+const clearSharedLayoutDescendantDirtyStates = (
+  container: RuntimeContainer,
+  boundaryId: string,
+  excludedRootId: string | null,
+) => {
+  for (const componentId of [...container.dirty]) {
+    if (!isDescendantOf(boundaryId, componentId)) {
+      continue
+    }
+    if (
+      excludedRootId &&
+      (componentId === excludedRootId || isDescendantOf(excludedRootId, componentId))
+    ) {
+      continue
+    }
+    container.dirty.delete(componentId)
+    const component = container.components.get(componentId)
+    if (!component) {
+      continue
+    }
+    component.activateModeOnFlush = undefined
+    component.reuseExistingDomOnActivate = true
+    component.reuseProjectionSlotDomOnActivate = false
+  }
+}
+
 const withUpdatedComponentChildren = (props: Record<string, unknown> | null, children: unknown) => {
   const next = {}
   if (props) {
@@ -4570,6 +4613,7 @@ const updateSharedLayoutBoundary = async (
   }
   boundary.reuseExistingDomOnActivate = true
   boundary.reuseProjectionSlotDomOnActivate = true
+  clearSharedLayoutDescendantDirtyStates(container, boundaryId, currentRouteRootId)
   container.dirty.add(boundaryId)
   if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
     bindRouterLinks(container, boundary.start.parentNode as ParentNode)
