@@ -1,5 +1,5 @@
 import type { ContentSearchResult } from '@eclipsa/content'
-import { onCleanup, onVisible, useSignal, useWatch } from 'eclipsa'
+import { onCleanup, onVisible, useSignal } from 'eclipsa'
 import clsx from 'clsx'
 
 const DEFAULT_PLACEHOLDER = 'Search docs'
@@ -165,10 +165,6 @@ export const DocsSearchDialog = () => {
     }
   }
 
-  useWatch(() => {
-    scheduleSearch(query.value)
-  }, [query])
-
   onVisible(() => {
     disposed.value = false
 
@@ -225,7 +221,15 @@ export const DocsSearchDialog = () => {
       }
     }
 
+    const handleInput = (event: Event) => {
+      if (!(event.currentTarget instanceof HTMLInputElement)) {
+        return
+      }
+      scheduleSearch(event.currentTarget.value)
+    }
+
     document.addEventListener('keydown', handleKeyDown)
+    inputRef.value?.addEventListener('input', handleInput)
     inputRef.value?.addEventListener('keydown', handleInputKeyDown)
 
     onCleanup(() => {
@@ -235,6 +239,7 @@ export const DocsSearchDialog = () => {
         searchTimeout.value = undefined
       }
       document.removeEventListener('keydown', handleKeyDown)
+      inputRef.value?.removeEventListener('input', handleInput)
       inputRef.value?.removeEventListener('keydown', handleInputKeyDown)
     })
   })

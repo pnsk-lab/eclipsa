@@ -342,7 +342,7 @@ export const MotionConfig = asManagedComponent<MotionConfigProps>(
         reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
         transition: {
           ...DEFAULT_CONFIG.transition,
-          ...(transition ?? {}),
+          ...transition,
         },
       }}
     >

@@ -41,12 +41,11 @@ describe('docs search dialog', () => {
     expect(source).toContain('scheduleSearch(query.value)')
   })
 
-  it('binds search input updates through framework bindings instead of a native input workaround', () => {
+  it('binds search input value through framework bindings and schedules searches from a native input listener', () => {
     const source = readFileSync(new URL('./SearchDialog.tsx', import.meta.url), 'utf8')
 
     expect(source).toContain('bind:value={query}')
-    expect(source).toContain('useWatch(() => {')
-    expect(source).toContain('scheduleSearch(query.value)')
-    expect(source).not.toContain("addEventListener('input', handleInput)")
+    expect(source).toContain("inputRef.value?.addEventListener('input', handleInput)")
+    expect(source).toContain("inputRef.value?.removeEventListener('input', handleInput)")
   })
 })

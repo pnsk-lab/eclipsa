@@ -81,7 +81,7 @@ export const createEclipsaNitroConfig = (
     entry: ECLIPSA_NITRO_ENTRY_ID,
     publicAssets: nextPublicAssets,
     virtual: {
-      ...(nitroConfig?.virtual ?? {}),
+      ...nitroConfig?.virtual,
       [ECLIPSA_NITRO_ENTRY_ID]: createEclipsaNitroEntry(appModulePath),
     },
   }

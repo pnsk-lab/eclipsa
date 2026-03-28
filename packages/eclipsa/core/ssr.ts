@@ -94,7 +94,7 @@ export const renderSSRAsync = async (
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
       if (container.pendingSuspensePromises.size > 0) {
-        await Promise.allSettled([...container.pendingSuspensePromises])
+        await Promise.allSettled(container.pendingSuspensePromises)
         continue
       }
       asyncSignalSnapshotCache.clear()
