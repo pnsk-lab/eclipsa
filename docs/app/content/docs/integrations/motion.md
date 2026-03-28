@@ -5,6 +5,10 @@ description: Animate Eclipsa components with @eclipsa/motion.
 
 # Motion
 
+[motion](https://motion.dev/) (fka framer-motion) integration for eclipsa.
+
+## Installation
+
 Install `@eclipsa/motion`:
 
 ```bash
@@ -13,6 +17,8 @@ pnpm add @eclipsa/motion
 yarn add @eclipsa/motion
 npm install @eclipsa/motion
 ```
+
+## Usage
 
 Animate elements with the familiar `motion.div` API:
 

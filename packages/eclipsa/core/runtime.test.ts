@@ -6,10 +6,13 @@ import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
 import { Link, useLocation } from './router.tsx'
 import { onCleanup, onMount, useComputed$, useSignal, useWatch } from './signal.ts'
 import {
+  createDelegatedEvent,
   createDetachedRuntimeSignal,
+  dispatchDocumentEvent,
   flushDirtyComponents,
   renderClientInsertable,
   restoreResumedLocalSignalEffects,
+  syncBoundElementSignal,
   tryPatchBoundaryContentsInPlace,
   type RuntimeContainer,
   withRuntimeContainer,
@@ -21,6 +24,7 @@ class FakeNode {
   static TEXT_NODE = 3
   childNodes: FakeNode[] = []
   nodeType = 0
+  ownerDocument: FakeDocument | null = null
   parentNode: FakeNode | null = null
 
   remove() {
@@ -94,7 +98,14 @@ class FakeElement extends FakeNode {
   attributes = new Map<string, string>()
   childNodes: FakeNode[] = []
   namespaceURI = 'http://www.w3.org/1999/xhtml'
+  checked = false
+  #eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
   #className = ''
+  selectionDirection: 'backward' | 'forward' | 'none' | null = null
+  selectionEnd: number | null = null
+  selectionStart: number | null = null
+  type = 'text'
+  value = ''
 
   constructor(readonly tagName: string) {
     super()
@@ -127,6 +138,7 @@ class FakeElement extends FakeNode {
 
   appendChild(node: FakeNode) {
     this.#detachFromCurrentParent(node)
+    node.ownerDocument = this.ownerDocument
     node.parentNode = this
     this.childNodes.push(node)
     return node
@@ -134,6 +146,7 @@ class FakeElement extends FakeNode {
 
   insertBefore(node: FakeNode, referenceNode: FakeNode | null) {
     this.#detachFromCurrentParent(node)
+    node.ownerDocument = this.ownerDocument
     node.parentNode = this
     if (!referenceNode) {
       this.childNodes.push(node)
@@ -153,10 +166,12 @@ class FakeElement extends FakeNode {
     const index = this.childNodes.indexOf(child)
     if (index < 0) {
       this.childNodes.push(node)
+      node.ownerDocument = this.ownerDocument
       node.parentNode = this
       return child
     }
     this.childNodes[index] = node
+    node.ownerDocument = this.ownerDocument
     node.parentNode = this
     child.parentNode = null
     return child
@@ -182,26 +197,160 @@ class FakeElement extends FakeNode {
     return this.attributes.get(name) ?? null
   }
 
+  hasAttribute(name: string) {
+    return this.attributes.has(name)
+  }
+
   getAttributeNames() {
     return [...this.attributes.keys()]
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    let listeners = this.#eventListeners.get(type)
+    if (!listeners) {
+      listeners = new Set()
+      this.#eventListeners.set(type, listeners)
+    }
+    listeners.add(listener)
+  }
+
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    this.#eventListeners.get(type)?.delete(listener)
+  }
+
+  dispatchEvent(event: Event) {
+    for (const listener of this.#eventListeners.get(event.type) ?? []) {
+      if (typeof listener === 'function') {
+        listener.call(this, event)
+        continue
+      }
+      listener.handleEvent(event)
+    }
+    return !event.defaultPrevented
+  }
+
+  get valueAsNumber() {
+    if (this.value.trim() === '') {
+      return Number.NaN
+    }
+    const parsed = Number(this.value)
+    return Number.isNaN(parsed) ? Number.NaN : parsed
   }
 
   override get textContent() {
     return this.childNodes.map((child) => child.textContent ?? '').join('')
   }
+
+  get children() {
+    const children = this.childNodes.filter((child) => child instanceof FakeElement) as FakeElement[]
+    return {
+      item(index: number) {
+        return children[index] ?? null
+      },
+    }
+  }
+
+  get isConnected() {
+    let cursor: FakeNode | null = this
+    while (cursor) {
+      if (cursor === (this.ownerDocument?.body as unknown as FakeNode | undefined)) {
+        return true
+      }
+      cursor = cursor.parentNode
+    }
+    return false
+  }
+
+  get parentElement(): FakeElement | null {
+    return this.parentNode instanceof FakeElement ? this.parentNode : null
+  }
+
+  contains(node: FakeNode | null) {
+    let cursor = node
+    while (cursor) {
+      if (cursor === this) {
+        return true
+      }
+      cursor = cursor.parentNode
+    }
+    return false
+  }
+
+  focus() {
+    if (this.ownerDocument) {
+      this.ownerDocument.activeElement = this as unknown as Element
+    }
+  }
+
+  setSelectionRange(start: number, end: number, direction?: 'backward' | 'forward' | 'none') {
+    this.selectionStart = start
+    this.selectionEnd = end
+    this.selectionDirection = direction ?? 'none'
+  }
 }
 
 class FakeDocument {
+  activeElement: Element | null = null
+  body: HTMLElement
+  defaultView = {
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame(callback: FrameRequestCallback) {
+      callback(0)
+      return 0
+    },
+    setTimeout(callback: () => void) {
+      callback()
+      return 0
+    },
+  }
+
+  constructor() {
+    const body = new FakeElement('body')
+    body.ownerDocument = this
+    this.body = body as unknown as HTMLElement
+  }
+
   createComment(data: string) {
-    return new FakeComment(data) as unknown as Comment
+    const comment = new FakeComment(data)
+    comment.ownerDocument = this
+    return comment as unknown as Comment
   }
 
   createElement(tagName: string) {
-    return new FakeElement(tagName) as unknown as HTMLElement
+    const element = new FakeElement(tagName)
+    element.ownerDocument = this
+    return element as unknown as HTMLElement
   }
 
   createTextNode(data: string) {
-    return new FakeText(data) as unknown as Text
+    const text = new FakeText(data)
+    text.ownerDocument = this
+    return text as unknown as Text
+  }
+
+  createTreeWalker(root: FakeNode) {
+    const comments: FakeComment[] = []
+    const visit = (node: FakeNode) => {
+      if (node instanceof FakeComment) {
+        comments.push(node)
+      }
+      for (const child of node.childNodes) {
+        visit(child)
+      }
+    }
+    visit(root)
+
+    let index = -1
+    return {
+      currentNode: null as Node | null,
+      nextNode() {
+        index++
+        const next = comments[index] ?? null
+        this.currentNode = next as unknown as Node | null
+        return next
+      },
+    }
   }
 }
 
@@ -237,29 +386,61 @@ const createContainer = () =>
   }) as RuntimeContainer
 
 const withFakeNodeGlobal = <T>(fn: () => T) => {
+  const OriginalComment = globalThis.Comment
   const OriginalElement = globalThis.Element
   const OriginalHTMLElement = globalThis.HTMLElement
+  const OriginalHTMLInputElement = globalThis.HTMLInputElement
+  const OriginalHTMLSelectElement = globalThis.HTMLSelectElement
+  const OriginalHTMLTextAreaElement = globalThis.HTMLTextAreaElement
   const OriginalNode = globalThis.Node
+  const OriginalNodeFilter = globalThis.NodeFilter
+  const OriginalText = globalThis.Text
+  globalThis.Comment = FakeComment as unknown as typeof Comment
   globalThis.Element = FakeElement as unknown as typeof Element
   globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
+  globalThis.HTMLInputElement = FakeElement as unknown as typeof HTMLInputElement
+  globalThis.HTMLSelectElement = FakeElement as unknown as typeof HTMLSelectElement
+  globalThis.HTMLTextAreaElement = FakeElement as unknown as typeof HTMLTextAreaElement
   globalThis.Node = FakeNode as unknown as typeof Node
+  globalThis.NodeFilter = {
+    SHOW_COMMENT: 128,
+  } as typeof NodeFilter
+  globalThis.Text = FakeText as unknown as typeof Text
   try {
     const result = fn()
     if (result instanceof Promise) {
       return result.finally(() => {
+        globalThis.Comment = OriginalComment
         globalThis.Element = OriginalElement
         globalThis.HTMLElement = OriginalHTMLElement
+        globalThis.HTMLInputElement = OriginalHTMLInputElement
+        globalThis.HTMLSelectElement = OriginalHTMLSelectElement
+        globalThis.HTMLTextAreaElement = OriginalHTMLTextAreaElement
         globalThis.Node = OriginalNode
+        globalThis.NodeFilter = OriginalNodeFilter
+        globalThis.Text = OriginalText
       }) as T
     }
+    globalThis.Comment = OriginalComment
     globalThis.Element = OriginalElement
     globalThis.HTMLElement = OriginalHTMLElement
+    globalThis.HTMLInputElement = OriginalHTMLInputElement
+    globalThis.HTMLSelectElement = OriginalHTMLSelectElement
+    globalThis.HTMLTextAreaElement = OriginalHTMLTextAreaElement
     globalThis.Node = OriginalNode
+    globalThis.NodeFilter = OriginalNodeFilter
+    globalThis.Text = OriginalText
     return result
   } catch (error) {
+    globalThis.Comment = OriginalComment
     globalThis.Element = OriginalElement
     globalThis.HTMLElement = OriginalHTMLElement
+    globalThis.HTMLInputElement = OriginalHTMLInputElement
+    globalThis.HTMLSelectElement = OriginalHTMLSelectElement
+    globalThis.HTMLTextAreaElement = OriginalHTMLTextAreaElement
     globalThis.Node = OriginalNode
+    globalThis.NodeFilter = OriginalNodeFilter
+    globalThis.Text = OriginalText
     throw error
   }
 }
@@ -284,6 +465,31 @@ const flushAsync = async () => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('createDelegatedEvent', () => {
+  it('preserves native getters and methods when currentTarget is overridden', () => {
+    class NativeLikeEvent extends Event {
+      constructor(private readonly eventTarget: EventTarget | null) {
+        super('click')
+      }
+
+      override get target() {
+        if (!(this instanceof NativeLikeEvent)) {
+          throw new TypeError('Illegal invocation')
+        }
+        return this.eventTarget
+      }
+    }
+
+    const target = {} as EventTarget
+    const currentTarget = new FakeElement('div') as unknown as Element
+    const delegated = createDelegatedEvent(new NativeLikeEvent(target), currentTarget)
+
+    expect(delegated.target).toBe(target)
+    expect(delegated.currentTarget).toBe(currentTarget)
+    expect(() => delegated.preventDefault()).not.toThrow()
+  })
+})
 
 describe('renderClientInsertable', () => {
   it('keeps nodes returned from function arrays during client rerenders', () => {
@@ -315,6 +521,130 @@ describe('renderClientInsertable', () => {
       expect(element).toBeInstanceOf(FakeElement)
       expect(ref.value).toBe(element as unknown as HTMLElement)
       expect(element?.tagName).toBe('div')
+    })
+  })
+
+  it('serializes and syncs bound input signals', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const value = createDetachedRuntimeSignal(container, 's0', 'alpha')
+      const checked = createDetachedRuntimeSignal(container, 's1', false)
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            'div',
+            {
+              children: [
+                jsxDEV('input', { 'bind:value': value }, null, false, {}),
+                jsxDEV('input', { 'bind:checked': checked, type: 'checkbox' }, null, false, {}),
+              ],
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      )
+      const root = nodes[0] as unknown as FakeElement | undefined
+      const textInput = root?.childNodes[0] as unknown as FakeElement | undefined
+      const checkbox = root?.childNodes[1] as unknown as FakeElement | undefined
+
+      expect(textInput?.getAttribute('data-e-bind-value')).toBe('s0')
+      expect(textInput?.value).toBe('alpha')
+      expect(checkbox?.getAttribute('data-e-bind-checked')).toBe('s1')
+      expect(checkbox?.checked).toBe(false)
+
+      if (!textInput || !checkbox) {
+        throw new Error('Expected rendered inputs.')
+      }
+
+      textInput.value = 'beta'
+      checkbox.checked = true
+
+      expect(syncBoundElementSignal(container, textInput as unknown as EventTarget)).toBe(true)
+      expect(syncBoundElementSignal(container, checkbox as unknown as EventTarget)).toBe(true)
+      expect(value.value).toBe('beta')
+      expect(checked.value).toBe(true)
+    })
+  })
+
+  it('keeps direct client DOM bindings live without manual native input workarounds', () => {
+    withFakeNodeGlobal(() => {
+      const value = createDetachedRuntimeSignal(createContainer(), 's0', 'alpha')
+      const input = new FakeElement('input') as unknown as Element
+
+      attr(input, 'bind:value', () => value)
+
+      expect((input as unknown as FakeElement).value).toBe('alpha')
+
+      ;(input as unknown as FakeElement).value = 'beta'
+      ;(input as unknown as FakeElement).dispatchEvent(new Event('input'))
+      expect(value.value).toBe('beta')
+
+      value.value = 'gamma'
+      expect((input as unknown as FakeElement).value).toBe('gamma')
+    })
+  })
+
+  it('restores focus for bound inputs that rerender without an onInput handler', async () => {
+    await withFakeNodeGlobal(async () => {
+      let inputRef!: { value: HTMLInputElement | undefined }
+
+      const AppBody = () => {
+        const query = useSignal('')
+        inputRef = useSignal<HTMLInputElement | undefined>()
+        return jsxDEV('input', { 'bind:value': query, ref: inputRef, type: 'text' }, null, false, {})
+      }
+
+      const App = __eclipsaComponent(
+        () => AppBody(),
+        'component-bind-focus',
+        () => [],
+      )
+
+      class TargetedInputEvent extends Event {
+        constructor(private readonly inputTarget: EventTarget | null) {
+          super('input')
+        }
+
+        override get target() {
+          return this.inputTarget
+        }
+      }
+
+      const container = createContainer()
+      container.imports.set(
+        'component-bind-focus',
+        Promise.resolve({
+          default: () => AppBody(),
+        }),
+      )
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes as unknown as FakeNode[]) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+      const initialInput = nodes.find((node) => node instanceof FakeElement) as FakeElement | undefined
+      if (!initialInput) {
+        throw new Error('Expected rendered input.')
+      }
+      initialInput.focus()
+      initialInput.value = 'a'
+      initialInput.selectionStart = 1
+      initialInput.selectionEnd = 1
+
+      await dispatchDocumentEvent(container, new TargetedInputEvent(initialInput as unknown as EventTarget))
+      await flushAsync()
+
+      expect(inputRef.value).toBeDefined()
+      expect(doc.activeElement).toBe(initialInput as unknown as Element)
+      expect(initialInput.value).toBe('a')
+      expect(initialInput.selectionStart).toBe(1)
+      expect(initialInput.selectionEnd).toBe(1)
     })
   })
 
@@ -464,6 +794,58 @@ describe('renderClientInsertable', () => {
       expect(getButton()).toBe(initialButton)
       expect(getButton()?.textContent).toBe('Count 2')
       expect(container.signals.get('s0')?.subscribers.has('c0')).toBe(true)
+    })
+  })
+
+  it('wraps generated __scope reference failures with an explicit resumable runtime error', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const parent = new FakeElement('div')
+      const start = container.doc!.createComment('ec:c:c0:start') as unknown as FakeNode
+      const end = container.doc!.createComment('ec:c:c0:end') as unknown as FakeNode
+
+      parent.appendChild(start)
+      parent.appendChild(end)
+
+      container.scopes.set('sc0', [])
+      container.components.set('c0', {
+        active: false,
+        didMount: false,
+        end: end as unknown as Comment,
+        id: 'c0',
+        mountCleanupSlots: [],
+        parentId: '$root',
+        projectionSlots: null,
+        props: {},
+        rawProps: null,
+        scopeId: 'sc0',
+        signalIds: [],
+        start: start as unknown as Comment,
+        symbol: 'broken-symbol',
+        suspensePromise: null,
+        visibleCount: 0,
+        watchCount: 0,
+      })
+      container.imports.set(
+        'broken-symbol',
+        Promise.resolve({
+          default: () => {
+            throw new ReferenceError('__scope is not defined')
+          },
+        }),
+      )
+      container.dirty.add('c0')
+
+      const error = await flushDirtyComponents(container).catch((error) => error)
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).name).toBe('EclipsaRuntimeError')
+      expect((error as Error).message).toMatch(
+        /Eclipsa runtime failed while rerendering component "c0", symbol "broken-symbol"\./,
+      )
+      expect((error as Error).message).toMatch(
+        /same-file helper was transformed incorrectly during symbol compilation/i,
+      )
     })
   })
 

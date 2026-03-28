@@ -1,4 +1,8 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import * as fs from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
+import { analyzeModule } from '../analyze/mod.ts'
 import { compileClientModule } from './mod.ts'
 
 describe('compileClientModule', () => {
@@ -128,6 +132,31 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('<label>Right<input></input></label>')
   })
 
+  it('embeds static intrinsic attributes into the template html', async () => {
+    const resultCode = await compileClientModule(`<div class="card" data-testid="probe" />`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('<div class=\\"card\\" data-testid=\\"probe\\"></div>')
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+    expect(resultCode).not.toContain('_attr(_cloned, "data-testid"')
+  })
+
+  it('keeps dynamic and runtime-only attributes on the runtime attr path', async () => {
+    const resultCode = await compileClientModule(
+      `<div class="card" data-id={id} dangerouslySetInnerHTML="<span>raw</span>" />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('<div class=\\"card\\"></div>')
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+    expect(resultCode).toContain('_attr(_cloned, "data-id", () => id);')
+    expect(resultCode).toContain('_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");')
+  })
+
   it('emits dangerouslySetInnerHTML through runtime attr application', async () => {
     const resultCode = await compileClientModule(
       `<div dangerouslySetInnerHTML="<span>raw</span>" />`,
@@ -151,8 +180,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('<svg><sodipodi:namedview></sodipodi:namedview></svg>')
-    expect(resultCode).toContain('"xml:space"')
+    expect(resultCode).toContain('<svg><sodipodi:namedview xml:space=\\"preserve\\"></sodipodi:namedview></svg>')
+    expect(resultCode).not.toContain('_attr(')
   })
 
   it('accepts raw TSX without a JS-side preprocess step', async () => {
@@ -184,5 +213,26 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('=> <li')
     expect(resultCode).toContain('_createComponent(For')
     expect(resultCode).toContain('<li><!-- 0 --></li>')
+  })
+
+  it('does not emit free __scope references before the docs layout default symbol', async () => {
+    const clientDir = path.dirname(fileURLToPath(import.meta.url))
+    const layoutPath = path.resolve(clientDir, '../../../../docs/app/docs/[...slug]/+layout.tsx')
+    const tsx = await fs.readFile(layoutPath, 'utf8')
+    const analyzed = await analyzeModule(tsx, layoutPath)
+    const component = [...analyzed.symbols.values()].find(
+      (symbol) => symbol.kind === 'component' && symbol.code.includes('export default'),
+    )
+
+    expect(component).toBeDefined()
+
+    const resultCode = await compileClientModule(component!.code, 'docs-layout-symbol.tsx', {
+      hmr: false,
+    })
+    const defaultMatch = resultCode.match(/export default \(__scope(?:, props)?\)/)
+    const defaultIndex = defaultMatch?.index ?? -1
+
+    expect(defaultIndex).toBeGreaterThan(0)
+    expect(resultCode.slice(0, defaultIndex)).not.toContain('__scope')
   })
 })

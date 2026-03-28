@@ -5,6 +5,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import type { StandardSchemaIssue, StandardSchemaV1 } from 'eclipsa'
 import { highlightHtml } from './highlight.ts'
+import { buildContentSearchIndex, resolveContentSearchOptions } from './search.ts'
 import type { CollectionEntry, ContentFilter, ContentRuntimeModule } from './mod.ts'
 import { CONTENT_COLLECTION_MARKER } from './types.ts'
 import type {
@@ -17,6 +18,9 @@ import type {
   ContentLoader,
   ContentLoaderContext,
   ContentLoaderObject,
+  ContentSearchDocument,
+  ContentSearchIndex,
+  ResolvedContentSearchOptions,
   ContentSourceEntry,
   DefinedCollection,
   GlobLoader,
@@ -32,6 +36,7 @@ interface ParsedFrontmatter {
 interface ResolvedManifest {
   collections: Map<AnyCollection, BaseContentEntry[]>
   markdownByCollectionName: Map<string, ContentMarkdownOptions | undefined>
+  searchByCollectionName: Map<string, ResolvedContentSearchOptions>
   entriesByCollection: Map<AnyCollection, Map<string, BaseContentEntry>>
 }
 
@@ -223,6 +228,7 @@ export const resolveCollections = async ({
   const byCollection = new Map<AnyCollection, BaseContentEntry[]>()
   const entriesByCollection = new Map<AnyCollection, Map<string, BaseContentEntry>>()
   const markdownByCollectionName = new Map<string, ContentMarkdownOptions | undefined>()
+  const searchByCollectionName = new Map<string, ResolvedContentSearchOptions>()
   const definedCollections = Object.entries(collectionsModule).filter(
     (entry): entry is [string, DefinedCollection<any>] => isDefinedCollection(entry[1]),
   )
@@ -251,10 +257,12 @@ export const resolveCollections = async ({
     byCollection.set(definition, resolvedEntries)
     entriesByCollection.set(definition, entriesById)
     markdownByCollectionName.set(collectionName, definition.markdown)
+    searchByCollectionName.set(collectionName, resolveContentSearchOptions(definition.search))
   }
   return {
     collections: byCollection,
     markdownByCollectionName,
+    searchByCollectionName,
     entriesByCollection,
   }
 }
@@ -287,10 +295,48 @@ const loadMarkdownTransform = async () => {
   return markdownTransform
 }
 
-const renderMarkdown = async (
-  entry: BaseContentEntry,
-  markdownOptions: ContentMarkdownOptions | undefined,
-): Promise<RenderedContent> => {
+const decodeHtmlEntities = (value: string) =>
+  value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&nbsp;', ' ')
+
+const stripHtml = (html: string) =>
+  decodeHtmlEntities(
+    html
+      .replaceAll(/<style[\s\S]*?<\/style>/gu, ' ')
+      .replaceAll(/<script[\s\S]*?<\/script>/gu, ' ')
+      .replaceAll(/<[^>]+>/gu, ' ')
+      .replaceAll(/\s+/gu, ' ')
+      .trim(),
+  )
+
+const extractMarkdownCode = (source: string) => {
+  const codeBlocks = new Set<string>()
+  for (const match of source.matchAll(/```[\t ]*[^\n\r]*\r?\n([\s\S]*?)```/gu)) {
+    const code = match[1]?.trim()
+    if (code) {
+      codeBlocks.add(code)
+    }
+  }
+  for (const match of source.matchAll(/`([^`\n\r]+)`/gu)) {
+    const code = match[1]?.trim()
+    if (code) {
+      codeBlocks.add(code)
+    }
+  }
+  return [...codeBlocks]
+}
+
+const resolveSearchUrl = (base: string, entry: BaseContentEntry) => {
+  const normalizedBase = base === '' ? '/' : base.endsWith('/') ? base : `${base}/`
+  return `${normalizedBase}${entry.collection}/${entry.id}`.replaceAll(/\/+/g, '/')
+}
+
+const transformMarkdownEntry = async (entry: BaseContentEntry) => {
   const transform = await loadMarkdownTransform()
   const result = transform(entry.body, {
     autolinks: true,
@@ -307,6 +353,36 @@ const renderMarkdown = async (
       `Failed to render markdown for ${entry.filePath}: ${result.errors.join('; ')}`,
     )
   }
+  return result
+}
+
+const createSearchDocument = async (
+  entry: BaseContentEntry,
+  base: string,
+): Promise<ContentSearchDocument> => {
+  const result = await transformMarkdownEntry(entry)
+  const headings = result.toc.map((heading) => heading.text)
+  const title =
+    typeof entry.data.title === 'string'
+      ? entry.data.title
+      : result.toc.find((heading) => heading.depth === 1)?.text ?? entry.id
+
+  return {
+    body: stripHtml(result.html),
+    code: extractMarkdownCode(entry.body),
+    collection: entry.collection,
+    headings,
+    id: entry.id,
+    title,
+    url: resolveSearchUrl(base, entry),
+  }
+}
+
+const renderMarkdown = async (
+  entry: BaseContentEntry,
+  markdownOptions: ContentMarkdownOptions | undefined,
+): Promise<RenderedContent> => {
+  const result = await transformMarkdownEntry(entry)
   const headings = result.toc.map(
     (heading) =>
       ({
@@ -320,6 +396,48 @@ const renderMarkdown = async (
     Content: createContentRenderer(html),
     headings,
     html,
+  }
+}
+
+export const createContentSearch = async ({
+  collectionsModule,
+  configPath,
+  root,
+  base,
+}: CreateContentRuntimeOptions & {
+  base: string
+}): Promise<{
+  index: ContentSearchIndex
+  options: ResolvedContentSearchOptions
+}> => {
+  const manifest = await resolveCollections({
+    collectionsModule,
+    configPath,
+    root,
+  })
+  const documents: ContentSearchDocument[] = []
+  let resolvedOptions = resolveContentSearchOptions(false)
+
+  for (const entries of manifest.collections.values()) {
+    const collectionName = entries[0]?.collection
+    if (!collectionName) {
+      continue
+    }
+    const searchOptions = manifest.searchByCollectionName.get(collectionName)
+    if (!searchOptions?.enabled) {
+      continue
+    }
+    if (!resolvedOptions.enabled) {
+      resolvedOptions = searchOptions
+    }
+    for (const entry of entries) {
+      documents.push(await createSearchDocument(entry, base))
+    }
+  }
+
+  return {
+    index: buildContentSearchIndex(documents, resolvedOptions),
+    options: resolvedOptions,
   }
 }
 

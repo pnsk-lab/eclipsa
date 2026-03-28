@@ -174,6 +174,21 @@ describe('Link', () => {
     expect(enabled.html).not.toContain(' prefetch=')
   })
 
+  it('skips internal router attrs when document navigation is requested', () => {
+    const rendered = renderSSR(() => (
+      <Link href="/playground" prefetch="hover" reloadDocument replace>
+        Playground
+      </Link>
+    ))
+
+    expect(rendered.html).toContain('href="/playground"')
+    expect(rendered.html).not.toContain('data-e-link=')
+    expect(rendered.html).not.toContain('data-e-link-prefetch=')
+    expect(rendered.html).not.toContain('data-e-link-replace=')
+    expect(rendered.html).not.toContain(' reloadDocument=')
+    expect(rendered.html).not.toContain(' replace=')
+  })
+
   it('renders jsx children on the client without stringifying them', () => {
     withFakeDom(() => {
       const Icon = () => (

@@ -88,10 +88,15 @@ const RENDER_REFERENCE_KIND = 'render'
 const REF_SIGNAL_ATTR = 'data-e-ref'
 const STREAM_STATE_KEY = '__eclipsa_stream'
 const PENDING_RESUME_LINK_KEY = '__eclipsa_pending_route_link'
+const BIND_VALUE_PROP = 'bind:value'
+const BIND_CHECKED_PROP = 'bind:checked'
+const BIND_VALUE_ATTR = 'data-e-bind-value'
+const BIND_CHECKED_ATTR = 'data-e-bind-checked'
 type DomConstructorName =
   | 'Element'
   | 'HTMLElement'
   | 'HTMLInputElement'
+  | 'HTMLSelectElement'
   | 'HTMLTextAreaElement'
   | 'HTMLAnchorElement'
   | 'HTMLFormElement'
@@ -229,6 +234,9 @@ const isHTMLElementNode = (value: unknown): value is HTMLElement =>
 
 const isHTMLInputElementNode = (value: unknown): value is HTMLInputElement =>
   isDomInstance<HTMLInputElement>(value, 'HTMLInputElement')
+
+const isHTMLSelectElementNode = (value: unknown): value is HTMLSelectElement =>
+  isDomInstance<HTMLSelectElement>(value, 'HTMLSelectElement')
 
 const isHTMLTextAreaElementNode = (value: unknown): value is HTMLTextAreaElement =>
   isDomInstance<HTMLTextAreaElement>(value, 'HTMLTextAreaElement')
@@ -372,6 +380,40 @@ interface RuntimeSymbolModule {
 interface ReactiveEffect {
   fn: () => void
   signals: Set<SignalRecord>
+}
+
+const isMissingGeneratedScopeReferenceError = (error: unknown): error is ReferenceError =>
+  error instanceof ReferenceError && /\b__scope\b/.test(error.message)
+
+const toRuntimeError = (error: unknown) =>
+  error instanceof Error ? error : new Error(typeof error === 'string' ? error : String(error))
+
+const wrapGeneratedScopeReferenceError = (
+  error: unknown,
+  context: {
+    componentId?: string
+    phase: string
+    symbolId?: string
+  },
+) => {
+  const baseError = toRuntimeError(error)
+  if (!isMissingGeneratedScopeReferenceError(baseError)) {
+    return baseError
+  }
+
+  const location = [
+    context.componentId ? `component "${context.componentId}"` : null,
+    context.symbolId ? `symbol "${context.symbolId}"` : null,
+  ]
+    .filter(Boolean)
+    .join(', ')
+
+  const wrapped = new Error(
+    `Eclipsa runtime failed while ${context.phase}${location ? ` ${location}` : ''}. The generated resumable symbol referenced "__scope" outside its valid scope. This usually means a same-file helper was transformed incorrectly during symbol compilation. Inline that helper into the component as a workaround. Original error: ${baseError.message}`,
+    { cause: baseError },
+  )
+  wrapped.name = 'EclipsaRuntimeError'
+  return wrapped
 }
 
 type WatchDependency = { value: unknown } | (() => unknown)
@@ -1478,6 +1520,15 @@ const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
 }
 
 const getRefSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+
+const getBindableSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+
+const readBindableSignalValue = (value: unknown) => {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function') || !('value' in value)) {
+    return undefined
+  }
+  return (value as { value: unknown }).value
+}
 
 export const assignRuntimeRef = (
   value: unknown,
@@ -3334,6 +3385,31 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const eventName = toEventName(name)
     const value = resolved.props[name]
 
+    if (name === BIND_VALUE_PROP) {
+      const signalId = getBindableSignalId(value)
+      if (!signalId) {
+        continue
+      }
+      attrParts.push(`${BIND_VALUE_ATTR}="${escapeAttr(signalId)}"`)
+      const currentValue = readBindableSignalValue(value)
+      if (currentValue !== undefined && currentValue !== null) {
+        attrParts.push(`value="${escapeAttr(String(currentValue))}"`)
+      }
+      continue
+    }
+
+    if (name === BIND_CHECKED_PROP) {
+      const signalId = getBindableSignalId(value)
+      if (!signalId) {
+        continue
+      }
+      attrParts.push(`${BIND_CHECKED_ATTR}="${escapeAttr(signalId)}"`)
+      if (readBindableSignalValue(value)) {
+        attrParts.push('checked')
+      }
+      continue
+    }
+
     if (eventName) {
       const eventMeta = getRuntimeEventDescriptor(value)
       if (!eventMeta || !container) {
@@ -3498,6 +3574,30 @@ const applyElementProp = (
   value: unknown,
   container: RuntimeContainer,
 ) => {
+  if (name === BIND_VALUE_PROP) {
+    const signalId = getBindableSignalId(value)
+    if (signalId) {
+      element.setAttribute(BIND_VALUE_ATTR, signalId)
+    }
+    if ('value' in element) {
+      ;(element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value = String(
+        readBindableSignalValue(value) ?? '',
+      )
+    }
+    return
+  }
+
+  if (name === BIND_CHECKED_PROP) {
+    const signalId = getBindableSignalId(value)
+    if (signalId) {
+      element.setAttribute(BIND_CHECKED_ATTR, signalId)
+    }
+    if (isHTMLInputElementNode(element)) {
+      element.checked = Boolean(readBindableSignalValue(value))
+    }
+    return
+  }
+
   const eventName = toEventName(name)
   if (eventName) {
     const eventMeta = getRuntimeEventDescriptor(value)
@@ -5276,34 +5376,43 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   component.reuseProjectionSlotDomOnActivate = false
   const parentRoot = component.start.parentNode
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
-  const nodes = pushContainer(container, () =>
-    pushFrame(frame, () => {
-      const renderProps =
-        rawProps
-          ? createRenderProps(
-              component.id,
-              {
-                captures: () => [],
-                projectionSlots: component.projectionSlots ?? undefined,
-                symbol: activateSymbol,
-              },
-              rawProps,
-            )
-          : component.props && typeof component.props === 'object'
-          ? createRenderProps(
-              component.id,
-              {
-                captures: () => [],
-                projectionSlots: component.projectionSlots ?? undefined,
-                symbol: activateSymbol,
-              },
-              component.props as Record<string, unknown>,
-            )
-          : component.props
-      const rendered = module.default(scope, renderProps)
-      return toMountedNodes(rendered, container)
-    }),
-  )
+  let nodes: Node[]
+  try {
+    nodes = pushContainer(container, () =>
+      pushFrame(frame, () => {
+        const renderProps =
+          rawProps
+            ? createRenderProps(
+                component.id,
+                {
+                  captures: () => [],
+                  projectionSlots: component.projectionSlots ?? undefined,
+                  symbol: activateSymbol,
+                },
+                rawProps,
+              )
+            : component.props && typeof component.props === 'object'
+            ? createRenderProps(
+                component.id,
+                {
+                  captures: () => [],
+                  projectionSlots: component.projectionSlots ?? undefined,
+                  symbol: activateSymbol,
+                },
+                component.props as Record<string, unknown>,
+              )
+            : component.props
+        const rendered = module.default(scope, renderProps)
+        return toMountedNodes(rendered, container)
+      }),
+    )
+  } catch (error) {
+    throw wrapGeneratedScopeReferenceError(error, {
+      componentId,
+      phase: 'rerendering',
+      symbolId: activateSymbol,
+    })
+  }
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const patched =
@@ -6287,12 +6396,69 @@ const parseBinding = (value: string): { scopeId: string; symbolId: string } => {
 const withClientContainer = async <T>(container: RuntimeContainer, fn: () => Promise<T> | T) =>
   pushContainer(container, () => Promise.resolve(fn()))
 
-const createDelegatedEvent = (event: Event, currentTarget: Element) =>
-  Object.create(event, {
-    currentTarget: {
-      value: currentTarget,
+export const createDelegatedEvent = (event: Event, currentTarget: Element) =>
+  new Proxy(event, {
+    get(target, property) {
+      if (property === 'currentTarget') {
+        return currentTarget
+      }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
     },
   }) as Event
+
+const readBoundElementValue = (
+  element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  currentValue: unknown,
+) => {
+  if (
+    isHTMLInputElementNode(element)
+    && typeof currentValue === 'number'
+    && (element.type === 'number' || element.type === 'range')
+    && !Number.isNaN(element.valueAsNumber)
+  ) {
+    return element.valueAsNumber
+  }
+
+  return element.value
+}
+
+export const syncBoundElementSignal = (container: RuntimeContainer, target: EventTarget | null) => {
+  if (!isHTMLInputElementNode(target) && !isHTMLSelectElementNode(target) && !isHTMLTextAreaElementNode(target)) {
+    return false
+  }
+
+  let didSync = false
+  const valueSignalId = target.getAttribute(BIND_VALUE_ATTR)
+  if (valueSignalId) {
+    const record = container.signals.get(valueSignalId)
+    if (record) {
+      const nextValue = readBoundElementValue(target, record.value)
+      if (record.value !== nextValue) {
+        record.value = nextValue
+        notifySignalWrite(container, record)
+      }
+      didSync = true
+    }
+  }
+
+  if (isHTMLInputElementNode(target)) {
+    const checkedSignalId = target.getAttribute(BIND_CHECKED_ATTR)
+    if (checkedSignalId) {
+      const record = container.signals.get(checkedSignalId)
+      if (record) {
+        const nextChecked = target.checked
+        if (record.value !== nextChecked) {
+          record.value = nextChecked
+          notifySignalWrite(container, record)
+        }
+        didSync = true
+      }
+    }
+  }
+
+  return didSync
+}
 
 export const createClientLazyListener = (
   descriptor: EventDescriptor | LazyMeta,
@@ -6305,9 +6471,16 @@ export const createClientLazyListener = (
 
   return async (event: Event) => {
     const module = await loadSymbol(container, descriptor.symbol)
-    await withClientContainer(container, async () => {
-      await module.default(descriptor.captures(), createDelegatedEvent(event, currentTarget))
-    })
+    try {
+      await withClientContainer(container, async () => {
+        await module.default(descriptor.captures(), createDelegatedEvent(event, currentTarget))
+      })
+    } catch (error) {
+      throw wrapGeneratedScopeReferenceError(error, {
+        phase: 'running a lazy event handler for',
+        symbolId: descriptor.symbol,
+      })
+    }
     await flushDirtyComponents(container)
   }
 }
@@ -6317,28 +6490,43 @@ export const dispatchResumeEvent = async (container: RuntimeContainer, event: Ev
   if (!interactiveTarget) {
     return
   }
-  const pendingFocus = capturePendingFocusRestore(container, event.target)
 
   const binding = interactiveTarget.getAttribute(`data-e-on${event.type}`)
   if (!binding) {
     return
   }
+  const pendingFocus = capturePendingFocusRestore(container, event.target)
 
   const { scopeId, symbolId } = parseBinding(binding)
   const module = await loadSymbol(container, symbolId)
   const scope = materializeScope(container, scopeId)
-  await withClientContainer(container, async () => {
-    await module.default(
-      scope,
-      createDelegatedEvent(event, interactiveTarget),
-    )
-  })
+  try {
+    await withClientContainer(container, async () => {
+      await module.default(
+        scope,
+        createDelegatedEvent(event, interactiveTarget),
+      )
+    })
+  } catch (error) {
+    throw wrapGeneratedScopeReferenceError(error, {
+      phase: 'running a resumable event handler for',
+      symbolId,
+    })
+  }
   await flushDirtyComponents(container)
   restorePendingFocus(container, pendingFocus)
 }
 
-const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
+export const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
+  const didSyncBoundSignal =
+    (event.type === 'input' || event.type === 'change')
+    && syncBoundElementSignal(container, event.target)
+  const pendingFocus = didSyncBoundSignal ? capturePendingFocusRestore(container, event.target) : null
   await dispatchResumeEvent(container, event)
+  if (didSyncBoundSignal) {
+    await flushDirtyComponents(container)
+    restorePendingFocus(container, pendingFocus)
+  }
   if (event.type === 'submit' && !event.defaultPrevented && isHTMLFormElementNode(event.target)) {
     const actionId = event.target.getAttribute(ACTION_FORM_ATTR)
     if (actionId) {

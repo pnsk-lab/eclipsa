@@ -95,9 +95,36 @@ sumHandle.action({ left: 1, right: 2 })
 
 const usePing = action(async () => 'pong')
 
+const useCounterStream = action(async function* () {
+  yield 0
+  yield 1
+})
+
 type PingHandle = ReturnType<typeof usePing>
 type _Ping = Expect<Equal<PingHandle, ActionHandle<unknown, string>>>
+
+type CounterStreamHandle = ReturnType<typeof useCounterStream>
+type _CounterStream = Expect<
+  Equal<
+    CounterStreamHandle,
+    ActionHandle<unknown, 0 | 1, AsyncGenerator<0 | 1, void, void>>
+  >
+>
+type _CounterSubmission = Expect<
+  Equal<CounterStreamHandle['lastSubmission'], ActionSubmission<unknown, 0 | 1> | undefined>
+>
 
 declare const pingHandle: PingHandle
 pingHandle.action()
 pingHandle.action('value')
+
+declare const counterStreamHandle: CounterStreamHandle
+type _CounterResult = Expect<Equal<typeof counterStreamHandle.result, 0 | 1 | undefined>>
+type _CounterInvoke = Expect<
+  Equal<
+    typeof counterStreamHandle.action,
+    (input?: unknown | FormData) => AsyncGenerator<0 | 1, void, void>
+  >
+>
+counterStreamHandle.action()
+counterStreamHandle.action('value')

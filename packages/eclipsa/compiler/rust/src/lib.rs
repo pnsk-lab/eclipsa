@@ -402,6 +402,10 @@ fn event_name_from_prop(name: &str) -> Option<String> {
     Some(output)
 }
 
+fn should_apply_attr_at_runtime(name: &str) -> bool {
+    name == "ref" || name == DANGEROUSLY_SET_INNER_HTML_PROP || event_name_from_prop(name).is_some()
+}
+
 fn collect_node_lookup_paths(path: &[usize]) -> Vec<Vec<usize>> {
     let mut prefixes = Vec::new();
     for index in 0..path.len() {
@@ -837,6 +841,7 @@ impl<'s> ClientCompiler<'s> {
         attrs: &mut Vec<ClientAttrOp>,
     ) -> Result<String, String> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
+        let mut html = format!("<{name}");
 
         for attribute in &element.opening_element.attributes {
             match attribute {
@@ -845,6 +850,23 @@ impl<'s> ClientCompiler<'s> {
                 }
                 JSXAttributeItem::Attribute(attribute) => {
                     let attr_name = get_jsx_attribute_name(&attribute.name)?;
+                    if !should_apply_attr_at_runtime(&attr_name) {
+                        match &attribute.value {
+                            None => {
+                                html.push_str(&format!(" {attr_name}"));
+                                continue;
+                            }
+                            Some(JSXAttributeValue::StringLiteral(value)) => {
+                                html.push_str(&format!(
+                                    " {attr_name}=\"{}\"",
+                                    escape_attr(value.value.as_str())
+                                ));
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     let value = match &attribute.value {
                         None => "true".to_string(),
                         Some(JSXAttributeValue::StringLiteral(value)) => js_string(value.value.as_str()),
@@ -862,8 +884,11 @@ impl<'s> ClientCompiler<'s> {
             }
         }
 
+        html.push('>');
         let children = self.render_fragment_children(&element.children, path, inserts, attrs)?;
-        Ok(format!("<{name}>{children}</{name}>"))
+        html.push_str(&children);
+        html.push_str(&format!("</{name}>"));
+        Ok(html)
     }
 }
 

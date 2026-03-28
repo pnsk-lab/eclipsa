@@ -1,4 +1,4 @@
-import { getCollection, getEntry, render } from '@eclipsa/content'
+import { getCollection, getEntry, render, type ContentHeading } from '@eclipsa/content'
 import { notFound, type GetStaticPaths } from 'eclipsa'
 import { docs } from '../content.config.ts'
 
@@ -29,6 +29,24 @@ export const getFirstDocHref = async () => {
   return `/docs/${entry.id}`
 }
 
+const attachHeadingIds = (html: string, headings: ContentHeading[]) => {
+  let headingIndex = 0
+
+  return html.replace(/<h([1-6])([^>]*)>/g, (match, depth, attrs) => {
+    const heading = headings[headingIndex]
+    if (!heading || heading.depth !== Number(depth)) {
+      return match
+    }
+    headingIndex += 1
+
+    if (/\sid=/.test(attrs)) {
+      return match
+    }
+
+    return `<h${depth}${attrs} id="${heading.slug}">`
+  })
+}
+
 export const getDocPage = async (slug: string | string[] | undefined) => {
   const id = normalizeSlugParam(slug)
   if (id === '') {
@@ -41,12 +59,14 @@ export const getDocPage = async (slug: string | string[] | undefined) => {
   }
 
   const rendered = await render(entry)
+  const html = attachHeadingIds(rendered.html, rendered.headings)
   return {
     description:
       typeof entry.data.description === 'string'
         ? entry.data.description
         : 'Markdown rendered with @eclipsa/content.',
-    html: rendered.html,
+    headings: rendered.headings,
+    html,
     title: typeof entry.data.title === 'string' ? entry.data.title : entry.id,
   }
 }

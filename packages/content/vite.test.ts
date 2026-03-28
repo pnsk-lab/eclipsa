@@ -7,6 +7,7 @@ import { eclipsaContent } from './vite.ts'
 
 const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
 const createdRoots: string[] = []
+const contentEntryImportPath = JSON.stringify(path.resolve(__dirname, 'mod.ts'))
 
 const createTempRoot = async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-content-vite-'))
@@ -72,6 +73,57 @@ describe('@eclipsa/content vite plugin', () => {
 
     expect(code).toContain('@eclipsa/content/internal')
     expect(code).toContain('app/content.config.ts')
+  })
+
+  it('builds a search runtime module when search is enabled', async () => {
+    const root = await createTempRoot()
+    await fs.mkdir(path.join(root, 'app', 'content', 'docs'), {
+      recursive: true,
+    })
+    await fs.writeFile(
+      path.join(root, 'app', 'content.config.ts'),
+      `
+import { defineCollection, glob } from ${contentEntryImportPath}
+
+export const docs = defineCollection({
+  loader: glob({
+    base: './content/docs',
+    pattern: '**/*.md',
+  }),
+  search: {
+    placeholder: 'Search docs',
+  },
+})
+`,
+    )
+    await fs.writeFile(
+      path.join(root, 'app', 'content', 'docs', 'page.md'),
+      `---
+title: Search Page
+---
+# Search Page
+
+Find the comet needle.
+`,
+    )
+
+    const plugin = getPlugin()
+    const configResolved =
+      typeof plugin.configResolved === 'function'
+        ? plugin.configResolved
+        : plugin.configResolved?.handler
+    await configResolved?.call({} as any, {
+      base: '/',
+      root,
+    } as any)
+
+    const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
+    const code = await load?.call({ environment: { name: 'client' } } as any, '\0eclipsa-content:search')
+
+    expect(code).toContain('__eclipsa_content_search__.json')
+    expect(code).toContain('searchOptions')
+    expect(code).not.toContain('import type')
+    expect(code).not.toContain(': Promise<')
   })
 
   it('stubs content config collections in the client environment', async () => {
@@ -151,5 +203,55 @@ export const posts = defineCollection({ loader: { load: () => [] } })
     expect(invalidate).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith('eclipsa:content-update')
     expect(result).toEqual([])
+  })
+
+  it('emits a search index asset during bundle generation when search is enabled', async () => {
+    const root = await createTempRoot()
+    await fs.mkdir(path.join(root, 'app', 'content', 'docs'), {
+      recursive: true,
+    })
+    await fs.writeFile(
+      path.join(root, 'app', 'content.config.ts'),
+      `
+import { defineCollection, glob } from ${contentEntryImportPath}
+
+export const docs = defineCollection({
+  loader: glob({
+    base: './content/docs',
+    pattern: '**/*.md',
+  }),
+  search: true,
+})
+`,
+    )
+    await fs.writeFile(
+      path.join(root, 'app', 'content', 'docs', 'page.md'),
+      '# Search Asset\n\nMeteor shard token.',
+    )
+
+    const plugin = getPlugin()
+    const configResolved =
+      typeof plugin.configResolved === 'function'
+        ? plugin.configResolved
+        : plugin.configResolved?.handler
+    await configResolved?.call({} as any, {
+      base: '/',
+      root,
+    } as any)
+
+    const emitFile = vi.fn()
+    const generateBundle =
+      typeof plugin.generateBundle === 'function'
+        ? plugin.generateBundle
+        : plugin.generateBundle?.handler
+
+    await generateBundle?.call({ emitFile } as any, {} as any, {} as any, false)
+
+    expect(emitFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: '__eclipsa_content_search__.json',
+        type: 'asset',
+      }),
+    )
   })
 })

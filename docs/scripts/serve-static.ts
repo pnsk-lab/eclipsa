@@ -2,6 +2,7 @@ import { access, readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isPlaygroundPathname, PLAYGROUND_RESPONSE_HEADERS } from '../app/playground/isolation.ts'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist/client')
 const port = Number.parseInt(process.env.PORT ?? '3000', 10)
@@ -60,6 +61,11 @@ createServer(async (request, response) => {
     'content-type',
     contentTypes.get(path.extname(filePath)) ?? 'application/octet-stream',
   )
+  if (isPlaygroundPathname(url.pathname)) {
+    for (const [name, value] of Object.entries(PLAYGROUND_RESPONSE_HEADERS)) {
+      response.setHeader(name, value)
+    }
+  }
   response.end(await readFile(filePath))
 }).listen(port, () => {
   console.log(`Docs preview listening on http://localhost:${port}`)

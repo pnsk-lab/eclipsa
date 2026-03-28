@@ -1,5 +1,3 @@
-import { onCleanup } from 'eclipsa'
-
 const SHIELD_RADIUS = 100
 const MOBILE_DROP_COUNT = 50
 const DESKTOP_DROP_COUNT = 100
@@ -18,7 +16,7 @@ export interface LandingElements {
 export const setupLandingScene = ({ canvas }: LandingElements) => {
   const initialContext = canvas.getContext('2d')
   if (!initialContext) {
-    return
+    return () => {}
   }
   const drawingContext: CanvasRenderingContext2D = initialContext
 
@@ -220,7 +218,7 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
   window.addEventListener('resize', resize)
   animationFrame = window.requestAnimationFrame(animate)
 
-  onCleanup(() => {
+  return () => {
     window.removeEventListener('resize', resize)
     if ('PointerEvent' in window) {
       document.removeEventListener('pointerdown', handlePointerListener, PASSIVE_EVENT_OPTIONS)
@@ -235,5 +233,5 @@ export const setupLandingScene = ({ canvas }: LandingElements) => {
       document.removeEventListener('touchcancel', handleTouchListener, PASSIVE_EVENT_OPTIONS)
     }
     window.cancelAnimationFrame(animationFrame)
-  })
+  }
 }

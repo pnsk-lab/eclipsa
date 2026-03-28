@@ -8,23 +8,87 @@
   --font-urbanist: 'Urbanist', sans-serif;
 }
 
+html {
+  --docs-accent-bg: color-mix(in srgb, #8b5cf6 18%, white);
+  --docs-accent-bg-soft: color-mix(in srgb, #8b5cf6 10%, white);
+  --docs-accent-fg: #4c1d95;
+  --docs-accent-line: #7c3aed;
+  --docs-bg: #f5f7fb;
+  --docs-border: rgba(161, 161, 170, 0.34);
+  --docs-border-strong: rgba(113, 113, 122, 0.3);
+  --docs-code-bg: rgba(9, 9, 11, 0.92);
+  --docs-code-text: #f3e8ff;
+  --docs-nav-bg: rgba(255, 255, 255, 0.95);
+  --docs-panel: rgba(255, 255, 255, 0.94);
+  --docs-panel-hover: rgba(244, 244, 245, 0.98);
+  --docs-shadow: 0 24px 80px rgba(15, 23, 42, 0.14);
+  --docs-text: #18181b;
+  --docs-text-muted: #52525b;
+  --docs-text-soft: #71717a;
+}
+
+html[data-docs-theme='dark'] {
+  --docs-accent-bg: color-mix(in srgb, #8b5cf6 22%, #18181b);
+  --docs-accent-bg-soft: color-mix(in srgb, #8b5cf6 14%, #18181b);
+  --docs-accent-fg: #f3e8ff;
+  --docs-accent-line: #c084fc;
+  --docs-bg: #09090b;
+  --docs-border: rgba(113, 113, 122, 0.48);
+  --docs-border-strong: rgba(161, 161, 170, 0.45);
+  --docs-code-bg: rgba(24, 24, 27, 0.96);
+  --docs-code-text: #f5f3ff;
+  --docs-nav-bg: rgba(9, 9, 11, 0.9);
+  --docs-panel: rgba(24, 24, 27, 0.92);
+  --docs-panel-hover: rgba(39, 39, 42, 0.95);
+  --docs-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
+  --docs-text: #fafafa;
+  --docs-text-muted: #d4d4d8;
+  --docs-text-soft: #a1a1aa;
+}
+
+html[data-docs-theme='dark'] {
+  color-scheme: dark;
+}
+
 .markdown-content {
-  @apply p-1 text-base/7 font-normal text-zinc-700;
+  @apply px-0 py-1 text-[15px]/7 font-normal sm:px-1 sm:text-base/7;
+  color: var(--docs-text-muted);
 }
 .markdown-content :not(pre) > code {
-  @apply bg-black/80 text-purple-100 px-1 text-sm py-0.5 rounded-lg mx-0.5;
+  @apply mx-0.5 break-words rounded-lg px-2 py-0.5 text-sm;
+  background: var(--docs-code-bg);
+  color: var(--docs-code-text);
+}
+.markdown-content :is(h1, h2, h3, h4, h5, h6) > code {
+  font-size: inherit;
+  line-height: inherit;
 }
 .markdown-content pre {
-  @apply px-6 py-5 rounded-2xl text-sm my-4;
+  @apply my-4 max-w-full overflow-x-auto overflow-y-hidden rounded-xl px-4 py-4 text-xs sm:rounded-2xl sm:px-6 sm:py-5 sm:text-sm;
+}
+.markdown-content pre > code {
+  @apply block min-w-max;
 }
 .markdown-content {
   & h1 {
-    @apply text-3xl/10 font-semibold text-zinc-700;
+    @apply text-3xl/10 font-semibold sm:text-4xl/10;
+    color: var(--docs-text);
   }
   & h2 {
-    @apply text-2xl/10 font-semibold text-zinc-700;
+    @apply mt-5 border-t pt-5 text-2xl/9 font-semibold;
+    border-color: var(--docs-border);
+    color: var(--docs-text);
   }
   & p {
-    @apply text-base/7 my-4 text-zinc-700;
+    @apply my-4 break-words text-[15px]/7 sm:text-base/7;
+    color: var(--docs-text-muted);
   }
+  & ul {
+    @apply my-4 list-disc pl-5 text-[15px]/7 sm:text-base/7;
+    color: var(--docs-text-muted);
+  }
+}
+
+.markdown-content :is(h1, h2, h3, h4, h5, h6)[id] {
+  scroll-margin-top: 5.5rem;
 }

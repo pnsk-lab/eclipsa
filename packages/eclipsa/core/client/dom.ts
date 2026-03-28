@@ -94,8 +94,30 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
 
 const EVENT_ATTR_REGEX = /^on[A-Z].+$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
+const BIND_VALUE_PROP = 'bind:value'
+const BIND_CHECKED_PROP = 'bind:checked'
 const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
   isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
+
+type BindableSignal<T> = {
+  value: T
+}
+
+const isBindableSignal = <T>(value: unknown): value is BindableSignal<T> =>
+  !!value && (typeof value === 'object' || typeof value === 'function') && 'value' in value
+
+const readValueBinding = (elem: Element, currentValue: unknown) => {
+  if (
+    elem instanceof HTMLInputElement
+    && typeof currentValue === 'number'
+    && (elem.type === 'number' || elem.type === 'range')
+    && !Number.isNaN(elem.valueAsNumber)
+  ) {
+    return elem.valueAsNumber
+  }
+
+  return (elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value
+}
 
 const syncElementAttributes = (current: Element, next: Element) => {
   const nextNames = new Set(next.getAttributeNames())
@@ -156,6 +178,56 @@ const tryPatchSingleElementShellInPlace = (currentNodes: Node[], nextNodes: Node
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+
+  if (name === BIND_VALUE_PROP) {
+    const syncSignalFromElement = () => {
+      const binding = value()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      binding.value = readValueBinding(elem, binding.value) as never
+    }
+
+    elem.addEventListener('input', syncSignalFromElement)
+    elem.addEventListener('change', syncSignalFromElement)
+
+    effect(() => {
+      const binding = value()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      ;(elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value = String(
+        binding.value ?? '',
+      )
+    })
+    return
+  }
+
+  if (name === BIND_CHECKED_PROP) {
+    if (!(elem instanceof HTMLInputElement)) {
+      return
+    }
+
+    const syncSignalFromElement = () => {
+      const binding = value()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      binding.value = elem.checked as never
+    }
+
+    elem.addEventListener('input', syncSignalFromElement)
+    elem.addEventListener('change', syncSignalFromElement)
+
+    effect(() => {
+      const binding = value()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      elem.checked = Boolean(binding.value)
+    })
+    return
+  }
 
   if (EVENT_ATTR_REGEX.test(name)) {
     const eventName = name[2].toLowerCase() + name.slice(3)

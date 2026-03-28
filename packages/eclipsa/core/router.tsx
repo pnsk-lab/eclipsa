@@ -20,10 +20,12 @@ export interface LinkProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
   href: string
   prefetch?: LinkPrefetchMode | boolean
+  reloadDocument?: boolean
   replace?: boolean
 }
 
 export const Link = (props: LinkProps) => {
+  const reloadDocument = props.reloadDocument === true
   const prefetchMode =
     props.prefetch === undefined
       ? undefined
@@ -35,16 +37,19 @@ export const Link = (props: LinkProps) => {
 
   const nextProps: Record<string, unknown> = {
     ...props,
-    [ROUTE_LINK_ATTR]: '',
   }
 
-  if (prefetchMode) {
-    nextProps[ROUTE_PREFETCH_ATTR] = prefetchMode
-  }
-  if (props.replace) {
-    nextProps[ROUTE_REPLACE_ATTR] = 'true'
+  if (!reloadDocument) {
+    nextProps[ROUTE_LINK_ATTR] = ''
+    if (prefetchMode) {
+      nextProps[ROUTE_PREFETCH_ATTR] = prefetchMode
+    }
+    if (props.replace) {
+      nextProps[ROUTE_REPLACE_ATTR] = 'true'
+    }
   }
   delete nextProps.prefetch
+  delete nextProps.reloadDocument
   delete nextProps.replace
 
   return {

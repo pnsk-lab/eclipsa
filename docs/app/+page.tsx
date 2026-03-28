@@ -1,27 +1,25 @@
-import { Link, onVisible, useSignal } from 'eclipsa'
+import { Link, onCleanup, onMount, useSignal } from 'eclipsa'
 import { setupLandingScene } from './landing-scene.ts'
 import { Logo } from '../components/logo.tsx'
 
 export default () => {
-  const rootRef = useSignal<HTMLDivElement | undefined>()
   const canvasRef = useSignal<HTMLCanvasElement | undefined>()
 
-  onVisible(() => {
-    const root = rootRef.value
+  onMount(() => {
     const canvas = canvasRef.value
 
-    if (!root || !canvas) {
+    if (!canvas) {
       return
     }
 
-    setupLandingScene({ canvas })
+    const cleanup = setupLandingScene({ canvas })
+    onCleanup(() => {
+      cleanup()
+    })
   })
 
   return (
-    <div
-      class="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050505] text-white antialiased font-space-grotesk selection:bg-purple-500 selection:text-white"
-      ref={rootRef}
-    >
+    <div class="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050505] text-white antialiased font-space-grotesk selection:bg-purple-500 selection:text-white">
       <div
         aria-hidden="true"
         class="pointer-events-none fixed inset-0 z-0 bg-[image:linear-gradient(to_right,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[length:50px_50px]"
@@ -47,10 +45,6 @@ export default () => {
         <div class="z-20 mt-10 flex flex-col items-center">
           <p class="mb-6 max-w-3xl text-xl font-bold uppercase tracking-wide text-white font-archivo-black md:text-2xl">
             Ultrafast development, ultrafast apps.
-          </p>
-          <p class="mx-auto mb-12 max-w-2xl text-sm font-medium leading-relaxed text-zinc-400 md:text-base">
-            eclipsa aims to be the last frontend framework before AI replaces web app by performance
-            and developer experience.
           </p>
 
           <div class="flex flex-col gap-6 sm:flex-row">
@@ -78,7 +72,7 @@ export default () => {
             <Link
               class="self-center border-b border-transparent pb-1 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 transition-all hover:border-[#9d00ff] hover:text-white"
               data-interactive=""
-              href="/docs"
+              href="/docs/getting-started/overview"
             >
               Read the Docs
             </Link>

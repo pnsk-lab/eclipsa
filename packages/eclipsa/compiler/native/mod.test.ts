@@ -11,6 +11,11 @@ import {
   PUBLISH_EXPORTS,
   PUBLISH_FILES,
 } from '../../scripts/sync-package-manifest.ts'
+import {
+  GENERATED_BROWSER_WASM_FILE_NAME,
+  resolveBrowserWasmSourcePath,
+  syncGeneratedBrowserWasm,
+} from './browser-artifacts.ts'
 
 const execFileAsync = promisify(execFile)
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -106,5 +111,25 @@ describe('native compiler packaging', () => {
     expect(stdout).not.toContain('compiler/rust/target/hidden.txt')
     expect(stdout).not.toContain('compiler/analyze/mod.test.ts')
     expect(stdout).not.toContain('dist/native/linux-x64/eclipsa_compiler.node')
+  })
+
+  it('syncs the browser wasm artifact from the release target into generated output', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'eclipsa-browser-wasm-'))
+    const baseUrl = new URL(`file://${path.join(tempRoot, 'compiler/native/browser-artifacts.ts')}`)
+    const releaseWasmPath = path.join(
+      tempRoot,
+      'compiler/rust/target/wasm32-wasip1-threads/release/eclipsa_compiler.wasm',
+    )
+
+    await mkdir(path.dirname(releaseWasmPath), { recursive: true })
+    await writeFile(releaseWasmPath, new Uint8Array([0x00, 0x61, 0x73, 0x6d]))
+
+    expect(resolveBrowserWasmSourcePath(baseUrl.href)).toBe(releaseWasmPath)
+
+    const syncedPath = syncGeneratedBrowserWasm(baseUrl.href)
+    expect(syncedPath).toBe(
+      path.join(tempRoot, 'compiler/native/generated', GENERATED_BROWSER_WASM_FILE_NAME),
+    )
+    expect(await readFile(syncedPath!)).toEqual(Buffer.from([0x00, 0x61, 0x73, 0x6d]))
   })
 })

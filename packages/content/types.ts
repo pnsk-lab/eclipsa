@@ -29,6 +29,64 @@ export interface ContentMarkdownOptions {
   highlight?: boolean | ContentHighlightOptions
 }
 
+export interface ContentSearchOptions {
+  enabled?: boolean
+  hotkey?: string
+  limit?: number
+  placeholder?: string
+  prefix?: boolean
+}
+
+export interface ResolvedContentSearchOptions {
+  enabled: boolean
+  hotkey: string
+  limit: number
+  placeholder: string
+  prefix: boolean
+}
+
+export type ContentSearchField = 'body' | 'code' | 'heading' | 'title'
+
+export interface ContentSearchDocument {
+  body: string
+  code: string[]
+  collection: string
+  headings: string[]
+  id: string
+  title: string
+  url: string
+}
+
+export interface ContentSearchPosting {
+  docIdx: number
+  field: ContentSearchField
+  tf: number
+}
+
+export interface ContentSearchIndex {
+  avgDl: number
+  df: Record<string, number>
+  docCount: number
+  documents: ContentSearchDocument[]
+  index: Record<string, ContentSearchPosting[]>
+  options: ResolvedContentSearchOptions
+}
+
+export interface ContentSearchQueryOptions {
+  limit?: number
+  prefix?: boolean
+}
+
+export interface ContentSearchResult {
+  collection: string
+  id: string
+  matches: string[]
+  score: number
+  snippet: string
+  title: string
+  url: string
+}
+
 export interface GlobLoaderOptions {
   base: string
   pattern: string
@@ -45,6 +103,7 @@ export type ContentLoader = GlobLoader | ContentLoaderObject
 export interface ContentCollectionDefinition<Schema extends StandardSchemaV1<any, any> | undefined> {
   loader: ContentLoader
   markdown?: ContentMarkdownOptions
+  search?: boolean | ContentSearchOptions
   schema?: Schema
 }
 

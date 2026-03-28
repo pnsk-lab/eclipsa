@@ -159,6 +159,24 @@ describe('analyzeModule()', () => {
     expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:Link')
   })
 
+  it('preserves async generator actions as resumable action symbols', async () => {
+    const analyzed = await analyzeModule(`
+      import { action } from "eclipsa";
+
+      export const useCounterStream = action(async function* () {
+        yield 0;
+        yield 1;
+      });
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaAction')
+    const actionSymbols = [...(analyzed?.symbols.values() ?? [])].filter(
+      (symbol) => symbol.kind === 'action',
+    )
+    expect(actionSymbols).toHaveLength(1)
+    expect(actionSymbols[0]?.code).toContain('async function*')
+  })
+
   it('inlines same-file top-level component helpers into resumable symbols', async () => {
     const analyzed = await analyzeModule(`
       const title = "ready";

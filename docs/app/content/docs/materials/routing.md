@@ -1,11 +1,15 @@
 ---
 title: Routing
-description: Client-side routing with eclipsa's router.
+description: File-based routing, layouts, params, and navigation in eclipsa.
 ---
 
 # Routing
 
 eclipsa has file-based routing built in.
+
+Instead of declaring routes in a separate router table, the route structure comes from your `app/` directories.
+
+## Route tree
 
 ```bash
 app/
@@ -22,13 +26,16 @@ app/
   [[lang]]/
     about/
       +page.tsx        # "/about" and "/ja/about"
+  (marketing)/
+    pricing/
+      +page.tsx        # "/pricing"
 ```
 
-Each directory becomes a route segment, and special files define what that segment does.
+Each directory becomes a route segment, and special files starting with `+` define how that segment behaves.
 
 ## `+page.tsx`
 
-A page component for that route.
+This is the page component rendered for the route.
 
 ```tsx
 export default function Page() {
@@ -38,7 +45,7 @@ export default function Page() {
 
 ## `+layout.tsx`
 
-A layout wraps every nested page below it. Layouts can be nested.
+Layouts wrap the pages and nested layouts below them.
 
 ```tsx
 import type { JSX } from 'eclipsa/jsx-runtime'
@@ -53,9 +60,11 @@ export default function Layout(props: { children: JSX.Childable }) {
 }
 ```
 
-## Dynamic Routes
+Nested `+layout.tsx` files compose from top to bottom.
 
-Use bracket syntax for params.
+## Dynamic routes
+
+`[name]` captures exactly one path segment.
 
 ```bash
 app/
@@ -74,11 +83,11 @@ export default function BlogPost() {
 }
 ```
 
-`[slug]` matches one segment and gives you a string.
+For `/blog/hello-world`, `params.slug === 'hello-world'`.
 
-## Catch-all Routes
+## Catch-all routes
 
-Use `[...name]` to capture the rest of the path.
+`[...name]` captures the rest of the path.
 
 ```bash
 app/
@@ -89,9 +98,9 @@ app/
 
 For `/docs/guide/routing`, `parts` becomes `['guide', 'routing']`.
 
-## Optional Segments
+## Optional segments
 
-Use `[[name]]` for an optional segment.
+`[[name]]` makes a segment optional.
 
 ```bash
 app/
@@ -102,9 +111,9 @@ app/
 
 This matches both `/about` and `/ja/about`.
 
-## Route Groups
+## Route groups
 
-Use parentheses to group routes without adding a URL segment.
+`(group-name)` is a grouping directory that does not appear in the URL.
 
 ```bash
 app/
@@ -113,11 +122,11 @@ app/
       +page.tsx
 ```
 
-This still matches `/about`.
+This still matches `/about`. Use it when you want to organize routes without changing the URL.
 
-## Navigation
+## Navigation with `Link`
 
-Use `Link` for client-side navigation.
+Use `Link` for normal client-side navigation.
 
 ```tsx
 import { Link } from 'eclipsa'
@@ -135,11 +144,18 @@ export default function Nav() {
 }
 ```
 
-`prefetch` supports `'focus'`, `'hover'`, `'intent'`, and `'none'`.
+`Link` performs client-side navigation. `prefetch` supports:
 
-## Imperative Navigation
+- `'focus'`
+- `'hover'`
+- `'intent'`
+- `'none'`
 
-Use `useNavigate` when navigation should happen in code.
+`true` means `'intent'`, and `false` means `'none'`.
+
+## Imperative navigation
+
+Use `useNavigate()` when navigation should happen from code.
 
 ```tsx
 import { useNavigate } from 'eclipsa'
@@ -159,9 +175,9 @@ export default function LoginButton() {
 }
 ```
 
-## Current Location
+## Reading the current location
 
-Use `useLocation` to read the current URL.
+Use `useLocation()` to read the current URL.
 
 ```tsx
 import { useLocation } from 'eclipsa'
@@ -173,17 +189,21 @@ export default function Breadcrumb() {
 }
 ```
 
-## Special Route Files
+This is useful for navigation UI and active-state checks.
 
-eclipsa also supports special files inside route directories.
+## Special route files
 
-- `+loading.tsx`: loading UI for that route subtree.
-- `+not-found.tsx`: fallback when no route matches in that subtree.
-- `+error.tsx`: error UI for thrown errors in that subtree.
-- `+middleware.ts`: request middleware for matching routes.
-- `+server.ts`: route-scoped server handler.
+Route directories can also contain these special files:
 
-You can trigger a not found state from a page with `notFound()`.
+- `+loading.tsx`: loading UI for that subtree
+- `+not-found.tsx`: UI for not found states inside that subtree
+- `+error.tsx`: error UI for thrown errors inside that subtree
+- `+middleware.ts`: request middleware for that subtree
+- `+server.ts`: route-scoped server handler
+
+## Not found
+
+Call `notFound()` from a page or loader to fall back to that subtree's `+not-found.tsx`.
 
 ```tsx
 import { notFound } from 'eclipsa'
@@ -193,11 +213,22 @@ export default function Page() {
 }
 ```
 
-In `+error.tsx`, use `useRouteError()` to read the thrown value.
+## Route errors
 
-## Static Paths
+Inside `+error.tsx`, use `useRouteError()` to read the thrown value.
 
-Dynamic routes can declare `getStaticPaths` for static generation.
+```tsx
+import { useRouteError } from 'eclipsa'
+
+export default function RouteError() {
+  const error = useRouteError<Error>()
+  return <pre>{error?.message}</pre>
+}
+```
+
+## Static paths
+
+Use `getStaticPaths` when dynamic routes should be generated at build time.
 
 ```tsx
 import type { GetStaticPaths } from 'eclipsa'
@@ -214,4 +245,13 @@ export default function Page() {
 }
 ```
 
-Use `render = 'static'` when the route should be generated ahead of time.
+With `render = 'static'`, the route is generated ahead of time.
+
+## Practical routing pattern
+
+For a docs-style app, a practical pattern is:
+
+- Use `+layout.tsx` to share the sidebar and shell
+- Use `[slug]` or `[...slug]` for document pages
+- Use `getStaticPaths` to prebuild known pages
+- Use `Link` and `useLocation()` for active navigation

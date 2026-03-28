@@ -9,5 +9,9 @@ export const docs = defineCollection({
     highlight: {
       theme: 'github-dark',
     }
-  }
+  },
+  search: {
+    hotkey: 'k',
+    placeholder: 'Search docs',
+  },
 })

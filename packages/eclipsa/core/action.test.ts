@@ -1,7 +1,15 @@
 import { Hono } from 'hono'
-import { describe, expect, it } from 'vitest'
-import { executeAction, registerAction, validator, type StandardSchemaV1 } from './action.ts'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  __eclipsaAction,
+  executeAction,
+  registerAction,
+  validator,
+  type StandardSchemaV1,
+} from './action.ts'
 import type { AppContext } from './hooks.ts'
+import type { RuntimeContainer } from './runtime.ts'
+import { withRuntimeContainer } from './runtime.ts'
 import { serializeValue } from './serialize.ts'
 
 const createSchema = <T>(
@@ -25,6 +33,36 @@ const createActionApp = () => {
   )
   return app
 }
+
+const createRuntimeContainer = (): RuntimeContainer =>
+  ({
+    actions: new Map(),
+    actionStates: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
+    atoms: new WeakMap(),
+    components: new Map(),
+    dirty: new Set(),
+    id: 'rt-test',
+    imports: new Map(),
+    loaderStates: new Map(),
+    loaders: new Map(),
+    nextAtomId: 0,
+    nextComponentId: 0,
+    nextElementId: 0,
+    nextScopeId: 0,
+    nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    rootChildCursor: 0,
+    router: null,
+    scopes: new Map(),
+    signals: new Map(),
+    symbols: new Map(),
+    visibilityCheckQueued: false,
+    visibilityListenersCleanup: null,
+    visibles: new Map(),
+    watches: new Map(),
+  }) satisfies RuntimeContainer
 
 describe('action runtime', () => {
   it('validates input and exposes c.var.input', async () => {
@@ -251,5 +289,52 @@ describe('action runtime', () => {
         token: 's0',
       },
     })
+  })
+
+  it('streams async generator actions through client handles', async () => {
+    const container = createRuntimeContainer()
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () =>
+      new Response('{"type":"chunk","value":0}\n{"type":"chunk","value":1}\n{"type":"done"}\n', {
+        headers: {
+          'content-type': 'application/eclipsa-action-stream+json',
+          'x-eclipsa-stream-kind': 'async-generator',
+        },
+      }),
+    ) as typeof fetch
+
+    try {
+      const useStream = __eclipsaAction(
+        'stream-handle',
+        [],
+        async function* () {
+          yield 0
+          yield 1
+        },
+      )
+      const handle = withRuntimeContainer(container, () => useStream())
+
+      const stream = handle.action()
+      expect(typeof stream[Symbol.asyncIterator]).toBe('function')
+
+      const values: number[] = []
+      for await (const value of stream) {
+        values.push(value)
+        expect(handle.result).toBe(value)
+        expect(handle.lastSubmission?.result).toBe(value)
+        expect(handle.isPending).toBe(true)
+      }
+
+      expect(values).toEqual([0, 1])
+      expect(handle.isPending).toBe(false)
+      expect(handle.result).toBe(1)
+      expect(handle.lastSubmission).toEqual({
+        error: undefined,
+        input: undefined,
+        result: 1,
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

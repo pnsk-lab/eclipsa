@@ -8,14 +8,17 @@
     "deploy": "bun run build && wrangler deploy",
     "deploy:dry-run": "bun run build && wrangler deploy --dry-run",
     "start": "bun ./scripts/serve-static.ts",
+    "test": "bunx vitest run",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@eclipsa/content": "workspace:*",
     "@eclipsa/motion": "workspace:*",
+    "@iconify-json/simple-icons": "^1.2.75",
     "@iconify-json/tabler": "^1.2.31",
     "clsx": "^2.1.1",
     "eclipsa": "workspace:*",
+    "monaco-editor": "^0.55.1",
     "shiki": "^4.0.2",
     "tailwindcss": "^4.2.1"
   },

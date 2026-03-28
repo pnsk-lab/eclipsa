@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createContentRuntime, parseFrontmatter, toEntryIdFromRelativePath } from './internal.ts'
+import { createContentRuntime, createContentSearch, parseFrontmatter, toEntryIdFromRelativePath } from './internal.ts'
 import { defineCollection, glob } from './mod.ts'
 
 const createdRoots: string[] = []
@@ -198,5 +198,59 @@ title: Bad
     await expect(runtime.getCollection(docs)).rejects.toThrow(
       /Invalid frontmatter in collection "docs".*description is required/u,
     )
+  })
+
+  it('builds a search index from searchable markdown collections', async () => {
+    const root = await createTempRoot()
+    const configPath = path.join(root, 'app', 'content.config.ts')
+    await fs.writeFile(
+      path.join(root, 'app', 'content', 'docs', 'guide', 'quick-start.md'),
+      `---
+title: Quick Start
+---
+# Quick Start
+
+Searchable nebula token.
+
+\`\`\`ts
+const searchNeedle = 'nebula'
+\`\`\`
+`,
+    )
+    const docs = defineCollection({
+      loader: glob({
+        base: './content/docs',
+        pattern: '**/*.md',
+      }),
+      search: {
+        hotkey: 'k',
+        limit: 5,
+        placeholder: 'Search docs',
+      },
+    })
+
+    const result = await createContentSearch({
+      base: '/',
+      collectionsModule: { docs },
+      configPath,
+      root,
+    })
+
+    expect(result.options).toMatchObject({
+      enabled: true,
+      hotkey: 'k',
+      limit: 5,
+      placeholder: 'Search docs',
+    })
+    expect(result.index.documents).toHaveLength(1)
+    expect(result.index.documents[0]).toMatchObject({
+      collection: 'docs',
+      id: 'guide/quick-start',
+      title: 'Quick Start',
+      url: '/docs/guide/quick-start',
+    })
+    expect(result.index.documents[0]?.body).toContain('Searchable nebula token.')
+    expect(result.index.documents[0]?.code).toContain("const searchNeedle = 'nebula'")
+    expect(result.index.documents[0]?.headings).toContain('Quick Start')
   })
 })

@@ -13,6 +13,7 @@ import {
   createDetachedRuntimeSignal,
   ensureRuntimeElementId,
   findRuntimeElement,
+  flushDirtyComponents,
   getRuntimeContainer,
   getRuntimeSignalId,
   type RuntimeContainer,
@@ -112,11 +113,24 @@ type ActionInput<Middlewares extends readonly ActionMiddleware<any>[]> = [
   ? unknown
   : MiddlewareActionInput<Middlewares[number]>
 
-type ActionInvoker<Input, Output> = unknown extends Input
-  ? (input?: Input | FormData) => Promise<Output>
+type ResolvedActionOutput<Output> = Awaited<Output>
+
+type ActionStreamYield<Output> =
+  ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
+    ? Value
+    : ResolvedActionOutput<Output> extends ReadableStream<infer Value>
+      ? Value
+      : ResolvedActionOutput<Output>
+
+type ActionInvokeResult<Output> = ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
+  ? AsyncGenerator<Value, void, void>
+  : Promise<ResolvedActionOutput<Output>>
+
+type ActionInvoker<Input, Result> = unknown extends Input
+  ? (input?: Input | FormData) => Result
   : undefined extends Input
-    ? (input?: Input | FormData) => Promise<Output>
-    : (input: Input | FormData) => Promise<Output>
+    ? (input?: Input | FormData) => Result
+    : (input: Input | FormData) => Result
 
 export interface ActionSubmission<Input, Output> {
   readonly error: unknown
@@ -128,9 +142,9 @@ export interface ActionFormProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
 }
 
-export interface ActionHandle<Input, Output> {
+export interface ActionHandle<Input, Output, InvokeResult = Promise<Output>> {
   Form: (props: ActionFormProps) => JSX.Element
-  action: ActionInvoker<Input, Output>
+  action: ActionInvoker<Input, InvokeResult>
   readonly error: unknown
   readonly formActionId: string
   readonly isPending: boolean
@@ -152,61 +166,71 @@ export type ActionHandler<E extends Env = Env, Output = unknown> = (
   c: AppContext<E>,
 ) => Output | Promise<Output>
 
-type ActionUse<Middlewares extends readonly ActionMiddleware<any>[], Output> = () => ActionHandle<
+type ActionHandlerOutput<Handler extends (...args: any[]) => unknown> = Awaited<ReturnType<Handler>>
+
+type ActionUse<
+  Middlewares extends readonly ActionMiddleware<any>[],
+  Handler extends ActionHandler<any, any>,
+> = () => ActionHandle<
   ActionInput<Middlewares>,
-  Output
+  ActionStreamYield<ActionHandlerOutput<Handler>>,
+  ActionInvokeResult<ActionHandlerOutput<Handler>>
 >
 
 export interface ActionFactory {
-  <Output>(handler: ActionHandler<{}, Output>): ActionUse<[], Output>
-  <M1 extends ActionMiddleware<any>, Output>(
+  <Handler extends ActionHandler<{}, any>>(handler: Handler): ActionUse<[], Handler>
+  <M1 extends ActionMiddleware<any>, Handler extends ActionHandler<ActionEnv<[M1]>, any>>(
     middleware1: M1,
-    handler: ActionHandler<ActionEnv<[M1]>, Output>,
-  ): ActionUse<[M1], Output>
-  <M1 extends ActionMiddleware<any>, M2 extends ActionMiddleware<any>, Output>(
+    handler: Handler,
+  ): ActionUse<[M1], Handler>
+  <
+    M1 extends ActionMiddleware<any>,
+    M2 extends ActionMiddleware<any>,
+    Handler extends ActionHandler<ActionEnv<[M1, M2]>, any>,
+  >(
     middleware1: M1,
     middleware2: M2,
-    handler: ActionHandler<ActionEnv<[M1, M2]>, Output>,
-  ): ActionUse<[M1, M2], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3]>, Output>,
-  ): ActionUse<[M1, M2, M3], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
     M4 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3, M4]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3, M4]>, Output>,
-  ): ActionUse<[M1, M2, M3, M4], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3, M4], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
     M4 extends ActionMiddleware<any>,
     M5 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3, M4, M5]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
     middleware5: M5,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3, M4, M5]>, Output>,
-  ): ActionUse<[M1, M2, M3, M4, M5], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3, M4, M5], Handler>
 }
 
 interface RegisteredAction {
@@ -481,6 +505,11 @@ const isAsyncGeneratorValue = (
   value: unknown,
 ): value is AsyncGenerator<unknown, unknown, unknown> | AsyncIterable<unknown> =>
   !!value && typeof value === 'object' && Symbol.asyncIterator in value
+
+const isAsyncGeneratorFunctionValue = (
+  value: unknown,
+): value is (...args: any[]) => AsyncGenerator<unknown, unknown, unknown> =>
+  typeof value === 'function' && Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]'
 
 const toSerializedActionError = (error: unknown): SerializedValue => {
   if (error instanceof Error) {
@@ -1024,11 +1053,16 @@ export const executeAction = async (id: string, c: AppContext<any>) => {
   }
 }
 
-export const __eclipsaAction = <const Middlewares extends readonly ActionMiddleware<any>[], Output>(
+export const __eclipsaAction = <
+  const Middlewares extends readonly ActionMiddleware<any>[],
+  Handler extends ActionHandler<ActionEnv<Middlewares>, any>,
+>(
   id: string,
   middlewares: readonly [...Middlewares],
-  handler: ActionHandler<ActionEnv<Middlewares>, Output>,
-) => {
+  handler: Handler,
+): ActionUse<Middlewares, Handler> => {
+  type Output = ActionHandlerOutput<Handler>
+
   if (typeof window === 'undefined') {
     getActionRegistry().set(id, {
       handler: handler as ActionHandler<any, unknown>,
@@ -1043,20 +1077,20 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
       const container = getRuntimeContainer()
       const existing = container?.actions.get(id)
       if (existing) {
-        return existing as ActionHandle<ActionInput<Middlewares>, Output>
+        return existing as ReturnType<ActionUse<Middlewares, Handler>>
       }
 
       const initialState = container?.actionStates.get(id)
       const pending = createHandleSignal(container, id, 'pending', false)
-      const result = createHandleSignal<Output | undefined>(
+      const result = createHandleSignal<ActionStreamYield<Output> | undefined>(
         container,
         id,
         'result',
-        initialState?.result as Output | undefined,
+        initialState?.result as ActionStreamYield<Output> | undefined,
       )
       const error = createHandleSignal<unknown>(container, id, 'error', initialState?.error)
       const lastSubmission = createHandleSignal<
-        ActionSubmission<ActionInput<Middlewares>, Output> | undefined
+        ActionSubmission<ActionInput<Middlewares>, ActionStreamYield<Output>> | undefined
       >(
         container,
         id,
@@ -1065,8 +1099,8 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
           ? ({
               error: initialState.error,
               input: initialState.input as ActionInput<Middlewares>,
-              result: initialState.result as Output | undefined,
-            } satisfies ActionSubmission<ActionInput<Middlewares>, Output>)
+              result: initialState.result as ActionStreamYield<Output> | undefined,
+            } satisfies ActionSubmission<ActionInput<Middlewares>, ActionStreamYield<Output>>)
           : undefined,
       )
 
@@ -1086,32 +1120,84 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
         })
       }
 
-      const invoke = async (input: ActionInput<Middlewares> | FormData) => {
+      const flushHandleUpdates = async () => {
+        if (!container) {
+          return
+        }
+        await flushDirtyComponents(container)
+      }
+
+      const applySubmissionChunk = async (
+        input: ActionInput<Middlewares>,
+        value: ActionStreamYield<Output>,
+      ) => {
+        result.value = value
+        lastSubmission.value = {
+          error: undefined,
+          input,
+          result: value,
+        }
+        syncSnapshot()
+        await flushHandleUpdates()
+      }
+
+      const applySubmissionError = async (input: ActionInput<Middlewares>, caught: unknown) => {
+        error.value = caught
+        lastSubmission.value = {
+          error: caught,
+          input,
+          result: result.value,
+        }
+        syncSnapshot()
+        await flushHandleUpdates()
+      }
+
+      const finalizeSubmission = async () => {
+        pending.value = false
+        await flushHandleUpdates()
+      }
+
+      const invoke = (input: ActionInput<Middlewares> | FormData) => {
         pending.value = true
         error.value = undefined
         const normalizedInput = normalizeFormSubmissionInput(input) as ActionInput<Middlewares>
-        try {
-          const value = (await invokeAction(id, input, container)) as Output
-          result.value = value
-          lastSubmission.value = {
-            error: undefined,
-            input: normalizedInput,
-            result: value,
-          }
-          syncSnapshot()
-          return value
-        } catch (caught) {
-          error.value = caught
-          lastSubmission.value = {
-            error: caught,
-            input: normalizedInput,
-            result: undefined,
-          }
-          syncSnapshot()
-          throw caught
-        } finally {
-          pending.value = false
+        const request = invokeAction(id, input, container)
+
+        if (isAsyncGeneratorFunctionValue(handler)) {
+          return (async function* () {
+            try {
+              const value = await request
+              if (isAsyncGeneratorValue(value)) {
+                for await (const chunk of value) {
+                  const resolved = chunk as ActionStreamYield<Output>
+                  await applySubmissionChunk(normalizedInput, resolved)
+                  yield resolved
+                }
+                return
+              }
+              const resolved = value as ActionStreamYield<Output>
+              await applySubmissionChunk(normalizedInput, resolved)
+              yield resolved
+            } catch (caught) {
+              await applySubmissionError(normalizedInput, caught)
+              throw caught
+            } finally {
+              await finalizeSubmission()
+            }
+          })() as ActionInvokeResult<Output>
         }
+
+        return request
+          .then(async (value) => {
+            const resolved = value as ActionStreamYield<Output>
+            await applySubmissionChunk(normalizedInput, resolved)
+            return value as ResolvedActionOutput<Output>
+          })
+          .catch(async (caught) => {
+            await applySubmissionError(normalizedInput, caught)
+            throw caught
+          })
+          .finally(finalizeSubmission) as ActionInvokeResult<Output>
       }
 
       const Form = (props: ActionFormProps) => {
@@ -1147,7 +1233,7 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
       const actionHandle = setActionHandleMeta(
         {
           Form,
-          action: invoke as ActionInvoker<ActionInput<Middlewares>, Output>,
+          action: invoke as ActionInvoker<ActionInput<Middlewares>, ActionInvokeResult<Output>>,
           get error() {
             return error.value
           },
@@ -1163,14 +1249,18 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
           get result() {
             return result.value
           },
-        } satisfies ActionHandle<ActionInput<Middlewares>, Output>,
+        } satisfies ActionHandle<
+          ActionInput<Middlewares>,
+          ActionStreamYield<Output>,
+          ActionInvokeResult<Output>
+        >,
         id,
       )
       container?.actions.set(id, actionHandle)
       syncSnapshot()
       return actionHandle
     }, id),
-  ) as () => ActionHandle<ActionInput<Middlewares>, Output>
+  ) as ActionUse<Middlewares, Handler>
 
   return useActionHandle
 }

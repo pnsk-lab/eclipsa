@@ -2,7 +2,6 @@ import {
   applyResumeHmrUpdateToRegisteredContainers,
   createResumeContainer,
   refreshRegisteredRouteContainers,
-  installResumeLinkListeners,
   RESUME_FINAL_STATE_ELEMENT_ID,
   installResumeListeners,
   primeRouteModules,
@@ -91,7 +90,7 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
   const container = createResumeContainer(root, payload, {
     routeManifest: getRouteManifest(doc),
   })
-  installResumeLinkListeners(container)
+  installResumeListeners(container)
 
   const appHooksManifest = getAppHooksManifest(doc)
   if (appHooksManifest.client) {
@@ -109,5 +108,4 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
   await restoreResumedLocalSignalEffects(container)
   registerResumeContainer(container)
   root.setAttribute('data-e-resume', 'resumed')
-  installResumeListeners(container)
 }

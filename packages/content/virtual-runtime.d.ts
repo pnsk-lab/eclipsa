@@ -14,3 +14,11 @@ declare module 'virtual:eclipsa-content:runtime' {
     entry: import('./mod.ts').CollectionEntry<Collection>,
   ): Promise<import('./types.ts').RenderedContent>
 }
+
+declare module 'virtual:eclipsa-content:search' {
+  export const searchOptions: import('./types.ts').ResolvedContentSearchOptions
+  export function search(
+    query: string,
+    options?: import('./types.ts').ContentSearchQueryOptions,
+  ): Promise<import('./types.ts').ContentSearchResult[]>
+}

@@ -47,6 +47,11 @@ const docs = defineCollection({
       theme: 'github-dark',
     },
   },
+  search: {
+    hotkey: 'k',
+    limit: 6,
+    placeholder: 'Search docs',
+  },
   schema,
 })
 

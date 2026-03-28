@@ -1,13 +1,20 @@
 import * as fs from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import type { Plugin, PluginOption, ResolvedConfig, ViteDevServer } from 'vite'
+import { createContentSearch } from './internal.ts'
+import { generateContentSearchRuntimeModule, resolveContentSearchOptions } from './search.ts'
+import type { ResolvedContentSearchOptions } from './types.ts'
 
 const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
 const CONTENT_HMR_EVENT = 'eclipsa:content-update'
 const VIRTUAL_RUNTIME_ID = 'virtual:eclipsa-content:runtime'
 const RESOLVED_VIRTUAL_RUNTIME_ID = '\0eclipsa-content:runtime'
+const VIRTUAL_SEARCH_ID = 'virtual:eclipsa-content:search'
+const RESOLVED_VIRTUAL_SEARCH_ID = '\0eclipsa-content:search'
 const CONTENT_CONFIG_PATH = 'app/content.config.ts'
 const CONTENT_COLLECTION_MARKER = '__eclipsa_content_collection__'
+const CONTENT_SEARCH_ASSET = '__eclipsa_content_search__.json'
 
 const normalizeSlashes = (value: string) => value.replaceAll('\\', '/')
 const stripQuery = (id: string) => id.split('?', 1)[0] ?? id
@@ -22,6 +29,10 @@ const fileExists = async (filePath: string) => {
 }
 
 const getConfigPath = (root: string) => path.join(root, CONTENT_CONFIG_PATH)
+const getSearchAssetPath = (base: string) => {
+  const normalizedBase = base === '' ? '/' : base.endsWith('/') ? base : `${base}/`
+  return `${normalizedBase}${CONTENT_SEARCH_ASSET}`
+}
 const isContentConfigId = (root: string, id: string) =>
   normalizeSlashes(path.resolve(stripQuery(id))) === normalizeSlashes(getConfigPath(root))
 
@@ -39,7 +50,12 @@ const invalidateVirtualRuntime = (server: ViteDevServer) => {
     if (!graph) {
       continue
     }
-    for (const id of [VIRTUAL_RUNTIME_ID, RESOLVED_VIRTUAL_RUNTIME_ID]) {
+    for (const id of [
+      VIRTUAL_RUNTIME_ID,
+      RESOLVED_VIRTUAL_RUNTIME_ID,
+      VIRTUAL_SEARCH_ID,
+      RESOLVED_VIRTUAL_SEARCH_ID,
+    ]) {
       const mod = graph.getModuleById?.(id)
       if (mod) {
         graph.invalidateModule?.(mod)
@@ -93,6 +109,12 @@ export const getEntry = async () => { throw error; };
 export const render = async () => { throw error; };
 `
 
+const createDisabledSearchModule = () => `
+export const searchOptions = ${JSON.stringify(resolveContentSearchOptions(false))};
+export const search = async () => [];
+export default { search, searchOptions };
+`
+
 const createClientContentConfigModule = async (configPath: string) => {
   const source = await fs.readFile(configPath, 'utf8')
   const exportNames = getNamedCollectionExports(source)
@@ -123,6 +145,11 @@ export const getEntry = runtime.getEntry;
 export const render = runtime.render;
 `
 
+const loadCollectionsModule = async (configPath: string) => {
+  const href = pathToFileURL(configPath).href
+  return import(`${href}?t=${Date.now()}`)
+}
+
 const handleInvalidation = (server: ViteDevServer, root: string, filePath: string) => {
   if (!shouldInvalidateForFile(root, filePath)) {
     return false
@@ -137,6 +164,36 @@ const handleInvalidation = (server: ViteDevServer, root: string, filePath: strin
 
 const contentPlugin = (): Plugin => {
   let config: ResolvedConfig
+  let searchStatePromise:
+    | Promise<{ indexJson: string; options: ResolvedContentSearchOptions } | null>
+    | null = null
+
+  const resolveSearchState = async () => {
+    if (searchStatePromise) {
+      return searchStatePromise
+    }
+    searchStatePromise = (async () => {
+      const configPath = getConfigPath(config.root)
+      if (!(await fileExists(configPath))) {
+        return null
+      }
+      const collectionsModule = await loadCollectionsModule(configPath)
+      const result = await createContentSearch({
+        base: config.base,
+        collectionsModule,
+        configPath,
+        root: config.root,
+      })
+      if (!result.options.enabled || result.index.documents.length === 0) {
+        return null
+      }
+      return {
+        indexJson: JSON.stringify(result.index),
+        options: result.options,
+      }
+    })()
+    return searchStatePromise
+  }
 
   return {
     enforce: 'pre',
@@ -144,7 +201,26 @@ const contentPlugin = (): Plugin => {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
+    configureServer(server) {
+      const searchPath = getSearchAssetPath(config.base)
+      server.middlewares.use(async (req, res, next) => {
+        const requestPath = req.url?.split('?', 1)[0] ?? ''
+        if (requestPath !== searchPath) {
+          next()
+          return
+        }
+        const state = await resolveSearchState()
+        if (!state) {
+          res.statusCode = 404
+          res.end('Not found')
+          return
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.end(state.indexJson)
+      })
+    },
     hotUpdate(options) {
+      searchStatePromise = null
       if (handleInvalidation(options.server, config.root, options.file)) {
         return []
       }
@@ -153,9 +229,19 @@ const contentPlugin = (): Plugin => {
       if (id === VIRTUAL_RUNTIME_ID) {
         return RESOLVED_VIRTUAL_RUNTIME_ID
       }
+      if (id === VIRTUAL_SEARCH_ID) {
+        return RESOLVED_VIRTUAL_SEARCH_ID
+      }
       return null
     },
     async load(id) {
+      if (id === RESOLVED_VIRTUAL_SEARCH_ID) {
+        const state = await resolveSearchState()
+        if (!state) {
+          return createDisabledSearchModule()
+        }
+        return generateContentSearchRuntimeModule(getSearchAssetPath(config.base), state.options)
+      }
       if (id !== RESOLVED_VIRTUAL_RUNTIME_ID) {
         if (this.environment?.name === 'client' && isContentConfigId(config.root, id)) {
           return createClientContentConfigModule(getConfigPath(config.root))
@@ -170,6 +256,17 @@ const contentPlugin = (): Plugin => {
         return createMissingRuntimeModule(config.root)
       }
       return createRuntimeModule(config.root, configPath)
+    },
+    async generateBundle() {
+      const state = await resolveSearchState()
+      if (!state) {
+        return
+      }
+      this.emitFile({
+        fileName: CONTENT_SEARCH_ASSET,
+        source: state.indexJson,
+        type: 'asset',
+      })
     },
   }
 }
