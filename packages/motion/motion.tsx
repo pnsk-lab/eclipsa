@@ -1,11 +1,4 @@
-import {
-  createContext,
-  signal,
-  useContext,
-  useSignal,
-  type JSX,
-  type Signal,
-} from 'eclipsa'
+import { createContext, signal, useContext, useSignal, type JSX, type Signal } from 'eclipsa'
 import { __eclipsaComponent } from 'eclipsa/internal'
 import { MotionValue, type MotionNodeOptions, type PanInfo } from 'motion-dom'
 import type { MotionAnimateOptions } from './animate.ts'
@@ -43,10 +36,8 @@ interface ReorderGroupContextValue<T> {
   draggedValue: Signal<T | null>
 }
 
-const asManagedComponent = <T extends object>(
-  name: string,
-  component: (props: T) => JSX.Element,
-) => __eclipsaComponent(component, `@eclipsa/motion:${name}`, () => [])
+const asManagedComponent = <T extends object>(name: string, component: (props: T) => JSX.Element) =>
+  __eclipsaComponent(component, `@eclipsa/motion:${name}`, () => [])
 
 export type MotionProps = Partial<MotionNodeOptions> & {
   [key: string]: unknown
@@ -298,7 +289,6 @@ const applyResolvedStyle = (element: Element, style: Record<string, string>) => 
   }
 }
 
-
 const toCssEasing = (value: MotionAnimateOptions['ease']) => {
   if (typeof value === 'string') {
     return value
@@ -330,9 +320,7 @@ const resolveTransition = (props: MotionProps, config: MotionConfigState): Motio
       ...config.transition,
       delay: typeof transition.delay === 'number' ? transition.delay : config.transition.delay,
       duration:
-        typeof transition.duration === 'number'
-          ? transition.duration
-          : config.transition.duration,
+        typeof transition.duration === 'number' ? transition.duration : config.transition.duration,
       ease:
         typeof transition.ease === 'string' || Array.isArray(transition.ease)
           ? (transition.ease as MotionAnimateOptions['ease'])
@@ -460,15 +448,17 @@ export const Reorder = {
     const draggedValue = useSignal<unknown | null>(null)
     return (
       <ReorderGroupContext.Provider
-        value={{
-          axis: axis ?? 'y',
-          draggedValue,
-          onReorder,
-          setDraggedValue: (value) => {
-            draggedValue.value = value
-          },
-          values,
-        } as ReorderGroupContextValue<unknown>}
+        value={
+          {
+            axis: axis ?? 'y',
+            draggedValue,
+            onReorder,
+            setDraggedValue: (value) => {
+              draggedValue.value = value
+            },
+            values,
+          } as ReorderGroupContextValue<unknown>
+        }
       >
         {children}
       </ReorderGroupContext.Provider>

@@ -34,7 +34,9 @@ describe('docs search dialog', () => {
 
     expect(source).toContain('results.value = []')
     expect(source).toContain('loading.value = true')
-    expect(source.indexOf('loading.value = true')).toBeLessThan(source.indexOf('searchTimeout.value = setTimeout'))
+    expect(source.indexOf('loading.value = true')).toBeLessThan(
+      source.indexOf('searchTimeout.value = setTimeout'),
+    )
     expect(source).toContain("if (query.value.trim() !== '') {")
     expect(source).toContain('scheduleSearch(query.value)')
   })

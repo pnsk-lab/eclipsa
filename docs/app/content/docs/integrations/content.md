@@ -35,6 +35,7 @@ export default defineConfig({
 ## Usage
 
 Create `app/content.config.ts`:
+
 ```ts
 import { defineCollection, glob } from '@eclipsa/content'
 
@@ -52,6 +53,7 @@ Then, put your markdown files in `content/docs`. For example, `content/docs/hell
 ---
 title: Hello
 ---
+
 # Hello
 
 This is a markdown file.
@@ -61,7 +63,7 @@ You can load the content in your components:
 
 ```tsx
 // app/docs/[...slug]/+page.tsx
-import { Content, getCollection, getEntry, render, getCollection } from "@eclipsa/content";
+import { Content, getCollection, getEntry, render, getCollection } from '@eclipsa/content'
 
 const normalizeSlugParam = (slug: string | string[] | undefined) => {
   if (Array.isArray(slug)) {
@@ -77,11 +79,11 @@ const useDocsPage = loader(async (c) => {
     html: (await render(entry)).html,
     title: entry.data.title,
   }
-});
+})
 
 export default () => {
-  const page = useDocsPage();
+  const page = useDocsPage()
 
-  return <Content as="div" class="markdown-content" html={page.data?.html ?? ""} />;
-};
+  return <Content as="div" class="markdown-content" html={page.data?.html ?? ''} />
+}
 ```

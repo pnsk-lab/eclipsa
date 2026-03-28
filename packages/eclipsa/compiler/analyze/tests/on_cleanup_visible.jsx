@@ -1,6 +1,6 @@
 import { onCleanup, onVisible } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const value = 'visible'
 
   onVisible(() => {
@@ -11,4 +11,4 @@ export default (() => {
   })
 
   return <button>{value}</button>
-});
+}

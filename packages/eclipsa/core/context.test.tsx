@@ -176,7 +176,9 @@ describe('createContext', () => {
       )
 
       const container = createContainer()
-      const nodes = withRuntimeContainer(container, () => renderClientInsertable(<App />, container))
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(<App />, container),
+      )
 
       expect(collectText(nodes as unknown as FakeNode[])).toBe('dark')
     }))

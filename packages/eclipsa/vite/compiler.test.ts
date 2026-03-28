@@ -171,9 +171,7 @@ describe('createResumeHmrUpdate', () => {
     const defaultComponentId = findComponentId(previous, 'component:default')
 
     expect(update?.fullReload).toBe(false)
-    expect(update?.rerenderComponentSymbols).toEqual(
-      defaultComponentId ? [defaultComponentId] : [],
-    )
+    expect(update?.rerenderComponentSymbols).toEqual(defaultComponentId ? [defaultComponentId] : [])
     expect(update?.rerenderOwnerSymbols).toEqual([])
     expect(
       defaultComponentId ? update?.symbolUrlReplacements[defaultComponentId] : undefined,
@@ -395,7 +393,9 @@ describe('createResumeHmrUpdate', () => {
       const symbols = await collectAppSymbols(root)
       const lazySymbol = symbols.find((symbol) => symbol.kind === 'lazy')
 
-      expect(lazySymbol?.code).toContain(`import { setupLandingScene } from "./landing-scene.ts";\n`)
+      expect(lazySymbol?.code).toContain(
+        `import { setupLandingScene } from "./landing-scene.ts";\n`,
+      )
 
       const compiled = await loadSymbolModuleForSSR(
         `/app/+page.tsx?eclipsa-symbol=${lazySymbol?.id}`,

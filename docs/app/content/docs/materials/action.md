@@ -24,10 +24,7 @@ export default function TodoComposer() {
   const createTodo = useCreateTodo()
 
   return (
-    <button
-      disabled={createTodo.isPending}
-      onClick={() => void createTodo.action()}
-    >
+    <button disabled={createTodo.isPending} onClick={() => void createTodo.action()}>
       {createTodo.isPending ? 'Saving...' : 'Create todo'}
     </button>
   )
@@ -112,11 +109,7 @@ const useRename = action(async (c) => {
 export default function RenameButton() {
   const rename = useRename()
 
-  return (
-    <button onClick={() => void rename.action({ name: 'eclipsa' })}>
-      Rename
-    </button>
-  )
+  return <button onClick={() => void rename.action({ name: 'eclipsa' })}>Rename</button>
 }
 ```
 

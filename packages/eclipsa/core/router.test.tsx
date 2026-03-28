@@ -147,9 +147,7 @@ describe('useLocation', () => {
       },
     })
 
-    expect(html).toContain(
-      '<p>/docs|?tab=api|#hooks|https://example.com/docs?tab=api#hooks</p>',
-    )
+    expect(html).toContain('<p>/docs|?tab=api|#hooks|https://example.com/docs?tab=api#hooks</p>')
     expect(payload.signals['$router:url']).toBe('https://example.com/docs?tab=api#hooks')
     expect(payload.subscriptions['$router:url']).toEqual(['c0'])
   })
@@ -243,7 +241,11 @@ describe('Link', () => {
       expect(anchor).toBeTruthy()
       expect(anchor?.textContent).toBe('eclipsa')
       expect(anchor?.textContent).not.toContain('[object Object]')
-      expect(collectElements(anchor ?? new FakeElement('missing')).some((node) => node.tagName === 'svg')).toBe(true)
+      expect(
+        collectElements(anchor ?? new FakeElement('missing')).some(
+          (node) => node.tagName === 'svg',
+        ),
+      ).toBe(true)
     })
   })
 })

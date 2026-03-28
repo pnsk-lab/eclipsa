@@ -49,7 +49,8 @@ const SEARCH_STOPWORDS = new Set([
 const SEARCH_K1 = 1.2
 const SEARCH_B = 0.75
 
-const isCjkChar = (char: string) => /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(char)
+const isCjkChar = (char: string) =>
+  /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(char)
 
 const tokenizeValue = (text: string, query: boolean) => {
   const tokens: string[] = []
@@ -251,7 +252,9 @@ export const searchContentIndex = (
         const score =
           idf *
           ((posting.tf * (SEARCH_K1 + 1)) /
-            (posting.tf + SEARCH_K1 * (1 - SEARCH_B + (SEARCH_B * docLength) / Math.max(1, searchIndex.avgDl)))) *
+            (posting.tf +
+              SEARCH_K1 *
+                (1 - SEARCH_B + (SEARCH_B * docLength) / Math.max(1, searchIndex.avgDl)))) *
           getFieldBoost(posting.field)
 
         const current = docScores.get(posting.docIdx) ?? {

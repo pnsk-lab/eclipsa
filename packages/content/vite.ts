@@ -42,9 +42,10 @@ const getNamedCollectionExports = (source: string) =>
 const invalidateVirtualRuntime = (server: ViteDevServer) => {
   const graphs = [
     (server as ViteDevServer & { moduleGraph?: any }).moduleGraph,
-    ...Object.values((server as ViteDevServer & { environments?: Record<string, { moduleGraph?: any }> }).environments ?? {}).map(
-      (environment) => environment.moduleGraph,
-    ),
+    ...Object.values(
+      (server as ViteDevServer & { environments?: Record<string, { moduleGraph?: any }> })
+        .environments ?? {},
+    ).map((environment) => environment.moduleGraph),
   ]
   for (const graph of graphs) {
     if (!graph) {
@@ -156,17 +157,18 @@ const handleInvalidation = (server: ViteDevServer, root: string, filePath: strin
   }
   invalidateVirtualRuntime(server)
   invalidateRegisteredDevApps(server)
-  ;(server as ViteDevServer & { ws?: { send?: (event: string, payload?: unknown) => void } }).ws?.send?.(
-    CONTENT_HMR_EVENT,
-  )
+  ;(
+    server as ViteDevServer & { ws?: { send?: (event: string, payload?: unknown) => void } }
+  ).ws?.send?.(CONTENT_HMR_EVENT)
   return true
 }
 
 const contentPlugin = (): Plugin => {
   let config: ResolvedConfig
-  let searchStatePromise:
-    | Promise<{ indexJson: string; options: ResolvedContentSearchOptions } | null>
-    | null = null
+  let searchStatePromise: Promise<{
+    indexJson: string
+    options: ResolvedContentSearchOptions
+  } | null> | null = null
 
   const resolveSearchState = async () => {
     if (searchStatePromise) {

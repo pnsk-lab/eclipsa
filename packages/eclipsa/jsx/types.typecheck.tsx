@@ -6,11 +6,15 @@ type Expect<T extends true> = T
 
 type ButtonClickHandler = NonNullable<JSX.IntrinsicElements['button']['onClick']>
 type ButtonClickEvent = Parameters<ButtonClickHandler>[0]
-type _ButtonClickEvent = Expect<Equal<ButtonClickEvent, DelegatedEvent<HTMLButtonElement, MouseEvent>>>
+type _ButtonClickEvent = Expect<
+  Equal<ButtonClickEvent, DelegatedEvent<HTMLButtonElement, MouseEvent>>
+>
 
 type InputHandler = NonNullable<JSX.IntrinsicElements['input']['onInput']>
 type InputEvent = Parameters<InputHandler>[0]
-type _InputEvent = Expect<Equal<InputEvent, DelegatedEvent<HTMLInputElement, globalThis.InputEvent>>>
+type _InputEvent = Expect<
+  Equal<InputEvent, DelegatedEvent<HTMLInputElement, globalThis.InputEvent>>
+>
 
 type FormSubmitHandler = NonNullable<JSX.IntrinsicElements['form']['onSubmit']>
 type FormSubmitEvent = Parameters<FormSubmitHandler>[0]
@@ -78,12 +82,7 @@ type _InputBindChecked = Expect<
 ;<a href="/docs/getting-started/overview" rel="noreferrer" />
 
 ;<svg viewBox="0 0 24 24" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <path
-    d="M0 0h24v24H0z"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-  />
+  <path d="M0 0h24v24H0z" fill="none" stroke="currentColor" stroke-width="2" />
   <use xlink:href="#icon" />
 </svg>
 

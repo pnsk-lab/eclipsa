@@ -43,7 +43,7 @@ class FakeNode {
       return null
     }
     const index = this.parentNode.childNodes.indexOf(this)
-    return index >= 0 ? this.parentNode.childNodes[index + 1] ?? null : null
+    return index >= 0 ? (this.parentNode.childNodes[index + 1] ?? null) : null
   }
 
   get firstChild(): FakeNode | null {
@@ -242,7 +242,9 @@ class FakeElement extends FakeNode {
   }
 
   get children() {
-    const children = this.childNodes.filter((child) => child instanceof FakeElement) as FakeElement[]
+    const children = this.childNodes.filter(
+      (child) => child instanceof FakeElement,
+    ) as FakeElement[]
     return {
       item(index: number) {
         return children[index] ?? null
@@ -595,7 +597,13 @@ describe('renderClientInsertable', () => {
       const AppBody = () => {
         const query = useSignal('')
         inputRef = useSignal<HTMLInputElement | undefined>()
-        return jsxDEV('input', { 'bind:value': query, ref: inputRef, type: 'text' }, null, false, {})
+        return jsxDEV(
+          'input',
+          { 'bind:value': query, ref: inputRef, type: 'text' },
+          null,
+          false,
+          {},
+        )
       }
 
       const App = __eclipsaComponent(
@@ -628,7 +636,9 @@ describe('renderClientInsertable', () => {
       for (const node of nodes as unknown as FakeNode[]) {
         ;(doc.body as unknown as FakeElement).appendChild(node)
       }
-      const initialInput = nodes.find((node) => node instanceof FakeElement) as FakeElement | undefined
+      const initialInput = nodes.find((node) => node instanceof FakeElement) as
+        | FakeElement
+        | undefined
       if (!initialInput) {
         throw new Error('Expected rendered input.')
       }
@@ -637,7 +647,10 @@ describe('renderClientInsertable', () => {
       initialInput.selectionStart = 1
       initialInput.selectionEnd = 1
 
-      await dispatchDocumentEvent(container, new TargetedInputEvent(initialInput as unknown as EventTarget))
+      await dispatchDocumentEvent(
+        container,
+        new TargetedInputEvent(initialInput as unknown as EventTarget),
+      )
       await flushAsync()
 
       expect(inputRef.value).toBeDefined()
@@ -751,11 +764,7 @@ describe('renderClientInsertable', () => {
         return jsxDEV('button', { children: `Count ${count.value}` }, null, false, {})
       }
 
-      const Counter = __eclipsaComponent(
-        CounterBody,
-        'component-counter',
-        () => [],
-      )
+      const Counter = __eclipsaComponent(CounterBody, 'component-counter', () => [])
 
       const container = createContainer()
       container.imports.set(
@@ -774,9 +783,7 @@ describe('renderClientInsertable', () => {
       }
 
       const getButton = () =>
-        parent.childNodes.find((node) => node instanceof FakeElement) as
-        | FakeElement
-        | undefined
+        parent.childNodes.find((node) => node instanceof FakeElement) as FakeElement | undefined
 
       const initialButton = getButton()
 
@@ -863,7 +870,9 @@ describe('renderClientInsertable', () => {
               jsxDEV(
                 'div',
                 {
-                  style: open.value ? 'max-height: 64px; opacity: 1' : 'max-height: 0px; opacity: 0',
+                  style: open.value
+                    ? 'max-height: 64px; opacity: 1'
+                    : 'max-height: 0px; opacity: 0',
                 },
                 null,
                 false,
@@ -890,7 +899,10 @@ describe('renderClientInsertable', () => {
 
       const parent = new FakeElement('div')
       const nodes = withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(Dir as any, { title: 'Materials' }, null, false, {}), container),
+        renderClientInsertable(
+          jsxDEV(Dir as any, { title: 'Materials' }, null, false, {}),
+          container,
+        ),
       ) as unknown as FakeNode[]
 
       for (const node of nodes) {
@@ -1017,11 +1029,7 @@ describe('renderClientInsertable', () => {
         )) as unknown as () => Node
 
       withRuntimeContainer(container, () => {
-        insert(
-          renderPanel,
-          host as unknown as Node,
-          marker as unknown as Node,
-        )
+        insert(renderPanel, host as unknown as Node, marker as unknown as Node)
       })
 
       const panel = host.childNodes[0] as FakeElement | undefined
@@ -1081,7 +1089,8 @@ describe('renderClientInsertable', () => {
       const host = new FakeElement('div')
       const originalDocument = globalThis.document
       let nodes!: FakeNode[]
-      ;(globalThis as typeof globalThis & { document: Document }).document = container.doc as Document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
       try {
         nodes = withRuntimeContainer(container, () =>
           renderClientInsertable(jsxDEV(Parent as any, {}, null, false, {}), container),
@@ -1129,11 +1138,7 @@ describe('renderClientInsertable', () => {
       const PageLinkBody = (props: { label: string }) =>
         jsxDEV('span', { children: props.label }, null, false, {})
 
-      const PageLink = __eclipsaComponent(
-        PageLinkBody,
-        'component-page-link',
-        () => [],
-      )
+      const PageLink = __eclipsaComponent(PageLinkBody, 'component-page-link', () => [])
 
       const DirBody = (props: { children?: unknown }) => {
         open = useSignal(true)
@@ -1151,12 +1156,7 @@ describe('renderClientInsertable', () => {
         )
       }
 
-      const Dir = __eclipsaComponent(
-        DirBody,
-        'component-dir',
-        () => [],
-        { children: 1 },
-      )
+      const Dir = __eclipsaComponent(DirBody, 'component-dir', () => [], { children: 1 })
 
       const container = createContainer()
       container.imports.set(
@@ -1439,12 +1439,9 @@ describe('renderClientInsertable', () => {
         )
       }
 
-      const Probe = __eclipsaComponent(
-        ProbeBody,
-        'probe-route-slot-patch-symbol',
-        () => [],
-        { children: 1 },
-      )
+      const Probe = __eclipsaComponent(ProbeBody, 'probe-route-slot-patch-symbol', () => [], {
+        children: 1,
+      })
 
       const container = createContainer()
       const page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
@@ -1524,7 +1521,11 @@ describe('renderClientInsertable', () => {
   it('keeps managed Link elements stable when route-location subscribers rerender', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
-      const currentPath = createDetachedRuntimeSignal(container, '$router:path', '/loader-nav/overview')
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/loader-nav/overview',
+      )
       const currentUrl = createDetachedRuntimeSignal(
         container,
         '$router:url',
@@ -1610,14 +1611,13 @@ describe('renderClientInsertable', () => {
         'page-link-route-location-symbol',
         Promise.resolve({
           default: (_scope: unknown[], propsOrArg?: unknown) =>
-            PageLinkBody(
-              propsOrArg as { href: string; label: string; stateTestId: string },
-            ),
+            PageLinkBody(propsOrArg as { href: string; label: string; stateTestId: string }),
         }),
       )
 
       const originalDocument = globalThis.document
-      ;(globalThis as typeof globalThis & { document: Document }).document = container.doc as Document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
       try {
         const host = new FakeElement('div')
         const nodes = withRuntimeContainer(container, () =>
@@ -1678,11 +1678,9 @@ describe('renderClientInsertable', () => {
       next.appendChild(new FakeText('Quick Start'))
 
       expect(
-        tryPatchBoundaryContentsInPlace(
-          start as unknown as Comment,
-          end as unknown as Comment,
-          [next as unknown as Node],
-        ),
+        tryPatchBoundaryContentsInPlace(start as unknown as Comment, end as unknown as Comment, [
+          next as unknown as Node,
+        ]),
       ).toBe(true)
       expect(current.getAttribute('class')).toBe('after')
       expect(current.textContent).toBe('Quick Start')
@@ -1702,11 +1700,9 @@ describe('renderClientInsertable', () => {
       const next = new FakeComment('ec:c:c0:start')
 
       expect(
-        tryPatchBoundaryContentsInPlace(
-          start as unknown as Comment,
-          end as unknown as Comment,
-          [next as unknown as Node],
-        ),
+        tryPatchBoundaryContentsInPlace(start as unknown as Comment, end as unknown as Comment, [
+          next as unknown as Node,
+        ]),
       ).toBe(true)
     })
   })

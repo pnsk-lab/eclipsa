@@ -32,7 +32,7 @@ describe('playground editor configuration', () => {
   it('registers Eclipsa declaration files and package entry shims for Monaco', () => {
     expect(PLAYGROUND_ECLIPSA_DIST_TYPE_FILE_COUNT).toBeGreaterThan(0)
     expect(PLAYGROUND_ECLIPSA_MODULE_SHIMS['/node_modules/eclipsa/index.d.ts']).toContain(
-      "./mod.d.mts",
+      './mod.d.mts',
     )
     expect(PLAYGROUND_ECLIPSA_MODULE_SHIMS['/node_modules/eclipsa/client.d.ts']).toContain(
       './core/client/mod.d.mts',

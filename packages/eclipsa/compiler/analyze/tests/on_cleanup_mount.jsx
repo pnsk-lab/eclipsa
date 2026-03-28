@@ -1,6 +1,6 @@
 import { onCleanup, onMount } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const value = 'mounted'
 
   onMount(() => {
@@ -11,4 +11,4 @@ export default (() => {
   })
 
   return <button>{value}</button>
-});
+}

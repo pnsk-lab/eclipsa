@@ -1,10 +1,5 @@
 import type { Component } from './component.ts'
-import {
-  createContext,
-  useContext,
-  type Context,
-  type ContextProviderProps,
-} from './context.ts'
+import { createContext, useContext, type Context, type ContextProviderProps } from './context.ts'
 
 type Equal<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2 ? true : false

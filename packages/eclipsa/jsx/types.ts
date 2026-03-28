@@ -53,9 +53,7 @@ type DelegatedEventProps<TElement extends globalThis.Element> = {
 }
 
 interface BaseIntrinsicElementProps<TElement extends globalThis.Element>
-  extends AriaAttributeProps,
-    DataAttributeProps,
-    DelegatedEventProps<TElement> {
+  extends AriaAttributeProps, DataAttributeProps, DelegatedEventProps<TElement> {
   children?: unknown
   class?: string | undefined
   dangerouslySetInnerHTML?: string | null | undefined
@@ -68,23 +66,16 @@ interface BaseIntrinsicElementProps<TElement extends globalThis.Element>
   title?: string | undefined
 }
 
-interface HTMLIntrinsicElementProps<TElement extends HTMLElement>
-  extends BaseIntrinsicElementProps<TElement> {
+interface HTMLIntrinsicElementProps<
+  TElement extends HTMLElement,
+> extends BaseIntrinsicElementProps<TElement> {
   accessKey?: string | undefined
   autoCapitalize?: string | undefined
   autoFocus?: boolean | undefined
   contentEditable?: boolean | 'inherit' | 'plaintext-only' | undefined
   dir?: 'auto' | 'ltr' | 'rtl' | undefined
   draggable?: boolean | undefined
-  enterKeyHint?:
-    | 'done'
-    | 'enter'
-    | 'go'
-    | 'next'
-    | 'previous'
-    | 'search'
-    | 'send'
-    | undefined
+  enterKeyHint?: 'done' | 'enter' | 'go' | 'next' | 'previous' | 'search' | 'send' | undefined
   hidden?: boolean | undefined
   inert?: boolean | undefined
   inputMode?:
@@ -103,9 +94,7 @@ interface HTMLIntrinsicElementProps<TElement extends HTMLElement>
 }
 
 interface SVGIntrinsicElementProps<TElement extends SVGElement>
-  extends BaseIntrinsicElementProps<TElement>,
-    HyphenatedAttributeProps,
-    NamespacedAttributeProps {
+  extends BaseIntrinsicElementProps<TElement>, HyphenatedAttributeProps, NamespacedAttributeProps {
   color?: string | undefined
   cx?: number | string | undefined
   cy?: number | string | undefined
@@ -137,10 +126,7 @@ interface SVGIntrinsicElementProps<TElement extends SVGElement>
 
 type ButtonType = 'button' | 'reset' | 'submit'
 type CrossOrigin = 'anonymous' | 'use-credentials'
-type FormEncType =
-  | 'application/x-www-form-urlencoded'
-  | 'multipart/form-data'
-  | 'text/plain'
+type FormEncType = 'application/x-www-form-urlencoded' | 'multipart/form-data' | 'text/plain'
 type FormMethod = 'dialog' | 'get' | 'post'
 type HTMLInputType =
   | 'button'
@@ -177,8 +163,9 @@ type ReferrerPolicy =
   | 'strict-origin-when-cross-origin'
   | 'unsafe-url'
 
-interface AnchorHTMLAttributes<TElement extends HTMLAnchorElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface AnchorHTMLAttributes<
+  TElement extends HTMLAnchorElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   download?: boolean | string | undefined
   href?: string | undefined
   hreflang?: string | undefined
@@ -189,8 +176,9 @@ interface AnchorHTMLAttributes<TElement extends HTMLAnchorElement>
   type?: string | undefined
 }
 
-interface ButtonHTMLAttributes<TElement extends HTMLButtonElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface ButtonHTMLAttributes<
+  TElement extends HTMLButtonElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   disabled?: boolean | undefined
   form?: string | undefined
   name?: string | undefined
@@ -198,8 +186,9 @@ interface ButtonHTMLAttributes<TElement extends HTMLButtonElement>
   value?: number | string | undefined
 }
 
-interface FormHTMLAttributes<TElement extends HTMLFormElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface FormHTMLAttributes<
+  TElement extends HTMLFormElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   action?: string | undefined
   autoComplete?: string | undefined
   encType?: FormEncType | undefined
@@ -209,8 +198,9 @@ interface FormHTMLAttributes<TElement extends HTMLFormElement>
   target?: string | undefined
 }
 
-interface ImgHTMLAttributes<TElement extends HTMLImageElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface ImgHTMLAttributes<
+  TElement extends HTMLImageElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   alt?: string | undefined
   crossOrigin?: CrossOrigin | undefined
   decoding?: 'async' | 'auto' | 'sync' | undefined
@@ -223,8 +213,9 @@ interface ImgHTMLAttributes<TElement extends HTMLImageElement>
   width?: number | string | undefined
 }
 
-interface InputHTMLAttributes<TElement extends HTMLInputElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface InputHTMLAttributes<
+  TElement extends HTMLInputElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   'bind:checked'?: BindTarget<boolean | undefined> | undefined
   'bind:value'?: BindTarget<number | readonly string[] | string | undefined> | undefined
   accept?: string | undefined
@@ -252,13 +243,15 @@ interface InputHTMLAttributes<TElement extends HTMLInputElement>
   value?: number | readonly string[] | string | undefined
 }
 
-interface LabelHTMLAttributes<TElement extends HTMLLabelElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface LabelHTMLAttributes<
+  TElement extends HTMLLabelElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   for?: string | undefined
 }
 
-interface LinkHTMLAttributes<TElement extends HTMLLinkElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface LinkHTMLAttributes<
+  TElement extends HTMLLinkElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   as?: string | undefined
   crossOrigin?: CrossOrigin | undefined
   fetchPriority?: 'auto' | 'high' | 'low' | undefined
@@ -272,24 +265,27 @@ interface LinkHTMLAttributes<TElement extends HTMLLinkElement>
   type?: string | undefined
 }
 
-interface MetaHTMLAttributes<TElement extends HTMLMetaElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface MetaHTMLAttributes<
+  TElement extends HTMLMetaElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   charset?: string | undefined
   content?: string | undefined
   httpEquiv?: string | undefined
   name?: string | undefined
 }
 
-interface OptionHTMLAttributes<TElement extends HTMLOptionElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface OptionHTMLAttributes<
+  TElement extends HTMLOptionElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   disabled?: boolean | undefined
   label?: string | undefined
   selected?: boolean | undefined
   value?: number | string | undefined
 }
 
-interface ScriptHTMLAttributes<TElement extends HTMLScriptElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface ScriptHTMLAttributes<
+  TElement extends HTMLScriptElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   async?: boolean | undefined
   crossOrigin?: CrossOrigin | undefined
   defer?: boolean | undefined
@@ -300,8 +296,9 @@ interface ScriptHTMLAttributes<TElement extends HTMLScriptElement>
   type?: string | undefined
 }
 
-interface SelectHTMLAttributes<TElement extends HTMLSelectElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface SelectHTMLAttributes<
+  TElement extends HTMLSelectElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   'bind:value'?: BindTarget<number | readonly string[] | string | undefined> | undefined
   autoComplete?: string | undefined
   disabled?: boolean | undefined
@@ -313,14 +310,16 @@ interface SelectHTMLAttributes<TElement extends HTMLSelectElement>
   value?: number | readonly string[] | string | undefined
 }
 
-interface StyleHTMLAttributes<TElement extends HTMLStyleElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface StyleHTMLAttributes<
+  TElement extends HTMLStyleElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   media?: string | undefined
   nonce?: string | undefined
 }
 
-interface TextareaHTMLAttributes<TElement extends HTMLTextAreaElement>
-  extends HTMLIntrinsicElementProps<TElement> {
+interface TextareaHTMLAttributes<
+  TElement extends HTMLTextAreaElement,
+> extends HTMLIntrinsicElementProps<TElement> {
   'bind:value'?: BindTarget<number | readonly string[] | string | undefined> | undefined
   autoComplete?: string | undefined
   cols?: number | undefined

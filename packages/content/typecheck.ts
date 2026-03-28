@@ -1,4 +1,11 @@
-import { defineCollection, getEntries, getEntry, getCollection, glob, type CollectionEntry } from './mod.ts'
+import {
+  defineCollection,
+  getEntries,
+  getEntry,
+  getCollection,
+  glob,
+  type CollectionEntry,
+} from './mod.ts'
 import type { StandardSchemaV1 } from 'eclipsa'
 
 type Equal<Left, Right> =
@@ -70,17 +77,27 @@ type _Data = Expect<
 >
 
 declare const filter: Parameters<typeof getCollection<typeof docs>>[1]
-declare const refsPromise: ReturnType<typeof getEntries<[{
-  collection: typeof docs
-  id: 'guide/start-here'
-}]>>
+declare const refsPromise: ReturnType<
+  typeof getEntries<
+    [
+      {
+        collection: typeof docs
+        id: 'guide/start-here'
+      },
+    ]
+  >
+>
 declare const entryPromise: ReturnType<typeof getEntry<typeof docs>>
 
-type _Filter = Expect<Equal<typeof filter, ((entry: CollectionEntry<typeof docs>) => boolean | Promise<boolean>) | undefined>>
-type _GetEntry = Expect<Equal<typeof entryPromise, Promise<CollectionEntry<typeof docs> | undefined>>>
-type _GetEntries = Expect<
+type _Filter = Expect<
   Equal<
-    typeof refsPromise,
-    Promise<[CollectionEntry<typeof docs> | undefined]>
+    typeof filter,
+    ((entry: CollectionEntry<typeof docs>) => boolean | Promise<boolean>) | undefined
   >
+>
+type _GetEntry = Expect<
+  Equal<typeof entryPromise, Promise<CollectionEntry<typeof docs> | undefined>>
+>
+type _GetEntries = Expect<
+  Equal<typeof refsPromise, Promise<[CollectionEntry<typeof docs> | undefined]>>
 >

@@ -1,6 +1,6 @@
 import { onCleanup, useSignal, useWatch } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const tracked = useSignal(0)
 
   useWatch(() => {
@@ -11,4 +11,4 @@ export default (() => {
   }, [tracked])
 
   return <button>{tracked.value}</button>
-});
+}

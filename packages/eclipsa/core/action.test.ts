@@ -294,24 +294,21 @@ describe('action runtime', () => {
   it('streams async generator actions through client handles', async () => {
     const container = createRuntimeContainer()
     const originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(async () =>
-      new Response('{"type":"chunk","value":0}\n{"type":"chunk","value":1}\n{"type":"done"}\n', {
-        headers: {
-          'content-type': 'application/eclipsa-action-stream+json',
-          'x-eclipsa-stream-kind': 'async-generator',
-        },
-      }),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response('{"type":"chunk","value":0}\n{"type":"chunk","value":1}\n{"type":"done"}\n', {
+          headers: {
+            'content-type': 'application/eclipsa-action-stream+json',
+            'x-eclipsa-stream-kind': 'async-generator',
+          },
+        }),
     ) as typeof fetch
 
     try {
-      const useStream = __eclipsaAction(
-        'stream-handle',
-        [],
-        async function* () {
-          yield 0
-          yield 1
-        },
-      )
+      const useStream = __eclipsaAction('stream-handle', [], async function* () {
+        yield 0
+        yield 1
+      })
       const handle = withRuntimeContainer(container, () => useStream())
 
       const stream = handle.action()

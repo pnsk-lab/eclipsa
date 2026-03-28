@@ -133,9 +133,13 @@ describe('compileClientModule', () => {
   })
 
   it('embeds static intrinsic attributes into the template html', async () => {
-    const resultCode = await compileClientModule(`<div class="card" data-testid="probe" />`, 'mod.test.tsx', {
-      hmr: false,
-    })
+    const resultCode = await compileClientModule(
+      `<div class="card" data-testid="probe" />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
 
     expect(resultCode).toContain('<div class=\\"card\\" data-testid=\\"probe\\"></div>')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
@@ -154,7 +158,9 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('<div class=\\"card\\"></div>')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
     expect(resultCode).toContain('_attr(_cloned, "data-id", () => id);')
-    expect(resultCode).toContain('_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");')
+    expect(resultCode).toContain(
+      '_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");',
+    )
   })
 
   it('emits dangerouslySetInnerHTML through runtime attr application', async () => {
@@ -180,7 +186,9 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('<svg><sodipodi:namedview xml:space=\\"preserve\\"></sodipodi:namedview></svg>')
+    expect(resultCode).toContain(
+      '<svg><sodipodi:namedview xml:space=\\"preserve\\"></sodipodi:namedview></svg>',
+    )
     expect(resultCode).not.toContain('_attr(')
   })
 

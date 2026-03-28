@@ -727,10 +727,14 @@ const renderScopedStyleNode = (
 }
 
 const renderFrameScopedStylesToString = (frame: RenderFrame) =>
-  frame.scopedStyles.map((style) => renderScopedStyleString(frame.component.scopeId, style)).join('')
+  frame.scopedStyles
+    .map((style) => renderScopedStyleString(frame.component.scopeId, style))
+    .join('')
 
 const renderFrameScopedStylesToNodes = (frame: RenderFrame, container: RuntimeContainer) =>
-  frame.scopedStyles.map((style) => renderScopedStyleNode(container, frame.component.scopeId, style))
+  frame.scopedStyles.map((style) =>
+    renderScopedStyleNode(container, frame.component.scopeId, style),
+  )
 
 export const registerRuntimeScopedStyle = (
   cssText: string,
@@ -747,8 +751,7 @@ export const registerRuntimeScopedStyle = (
 
   const existing = frame.scopedStyles.find(
     (entry) =>
-      entry.cssText === cssText &&
-      JSON.stringify(entry.attributes) === JSON.stringify(attributes),
+      entry.cssText === cssText && JSON.stringify(entry.attributes) === JSON.stringify(attributes),
   )
   if (existing) {
     return
@@ -852,10 +855,16 @@ const matchRouteSegments = (
       if (rest.length === 0) {
         return null
       }
-      return matchRouteSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
-        ...params,
-        [segment.value]: rest,
-      })
+      return matchRouteSegments(
+        segments,
+        pathnameSegments,
+        segments.length,
+        pathnameSegments.length,
+        {
+          ...params,
+          [segment.value]: rest,
+        },
+      )
     }
   }
 }
@@ -1364,7 +1373,7 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
       if (isRouteSlot(candidate)) {
         return {
           __eclipsa_type: 'ref',
-            data: serializePublicValue(candidate.startLayoutIndex),
+          data: serializePublicValue(candidate.startLayoutIndex),
           kind: 'route-slot',
           token: candidate.pathname,
         }
@@ -1982,11 +1991,7 @@ const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
 
 export const withRuntimeContainer = pushContainer
 
-const withRuntimeContextValue = <T>(
-  token: RuntimeContextToken,
-  value: unknown,
-  fn: () => T,
-): T => {
+const withRuntimeContextValue = <T>(token: RuntimeContextToken, value: unknown, fn: () => T): T => {
   const stack = getContextValueStack()
   stack.push({
     token,
@@ -2621,9 +2626,10 @@ const replaceBoundaryContents = (
     preserveProjectionSlots?: boolean
   },
 ) => {
-  const preservedComponentIds = options?.preserveProjectionSlots ?? true
-    ? preserveProjectionSlotContents(start, end, nodes)
-    : new Set<string>()
+  const preservedComponentIds =
+    (options?.preserveProjectionSlots ?? true)
+      ? preserveProjectionSlotContents(start, end, nodes)
+      : new Set<string>()
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
@@ -2770,7 +2776,12 @@ const patchNodeInPlace = (current: Node, next: Node): boolean => {
     const nextIsProjectionSlot = !!parseProjectionSlotMarker(nextComment.data)
     const currentIsBoundaryMarker = !!parseComponentBoundaryMarker(currentComment.data)
     const nextIsBoundaryMarker = !!parseComponentBoundaryMarker(nextComment.data)
-    if (currentIsProjectionSlot || nextIsProjectionSlot || currentIsBoundaryMarker || nextIsBoundaryMarker) {
+    if (
+      currentIsProjectionSlot ||
+      nextIsProjectionSlot ||
+      currentIsBoundaryMarker ||
+      nextIsBoundaryMarker
+    ) {
       return currentComment.data === nextComment.data
     }
     if (currentComment.data !== nextComment.data) {
@@ -2826,7 +2837,9 @@ const collectMountedBoundaryDescendants = (component: ComponentState) =>
 const collectProjectionSlotComponentIds = (roots: Node[]) => {
   const preserved = new Set<string>()
   for (const range of collectProjectionSlotRanges(roots).values()) {
-    for (const componentId of collectComponentBoundaryIds(getBoundaryChildren(range.start, range.end))) {
+    for (const componentId of collectComponentBoundaryIds(
+      getBoundaryChildren(range.start, range.end),
+    )) {
       preserved.add(componentId)
     }
   }
@@ -3540,11 +3553,10 @@ const renderComponentToNodes = (
   }
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  const preservedDescendants = frame.projectionState.reuseExistingDom
-    && previousStart
-    && previousEnd
-    ? collectPreservedProjectionSlotComponentIds(previousStart, previousEnd)
-    : new Set<string>()
+  const preservedDescendants =
+    frame.projectionState.reuseExistingDom && previousStart && previousEnd
+      ? collectPreservedProjectionSlotComponentIds(previousStart, previousEnd)
+      : new Set<string>()
   const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
   pruneRemovedComponents(container, componentId, keptDescendants)
 
@@ -3702,7 +3714,11 @@ export const renderClientNodes = (
   if (typeof resolved.type === 'function') {
     const providerMeta = getContextProviderMeta(resolved.type)
     if (providerMeta) {
-      return renderContextProviderToNodes(providerMeta.token, evaluateProps(resolved.props), container)
+      return renderContextProviderToNodes(
+        providerMeta.token,
+        evaluateProps(resolved.props),
+        container,
+      )
     }
 
     const componentFn = resolved.type as Component
@@ -3717,7 +3733,13 @@ export const renderClientNodes = (
         ),
       )
     }
-    return renderComponentToNodes(componentFn, resolved.props as Record<string, unknown>, container, 'client', resolved.props)
+    return renderComponentToNodes(
+      componentFn,
+      resolved.props as Record<string, unknown>,
+      container,
+      'client',
+      resolved.props,
+    )
   }
 
   if (resolved.type === FRAGMENT) {
@@ -3886,7 +3908,9 @@ export const renderClientInsertableForOwner = (
   })
   frame.childCursor = owner.childIndex
   frame.projectionState.counters = new Map(owner.projectionCounters)
-  return pushContainer(container, () => pushFrame(frame, () => renderClientInsertable(value, container)))
+  return pushContainer(container, () =>
+    pushFrame(frame, () => renderClientInsertable(value, container)),
+  )
 }
 
 export const serializeContainerValue = (
@@ -4653,14 +4677,15 @@ const updateSharedLayoutBoundary = async (
     [...collectComponentBoundaryIds(getBoundaryChildren(slotRange.start, slotRange.end))]
       .filter((candidateId) => parseDirectChildIndex(boundaryId, candidateId) !== null)
       .sort((left, right) => left.split('.').length - right.split('.').length)[0] ?? null
-  const routeChildIndex =
-    currentRouteRootId ? parseDirectChildIndex(boundaryId, currentRouteRootId) : null
+  const routeChildIndex = currentRouteRootId
+    ? parseDirectChildIndex(boundaryId, currentRouteRootId)
+    : null
   if (routeChildIndex === null) {
     return false
   }
 
   const currentRouteRoot = currentRouteRootId
-    ? container.components.get(currentRouteRootId) ?? null
+    ? (container.components.get(currentRouteRootId) ?? null)
     : null
   const needsFullBoundaryRerender =
     (currentRouteRoot?.watchCount ?? 0) > 0 || (currentRouteRoot?.visibleCount ?? 0) > 0
@@ -4672,9 +4697,7 @@ const updateSharedLayoutBoundary = async (
         ? (boundary.props as Record<string, unknown>)
         : null
     const boundaryRawProps =
-      boundary.rawProps && typeof boundary.rawProps === 'object'
-        ? boundary.rawProps
-        : boundaryProps
+      boundary.rawProps && typeof boundary.rawProps === 'object' ? boundary.rawProps : boundaryProps
     boundary.props = withUpdatedComponentChildren(boundaryProps, nextChildren)
     boundary.rawProps = withUpdatedComponentChildren(boundaryRawProps, nextChildren)
     boundary.active = false
@@ -5318,7 +5341,8 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     const patched =
-      activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+      activateMode === 'patch' &&
+      tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
     const preservedDescendants = patched
       ? frame.projectionState.reuseExistingDom
         ? collectPreservedProjectionSlotComponentIds(component.start, component.end)
@@ -5353,9 +5377,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   await preloadResumableValue(container, scope)
   const module = await loadSymbol(container, activateSymbol)
   const rawProps =
-    component.rawProps && typeof component.rawProps === 'object'
-      ? component.rawProps
-      : null
+    component.rawProps && typeof component.rawProps === 'object' ? component.rawProps : null
   if (rawProps) {
     component.props = evaluateProps(rawProps)
   }
@@ -5380,18 +5402,17 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   try {
     nodes = pushContainer(container, () =>
       pushFrame(frame, () => {
-        const renderProps =
-          rawProps
-            ? createRenderProps(
-                component.id,
-                {
-                  captures: () => [],
-                  projectionSlots: component.projectionSlots ?? undefined,
-                  symbol: activateSymbol,
-                },
-                rawProps,
-              )
-            : component.props && typeof component.props === 'object'
+        const renderProps = rawProps
+          ? createRenderProps(
+              component.id,
+              {
+                captures: () => [],
+                projectionSlots: component.projectionSlots ?? undefined,
+                symbol: activateSymbol,
+              },
+              rawProps,
+            )
+          : component.props && typeof component.props === 'object'
             ? createRenderProps(
                 component.id,
                 {
@@ -5416,7 +5437,8 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const patched =
-    activateMode === 'patch' && tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+    activateMode === 'patch' &&
+    tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
   const preservedDescendants = patched
     ? frame.projectionState.reuseExistingDom
       ? collectPreservedProjectionSlotComponentIds(component.start, component.end)
@@ -5462,10 +5484,7 @@ const parseSymbolIdFromUrl = (url: string) => {
 }
 
 export const resolveResumeHmrBoundarySymbols = (payload: ResumeHmrUpdatePayload) => {
-  const symbolIds = new Set([
-    ...payload.rerenderComponentSymbols,
-    ...payload.rerenderOwnerSymbols,
-  ])
+  const symbolIds = new Set([...payload.rerenderComponentSymbols, ...payload.rerenderOwnerSymbols])
 
   for (const symbolId of [...symbolIds]) {
     const replacementUrl = payload.symbolUrlReplacements[symbolId]
@@ -5672,7 +5691,11 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
         )
         if (rerenderedParent) {
           const component = container.components.get(componentId)
-          if (patchedAncestors.has(rerenderedParent) && component?.start?.parentNode && component.end?.parentNode) {
+          if (
+            patchedAncestors.has(rerenderedParent) &&
+            component?.start?.parentNode &&
+            component.end?.parentNode
+          ) {
             component.active = false
             container.dirty.add(componentId)
           }
@@ -6412,10 +6435,10 @@ const readBoundElementValue = (
   currentValue: unknown,
 ) => {
   if (
-    isHTMLInputElementNode(element)
-    && typeof currentValue === 'number'
-    && (element.type === 'number' || element.type === 'range')
-    && !Number.isNaN(element.valueAsNumber)
+    isHTMLInputElementNode(element) &&
+    typeof currentValue === 'number' &&
+    (element.type === 'number' || element.type === 'range') &&
+    !Number.isNaN(element.valueAsNumber)
   ) {
     return element.valueAsNumber
   }
@@ -6424,7 +6447,11 @@ const readBoundElementValue = (
 }
 
 export const syncBoundElementSignal = (container: RuntimeContainer, target: EventTarget | null) => {
-  if (!isHTMLInputElementNode(target) && !isHTMLSelectElementNode(target) && !isHTMLTextAreaElementNode(target)) {
+  if (
+    !isHTMLInputElementNode(target) &&
+    !isHTMLSelectElementNode(target) &&
+    !isHTMLTextAreaElementNode(target)
+  ) {
     return false
   }
 
@@ -6502,10 +6529,7 @@ export const dispatchResumeEvent = async (container: RuntimeContainer, event: Ev
   const scope = materializeScope(container, scopeId)
   try {
     await withClientContainer(container, async () => {
-      await module.default(
-        scope,
-        createDelegatedEvent(event, interactiveTarget),
-      )
+      await module.default(scope, createDelegatedEvent(event, interactiveTarget))
     })
   } catch (error) {
     throw wrapGeneratedScopeReferenceError(error, {
@@ -6519,9 +6543,11 @@ export const dispatchResumeEvent = async (container: RuntimeContainer, event: Ev
 
 export const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
   const didSyncBoundSignal =
-    (event.type === 'input' || event.type === 'change')
-    && syncBoundElementSignal(container, event.target)
-  const pendingFocus = didSyncBoundSignal ? capturePendingFocusRestore(container, event.target) : null
+    (event.type === 'input' || event.type === 'change') &&
+    syncBoundElementSignal(container, event.target)
+  const pendingFocus = didSyncBoundSignal
+    ? capturePendingFocusRestore(container, event.target)
+    : null
   await dispatchResumeEvent(container, event)
   if (didSyncBoundSignal) {
     await flushDirtyComponents(container)

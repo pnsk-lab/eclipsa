@@ -49,7 +49,7 @@ const resolveTheme = (options: boolean | ContentHighlightOptions | undefined) =>
   if (!options) {
     return null
   }
-  return options === true ? DEFAULT_THEME : options.theme ?? DEFAULT_THEME
+  return options === true ? DEFAULT_THEME : (options.theme ?? DEFAULT_THEME)
 }
 
 const getHighlighter = (theme: string) => {

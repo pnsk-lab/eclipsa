@@ -1,78 +1,82 @@
-import { motion } from "@eclipsa/motion";
-import { Link, onMount, useLocation, useSignal } from "eclipsa";
-import { Logo } from "../components/logo";
-import { DocsSearchDialog } from "./docs/SearchDialog";
-import "./style.css";
-import clsx from "clsx";
+import { motion } from '@eclipsa/motion'
+import { Link, onMount, useLocation, useSignal } from 'eclipsa'
+import { Logo } from '../components/logo'
+import { DocsSearchDialog } from './docs/SearchDialog'
+import './style.css'
+import clsx from 'clsx'
 
-type DocsTheme = "light" | "dark";
+type DocsTheme = 'light' | 'dark'
 
-const DOCS_THEME_STORAGE_KEY = "eclipsa-docs-theme";
+const DOCS_THEME_STORAGE_KEY = 'eclipsa-docs-theme'
 
 export default (props: { children?: unknown }) => {
-  const loc = useLocation();
-  const isHome = loc.pathname === "/";
-  const isDocsRoute = loc.pathname.startsWith("/docs");
-  const mobileMenuOpen = useSignal(false);
-  const docsTheme = useSignal<DocsTheme>("light");
+  const loc = useLocation()
+  const isHome = loc.pathname === '/'
+  const isDocsRoute = loc.pathname.startsWith('/docs')
+  const mobileMenuOpen = useSignal(false)
+  const docsTheme = useSignal<DocsTheme>('light')
 
   const applyDocsTheme = (nextTheme: DocsTheme) => {
-    docsTheme.value = nextTheme;
+    docsTheme.value = nextTheme
 
-    if (typeof document === "undefined") return;
-    document.documentElement.dataset.docsTheme = nextTheme;
-  };
+    if (typeof document === 'undefined') return
+    document.documentElement.dataset.docsTheme = nextTheme
+  }
 
   const toggleDocsTheme = () => {
-    const nextTheme = docsTheme.value === "dark" ? "light" : "dark";
-    applyDocsTheme(nextTheme);
+    const nextTheme = docsTheme.value === 'dark' ? 'light' : 'dark'
+    applyDocsTheme(nextTheme)
 
-    if (typeof window === "undefined") return;
+    if (typeof window === 'undefined') return
 
     try {
-      window.localStorage.setItem(DOCS_THEME_STORAGE_KEY, nextTheme);
+      window.localStorage.setItem(DOCS_THEME_STORAGE_KEY, nextTheme)
     } catch {}
-  };
+  }
 
   onMount(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === 'undefined') return
 
     try {
-      const stored = window.localStorage.getItem(DOCS_THEME_STORAGE_KEY);
+      const stored = window.localStorage.getItem(DOCS_THEME_STORAGE_KEY)
       applyDocsTheme(
-        stored === "light" || stored === "dark"
+        stored === 'light' || stored === 'dark'
           ? stored
-          : window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light",
-      );
+          : window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light',
+      )
     } catch {
-      applyDocsTheme("light");
+      applyDocsTheme('light')
     }
-  });
+  })
 
   const blurActiveElement = () => {
-    if (typeof document === "undefined") return;
-    if (!(document.activeElement instanceof HTMLElement)) return;
-    document.activeElement.blur();
-  };
+    if (typeof document === 'undefined') return
+    if (!(document.activeElement instanceof HTMLElement)) return
+    document.activeElement.blur()
+  }
 
   const closeMobileMenu = () => {
-    blurActiveElement();
-    mobileMenuOpen.value = false;
-  };
+    blurActiveElement()
+    mobileMenuOpen.value = false
+  }
 
   return (
-    <div class={clsx(isDocsRoute && "min-h-screen bg-[color:var(--docs-bg)] text-[color:var(--docs-text)]")}>
+    <div
+      class={clsx(
+        isDocsRoute && 'min-h-screen bg-[color:var(--docs-bg)] text-[color:var(--docs-text)]',
+      )}
+    >
       <nav
         class={clsx(
-          "z-50 flex w-full items-center justify-between px-4 py-4 sm:px-6",
-          isHome || !isDocsRoute ? "fixed top-0" : "md:fixed md:top-0",
+          'z-50 flex w-full items-center justify-between px-4 py-4 sm:px-6',
+          isHome || !isDocsRoute ? 'fixed top-0' : 'md:fixed md:top-0',
           isHome
-            ? "bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] text-white"
+            ? 'bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] text-white'
             : isDocsRoute
-              ? "border-b border-[color:var(--docs-border)] bg-[color:var(--docs-nav-bg)] text-[color:var(--docs-text)] backdrop-blur md:border-transparent md:bg-transparent"
-              : "text-zinc-900",
+              ? 'border-b border-[color:var(--docs-border)] bg-[color:var(--docs-nav-bg)] text-[color:var(--docs-text)] backdrop-blur md:border-transparent md:bg-transparent'
+              : 'text-zinc-900',
         )}
       >
         <Link
@@ -87,18 +91,22 @@ export default (props: { children?: unknown }) => {
 
         <div
           class={clsx(
-            "hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] md:flex",
-            isHome ? "text-zinc-400" : isDocsRoute ? "text-[color:var(--docs-text-muted)]" : "text-zinc-500",
+            'hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] md:flex',
+            isHome
+              ? 'text-zinc-400'
+              : isDocsRoute
+                ? 'text-[color:var(--docs-text-muted)]'
+                : 'text-zinc-500',
           )}
         >
           <Link
             class={clsx(
-              "transition-colors",
+              'transition-colors',
               isHome
-                ? "hover:text-white"
+                ? 'hover:text-white'
                 : isDocsRoute
-                  ? "hover:text-[color:var(--docs-text)]"
-                  : "hover:text-zinc-950",
+                  ? 'hover:text-[color:var(--docs-text)]'
+                  : 'hover:text-zinc-950',
             )}
             data-interactive=""
             href={`${import.meta.env.BASE_URL}docs/getting-started/overview`}
@@ -108,12 +116,12 @@ export default (props: { children?: unknown }) => {
           </Link>
           <Link
             class={clsx(
-              "transition-colors",
+              'transition-colors',
               isHome
-                ? "hover:text-white"
+                ? 'hover:text-white'
                 : isDocsRoute
-                  ? "hover:text-[color:var(--docs-text)]"
-                  : "hover:text-zinc-950",
+                  ? 'hover:text-[color:var(--docs-text)]'
+                  : 'hover:text-zinc-950',
             )}
             data-interactive=""
             href={`${import.meta.env.BASE_URL}playground`}
@@ -128,7 +136,7 @@ export default (props: { children?: unknown }) => {
           {isDocsRoute && <DocsSearchDialog />}
           {isDocsRoute && (
             <button
-              aria-label={`Switch to ${docsTheme.value === "dark" ? "light" : "dark"} mode`}
+              aria-label={`Switch to ${docsTheme.value === 'dark' ? 'light' : 'dark'} mode`}
               class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--docs-panel)] text-[color:var(--docs-text)] transition-colors hover:bg-[color:var(--docs-panel-hover)]"
               data-interactive=""
               data-testid="docs-theme-toggle"
@@ -139,8 +147,8 @@ export default (props: { children?: unknown }) => {
               <div
                 aria-hidden="true"
                 class={clsx(
-                  docsTheme.value === "dark" ? "i-tabler-sun-high" : "i-tabler-moon-stars",
-                  "text-lg",
+                  docsTheme.value === 'dark' ? 'i-tabler-sun-high' : 'i-tabler-moon-stars',
+                  'text-lg',
                 )}
               />
             </button>
@@ -148,30 +156,32 @@ export default (props: { children?: unknown }) => {
           <a
             aria-label="Discord"
             class={clsx(
-              "transition-colors hover:text-[#5865F2]",
-              isHome ? "text-white" : isDocsRoute ? "text-[color:var(--docs-text)]" : "text-zinc-900",
+              'transition-colors hover:text-[#5865F2]',
+              isHome
+                ? 'text-white'
+                : isDocsRoute
+                  ? 'text-[color:var(--docs-text)]'
+                  : 'text-zinc-900',
             )}
             data-interactive=""
             href="https://discord.gg/cKbScerjFK"
           >
-            <div
-              aria-hidden="true"
-              class="i-simple-icons-discord h-6 w-6"
-            />
+            <div aria-hidden="true" class="i-simple-icons-discord h-6 w-6" />
           </a>
           <a
             aria-label="GitHub"
             class={clsx(
-              "transition-colors hover:text-[#9d00ff]",
-              isHome ? "text-white" : isDocsRoute ? "text-[color:var(--docs-text)]" : "text-zinc-900",
+              'transition-colors hover:text-[#9d00ff]',
+              isHome
+                ? 'text-white'
+                : isDocsRoute
+                  ? 'text-[color:var(--docs-text)]'
+                  : 'text-zinc-900',
             )}
             data-interactive=""
             href="https://github.com/pnsk-lab/eclipsa"
           >
-            <div
-              aria-hidden="true"
-              class="i-simple-icons-github h-6 w-6"
-            />
+            <div aria-hidden="true" class="i-simple-icons-github h-6 w-6" />
           </a>
 
           <button
@@ -179,28 +189,28 @@ export default (props: { children?: unknown }) => {
             aria-expanded={mobileMenuOpen.value}
             aria-label="Toggle site navigation"
             class={clsx(
-              "inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors md:hidden",
+              'inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors md:hidden',
               isHome
-                ? "border border-white/10 text-white hover:border-white/30 hover:bg-white/5"
+                ? 'border border-white/10 text-white hover:border-white/30 hover:bg-white/5'
                 : isDocsRoute
-                  ? "border border-[color:var(--docs-border)] text-[color:var(--docs-text)] hover:bg-[color:var(--docs-panel-hover)]"
-                  : "border border-zinc-300 text-zinc-900 hover:border-zinc-400 hover:bg-white/70",
+                  ? 'border border-[color:var(--docs-border)] text-[color:var(--docs-text)] hover:bg-[color:var(--docs-panel-hover)]'
+                  : 'border border-zinc-300 text-zinc-900 hover:border-zinc-400 hover:bg-white/70',
             )}
             data-interactive=""
             type="button"
             onClick={() => {
-              mobileMenuOpen.value = !mobileMenuOpen.value;
+              mobileMenuOpen.value = !mobileMenuOpen.value
             }}
           >
-            <div class={clsx(mobileMenuOpen.value ? "i-tabler-x" : "i-tabler-menu-2", "text-xl")} />
+            <div class={clsx(mobileMenuOpen.value ? 'i-tabler-x' : 'i-tabler-menu-2', 'text-xl')} />
           </button>
         </div>
       </nav>
 
       <div
         class={clsx(
-          "fixed inset-0 z-[80] md:hidden",
-          mobileMenuOpen.value ? "" : "pointer-events-none",
+          'fixed inset-0 z-[80] md:hidden',
+          mobileMenuOpen.value ? '' : 'pointer-events-none',
         )}
         id="site-mobile-menu-shell"
       >
@@ -214,11 +224,7 @@ export default (props: { children?: unknown }) => {
             duration: 0.18,
           }}
         >
-          <button
-            class="absolute inset-0"
-            type="button"
-            onClick={closeMobileMenu}
-          />
+          <button class="absolute inset-0" type="button" onClick={closeMobileMenu} />
         </motion.div>
 
         <motion.div
@@ -258,5 +264,5 @@ export default (props: { children?: unknown }) => {
 
       <div>{props.children}</div>
     </div>
-  );
-};
+  )
+}

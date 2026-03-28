@@ -807,7 +807,9 @@ describe('createDevFetch', () => {
     })
 
     const response = await devFetch.fetch(
-      new Request('http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F'),
+      new Request(
+        'http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F',
+      ),
     )
 
     expect(response?.status).toBe(200)
@@ -891,9 +893,7 @@ describe('createDevFetch', () => {
     })
 
     const response = await devFetch.fetch(
-      new Request(
-        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded',
-      ),
+      new Request('http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded'),
     )
 
     expect(response?.status).toBe(200)
@@ -976,9 +976,7 @@ describe('createDevFetch', () => {
     })
 
     const response = await devFetch.fetch(
-      new Request(
-        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing',
-      ),
+      new Request('http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing'),
     )
 
     expect(response?.status).toBe(200)
@@ -1044,7 +1042,9 @@ describe('createDevFetch', () => {
     })
 
     const response = await devFetch.fetch(
-      new Request('http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F'),
+      new Request(
+        'http://127.0.0.1:4173/__eclipsa/route-data?href=http%3A%2F%2F127.0.0.1%3A4173%2F',
+      ),
     )
 
     expect(response?.status).toBe(200)

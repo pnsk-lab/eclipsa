@@ -1,11 +1,11 @@
 {
   "name": "@eclipsa/image",
   "private": true,
-  "license": "MIT",
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pnsk-lab/eclipsa.git",

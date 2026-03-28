@@ -404,9 +404,7 @@ describe('resume HMR runtime helpers', () => {
 
   it('cache-busts stable symbol URLs before rerendering unchanged symbol ids', () => {
     const container = createContainer({
-      symbols: new Map([
-        ['stable-symbol', '/app/+page.tsx?eclipsa-symbol=stable-symbol'],
-      ]),
+      symbols: new Map([['stable-symbol', '/app/+page.tsx?eclipsa-symbol=stable-symbol']]),
     })
 
     bustRuntimeSymbolUrls(container, ['stable-symbol'], 123)

@@ -1,6 +1,6 @@
 import { useSignal, useWatch } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const tracked = useSignal(0)
   const dynamic = useSignal('a')
   const explicit = useSignal('b')
@@ -14,4 +14,4 @@ export default (() => {
   }, [tracked, () => explicit.value])
 
   return <button>{tracked.value}</button>
-});
+}

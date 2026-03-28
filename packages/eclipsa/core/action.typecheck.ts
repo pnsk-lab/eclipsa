@@ -105,10 +105,7 @@ type _Ping = Expect<Equal<PingHandle, ActionHandle<unknown, string>>>
 
 type CounterStreamHandle = ReturnType<typeof useCounterStream>
 type _CounterStream = Expect<
-  Equal<
-    CounterStreamHandle,
-    ActionHandle<unknown, 0 | 1, AsyncGenerator<0 | 1, void, void>>
-  >
+  Equal<CounterStreamHandle, ActionHandle<unknown, 0 | 1, AsyncGenerator<0 | 1, void, void>>>
 >
 type _CounterSubmission = Expect<
   Equal<CounterStreamHandle['lastSubmission'], ActionSubmission<unknown, 0 | 1> | undefined>

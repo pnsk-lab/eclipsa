@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildContentSearchIndex, resolveContentSearchOptions, searchContentIndex } from './search.ts'
+import {
+  buildContentSearchIndex,
+  resolveContentSearchOptions,
+  searchContentIndex,
+} from './search.ts'
 
 describe('@eclipsa/content search', () => {
   it('resolves search options with defaults', () => {
@@ -18,7 +22,7 @@ describe('@eclipsa/content search', () => {
       [
         {
           body: 'Build apps with eclipsa signals and resumable rendering.',
-          code: ["const count = useSignal(0)"],
+          code: ['const count = useSignal(0)'],
           collection: 'docs',
           headings: ['Signals'],
           id: 'materials/signal',

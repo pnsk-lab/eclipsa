@@ -45,7 +45,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: path.join(artifactsRoot, 'report') }]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: path.join(artifactsRoot, 'report') }],
+  ],
   outputDir: path.join(artifactsRoot, 'test-results'),
   use: {
     ...devices['Desktop Chrome'],

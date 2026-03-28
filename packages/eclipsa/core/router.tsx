@@ -65,6 +65,7 @@ export const useLocation = (): RouteLocation => useRuntimeLocation()
 
 export const useRouteParams = (): RouteParams => useRuntimeRouteParams()
 
-export const useRouteError = <T = unknown>(): T | undefined => useRuntimeRouteError() as T | undefined
+export const useRouteError = <T = unknown>(): T | undefined =>
+  useRuntimeRouteError() as T | undefined
 
 export const notFound = (): never => throwRouteNotFound()

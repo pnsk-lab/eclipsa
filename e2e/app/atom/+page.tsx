@@ -6,10 +6,7 @@ export const metadata = {
   title: 'Atom | E2E',
 }
 
-const AtomCountButton = (props: {
-  testId: string
-  title: string
-}) => {
+const AtomCountButton = (props: { testId: string; title: string }) => {
   const count = useAtom(sharedCountAtom)
 
   return (

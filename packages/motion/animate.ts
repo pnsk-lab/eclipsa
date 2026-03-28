@@ -1,5 +1,11 @@
 import { cubicBezier, easeIn, easeInOut, easeOut, type Easing } from 'motion-utils'
-import { MotionValue, isMotionValue, stagger as staggerValue, delay as delayValue, spring } from 'motion-dom'
+import {
+  MotionValue,
+  isMotionValue,
+  stagger as staggerValue,
+  delay as delayValue,
+  spring,
+} from 'motion-dom'
 
 export type MotionAnimationTarget =
   | Element
@@ -36,7 +42,8 @@ const WAAPI_EASING = {
 
 const isBrowser = () => typeof document !== 'undefined' && typeof window !== 'undefined'
 
-const isElement = (value: unknown): value is Element => !!value && typeof value === 'object' && 'nodeType' in value
+const isElement = (value: unknown): value is Element =>
+  !!value && typeof value === 'object' && 'nodeType' in value
 
 const resolveElements = (target: MotionAnimationTarget, scope?: Element | null): Element[] => {
   if (!target) {
@@ -80,7 +87,11 @@ const resolveEasing = (ease: MotionAnimateOptions['ease']) => {
   if (typeof ease === 'string') {
     return ease in WAAPI_EASING ? ease : ease
   }
-  if (Array.isArray(ease) && ease.length === 4 && ease.every((entry) => typeof entry === 'number')) {
+  if (
+    Array.isArray(ease) &&
+    ease.length === 4 &&
+    ease.every((entry) => typeof entry === 'number')
+  ) {
     return `cubic-bezier(${ease.join(',')})`
   }
   if (typeof ease === 'function') {
@@ -164,7 +175,10 @@ const createElementControls = (
   keyframes: MotionKeyframes,
   options?: MotionAnimateOptions,
 ): MotionAnimationControls => {
-  if (elements.length === 0 || !elements.every((element) => typeof element.animate === 'function')) {
+  if (
+    elements.length === 0 ||
+    !elements.every((element) => typeof element.animate === 'function')
+  ) {
     for (const element of elements) {
       const typed = element as HTMLElement | SVGElement
       for (const [name, value] of Object.entries(keyframes)) {
@@ -180,12 +194,15 @@ const createElementControls = (
 
   const animations = elements.map((element) => {
     const computed =
-      typeof getComputedStyle === 'function' ? getComputedStyle(element as Element) : (null as CSSStyleDeclaration | null)
+      typeof getComputedStyle === 'function'
+        ? getComputedStyle(element as Element)
+        : (null as CSSStyleDeclaration | null)
     const fromFrame: Record<string, string> = {}
     const toFrame: Record<string, string> = {}
     for (const [name, value] of Object.entries(keyframes)) {
       const resolved = toCssValue(name, value)
-      fromFrame[name] = computed?.getPropertyValue(name) || (element as HTMLElement).style.getPropertyValue(name)
+      fromFrame[name] =
+        computed?.getPropertyValue(name) || (element as HTMLElement).style.getPropertyValue(name)
       toFrame[name] = resolved
     }
     return element.animate([fromFrame, toFrame], {
@@ -196,7 +213,9 @@ const createElementControls = (
     })
   })
 
-  const finished = Promise.all(animations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
+  const finished = Promise.all(
+    animations.map((animation) => animation.finished.catch(() => undefined)),
+  ).then(() => {
     options?.onComplete?.()
   })
 
@@ -236,7 +255,11 @@ export const animate = (
   options?: MotionAnimateOptions,
 ): MotionAnimationControls => {
   if (isMotionValue(target)) {
-    return createMotionValueControls(target as MotionValue<number>, keyframes as string | number, options)
+    return createMotionValueControls(
+      target as MotionValue<number>,
+      keyframes as string | number,
+      options,
+    )
   }
   const elements = resolveElements(target)
   if (!isBrowser()) {
@@ -248,13 +271,19 @@ export const animate = (
   return createElementControls(elements, keyframes, options)
 }
 
-export const createScopedAnimate = (scope: Element | null | undefined) => (
-  target: MotionAnimationTarget,
-  keyframes: MotionKeyframes | string | number,
-  options?: MotionAnimateOptions,
-) =>
-  typeof target === 'string'
-    ? createElementControls(resolveElements(target, scope ?? null), keyframes as MotionKeyframes, options)
-    : animate(target, keyframes, options)
+export const createScopedAnimate =
+  (scope: Element | null | undefined) =>
+  (
+    target: MotionAnimationTarget,
+    keyframes: MotionKeyframes | string | number,
+    options?: MotionAnimateOptions,
+  ) =>
+    typeof target === 'string'
+      ? createElementControls(
+          resolveElements(target, scope ?? null),
+          keyframes as MotionKeyframes,
+          options,
+        )
+      : animate(target, keyframes, options)
 
 export { delayValue as delay, spring, staggerValue as stagger }

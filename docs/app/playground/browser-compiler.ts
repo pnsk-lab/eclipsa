@@ -1,13 +1,12 @@
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import { createPlaygroundOutputFiles } from './output.ts'
-import {
-  PLAYGROUND_ENTRY_ID,
-  type PlaygroundBuildResult,
-  formatPlaygroundError,
-} from './shared.ts'
+import { PLAYGROUND_ENTRY_ID, type PlaygroundBuildResult, formatPlaygroundError } from './shared.ts'
 
 interface BrowserCompilerBinding {
-  analyzeModule: (source: string, id: string) => {
+  analyzeModule: (
+    source: string,
+    id: string,
+  ) => {
     code: string
     symbols: Array<
       [
@@ -81,7 +80,8 @@ export type MiddlewareHandler<E = any> = (...args: any[]) => any
   '/node_modules/vite/index.d.ts': `export type PluginOption = any
 `,
 } as const
-type TypeScriptContributionModule = typeof import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
+type TypeScriptContributionModule =
+  typeof import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
 
 let compilerPromise: Promise<BrowserCompilerBinding> | null = null
 let monacoPromise: Promise<MonacoModule> | null = null
@@ -161,9 +161,10 @@ export const getPlaygroundIsolationError = () => {
 
 const loadBrowserCompiler = async () => {
   if (!compilerPromise) {
-    compilerPromise = import(
-      '../../../packages/eclipsa/compiler/native/generated/eclipsa.wasi-browser.js'
-    ).then((module) => module.default as BrowserCompilerBinding)
+    compilerPromise =
+      import('../../../packages/eclipsa/compiler/native/generated/eclipsa.wasi-browser.js').then(
+        (module) => module.default as BrowserCompilerBinding,
+      )
   }
 
   return compilerPromise
@@ -209,13 +210,13 @@ export const loadPlaygroundMonaco = async () => {
   }
 
   if (!typeScriptContributionPromise) {
-    typeScriptContributionPromise = import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
+    typeScriptContributionPromise =
+      import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
   }
 
   if (!typeScriptTokenizerContributionPromise) {
-    typeScriptTokenizerContributionPromise = import(
-      'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution'
-    )
+    typeScriptTokenizerContributionPromise =
+      import('monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution')
   }
 
   const [monaco, typeScriptContribution] = await Promise.all([

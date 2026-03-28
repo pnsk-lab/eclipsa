@@ -142,10 +142,7 @@ const validatePathSegmentValue = (
     throw createStaticPathsError(routePath, `${kind} param "${paramName}" must not be empty.`)
   }
   if (value.includes('/')) {
-    throw createStaticPathsError(
-      routePath,
-      `${kind} param "${paramName}" must not contain "/".`,
-    )
+    throw createStaticPathsError(routePath, `${kind} param "${paramName}" must not contain "/".`)
   }
 }
 
@@ -295,7 +292,11 @@ const resolveStaticPrerenderTargets = async (
       continue
     }
 
-    const getStaticPaths = await loadBuiltGetStaticPaths(root, route.page.entryName, route.routePath)
+    const getStaticPaths = await loadBuiltGetStaticPaths(
+      root,
+      route.page.entryName,
+      route.routePath,
+    )
     const staticPaths = validateStaticPathsResult(route.routePath, await getStaticPaths())
 
     for (const [index, staticPath] of staticPaths.entries()) {
@@ -308,7 +309,10 @@ const resolveStaticPrerenderTargets = async (
         typeof staticPath.params !== 'object' ||
         Array.isArray(staticPath.params)
       ) {
-        throw createStaticPathsError(route.routePath, `entry ${index} must include a params object.`)
+        throw createStaticPathsError(
+          route.routePath,
+          `entry ${index} must include a params object.`,
+        )
       }
 
       const resolved = resolveStaticPathInfo(route.routePath, route.segments, staticPath.params)

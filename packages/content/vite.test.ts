@@ -35,7 +35,9 @@ const getHotUpdate = (plugin: Plugin) => {
 }
 
 afterEach(async () => {
-  await Promise.all(createdRoots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })))
+  await Promise.all(
+    createdRoots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })),
+  )
 })
 
 describe('@eclipsa/content vite plugin', () => {
@@ -46,9 +48,12 @@ describe('@eclipsa/content vite plugin', () => {
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        root,
+      } as any,
+    )
 
     const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
     const code = await load?.call({} as any, '\0eclipsa-content:runtime')
@@ -64,9 +69,12 @@ describe('@eclipsa/content vite plugin', () => {
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        root,
+      } as any,
+    )
 
     const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
     const code = await load?.call({} as any, '\0eclipsa-content:runtime')
@@ -112,13 +120,19 @@ Find the comet needle.
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      base: '/',
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        base: '/',
+        root,
+      } as any,
+    )
 
     const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
-    const code = await load?.call({ environment: { name: 'client' } } as any, '\0eclipsa-content:search')
+    const code = await load?.call(
+      { environment: { name: 'client' } } as any,
+      '\0eclipsa-content:search',
+    )
 
     expect(code).toContain('__eclipsa_content_search__.json')
     expect(code).toContain('searchOptions')
@@ -144,9 +158,12 @@ export const posts = defineCollection({ loader: { load: () => [] } })
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        root,
+      } as any,
+    )
 
     const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
     const code = await load?.call(
@@ -170,35 +187,41 @@ export const posts = defineCollection({ loader: { load: () => [] } })
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        root,
+      } as any,
+    )
 
     const invalidate = vi.fn()
     const send = vi.fn()
     const hotUpdate = getHotUpdate(plugin)
 
-    const result = await hotUpdate?.call({} as any, {
-      file: path.join(root, 'app', 'content', 'docs', 'guide', 'page.md'),
-      modules: [],
-      read: () => '',
-      server: {
-        [DEV_APP_INVALIDATORS_KEY]: new Set([invalidate]),
-        environments: {
-          ssr: {
-            moduleGraph: {
-              getModuleById: vi.fn(),
-              invalidateModule: vi.fn(),
+    const result = await hotUpdate?.call(
+      {} as any,
+      {
+        file: path.join(root, 'app', 'content', 'docs', 'guide', 'page.md'),
+        modules: [],
+        read: () => '',
+        server: {
+          [DEV_APP_INVALIDATORS_KEY]: new Set([invalidate]),
+          environments: {
+            ssr: {
+              moduleGraph: {
+                getModuleById: vi.fn(),
+                invalidateModule: vi.fn(),
+              },
             },
           },
+          ws: {
+            send,
+          },
         },
-        ws: {
-          send,
-        },
-      },
-      timestamp: Date.now(),
-      type: 'update',
-    } as any)
+        timestamp: Date.now(),
+        type: 'update',
+      } as any,
+    )
 
     expect(invalidate).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith('eclipsa:content-update')
@@ -234,10 +257,13 @@ export const docs = defineCollection({
       typeof plugin.configResolved === 'function'
         ? plugin.configResolved
         : plugin.configResolved?.handler
-    await configResolved?.call({} as any, {
-      base: '/',
-      root,
-    } as any)
+    await configResolved?.call(
+      {} as any,
+      {
+        base: '/',
+        root,
+      } as any,
+    )
 
     const emitFile = vi.fn()
     const generateBundle =

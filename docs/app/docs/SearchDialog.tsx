@@ -5,7 +5,8 @@ import clsx from 'clsx'
 const DEFAULT_PLACEHOLDER = 'Search docs'
 const DEFAULT_HOTKEY = 'k'
 
-const formatHotkey = (value: string) => value.trim().slice(0, 1).toUpperCase() || DEFAULT_HOTKEY.toUpperCase()
+const formatHotkey = (value: string) =>
+  value.trim().slice(0, 1).toUpperCase() || DEFAULT_HOTKEY.toUpperCase()
 
 const SearchResultsBody = (props: {
   loading: boolean
@@ -49,7 +50,9 @@ const SearchResultsBody = (props: {
           onClick={handleRowClick}
         >
           <div class="text-sm font-semibold text-zinc-900">{result.title}</div>
-          <div class="mt-1 text-xs uppercase tracking-[0.22em] text-zinc-400">{result.collection}</div>
+          <div class="mt-1 text-xs uppercase tracking-[0.22em] text-zinc-400">
+            {result.collection}
+          </div>
           {result.snippet !== '' ? (
             <div class="mt-2 text-sm leading-6 text-zinc-500">{result.snippet}</div>
           ) : null}
@@ -189,7 +192,11 @@ export const DocsSearchDialog = () => {
         close()
         return
       }
-      if (event.key.toLowerCase() === hotkey.value.toLowerCase() && !event.metaKey && !event.ctrlKey) {
+      if (
+        event.key.toLowerCase() === hotkey.value.toLowerCase() &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
         const active = document.activeElement
         if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
           return
@@ -202,7 +209,10 @@ export const DocsSearchDialog = () => {
     const handleInputKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        selectedIndex.value = Math.min(selectedIndex.value + 1, Math.max(results.value.length - 1, 0))
+        selectedIndex.value = Math.min(
+          selectedIndex.value + 1,
+          Math.max(results.value.length - 1, 0),
+        )
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         selectedIndex.value = Math.max(selectedIndex.value - 1, 0)

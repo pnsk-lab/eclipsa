@@ -1,73 +1,73 @@
-import clsx from "clsx";
-import { motion } from "@eclipsa/motion";
-import { Link, loader, useLocation, useSignal } from "eclipsa";
-import type { JSX } from "eclipsa/jsx-runtime";
-import { getDocPage } from "../content";
+import clsx from 'clsx'
+import { motion } from '@eclipsa/motion'
+import { Link, loader, useLocation, useSignal } from 'eclipsa'
+import type { JSX } from 'eclipsa/jsx-runtime'
+import { getDocPage } from '../content'
 
 type DocLink = {
-  href: string;
-  label: string;
-};
+  href: string
+  label: string
+}
 
 type DocSection = {
-  icon: string;
-  links: DocLink[];
-  title: string;
-};
+  icon: string
+  links: DocLink[]
+  title: string
+}
 
 type TocHeading = {
-  depth: number;
-  slug: string;
-  text: string;
-};
+  depth: number
+  slug: string
+  text: string
+}
 
 const DOC_SECTIONS: DocSection[] = [
   {
-    title: "Getting Started",
-    icon: "i-tabler-north-star",
+    title: 'Getting Started',
+    icon: 'i-tabler-north-star',
     links: [
-      { label: "Overview", href: "/docs/getting-started/overview" },
-      { label: "Quick Start", href: "/docs/getting-started/quick-start" },
+      { label: 'Overview', href: '/docs/getting-started/overview' },
+      { label: 'Quick Start', href: '/docs/getting-started/quick-start' },
     ],
   },
   {
-    title: "Materials",
-    icon: "i-tabler-square-rotated",
+    title: 'Materials',
+    icon: 'i-tabler-square-rotated',
     links: [
-      { label: "Routing", href: "/docs/materials/routing" },
-      { label: "Signal", href: "/docs/materials/signal" },
-      { label: "Atom", href: "/docs/materials/atom" },
-      { label: "Lifecycle", href: "/docs/materials/lifecycle" },
-      { label: "Loader", href: "/docs/materials/loader" },
-      { label: "Action", href: "/docs/materials/action" },
+      { label: 'Routing', href: '/docs/materials/routing' },
+      { label: 'Signal', href: '/docs/materials/signal' },
+      { label: 'Atom', href: '/docs/materials/atom' },
+      { label: 'Lifecycle', href: '/docs/materials/lifecycle' },
+      { label: 'Loader', href: '/docs/materials/loader' },
+      { label: 'Action', href: '/docs/materials/action' },
     ],
   },
   {
-    title: "Integrations",
-    icon: "i-tabler-plug-connected",
+    title: 'Integrations',
+    icon: 'i-tabler-plug-connected',
     links: [
-      { label: "Motion", href: "/docs/integrations/motion" },
-      { label: "Ox Content", href: "/docs/integrations/content" },
+      { label: 'Motion', href: '/docs/integrations/motion' },
+      { label: 'Ox Content', href: '/docs/integrations/content' },
     ],
   },
-];
+]
 
 const useDocPage = loader(async (c) => {
   try {
-    return await getDocPage(c.req.param("slug"));
+    return await getDocPage(c.req.param('slug'))
   } catch {
-    return null;
+    return null
   }
-});
+})
 
 const Dir = (props: {
-  activeHref: string;
-  links: { href: string; label: string }[];
-  title: string;
-  icon: string;
+  activeHref: string
+  links: { href: string; label: string }[]
+  title: string
+  icon: string
 }) => {
-  const { activeHref, icon, links, title } = props;
-  const open = useSignal(true);
+  const { activeHref, icon, links, title } = props
+  const open = useSignal(true)
 
   return (
     <div>
@@ -76,7 +76,7 @@ const Dir = (props: {
         aria-expanded={open.value}
         class="mb-1 flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-xl py-1 transition-colors hover:bg-[color:var(--docs-panel-hover)] active:bg-[color:var(--docs-panel-hover)]"
         onClick={() => {
-          open.value = !open.value;
+          open.value = !open.value
         }}
       >
         <div class="bg-linear-to-br from-emerald-700 to-teal-400 rounded-lg p-1">
@@ -112,16 +112,16 @@ const Dir = (props: {
             key={link.href}
             href={link.href}
             class={clsx(
-              "flex h-8 items-center rounded-lg transition-colors",
+              'flex h-8 items-center rounded-lg transition-colors',
               activeHref === link.href
-                ? "bg-[color:var(--docs-accent-bg)] text-[color:var(--docs-accent-fg)]"
-                : "hover:bg-[color:var(--docs-accent-bg-soft)] text-[color:var(--docs-text-muted)]",
+                ? 'bg-[color:var(--docs-accent-bg)] text-[color:var(--docs-accent-fg)]'
+                : 'hover:bg-[color:var(--docs-accent-bg-soft)] text-[color:var(--docs-text-muted)]',
             )}
           >
             <div
               class={clsx(
-                "h-full w-px bg-[color:var(--docs-border-strong)] transition-all",
-                activeHref === link.href ? "scale-y-60 bg-[color:var(--docs-accent-line)]" : "",
+                'h-full w-px bg-[color:var(--docs-border-strong)] transition-all',
+                activeHref === link.href ? 'scale-y-60 bg-[color:var(--docs-accent-line)]' : '',
               )}
             ></div>
             <div class="pl-4 py-1 text-sm">{link.label}</div>
@@ -129,86 +129,88 @@ const Dir = (props: {
         ))}
       </motion.div>
     </div>
-  );
-};
+  )
+}
 
 const OnThisPageNav = (props: {
-  headings: TocHeading[];
-  titleClass?: string;
-  wrapperClass?: string;
+  headings: TocHeading[]
+  titleClass?: string
+  wrapperClass?: string
 }) => {
-  const { headings, titleClass, wrapperClass } = props;
+  const { headings, titleClass, wrapperClass } = props
 
   return (
-    <div class={clsx("flex flex-col gap-4", wrapperClass)}>
-      <div class={clsx("flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[color:var(--docs-text-soft)]", titleClass)}>
+    <div class={clsx('flex flex-col gap-4', wrapperClass)}>
+      <div
+        class={clsx(
+          'flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[color:var(--docs-text-soft)]',
+          titleClass,
+        )}
+      >
         <div class="i-tabler-list-details text-base" />
         <span>On this page</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
         {headings.map((heading) => (
-          <OnThisPageLink
-            key={heading.slug}
-            heading={heading}
-          />
+          <OnThisPageLink key={heading.slug} heading={heading} />
         ))}
       </div>
     </div>
-  );
-};
+  )
+}
 
-const OnThisPageLink = (props: {
-  heading: TocHeading;
-}) => {
-  const { heading } = props;
+const OnThisPageLink = (props: { heading: TocHeading }) => {
+  const { heading } = props
   const jumpToHeading = (slug: string) => {
-    if (typeof document === "undefined") return;
-    const target = document.getElementById(slug);
-    if (!(target instanceof HTMLElement)) return;
+    if (typeof document === 'undefined') return
+    const target = document.getElementById(slug)
+    if (!(target instanceof HTMLElement)) return
     target.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-    history.replaceState(null, "", `#${slug}`);
-  };
+      behavior: 'smooth',
+      block: 'start',
+    })
+    history.replaceState(null, '', `#${slug}`)
+  }
 
   return (
     <a
       class={clsx(
-        "rounded-xl px-3 py-2 text-sm leading-5 text-[color:var(--docs-text-muted)] transition-colors hover:bg-[color:var(--docs-panel-hover)] hover:text-[color:var(--docs-text)]",
-        heading.depth > 2 ? "ml-4 text-[13px] text-[color:var(--docs-text-soft)]" : "",
+        'rounded-xl px-3 py-2 text-sm leading-5 text-[color:var(--docs-text-muted)] transition-colors hover:bg-[color:var(--docs-panel-hover)] hover:text-[color:var(--docs-text)]',
+        heading.depth > 2 ? 'ml-4 text-[13px] text-[color:var(--docs-text-soft)]' : '',
       )}
       href={`#${heading.slug}`}
       onClick={(event) => {
-        event.preventDefault();
-        jumpToHeading(heading.slug);
+        event.preventDefault()
+        jumpToHeading(heading.slug)
       }}
     >
       {heading.text}
     </a>
-  );
-};
+  )
+}
 
 export default function DocsLayout(props: { children: JSX.Childable }) {
-  const loc = useLocation();
-  const page = useDocPage();
-  const mobileNavOpen = useSignal(false);
+  const loc = useLocation()
+  const page = useDocPage()
+  const mobileNavOpen = useSignal(false)
   const currentDocLabel =
     DOC_SECTIONS.flatMap((section) => section.links).find((link) => link.href === loc.pathname)
-      ?.label ?? "Browse Docs";
-  const tocHeadings = (page.data?.headings ?? []).filter((heading) => heading.depth > 1 && heading.depth <= 3);
+      ?.label ?? 'Browse Docs'
+  const tocHeadings = (page.data?.headings ?? []).filter(
+    (heading) => heading.depth > 1 && heading.depth <= 3,
+  )
 
   const blurActiveElement = () => {
-    if (typeof document === "undefined") return;
-    if (!(document.activeElement instanceof HTMLElement)) return;
-    document.activeElement.blur();
-  };
+    if (typeof document === 'undefined') return
+    if (!(document.activeElement instanceof HTMLElement)) return
+    document.activeElement.blur()
+  }
 
   const closeMobileNav = () => {
-    blurActiveElement();
-    mobileNavOpen.value = false;
-  };
+    blurActiveElement()
+    mobileNavOpen.value = false
+  }
 
   return (
     <div class="flex w-full flex-col px-4 pb-12 pt-0 sm:px-6 md:pt-18 lg:flex-row lg:items-start lg:px-8">
@@ -221,28 +223,30 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
             data-testid="docs-mobile-nav-toggle"
             type="button"
             onClick={() => {
-              mobileNavOpen.value = !mobileNavOpen.value;
+              mobileNavOpen.value = !mobileNavOpen.value
             }}
           >
             <div class="i-tabler-menu-2 text-base" />
             <span>Menu</span>
           </button>
 
-          <div class="truncate text-sm font-medium text-[color:var(--docs-text-muted)]">{currentDocLabel}</div>
+          <div class="truncate text-sm font-medium text-[color:var(--docs-text-muted)]">
+            {currentDocLabel}
+          </div>
         </div>
       </div>
 
       <div
         class={clsx(
-          "fixed inset-0 z-[60] transition-opacity lg:hidden",
-          mobileNavOpen.value ? "" : "pointer-events-none",
+          'fixed inset-0 z-[60] transition-opacity lg:hidden',
+          mobileNavOpen.value ? '' : 'pointer-events-none',
         )}
         id="docs-mobile-drawer-shell"
       >
         <button
           class={clsx(
-            "absolute inset-0 bg-black/45 transition-opacity",
-            mobileNavOpen.value ? "opacity-100" : "opacity-0",
+            'absolute inset-0 bg-black/45 transition-opacity',
+            mobileNavOpen.value ? 'opacity-100' : 'opacity-0',
           )}
           type="button"
           onClick={closeMobileNav}
@@ -263,8 +267,12 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
         >
           <div class="mb-4 flex items-center justify-between border-b border-[color:var(--docs-border)] pb-4">
             <div>
-              <div class="text-[11px] font-bold uppercase tracking-[0.24em] text-[color:var(--docs-text-soft)]">Docs</div>
-              <div class="mt-1 text-lg font-semibold text-[color:var(--docs-text)]">{currentDocLabel}</div>
+              <div class="text-[11px] font-bold uppercase tracking-[0.24em] text-[color:var(--docs-text-soft)]">
+                Docs
+              </div>
+              <div class="mt-1 text-lg font-semibold text-[color:var(--docs-text)]">
+                {currentDocLabel}
+              </div>
             </div>
             <button
               aria-label="Close docs navigation"
@@ -310,5 +318,5 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
         <OnThisPageNav headings={tocHeadings} wrapperClass="w-full max-w-56" />
       </aside>
     </div>
-  );
+  )
 }

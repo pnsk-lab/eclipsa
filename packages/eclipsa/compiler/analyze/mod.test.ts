@@ -156,7 +156,7 @@ describe('analyzeModule()', () => {
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
     expect(analyzed?.code).not.toContain('()=>[LinkProps]')
-    expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:Link')
+    expect([...(analyzed?.hmrManifest.components.keys() ?? [])]).toContain('component:Link')
   })
 
   it('preserves async generator actions as resumable action symbols', async () => {
@@ -186,10 +186,14 @@ describe('analyzeModule()', () => {
     `)
 
     const component = [...analyzed.symbols.values()].find(
-      (symbol) => symbol.kind === 'component' && symbol.code.includes('export default (__scope) => <Item />;'),
+      (symbol) =>
+        symbol.kind === 'component' &&
+        symbol.code.includes('export default (__scope) => <Item />;'),
     )
 
-    expect(component?.code).toContain('const Item = __eclipsaComponent(() => <span>{__scope[0]}</span>')
+    expect(component?.code).toContain(
+      'const Item = __eclipsaComponent(() => <span>{__scope[0]}</span>',
+    )
     expect(component?.code).toContain('export default (__scope) => <Item />;')
   })
 
@@ -201,7 +205,7 @@ describe('analyzeModule()', () => {
     const analyzed = await analyzeModule(tsx, layoutPath)
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
-    expect([...analyzed?.hmrManifest.components.keys() ?? []]).toContain('component:default')
+    expect([...(analyzed?.hmrManifest.components.keys() ?? [])]).toContain('component:default')
   })
 
   it('emits symbol modules that accept __scope as the first runtime argument', async () => {
@@ -235,7 +239,9 @@ describe('analyzeModule()', () => {
     expect(component?.code).toMatch(/export default \(__scope, props\) =>/)
     expect(event?.code).toMatch(/export default \(__scope, event\) =>/)
     expect(
-      lazySymbols.some((symbol) => /export default(?: async)? \(__scope, event\) =>/.test(symbol.code)),
+      lazySymbols.some((symbol) =>
+        /export default(?: async)? \(__scope, event\) =>/.test(symbol.code),
+      ),
     ).toBe(true)
     expect(lazySymbols.some((symbol) => /export default \(__scope\) =>/.test(symbol.code))).toBe(
       true,
@@ -258,8 +264,12 @@ describe('analyzeModule()', () => {
     expect(analyzed.code).toContain('__eclipsaLazy')
     expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
+      1,
+    )
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
+      0,
+    )
   })
 
   it('auto-wraps local sync handlers so plain event props can reference them directly', async () => {
@@ -277,8 +287,12 @@ describe('analyzeModule()', () => {
     expect(analyzed.code).toContain('__eclipsaLazy')
     expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
+      1,
+    )
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
+      0,
+    )
   })
 
   it('auto-wraps local function declarations when plain event props reference them directly', async () => {
@@ -296,8 +310,12 @@ describe('analyzeModule()', () => {
 
     expect(analyzed.code).toContain('__eclipsaLazy')
     expect(analyzed.code).toContain('return <button onClick={__eclipsaLazy(')
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(1)
-    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(0)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
+      1,
+    )
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
+      0,
+    )
   })
 
   it('rejects plain event handlers that are not component-local functions', async () => {
@@ -339,7 +357,9 @@ describe('analyzeModule()', () => {
 
     const component = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'component')
     const lazy = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'lazy')
-    const hmrLazy = [...analyzed.hmrManifest.symbols.values()].find((symbol) => symbol.kind === 'lazy')
+    const hmrLazy = [...analyzed.hmrManifest.symbols.values()].find(
+      (symbol) => symbol.kind === 'lazy',
+    )
 
     expect(component?.code).toContain(`__eclipsaLazy("${lazy?.id}"`)
     expect(component?.code).not.toContain(hmrLazy?.hmrKey ?? 'component:default:lazy:slot')

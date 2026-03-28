@@ -175,9 +175,13 @@ const normalizePublicError = (value: unknown): PublicError => {
   }
 }
 
-const getActiveTransport = () => getRequestContextStorage()?.getStore()?.transport ?? clientHooks.transport
+const getActiveTransport = () =>
+  getRequestContextStorage()?.getStore()?.transport ?? clientHooks.transport
 
-const serializeTransportReference = (value: unknown, transport: Transport): SerializedReference | null => {
+const serializeTransportReference = (
+  value: unknown,
+  transport: Transport,
+): SerializedReference | null => {
   for (const [key, hook] of Object.entries(transport)) {
     const encoded = hook.encode(value)
     if (encoded === undefined) {
@@ -236,7 +240,9 @@ export const deserializePublicValue = (
         throw new TypeError(`Unknown transport "${reference.token}".`)
       }
       if (!options?.deserializeReference) {
-        throw new TypeError(`Cannot deserialize reference kind "${reference.kind}" in this context.`)
+        throw new TypeError(
+          `Cannot deserialize reference kind "${reference.kind}" in this context.`,
+        )
       }
       return options.deserializeReference(reference)
     },
@@ -264,7 +270,8 @@ export const withServerRequestContext = <T>(
   )
 }
 
-export const getCurrentServerRequestContext = () => getRequestContextStorage()?.getStore()?.context ?? null
+export const getCurrentServerRequestContext = () =>
+  getRequestContextStorage()?.getStore()?.context ?? null
 
 export const transformCurrentPublicError = async (
   error: unknown,
@@ -305,7 +312,10 @@ export const createRequestFetch = (
   }) as RequestFetch
 }
 
-export const attachRequestFetch = <E extends Env>(context: AppContext<E>, fetchImpl: RequestFetch) => {
+export const attachRequestFetch = <E extends Env>(
+  context: AppContext<E>,
+  fetchImpl: RequestFetch,
+) => {
   context.set('fetch' as never, fetchImpl as never)
 }
 
@@ -328,10 +338,10 @@ export const resolveReroute = (
 }
 
 export const toPublicError = (error: unknown): PublicError =>
-  (error &&
+  error &&
   typeof error === 'object' &&
   (error as Record<PropertyKey, unknown>)[PUBLIC_ERROR_KEY] &&
-  isPlainObject((error as Record<PropertyKey, unknown>)[PUBLIC_ERROR_KEY]))
+  isPlainObject((error as Record<PropertyKey, unknown>)[PUBLIC_ERROR_KEY])
     ? ((error as Record<PropertyKey, unknown>)[PUBLIC_ERROR_KEY] as PublicError)
     : normalizePublicError(error)
 

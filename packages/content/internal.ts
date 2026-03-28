@@ -72,7 +72,11 @@ const formatIssuePath = (pathValue: StandardSchemaIssue['path']) => {
     .join('.')
 }
 
-const createSchemaError = (collection: string, filePath: string, issues: readonly StandardSchemaIssue[]) => {
+const createSchemaError = (
+  collection: string,
+  filePath: string,
+  issues: readonly StandardSchemaIssue[],
+) => {
   const detail = issues
     .map((issue) => {
       const issuePath = formatIssuePath(issue.path)
@@ -122,7 +126,8 @@ const normalizeIdSegment = (segment: string) =>
     .replaceAll(/-+/g, '-')
     .replaceAll(/^[-/]+|[-/]+$/g, '')
 
-const normalizeEntryId = (value: string) => normalizeSlashes(value).split('/').map(normalizeIdSegment).filter(Boolean).join('/')
+const normalizeEntryId = (value: string) =>
+  normalizeSlashes(value).split('/').map(normalizeIdSegment).filter(Boolean).join('/')
 
 const toEntryIdFromRelativePath = (relativePath: string) => {
   const withoutExt = normalizeSlashes(relativePath).replace(MARKDOWN_EXTENSION_RE, '')
@@ -204,7 +209,8 @@ const normalizeResolvedEntry = async (
   const filePath = entry.filePath ?? `${collection}:${entry.id ?? index}`
   const slug = typeof parsed.data.slug === 'string' ? parsed.data.slug : undefined
   delete parsed.data.slug
-  const id = normalizeEntryId(entry.id ?? slug ?? `${collection}-${index}`) || `${collection}-${index}`
+  const id =
+    normalizeEntryId(entry.id ?? slug ?? `${collection}-${index}`) || `${collection}-${index}`
   return {
     body: parsed.body,
     collection,
@@ -267,14 +273,16 @@ export const resolveCollections = async ({
   }
 }
 
-const createContentRenderer = (html: string) => (props: Omit<ContentComponentProps, 'html'> = {}) => ({
-  isStatic: false,
-  props: {
-    ...props,
-    dangerouslySetInnerHTML: html,
-  },
-  type: props.as ?? 'article',
-})
+const createContentRenderer =
+  (html: string) =>
+  (props: Omit<ContentComponentProps, 'html'> = {}) => ({
+    isStatic: false,
+    props: {
+      ...props,
+      dangerouslySetInnerHTML: html,
+    },
+    type: props.as ?? 'article',
+  })
 
 const resolveOxContentNapiPath = () => {
   const resolvePaths = [
@@ -289,9 +297,8 @@ const resolveOxContentNapiPath = () => {
 }
 
 const loadMarkdownTransform = async () => {
-  markdownTransform ??= (
-    require(resolveOxContentNapiPath()) as typeof import('@ox-content/napi')
-  ).transform
+  markdownTransform ??= (require(resolveOxContentNapiPath()) as typeof import('@ox-content/napi'))
+    .transform
   return markdownTransform
 }
 
@@ -365,7 +372,7 @@ const createSearchDocument = async (
   const title =
     typeof entry.data.title === 'string'
       ? entry.data.title
-      : result.toc.find((heading) => heading.depth === 1)?.text ?? entry.id
+      : (result.toc.find((heading) => heading.depth === 1)?.text ?? entry.id)
 
   return {
     body: stripHtml(result.html),

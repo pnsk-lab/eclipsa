@@ -77,7 +77,8 @@ interface ProcessReportLike {
   sharedObjects?: string[]
 }
 
-const isFileMusl = (filePath: string) => filePath.includes('libc.musl-') || filePath.includes('ld-musl-')
+const isFileMusl = (filePath: string) =>
+  filePath.includes('libc.musl-') || filePath.includes('ld-musl-')
 
 const isMusl = () => {
   if (process.platform !== 'linux') {
@@ -90,7 +91,11 @@ const isMusl = () => {
 
   if (typeof process.report?.getReport === 'function') {
     const report = process.report.getReport() as ProcessReportLike
-    if (report?.header && 'glibcVersionRuntime' in report.header && report.header.glibcVersionRuntime) {
+    if (
+      report?.header &&
+      'glibcVersionRuntime' in report.header &&
+      report.header.glibcVersionRuntime
+    ) {
       return false
     }
     if (Array.isArray(report?.sharedObjects) && report.sharedObjects.some(isFileMusl)) {
@@ -99,7 +104,9 @@ const isMusl = () => {
   }
 
   try {
-    return require('node:child_process').execSync('ldd --version', { encoding: 'utf8' }).includes('musl')
+    return require('node:child_process')
+      .execSync('ldd --version', { encoding: 'utf8' })
+      .includes('musl')
   } catch {
     return false
   }
@@ -193,10 +200,7 @@ const requireNativeBinding = () => {
       )
     }
     if (process.arch === 'x64') {
-      return requirePreferredBinding(
-        `eclipsa.linux-x64-${libc}.node`,
-        `eclipsa-linux-x64-${libc}`,
-      )
+      return requirePreferredBinding(`eclipsa.linux-x64-${libc}.node`, `eclipsa-linux-x64-${libc}`)
     }
   }
 

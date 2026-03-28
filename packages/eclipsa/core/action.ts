@@ -122,9 +122,10 @@ type ActionStreamYield<Output> =
       ? Value
       : ResolvedActionOutput<Output>
 
-type ActionInvokeResult<Output> = ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
-  ? AsyncGenerator<Value, void, void>
-  : Promise<ResolvedActionOutput<Output>>
+type ActionInvokeResult<Output> =
+  ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
+    ? AsyncGenerator<Value, void, void>
+    : Promise<ResolvedActionOutput<Output>>
 
 type ActionInvoker<Input, Result> = unknown extends Input
   ? (input?: Input | FormData) => Result
@@ -509,7 +510,8 @@ const isAsyncGeneratorValue = (
 const isAsyncGeneratorFunctionValue = (
   value: unknown,
 ): value is (...args: any[]) => AsyncGenerator<unknown, unknown, unknown> =>
-  typeof value === 'function' && Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]'
+  typeof value === 'function' &&
+  Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]'
 
 const toSerializedActionError = (error: unknown): SerializedValue => {
   if (error instanceof Error) {

@@ -10,9 +10,7 @@ const PageLink = (props: { href: string; label: string; stateTestId: string }) =
       class={isActive.value ? 'link active' : 'link inactive'}
       data-testid={`${props.stateTestId}-link`}
     >
-      <span data-testid={props.stateTestId}>
-        {isActive.value ? ' active' : ' inactive'}
-      </span>
+      <span data-testid={props.stateTestId}>{isActive.value ? ' active' : ' inactive'}</span>
       <span data-testid={`${props.stateTestId}-label`}>{props.label}</span>
     </Link>
   )

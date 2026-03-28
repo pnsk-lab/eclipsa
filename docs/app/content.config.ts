@@ -8,7 +8,7 @@ export const docs = defineCollection({
   markdown: {
     highlight: {
       theme: 'github-dark',
-    }
+    },
   },
   search: {
     hotkey: 'k',

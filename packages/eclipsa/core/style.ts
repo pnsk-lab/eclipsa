@@ -33,7 +33,8 @@ const flattenStyleText = (value: unknown): string => {
 
 const resolveTaggedTemplateCss = (strings: TemplateStringsArray, values: unknown[]) =>
   strings.reduce(
-    (result, segment, index) => result + segment + (index < values.length ? String(values[index]) : ''),
+    (result, segment, index) =>
+      result + segment + (index < values.length ? String(values[index]) : ''),
     '',
   )
 
@@ -64,7 +65,9 @@ const resolveStyleInput = (
   return {
     attributes,
     cssText:
-      innerHTML !== undefined ? flattenStyleText(innerHTML) : flattenStyleText(value.props.children),
+      innerHTML !== undefined
+        ? flattenStyleText(innerHTML)
+        : flattenStyleText(value.props.children),
   }
 }
 

@@ -12,6 +12,7 @@ eclipsa means Egui(えぐい) Cool Lightweight Iine(いいね) Pawa-(パワー) 
 Fast DOM updates like Solid.js with JSX compile, quick page load like Qwik with resumability.
 
 And you know React, you know eclipsa:
+
 ```tsx
 import { useSignal } from 'eclipsa'
 
@@ -28,7 +29,7 @@ export default function Counter() {
 
 ## Why eclipsa?
 
-* Resumability: No hydration, no JavaScript on the client until interaction.
-* Reactivity: Fine-grained reactivity with signals and effects.
-* JSX Compile: Compile-time optimizations for fast updates.
-* TypeScript First: Built with TypeScript for type safety and developer experience.
+- Resumability: No hydration, no JavaScript on the client until interaction.
+- Reactivity: Fine-grained reactivity with signals and effects.
+- JSX Compile: Compile-time optimizations for fast updates.
+- TypeScript First: Built with TypeScript for type safety and developer experience.

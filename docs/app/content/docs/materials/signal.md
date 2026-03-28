@@ -17,11 +17,7 @@ import { useSignal } from 'eclipsa'
 export default function Counter() {
   const count = useSignal(0)
 
-  return (
-    <button onClick={() => count.value++}>
-      Count: {count.value}
-    </button>
-  )
+  return <button onClick={() => count.value++}>Count: {count.value}</button>
 }
 ```
 

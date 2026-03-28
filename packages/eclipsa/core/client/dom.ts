@@ -108,10 +108,10 @@ const isBindableSignal = <T>(value: unknown): value is BindableSignal<T> =>
 
 const readValueBinding = (elem: Element, currentValue: unknown) => {
   if (
-    elem instanceof HTMLInputElement
-    && typeof currentValue === 'number'
-    && (elem.type === 'number' || elem.type === 'range')
-    && !Number.isNaN(elem.valueAsNumber)
+    elem instanceof HTMLInputElement &&
+    typeof currentValue === 'number' &&
+    (elem.type === 'number' || elem.type === 'range') &&
+    !Number.isNaN(elem.valueAsNumber)
   ) {
     return elem.valueAsNumber
   }
@@ -159,7 +159,11 @@ const tryPatchSingleElementShellInPlace = (currentNodes: Node[], nextNodes: Node
 
   const [current] = currentNodes
   const [next] = nextNodes
-  if (!(current instanceof Element) || !(next instanceof Element) || current.tagName !== next.tagName) {
+  if (
+    !(current instanceof Element) ||
+    !(next instanceof Element) ||
+    current.tagName !== next.tagName
+  ) {
     return false
   }
   if (hasComponentBoundaryMarkers(current) || hasComponentBoundaryMarkers(next)) {

@@ -59,7 +59,8 @@ export const createContext = <T>(...args: [defaultValue?: T]): Context<T> => {
   const hasDefault = args.length > 0
   const defaultValue = args[0]
   const token = Symbol('eclipsa.context') as RuntimeContextToken<T>
-  const Provider = ((props: ContextProviderProps<T>) => props.children) as ContextProviderComponent<T>
+  const Provider = ((props: ContextProviderProps<T>) =>
+    props.children) as ContextProviderComponent<T>
 
   Object.defineProperty(Provider, CONTEXT_PROVIDER_META_KEY, {
     configurable: true,

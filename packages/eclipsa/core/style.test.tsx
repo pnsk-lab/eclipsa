@@ -190,7 +190,9 @@ describe('useStyleScoped', () => {
       )
 
       const container = createContainer()
-      const nodes = withRuntimeContainer(container, () => renderClientInsertable(<App />, container))
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(<App />, container),
+      )
       const scopeId = container.components.get('c0')?.scopeId
       const styleNode = nodes[1] as unknown as FakeElement
       const sectionNode = nodes[2] as unknown as FakeElement

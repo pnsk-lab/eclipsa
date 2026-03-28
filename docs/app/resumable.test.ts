@@ -3,8 +3,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { analyzeModule } from '../../packages/eclipsa/compiler/mod.ts'
 
-const readAppFile = (filePath: string) =>
-  readFile(path.join(process.cwd(), filePath), 'utf8')
+const readAppFile = (filePath: string) => readFile(path.join(process.cwd(), filePath), 'utf8')
 
 describe('docs app resumable compilation', () => {
   it('keeps the landing page mount callback client-only while still compiling the rain scene setup', async () => {

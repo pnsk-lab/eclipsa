@@ -35,9 +35,7 @@ const toSymbolArray = (symbols: PlaygroundAnalyzedModule['symbols']) => {
   return [...symbols]
 }
 
-const createEntryFile = (
-  code: string,
-): PlaygroundOutputFile => ({
+const createEntryFile = (code: string): PlaygroundOutputFile => ({
   code,
   fileName: 'app.js',
   language: 'javascript',
@@ -45,9 +43,7 @@ const createEntryFile = (
   relativePath: 'app.js',
 })
 
-const createSsrFile = (
-  code: string,
-): PlaygroundOutputFile => ({
+const createSsrFile = (code: string): PlaygroundOutputFile => ({
   code,
   fileName: 'ssr.js',
   language: 'javascript',

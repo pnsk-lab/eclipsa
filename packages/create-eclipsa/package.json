@@ -1,11 +1,11 @@
 {
   "name": "create-eclipsa",
   "version": "0.1.0-alpha.0",
-  "license": "MIT",
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pnsk-lab/eclipsa.git",

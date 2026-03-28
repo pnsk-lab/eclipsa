@@ -18,6 +18,7 @@ npm create eclipsa
 ```
 
 and
+
 ```bash
 cd my-app
 bun install # or pnpm install, deno task install, yarn install, npm install

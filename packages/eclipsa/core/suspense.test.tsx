@@ -196,9 +196,8 @@ describe('Suspense', () => {
   })
 
   it('recognizes suspense boundaries across duplicated module instances', () => {
-    const duplicateSuspense = ((props: { children?: unknown }) => props.children ?? null) as ((
-      props: { children?: unknown },
-    ) => unknown) & {
+    const duplicateSuspense = ((props: { children?: unknown }) =>
+      props.children ?? null) as ((props: { children?: unknown }) => unknown) & {
       [key: symbol]: true
     }
     duplicateSuspense[Symbol.for('eclipsa.suspense-type')] = true

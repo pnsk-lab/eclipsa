@@ -51,13 +51,9 @@ export default () => {
       </div>
 
       {activeTab.value === 'left' ? (
-        <div data-testid="motion-indicator">
-          Left active
-        </div>
+        <div data-testid="motion-indicator">Left active</div>
       ) : (
-        <div data-testid="motion-indicator">
-          Right active
-        </div>
+        <div data-testid="motion-indicator">Right active</div>
       )}
     </section>
   )

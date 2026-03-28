@@ -19,11 +19,7 @@ const countAtom = atom(0)
 function Counter() {
   const count = useAtom(countAtom)
 
-  return (
-    <button onClick={() => count.value++}>
-      Count: {count.value}
-    </button>
-  )
+  return <button onClick={() => count.value++}>Count: {count.value}</button>
 }
 ```
 
@@ -92,9 +88,7 @@ const itemsAtom = atom([
 
 function Summary() {
   const items = useAtom(itemsAtom)
-  const completed = useComputed$(
-    () => items.value.filter((item) => item.done).length,
-  )
+  const completed = useComputed$(() => items.value.filter((item) => item.done).length)
 
   return <p>{completed.value} completed</p>
 }

@@ -1,9 +1,4 @@
-import {
-  onMount,
-  onCleanup,
-  useSignal,
-  type Signal,
-} from 'eclipsa'
+import { onMount, onCleanup, useSignal, type Signal } from 'eclipsa'
 import {
   MotionValue,
   mapValue,
@@ -58,11 +53,7 @@ export const useMotionTemplate = (
       if (value === undefined) {
         return result + segment
       }
-      return (
-        result +
-        segment +
-        (value instanceof MotionValue ? String(value.get()) : String(value))
-      )
+      return result + segment + (value instanceof MotionValue ? String(value.get()) : String(value))
     }, ''),
   )
 
@@ -126,7 +117,9 @@ export const useReducedMotion = (): Signal<boolean> => {
 type TargetSignal = Signal<Element | undefined> | Element | null | undefined
 
 const resolveTargetElement = (target: TargetSignal) =>
-  target && typeof target === 'object' && 'value' in target ? (target.value as Element | undefined) : (target ?? undefined)
+  target && typeof target === 'object' && 'value' in target
+    ? (target.value as Element | undefined)
+    : (target ?? undefined)
 
 export const useInView = (
   target: TargetSignal,
@@ -176,11 +169,13 @@ export const useScroll = (options?: {
       const y = target instanceof Window ? target.scrollY : target.scrollTop
       const maxX = Math.max(
         0,
-        (element.scrollWidth || 0) - (target instanceof Window ? target.innerWidth : target.clientWidth),
+        (element.scrollWidth || 0) -
+          (target instanceof Window ? target.innerWidth : target.clientWidth),
       )
       const maxY = Math.max(
         0,
-        (element.scrollHeight || 0) - (target instanceof Window ? target.innerHeight : target.clientHeight),
+        (element.scrollHeight || 0) -
+          (target instanceof Window ? target.innerHeight : target.clientHeight),
       )
       scrollX.set(x)
       scrollY.set(y)
@@ -213,7 +208,10 @@ export const useAnimate = (): [
   ReturnType<typeof createScopedAnimate>,
 ] => {
   const scope = useSignal<Element | undefined>(undefined)
-  return [scope, (target, keyframes, options) => createScopedAnimate(scope.value)(target, keyframes, options)]
+  return [
+    scope,
+    (target, keyframes, options) => createScopedAnimate(scope.value)(target, keyframes, options),
+  ]
 }
 
 export const useDragControls = (): DragControls => {

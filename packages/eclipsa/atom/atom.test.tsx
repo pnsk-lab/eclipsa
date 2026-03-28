@@ -112,14 +112,22 @@ describe('atom', () => {
       let first!: { value: number }
       let second!: { value: number }
 
-      const First = __eclipsaComponent(() => {
-        first = useAtom(countAtom)
-        return 'first'
-      }, 'component-atom-first', () => [])
-      const Second = __eclipsaComponent(() => {
-        second = useAtom(countAtom)
-        return 'second'
-      }, 'component-atom-second', () => [])
+      const First = __eclipsaComponent(
+        () => {
+          first = useAtom(countAtom)
+          return 'first'
+        },
+        'component-atom-first',
+        () => [],
+      )
+      const Second = __eclipsaComponent(
+        () => {
+          second = useAtom(countAtom)
+          return 'second'
+        },
+        'component-atom-second',
+        () => [],
+      )
 
       const container = createContainer()
       withRuntimeContainer(container, () => {
@@ -141,14 +149,22 @@ describe('atom', () => {
       let first!: { value: number }
       let second!: { value: number }
 
-      const First = __eclipsaComponent(() => {
-        first = useAtom(countAtom)
-        return 'first'
-      }, 'component-atom-first-isolated', () => [])
-      const Second = __eclipsaComponent(() => {
-        second = useAtom(countAtom)
-        return 'second'
-      }, 'component-atom-second-isolated', () => [])
+      const First = __eclipsaComponent(
+        () => {
+          first = useAtom(countAtom)
+          return 'first'
+        },
+        'component-atom-first-isolated',
+        () => [],
+      )
+      const Second = __eclipsaComponent(
+        () => {
+          second = useAtom(countAtom)
+          return 'second'
+        },
+        'component-atom-second-isolated',
+        () => [],
+      )
 
       const firstContainer = createContainer()
       const secondContainer = createContainer()
@@ -175,12 +191,22 @@ describe('atom', () => {
 
   it('includes atom-backed signals in streaming SSR resume payloads', async () => {
     const countAtom = atom(0)
-    const App = __eclipsaComponent(() => {
-      const count = useAtom(countAtom)
-      return jsxDEV('div', {
-        children: count.value,
-      }, null, false, {})
-    }, 'component-atom-stream', () => [])
+    const App = __eclipsaComponent(
+      () => {
+        const count = useAtom(countAtom)
+        return jsxDEV(
+          'div',
+          {
+            children: count.value,
+          },
+          null,
+          false,
+          {},
+        )
+      },
+      'component-atom-stream',
+      () => [],
+    )
 
     const { payload } = await renderSSRStream(() => jsxDEV(App, {}, null, false, {}))
 

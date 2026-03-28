@@ -381,8 +381,8 @@ export const inspectResumeHmrUpdate = async (options: {
   }
   let previous =
     cached?.source === options.source
-      ? nextEntry.previous?.analyzed ?? null
-      : cached?.analyzed ?? null
+      ? (nextEntry.previous?.analyzed ?? null)
+      : (cached?.analyzed ?? null)
   if (!previous) {
     const servedSource = servedSources.get(normalizedId)
     if (servedSource && servedSource !== options.source) {
@@ -453,7 +453,7 @@ export const loadSymbolModuleForClient = async (id: string) => {
   }
   const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)
     ? currentAnalyzed
-    : findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed
+    : (findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed)
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)
@@ -483,7 +483,7 @@ export const loadSymbolModuleForSSR = async (id: string) => {
   }
   const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)
     ? currentAnalyzed
-    : findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed
+    : (findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed)
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)
@@ -534,12 +534,8 @@ const isAnalyzableSourceFile = (filePath: string) => {
 }
 
 const resolveImportedModule = (specifier: string, containingFile: string) =>
-  ts.resolveModuleName(
-    specifier,
-    containingFile,
-    moduleResolutionOptions,
-    moduleResolutionHost,
-  ).resolvedModule?.resolvedFileName ?? null
+  ts.resolveModuleName(specifier, containingFile, moduleResolutionOptions, moduleResolutionHost)
+    .resolvedModule?.resolvedFileName ?? null
 
 export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
   const appDir = path.join(root, 'app')

@@ -21,15 +21,15 @@ describe('@eclipsa/motion', () => {
   })
 
   it('renders the initial pose inline during SSR', () => {
-    const { html } = renderSSR(() => <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1 }} />)
+    const { html } = renderSSR(() => (
+      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1 }} />
+    ))
 
     expect(html).toContain('opacity: 0; transform: translate3d(20px, 0px, 0px)')
   })
 
   it('renders the animate pose inline during SSR when initial is false', () => {
-    const { html } = renderSSR(() => (
-      <motion.div initial={false} animate={{ opacity: 1, x: 0 }} />
-    ))
+    const { html } = renderSSR(() => <motion.div initial={false} animate={{ opacity: 1, x: 0 }} />)
 
     expect(html).toContain('opacity: 1; transform: translate3d(0px, 0px, 0px)')
   })

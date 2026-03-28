@@ -1,11 +1,11 @@
 {
   "name": "eclipsa",
   "version": "0.2.0-alpha.0",
-  "license": "MIT",
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pnsk-lab/eclipsa.git",
@@ -98,20 +98,6 @@
       }
     }
   },
-  "napi": {
-    "binaryName": "eclipsa",
-    "targets": [
-      "x86_64-apple-darwin",
-      "aarch64-apple-darwin",
-      "x86_64-unknown-linux-gnu",
-      "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-musl",
-      "aarch64-unknown-linux-musl",
-      "x86_64-pc-windows-msvc",
-      "aarch64-pc-windows-msvc",
-      "wasm32-wasip1-threads"
-    ]
-  },
   "scripts": {
     "artifacts": "bunx @napi-rs/cli artifacts --package-json-path ./package.json --output-dir ./compiler/native/generated --npm-dir ./npm --build-output-dir ./artifacts",
     "build": "bun run build:js && bun run build:native",
@@ -137,5 +123,19 @@
   },
   "peerDependencies": {
     "vite": "*"
+  },
+  "napi": {
+    "binaryName": "eclipsa",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "wasm32-wasip1-threads"
+    ]
   }
 }

@@ -101,10 +101,7 @@ export const PUBLISH_FILES = [
   'compiler/native/generated/**/*.wasm',
 ]
 
-export const buildPackageManifest = (
-  packageJson: PackageJson,
-  mode: ManifestMode,
-): PackageJson => {
+export const buildPackageManifest = (packageJson: PackageJson, mode: ManifestMode): PackageJson => {
   const nextManifest: PackageJson = {
     ...packageJson,
     exports: mode === 'publish' ? PUBLISH_EXPORTS : DEV_EXPORTS,

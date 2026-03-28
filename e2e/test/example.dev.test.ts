@@ -441,7 +441,9 @@ test.describe('example app in dev mode', () => {
 
     for (const target of ['Quick Start', 'Overview', 'Quick Start', 'Overview'] as const) {
       await page.getByRole('link', { name: target }).click()
-      await expect(page.getByRole('heading', { name: target.toLowerCase().replace(' ', '-') })).toBeVisible()
+      await expect(
+        page.getByRole('heading', { name: target.toLowerCase().replace(' ', '-') }),
+      ).toBeVisible()
       await expect
         .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
         .toBe('1')
@@ -519,7 +521,9 @@ test.describe('example app in dev mode', () => {
     const state = page.getByTestId('resume-motion-toggle-state')
     const panel = page.getByTestId('resume-motion-panel')
 
-    await expect(page.getByTestId('resume-motion-root-path')).toHaveText('/resume-motion-root/overview')
+    await expect(page.getByTestId('resume-motion-root-path')).toHaveText(
+      '/resume-motion-root/overview',
+    )
     await expect(state).toHaveText('open')
     await expect(panel).toHaveCSS('max-height', '96px')
 
@@ -635,7 +639,9 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByRole('heading', { name: 'Suspense Playground' })).toBeVisible()
   })
 
-  test('shows suspense fallback during Link navigation before resolved content', async ({ page }) => {
+  test('shows suspense fallback during Link navigation before resolved content', async ({
+    page,
+  }) => {
     await page.goto('/')
 
     await page.getByRole('link', { name: 'Suspense' }).click()
@@ -837,7 +843,9 @@ test.describe('example app in dev mode', () => {
 
     try {
       await page.goto('/content')
-      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionBeforeLabel,
+      )
       await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
 
       const updatedSource = originalSource
@@ -850,7 +858,9 @@ test.describe('example app in dev mode', () => {
       await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel)
     } finally {
       await writeSourceAtomically(contentMarkdownPath, originalSource)
-      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionBeforeLabel,
+      )
       await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
     }
   })

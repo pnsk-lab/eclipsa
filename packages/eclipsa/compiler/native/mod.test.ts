@@ -40,7 +40,10 @@ describe('native compiler packaging', () => {
   })
 
   it('produces a publish manifest that points at built dist entries', async () => {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
     const publishManifest = buildPackageManifest(packageJson, 'publish')
 
     expect(publishManifest.exports).toEqual(PUBLISH_EXPORTS)
@@ -50,11 +53,17 @@ describe('native compiler packaging', () => {
   })
 
   it('packs only publish artifacts and excludes Rust/dev-only paths', async () => {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
     const publishManifest = buildPackageManifest(packageJson, 'publish')
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'eclipsa-pack-'))
 
-    await writeFile(path.join(tempRoot, 'package.json'), `${JSON.stringify(publishManifest, null, 2)}\n`)
+    await writeFile(
+      path.join(tempRoot, 'package.json'),
+      `${JSON.stringify(publishManifest, null, 2)}\n`,
+    )
 
     const exportEntries = new Set<string>(['./dist/mod.mjs', './dist/mod.d.mts'])
     for (const target of Object.values(PUBLISH_EXPORTS)) {

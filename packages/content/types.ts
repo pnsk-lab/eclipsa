@@ -100,7 +100,9 @@ export interface GlobLoader {
 
 export type ContentLoader = GlobLoader | ContentLoaderObject
 
-export interface ContentCollectionDefinition<Schema extends StandardSchemaV1<any, any> | undefined> {
+export interface ContentCollectionDefinition<
+  Schema extends StandardSchemaV1<any, any> | undefined,
+> {
   loader: ContentLoader
   markdown?: ContentMarkdownOptions
   search?: boolean | ContentSearchOptions
@@ -122,7 +124,10 @@ export type InferCollectionData<Collection extends AnyCollection> =
       : Record<string, unknown>
     : Record<string, unknown>
 
-export interface BaseContentEntry<Data = Record<string, unknown>, Collection extends string = string> {
+export interface BaseContentEntry<
+  Data = Record<string, unknown>,
+  Collection extends string = string,
+> {
   body: string
   collection: Collection
   data: Data

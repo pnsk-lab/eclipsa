@@ -2,7 +2,12 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createContentRuntime, createContentSearch, parseFrontmatter, toEntryIdFromRelativePath } from './internal.ts'
+import {
+  createContentRuntime,
+  createContentSearch,
+  parseFrontmatter,
+  toEntryIdFromRelativePath,
+} from './internal.ts'
 import { defineCollection, glob } from './mod.ts'
 
 const createdRoots: string[] = []
@@ -17,7 +22,9 @@ const createTempRoot = async () => {
 }
 
 afterEach(async () => {
-  await Promise.all(createdRoots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })))
+  await Promise.all(
+    createdRoots.splice(0).map((root) => fs.rm(root, { force: true, recursive: true })),
+  )
 })
 
 describe('@eclipsa/content internals', () => {

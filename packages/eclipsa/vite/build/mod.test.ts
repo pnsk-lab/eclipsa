@@ -270,9 +270,7 @@ describe('build', () => {
     }
 
     const response = await app.fetch(
-      new Request(
-        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded',
-      ),
+      new Request('http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fguarded'),
     )
 
     expect(response.status).toBe(200)
@@ -311,9 +309,7 @@ describe('build', () => {
     }
 
     const response = await app.fetch(
-      new Request(
-        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing',
-      ),
+      new Request('http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fmissing'),
     )
 
     expect(response.status).toBe(200)
@@ -537,11 +533,7 @@ describe('build', () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-missing-paths-'))
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
-    await writeBuiltPageModule(
-      root,
-      'route__docs___slug____page',
-      'export default () => null;\n',
-    )
+    await writeBuiltPageModule(root, 'route__docs___slug____page', 'export default () => null;\n')
     mocks.createRoutes.mockResolvedValue([
       {
         ...createRootRoute(),
@@ -558,7 +550,9 @@ describe('build', () => {
       },
     ])
 
-    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(/export getStaticPaths/)
+    await expect(build(builder, { root }, { output: 'ssg' })).rejects.toThrow(
+      /export getStaticPaths/,
+    )
   })
 
   it('rejects invalid getStaticPaths params', async () => {

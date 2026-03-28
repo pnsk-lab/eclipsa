@@ -1,9 +1,4 @@
-import {
-  createServerModuleRunner,
-  type Plugin,
-  type PluginOption,
-  type ResolvedConfig,
-} from 'vite'
+import { createServerModuleRunner, type Plugin, type PluginOption, type ResolvedConfig } from 'vite'
 import { createDevFetch, shouldInvalidateDevApp } from './dev-app/mod.ts'
 import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
 import { createConfig } from './config.ts'
@@ -40,7 +35,9 @@ const preserveCssHotModules = <
       isCssRequest(module.file),
   )
 
-const mergeUniqueHotModules = <T extends { file?: string; id?: string; url?: string }>(modules: T[]) => {
+const mergeUniqueHotModules = <T extends { file?: string; id?: string; url?: string }>(
+  modules: T[],
+) => {
   const seen = new Set<string>()
   return modules.filter((module) => {
     const key = module.id ?? module.file ?? module.url

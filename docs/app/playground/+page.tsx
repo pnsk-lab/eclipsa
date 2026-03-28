@@ -107,7 +107,9 @@ export default () => {
 
       try {
         const highlightedEntries = await Promise.all(
-          result.files.map(async (file) => [file.path, await highlightCode(file.code, file.language)] as const),
+          result.files.map(
+            async (file) => [file.path, await highlightCode(file.code, file.language)] as const,
+          ),
         )
 
         if (state.disposed || requestId !== state.currentRequest) {
@@ -196,7 +198,11 @@ export default () => {
         Compile error
       </div>
       <pre class="min-h-0 flex-1 overflow-auto px-6 py-6 font-mono text-[13px] leading-6 text-rose-700 whitespace-pre-wrap">
-        {isCompiling.value ? 'Compiling current source...' : !buildResult.value.ok ? buildResult.value.error : ''}
+        {isCompiling.value
+          ? 'Compiling current source...'
+          : !buildResult.value.ok
+            ? buildResult.value.error
+            : ''}
       </pre>
     </div>
   )
@@ -267,42 +273,43 @@ export default () => {
               </div>
 
               <div class="min-h-0 overflow-hidden bg-[linear-gradient(to_bottom,rgba(15,23,42,0.03),transparent_180px)]">
-                {buildResult.value.ok ? (() => {
-                  const selectedFile =
-                    buildResult.value.files.find((file) => file.path === selectedFilePath.value) ??
-                    buildResult.value.files[0]
+                {buildResult.value.ok
+                  ? (() => {
+                      const selectedFile =
+                        buildResult.value.files.find(
+                          (file) => file.path === selectedFilePath.value,
+                        ) ?? buildResult.value.files[0]
 
-                  if (!selectedFile) {
-                    return (
-                      <pre class="h-full overflow-auto px-6 py-6 font-mono text-[13px] leading-6 text-zinc-800 whitespace-pre-wrap">
-                        No generated files.
-                      </pre>
-                    )
-                  }
+                      if (!selectedFile) {
+                        return (
+                          <pre class="h-full overflow-auto px-6 py-6 font-mono text-[13px] leading-6 text-zinc-800 whitespace-pre-wrap">
+                            No generated files.
+                          </pre>
+                        )
+                      }
 
-                  const highlightedHtml = highlightedFiles.value[selectedFile.path]
+                      const highlightedHtml = highlightedFiles.value[selectedFile.path]
 
-                  return (
-                    <div class="flex h-full min-h-0 flex-col">
-                      <div class="border-b border-zinc-950/10 px-6 py-3 font-mono text-[12px] text-zinc-500">
-                        {selectedFile.path}
-                      </div>
+                      return (
+                        <div class="flex h-full min-h-0 flex-col">
+                          <div class="border-b border-zinc-950/10 px-6 py-3 font-mono text-[12px] text-zinc-500">
+                            {selectedFile.path}
+                          </div>
 
-                      {highlightedHtml ? (
-                        <div
-                          class="min-h-0 flex-1 overflow-hidden px-6 py-6 [&_.line]:inline-block [&_.line]:min-w-full [&_code]:font-mono [&_code]:whitespace-pre [&_pre]:m-0 [&_pre]:h-full [&_pre]:overflow-auto [&_pre]:!bg-transparent [&_pre]:p-0 [&_pre]:font-mono [&_pre]:text-[13px] [&_pre]:leading-6"
-                          dangerouslySetInnerHTML={highlightedHtml}
-                        />
-                      ) : (
-                        <pre class="min-h-0 flex-1 overflow-auto px-6 py-6 font-mono text-[13px] leading-6 text-zinc-800 whitespace-pre">
-                          {selectedFile.code}
-                        </pre>
-                      )}
-                    </div>
-                  )
-                })() : (
-                  renderBuildError()
-                )}
+                          {highlightedHtml ? (
+                            <div
+                              class="min-h-0 flex-1 overflow-hidden px-6 py-6 [&_.line]:inline-block [&_.line]:min-w-full [&_code]:font-mono [&_code]:whitespace-pre [&_pre]:m-0 [&_pre]:h-full [&_pre]:overflow-auto [&_pre]:!bg-transparent [&_pre]:p-0 [&_pre]:font-mono [&_pre]:text-[13px] [&_pre]:leading-6"
+                              dangerouslySetInnerHTML={highlightedHtml}
+                            />
+                          ) : (
+                            <pre class="min-h-0 flex-1 overflow-auto px-6 py-6 font-mono text-[13px] leading-6 text-zinc-800 whitespace-pre">
+                              {selectedFile.code}
+                            </pre>
+                          )}
+                        </div>
+                      )
+                    })()
+                  : renderBuildError()}
               </div>
             </div>
           </section>

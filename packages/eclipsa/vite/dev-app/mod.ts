@@ -237,13 +237,7 @@ const createRouteElement = (
       value: error,
       writable: true,
     })
-    children = jsxDEV(
-      Layout as any,
-      nextProps,
-      null,
-      false,
-      {},
-    )
+    children = jsxDEV(Layout as any, nextProps, null, false, {})
   }
   return children
 }
@@ -397,7 +391,10 @@ const createDevApp = async (init: DevAppInit) => {
   )
   const appHooksPath = path.join(init.resolvedConfig.root, 'app/+hooks.ts')
   const serverHooksPath = path.join(init.resolvedConfig.root, 'app/+hooks.server.ts')
-  const appHooks = (await loadOptionalHookModule<AppHooksModule>(init.runner, appHooksPath)) as AppHooksModule
+  const appHooks = (await loadOptionalHookModule<AppHooksModule>(
+    init.runner,
+    appHooksPath,
+  )) as AppHooksModule
   const serverHooks = (await loadOptionalHookModule<ServerHooksModule>(
     init.runner,
     serverHooksPath,
@@ -444,7 +441,10 @@ const createDevApp = async (init: DevAppInit) => {
         handleError: serverHooks.handleError,
         transport: appHooks.transport,
       },
-      () => serverHooks.handle!(requestContext, (nextContext) => execute(nextContext ?? requestContext)),
+      () =>
+        serverHooks.handle!(requestContext, (nextContext) =>
+          execute(nextContext ?? requestContext),
+        ),
     )
   }
 
@@ -549,7 +549,9 @@ const createDevApp = async (init: DevAppInit) => {
       },
     ] = await Promise.all([
       Promise.all([
-        fileExists(modulePath).then((exists) => (exists ? primeCompilerCache(modulePath) : undefined)),
+        fileExists(modulePath).then((exists) =>
+          exists ? primeCompilerCache(modulePath) : undefined,
+        ),
         ...route.layouts.map((layout) =>
           fileExists(layout.filePath).then((exists) =>
             exists ? primeCompilerCache(layout.filePath) : undefined,
@@ -578,7 +580,13 @@ const createDevApp = async (init: DevAppInit) => {
     )
 
     const document = SSRRoot({
-      children: createRouteElement(pathname, params, Page, Layouts, options?.routeError) as SSRRootProps['children'],
+      children: createRouteElement(
+        pathname,
+        params,
+        Page,
+        Layouts,
+        options?.routeError,
+      ) as SSRRootProps['children'],
       head: {
         type: Fragment,
         isStatic: true,
@@ -750,13 +758,11 @@ const createDevApp = async (init: DevAppInit) => {
     modulePath: string,
     kind: RouteDataResponse['kind'],
   ) => {
-    const [
-      _primedModules,
-      modules,
-      { renderSSRAsync, resolvePendingLoaders },
-    ] = await Promise.all([
+    const [_primedModules, modules, { renderSSRAsync, resolvePendingLoaders }] = await Promise.all([
       Promise.all([
-        fileExists(modulePath).then((exists) => (exists ? primeCompilerCache(modulePath) : undefined)),
+        fileExists(modulePath).then((exists) =>
+          exists ? primeCompilerCache(modulePath) : undefined,
+        ),
         ...route.layouts.map((layout) =>
           fileExists(layout.filePath).then((exists) =>
             exists ? primeCompilerCache(layout.filePath) : undefined,
@@ -869,7 +875,11 @@ const createDevApp = async (init: DevAppInit) => {
     }
 
     const target = resolvePreflightTarget(
-      reroutePathname(new Request(targetUrl.href), normalizeRoutePath(targetUrl.pathname), targetUrl.href),
+      reroutePathname(
+        new Request(targetUrl.href),
+        normalizeRoutePath(targetUrl.pathname),
+        targetUrl.href,
+      ),
     )
     if (!target) {
       return c.json({ ok: true })
@@ -981,32 +991,39 @@ const createDevApp = async (init: DevAppInit) => {
       if (!match) {
         const fallback = findSpecialRoute(routes, resolvedPathname, 'notFound')
         if (fallback?.route.notFound) {
-          return composeRouteMiddlewares(fallback.route, requestContext, fallback.params, async () =>
-            requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
-              ? requestContext.body(null, 204)
-              : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === '1'
-                ? renderRouteData(
-                    fallback.route,
-                    requestPathname,
-                    fallback.params,
-                    requestContext,
-                    fallback.route.notFound!.filePath,
-                    'not-found',
-                  )
-                : renderRouteResponse(
-                  fallback.route,
-                  requestPathname,
-                  fallback.params,
-                  requestContext,
-                  fallback.route.notFound!.filePath,
-                  404,
-                ),
+          return composeRouteMiddlewares(
+            fallback.route,
+            requestContext,
+            fallback.params,
+            async () =>
+              requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'
+                ? requestContext.body(null, 204)
+                : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === '1'
+                  ? renderRouteData(
+                      fallback.route,
+                      requestPathname,
+                      fallback.params,
+                      requestContext,
+                      fallback.route.notFound!.filePath,
+                      'not-found',
+                    )
+                  : renderRouteResponse(
+                      fallback.route,
+                      requestPathname,
+                      fallback.params,
+                      requestContext,
+                      fallback.route.notFound!.filePath,
+                      404,
+                    ),
           )
         }
         return requestContext.text('Not Found', 404)
       }
 
-      if ((requestContext.req.method === 'GET' || requestContext.req.method === 'HEAD') && match.route.page) {
+      if (
+        (requestContext.req.method === 'GET' || requestContext.req.method === 'HEAD') &&
+        match.route.page
+      ) {
         const page = match.route.page
         return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
           requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === '1'

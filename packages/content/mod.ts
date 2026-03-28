@@ -39,7 +39,9 @@ export interface ContentRuntimeModule {
     collection: Collection,
     id: string,
   ): Promise<CollectionEntry<Collection> | undefined>
-  render<Collection extends AnyCollection>(entry: CollectionEntry<Collection>): Promise<RenderedContent>
+  render<Collection extends AnyCollection>(
+    entry: CollectionEntry<Collection>,
+  ): Promise<RenderedContent>
 }
 
 export type {

@@ -21,7 +21,11 @@ describe('playground output splitting', () => {
     expect(files[0]?.path).toBe('/dist/app.js')
     expect(files[1]?.path).toBe('/dist/ssr.js')
     expect(files).toHaveLength(analyzed.symbols.size + 2)
-    expect(files.some((file: (typeof files)[number]) => file.relativePath.startsWith('entries/symbol__'))).toBe(true)
+    expect(
+      files.some((file: (typeof files)[number]) =>
+        file.relativePath.startsWith('entries/symbol__'),
+      ),
+    ).toBe(true)
     expect(files.some((file: (typeof files)[number]) => file.symbolKind === 'component')).toBe(true)
   })
 })

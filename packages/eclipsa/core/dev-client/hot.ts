@@ -10,8 +10,9 @@ interface ViteHotContext {
 }
 
 const unwrapHotComponent = (Component: Component): Component =>
-  ((Component as Component & { [HOT_COMPONENT_TARGET_KEY]?: Component })[HOT_COMPONENT_TARGET_KEY] ??
-    Component) as Component
+  ((Component as Component & { [HOT_COMPONENT_TARGET_KEY]?: Component })[
+    HOT_COMPONENT_TARGET_KEY
+  ] ?? Component) as Component
 
 export const initHot = (
   hot: ViteHotContext | undefined,
