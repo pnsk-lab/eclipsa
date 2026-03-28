@@ -62,6 +62,7 @@ const createContainer = () =>
   ({
     actions: new Map(),
     actionStates: new Map(),
+    atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -69,6 +70,7 @@ const createContainer = () =>
     loaderStates: new Map(),
     loaders: new Map(),
     id: 'rt-test',
+    nextAtomId: 0,
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,

@@ -19,6 +19,7 @@
       "name": "@eclipsa/docs",
       "dependencies": {
         "@eclipsa/content": "workspace:*",
+        "@eclipsa/motion": "workspace:*",
         "@iconify-json/tabler": "^1.2.31",
         "clsx": "^2.1.1",
         "eclipsa": "workspace:*",
@@ -37,6 +38,7 @@
       "dependencies": {
         "@eclipsa/content": "workspace:*",
         "@eclipsa/image": "workspace:*",
+        "@eclipsa/motion": "workspace:*",
         "eclipsa": "workspace:*",
         "zod": "^4.3.6",
       },
@@ -93,6 +95,14 @@
         "vite": "*",
       },
     },
+    "packages/motion": {
+      "name": "@eclipsa/motion",
+      "dependencies": {
+        "eclipsa": "workspace:*",
+        "motion-dom": "12.38.0",
+        "motion-utils": "12.36.0",
+      },
+    },
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
@@ -124,6 +134,8 @@
     "@eclipsa/e2e": ["@eclipsa/e2e@workspace:e2e"],
 
     "@eclipsa/image": ["@eclipsa/image@workspace:packages/image"],
+
+    "@eclipsa/motion": ["@eclipsa/motion@workspace:packages/motion"],
 
     "@egoist/tailwindcss-icons": ["@egoist/tailwindcss-icons@1.9.2", "", { "dependencies": { "@iconify/utils": "^3.1.0" }, "peerDependencies": { "tailwindcss": "*" } }, "sha512-I6XsSykmhu2cASg5Hp/ICLsJ/K/1aXPaSKjgbWaNp2xYnb4We/arWMmkhhV+9CglOFCUbqx0A3mM2kWV32ZIhw=="],
 
@@ -788,6 +800,10 @@
     "mitata": ["mitata@1.0.34", "", {}, "sha512-Mc3zrtNBKIMeHSCQ0XqRLo1vbdIx1wvFV9c8NJAiyho6AjNfMY8bVhbS12bwciUdd1t4rj8099CH3N3NFahaUA=="],
 
     "mlly": ["mlly@1.8.2", "", { "dependencies": { "acorn": "^8.16.0", "pathe": "^2.0.3", "pkg-types": "^1.3.1", "ufo": "^1.6.3" } }, "sha512-d+ObxMQFmbt10sretNDytwt85VrbkhhUA/JBGm1MPaWJ65Cl4wOgLaB1NYvJSZ0Ef03MMEU/0xpPMXUIQ29UfA=="],
+
+    "motion-dom": ["motion-dom@12.38.0", "", { "dependencies": { "motion-utils": "^12.36.0" } }, "sha512-pdkHLD8QYRp8VfiNLb8xIBJis1byQ9gPT3Jnh2jqfFtAsWUA3dEepDlsWe/xMpO8McV+VdpKVcp+E+TGJEtOoA=="],
+
+    "motion-utils": ["motion-utils@12.36.0", "", {}, "sha512-eHWisygbiwVvf6PZ1vhaHCLamvkSbPIeAYxWUuL3a2PD/TROgE7FvfHWTIH4vMl798QLfMw15nRqIaRDXTlYRg=="],
 
     "mrmime": ["mrmime@2.0.1", "", {}, "sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ=="],
 

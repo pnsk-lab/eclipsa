@@ -4,8 +4,11 @@ import { getComponentMeta } from '../internal.ts'
 import {
   assignRuntimeRef,
   bindRuntimeEvent,
+  captureClientInsertOwner,
   getRuntimeContainer,
   renderClientInsertable,
+  renderClientInsertableForOwner,
+  tryPatchNodeSequenceInPlace,
 } from '../runtime.ts'
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
@@ -28,9 +31,46 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   let lastFirstNode = marker
   let lastNodeLength = 0
   const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+  const owner = captureClientInsertOwner(runtimeContainer)
+  let initialized = false
+  const collectCurrentNodes = () => {
+    if (!lastFirstNode || lastNodeLength === 0) {
+      return [] as Node[]
+    }
+    const nodes = [lastFirstNode]
+    let cursor = lastFirstNode
+    while (nodes.length < lastNodeLength) {
+      const next = cursor.nextSibling
+      if (!next) {
+        return [] as Node[]
+      }
+      cursor = next
+      nodes.push(cursor)
+    }
+    return nodes
+  }
 
   effect(() => {
-    const newNodes = renderClientInsertable(value, runtimeContainer)
+    const newNodes =
+      initialized && owner
+        ? renderClientInsertableForOwner(value, runtimeContainer, owner)
+        : renderClientInsertable(value, runtimeContainer)
+    const currentNodes = collectCurrentNodes()
+
+    if (
+      currentNodes.length === lastNodeLength &&
+      currentNodes.length !== 0 &&
+      newNodes.length !== 0 &&
+      (tryPatchNodeSequenceInPlace(currentNodes, newNodes) ||
+        tryPatchSingleElementShellInPlace(currentNodes, newNodes))
+    ) {
+      lastFirstNode = currentNodes[0]
+      lastNodeLength = currentNodes.length
+      return
+    }
 
     if (lastFirstNode && newNodes.length !== 0) {
       for (let i = 1; i < lastNodeLength; i++) {
@@ -48,6 +88,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
 
     lastFirstNode = newNodes[0]
     lastNodeLength = newNodes.length
+    initialized = true
   })
 }
 
@@ -55,6 +96,63 @@ const EVENT_ATTR_REGEX = /^on[A-Z].+$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
 const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
   isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
+
+const syncElementAttributes = (current: Element, next: Element) => {
+  const nextNames = new Set(next.getAttributeNames())
+
+  for (const name of current.getAttributeNames()) {
+    if (!nextNames.has(name)) {
+      current.removeAttribute(name)
+    }
+  }
+
+  for (const name of nextNames) {
+    const nextValue = next.getAttribute(name)
+    if (nextValue === null) {
+      current.removeAttribute(name)
+      continue
+    }
+    if (current.getAttribute(name) !== nextValue) {
+      current.setAttribute(name, nextValue)
+    }
+  }
+}
+
+const hasComponentBoundaryMarkers = (node: Node): boolean => {
+  if (node.nodeType === Node.COMMENT_NODE) {
+    return /^ec:c:.+:(start|end)$/.test((node as Comment).data)
+  }
+  for (const child of node.childNodes) {
+    if (hasComponentBoundaryMarkers(child)) {
+      return true
+    }
+  }
+  return false
+}
+
+const tryPatchSingleElementShellInPlace = (currentNodes: Node[], nextNodes: Node[]) => {
+  if (currentNodes.length !== 1 || nextNodes.length !== 1) {
+    return false
+  }
+
+  const [current] = currentNodes
+  const [next] = nextNodes
+  if (!(current instanceof Element) || !(next instanceof Element) || current.tagName !== next.tagName) {
+    return false
+  }
+  if (hasComponentBoundaryMarkers(current) || hasComponentBoundaryMarkers(next)) {
+    return false
+  }
+
+  syncElementAttributes(current, next)
+  while (current.firstChild) {
+    current.firstChild.remove()
+  }
+  while (next.firstChild) {
+    current.appendChild(next.firstChild)
+  }
+  return true
+}
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'

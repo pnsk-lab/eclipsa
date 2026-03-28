@@ -132,6 +132,7 @@ pub struct AnalyzeResponse {
 #[derive(Debug)]
 struct ImportBindings {
     action_identifier: Option<String>,
+    atom_identifier: Option<String>,
     deprecated_action_identifier: Option<String>,
     deprecated_lazy_identifier: Option<String>,
     deprecated_loader_identifier: Option<String>,
@@ -271,6 +272,7 @@ fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> String {
 fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
     let mut bindings = ImportBindings {
         action_identifier: None,
+        atom_identifier: None,
         deprecated_action_identifier: None,
         deprecated_lazy_identifier: None,
         deprecated_loader_identifier: None,
@@ -284,9 +286,7 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
         let oxc_ast::ast::Statement::ImportDeclaration(import_decl) = statement else {
             continue;
         };
-        if import_decl.source.value.as_str() != "eclipsa" {
-            continue;
-        }
+        let source = import_decl.source.value.as_str();
         let Some(specifiers) = &import_decl.specifiers else {
             continue;
         };
@@ -300,15 +300,22 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
                 oxc_ast::ast::ModuleExportName::StringLiteral(name) => name.value.as_str(),
             };
             let local = specifier.local.name.as_str().to_string();
-            match imported {
-                "action" => bindings.action_identifier = Some(local),
-                "action$" => bindings.deprecated_action_identifier = Some(local),
-                "$" => bindings.deprecated_lazy_identifier = Some(local),
-                "loader" => bindings.loader_identifier = Some(local),
-                "loader$" => bindings.deprecated_loader_identifier = Some(local),
-                "onVisible" => bindings.visible_identifier = Some(local),
-                "useSignal" => bindings.signal_identifier = Some(local),
-                "useWatch" => bindings.watch_identifier = Some(local),
+            match source {
+                "eclipsa" => match imported {
+                    "action" => bindings.action_identifier = Some(local),
+                    "action$" => bindings.deprecated_action_identifier = Some(local),
+                    "$" => bindings.deprecated_lazy_identifier = Some(local),
+                    "loader" => bindings.loader_identifier = Some(local),
+                    "loader$" => bindings.deprecated_loader_identifier = Some(local),
+                    "onVisible" => bindings.visible_identifier = Some(local),
+                    "useSignal" => bindings.signal_identifier = Some(local),
+                    "useWatch" => bindings.watch_identifier = Some(local),
+                    _ => {}
+                },
+                "eclipsa/atom" => match imported {
+                    "useAtom" => bindings.atom_identifier = Some(local),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -1739,6 +1746,20 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             if !self.current_function_is_component() {
                 self.fail(
                     "useSignal() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).",
+                );
+            }
+            return;
+        }
+
+        if self
+            .imports
+            .atom_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            if !self.current_function_is_component() {
+                self.fail(
+                    "useAtom() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).",
                 );
             }
             return;

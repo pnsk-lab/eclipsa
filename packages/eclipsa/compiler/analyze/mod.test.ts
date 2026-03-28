@@ -49,6 +49,34 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('accepts useAtom() from the atom subpath inside a component', async () => {
+    const analyzed = await analyzeModule(`
+      import { atom, useAtom } from "eclipsa/atom";
+
+      const countAtom = atom(0);
+
+      export default () => {
+        const count = useAtom(countAtom);
+        return <button>{count.value}</button>;
+      };
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+  })
+
+  it('rejects useAtom() outside a component', async () => {
+    await expect(
+      analyzeModule(`
+        import { atom, useAtom } from "eclipsa/atom";
+        const countAtom = atom(0);
+        const count = useAtom(countAtom);
+        export default count;
+      `),
+    ).rejects.toThrowError(
+      'useAtom() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).',
+    )
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (

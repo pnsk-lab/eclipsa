@@ -21,6 +21,9 @@
   & h1 {
     @apply text-3xl/10 font-semibold text-zinc-700;
   }
+  & h2 {
+    @apply text-2xl/10 font-semibold text-zinc-700;
+  }
   & p {
     @apply text-base/7 my-4 text-zinc-700;
   }

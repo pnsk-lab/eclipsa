@@ -440,7 +440,20 @@ export const loadSymbolModuleForClient = async (id: string) => {
     return null
   }
 
-  const analyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? (await loadAnalyzedModule(parsed.filePath))
+  let currentAnalyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId)
+  try {
+    const currentSource = await fs.readFile(stripQuery(parsed.filePath), 'utf8')
+    currentAnalyzed = await loadAnalyzedModule(parsed.filePath, currentSource)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      throw error
+    }
+    currentAnalyzed ??= await loadAnalyzedModule(parsed.filePath)
+  }
+  const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)
+    ? currentAnalyzed
+    : findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)
@@ -457,7 +470,20 @@ export const loadSymbolModuleForSSR = async (id: string) => {
     return null
   }
 
-  const analyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? (await loadAnalyzedModule(parsed.filePath))
+  let currentAnalyzed = findCachedAnalyzedModuleBySymbolId(parsed.symbolId)
+  try {
+    const currentSource = await fs.readFile(stripQuery(parsed.filePath), 'utf8')
+    currentAnalyzed = await loadAnalyzedModule(parsed.filePath, currentSource)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      throw error
+    }
+    currentAnalyzed ??= await loadAnalyzedModule(parsed.filePath)
+  }
+  const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)
+    ? currentAnalyzed
+    : findCachedAnalyzedModuleBySymbolId(parsed.symbolId) ?? currentAnalyzed
   const symbol = analyzed.symbols.get(parsed.symbolId)
   if (!symbol) {
     throw new Error(`Unknown resume symbol ${parsed.symbolId} for ${parsed.filePath}.`)

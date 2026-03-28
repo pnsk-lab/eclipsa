@@ -52,16 +52,6 @@ const mergeUniqueHotModules = <T extends { file?: string; id?: string; url?: str
   })
 }
 
-const DEV_APP_INVALIDATORS_KEY = Symbol.for('eclipsa.dev-app-invalidators')
-
-const registerDevAppInvalidator = (server: Record<PropertyKey, unknown>, invalidate: () => void) => {
-  const existing = server[DEV_APP_INVALIDATORS_KEY]
-  const invalidators =
-    existing instanceof Set ? existing : new Set<() => void>()
-  invalidators.add(invalidate)
-  server[DEV_APP_INVALIDATORS_KEY] = invalidators
-}
-
 interface EclipsaPluginState {
   config?: ResolvedConfig
   pendingSsrUpdates?: Map<string, ResumeHmrUpdatePayload>
@@ -235,10 +225,6 @@ const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = 
           devApp.invalidate()
         }
       }
-
-      registerDevAppInvalidator(server as unknown as Record<PropertyKey, unknown>, () => {
-        devApp.invalidate()
-      })
 
       server.watcher.on('add', (filePath) => {
         invalidateDevApp(filePath, 'add')

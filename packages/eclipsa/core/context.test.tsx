@@ -64,6 +64,7 @@ const createContainer = () =>
     actionStates: new Map(),
     asyncSignalStates: new Map(),
     asyncSignalSnapshotCache: new Map(),
+    atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -71,6 +72,7 @@ const createContainer = () =>
     imports: new Map(),
     loaderStates: new Map(),
     loaders: new Map(),
+    nextAtomId: 0,
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,
@@ -235,6 +237,19 @@ describe('createContext', () => {
 
     expect(html).toContain('<span>left</span>')
     expect(html).toContain('<span>right</span>')
+  })
+
+  it('returns the default value when no provider exists', () => {
+    const ThemeContext = createContext('light')
+    const ReadTheme = __eclipsaComponent(
+      () => <p>{useContext(ThemeContext)}</p>,
+      'context-read-default',
+      () => [],
+    )
+
+    const { html } = renderSSR(() => <ReadTheme />)
+
+    expect(html).toContain('<p>light</p>')
   })
 
   it('throws when no matching provider exists', () => {

@@ -24,6 +24,7 @@ describe('resumeContainer route link bootstrap', () => {
     )
     const registerResumeContainer = vi.fn()
     const restoreRegisteredRpcHandles = vi.fn()
+    const restoreResumedLocalSignalEffects = vi.fn()
     const registerClientHooks = vi.fn()
 
     vi.doMock('./runtime.ts', () => ({
@@ -37,6 +38,7 @@ describe('resumeContainer route link bootstrap', () => {
       refreshRegisteredRouteContainers: vi.fn(),
       registerResumeContainer,
       restoreRegisteredRpcHandles,
+      restoreResumedLocalSignalEffects,
     }))
     vi.doMock('./hooks.ts', () => ({
       APP_HOOKS_ELEMENT_ID: 'app-hooks',
@@ -97,11 +99,12 @@ describe('resumeContainer route link bootstrap', () => {
       expect(installResumeListeners).not.toHaveBeenCalled()
       expect(registerResumeContainer).not.toHaveBeenCalled()
 
-      resolvePrime?.()
+      ;(resolvePrime as (() => void) | null)?.()
       await resumePromise
 
       expect(registerClientHooks).toHaveBeenCalledWith({})
       expect(restoreRegisteredRpcHandles).toHaveBeenCalledWith(container)
+      expect(restoreResumedLocalSignalEffects).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).toHaveBeenCalledWith(container)
       expect(root.setAttribute).toHaveBeenCalledWith('data-e-resume', 'resumed')
       expect(installResumeListeners).toHaveBeenCalledWith(container)

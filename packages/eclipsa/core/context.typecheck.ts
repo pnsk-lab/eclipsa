@@ -11,6 +11,7 @@ type Equal<Left, Right> =
 type Expect<T extends true> = T
 
 const NumberContext = createContext<number>()
+const DefaultNumberContext = createContext(1)
 
 type _Context = Expect<Equal<typeof NumberContext, Context<number>>>
 type _Provider = Expect<
@@ -19,9 +20,16 @@ type _Provider = Expect<
 type _ProviderProps = Expect<
   Equal<Parameters<typeof NumberContext.Provider>[0], ContextProviderProps<number>>
 >
+type _DefaultContext = Expect<Equal<typeof DefaultNumberContext, Context<number>>>
 
 const readNumber = () => {
   const value = useContext(NumberContext)
+  type _Value = Expect<Equal<typeof value, number>>
+  return value
+}
+
+const readDefaultNumber = () => {
+  const value = useContext(DefaultNumberContext)
   type _Value = Expect<Equal<typeof value, number>>
   return value
 }
@@ -37,3 +45,6 @@ NumberProvider({
   // @ts-expect-error Provider value must match the context type.
   value: 'nope',
 })
+
+createContext<string>('ok')
+createContext<string>()

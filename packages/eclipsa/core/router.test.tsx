@@ -84,12 +84,12 @@ const withFakeDom = (fn: () => void) => {
     fn()
   } finally {
     if (previousDocument === undefined) {
-      delete (globalThis as typeof globalThis & { document?: Document }).document
+      Reflect.deleteProperty(globalThis as Record<string, unknown>, 'document')
     } else {
       Object.assign(globalThis, { document: previousDocument })
     }
     if (previousNode === undefined) {
-      delete (globalThis as typeof globalThis & { Node?: typeof Node }).Node
+      Reflect.deleteProperty(globalThis as Record<string, unknown>, 'Node')
     } else {
       Object.assign(globalThis, { Node: previousNode })
     }
@@ -186,6 +186,7 @@ describe('Link', () => {
         actions: new Map(),
         asyncSignalSnapshotCache: new Map(),
         asyncSignalStates: new Map(),
+        atoms: new WeakMap(),
         components: new Map(),
         dirty: new Set(),
         doc: document as unknown as Document,
@@ -193,6 +194,7 @@ describe('Link', () => {
         imports: new Map(),
         loaderStates: new Map(),
         loaders: new Map(),
+        nextAtomId: 0,
         nextComponentId: 0,
         nextElementId: 0,
         nextScopeId: 0,

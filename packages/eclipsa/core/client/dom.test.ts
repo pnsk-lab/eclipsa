@@ -6,6 +6,8 @@ import { Suspense } from '../suspense.ts'
 
 const createContainer = () =>
   ({
+    atoms: new WeakMap(),
+    nextAtomId: 0,
     signals: new Map(),
   }) as RuntimeContainer
 

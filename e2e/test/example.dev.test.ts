@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const hmrSvgPagePath = fileURLToPath(new URL('../app/hmr-svg/+page.tsx', import.meta.url))
 const hmrBeforeLabel = 'svg hmr before'
@@ -23,6 +23,11 @@ const writeSourceAtomically = async (filePath: string, source: string) => {
   const tempPath = `${filePath}.tmp`
   await writeFile(tempPath, source)
   await rename(tempPath, filePath)
+}
+
+const waitForResumedRoute = async (page: Page) => {
+  await expect(page.locator('body')).toHaveAttribute('data-e-resume', 'resumed')
+  await page.waitForTimeout(250)
 }
 
 test.describe('example app in dev mode', () => {
@@ -102,8 +107,10 @@ test.describe('example app in dev mode', () => {
     page,
   }) => {
     await page.goto('/')
+    await waitForResumedRoute(page)
 
     await page.getByRole('button', { name: /^Layout count:\s*0$/ }).click()
+    await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
     await page.getByRole('button', { name: 'Go to counter with navigate()' }).click()
 
     await expect(page).toHaveURL(/\/counter$/)
@@ -235,6 +242,91 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('layout-location-nav')).toHaveClass(/inactive/)
   })
 
+  test('runs motion enter/exit and shared layout flows', async ({ page }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    await expect(page).toHaveTitle('Motion | E2E')
+    await expect(page.getByRole('heading', { name: 'Motion Playground' })).toBeVisible()
+    await expect(page.getByTestId('motion-card')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Toggle motion card' }).click()
+    await expect(page.getByTestId('motion-card')).toHaveCSS('opacity', '0')
+    await page.getByRole('button', { name: 'Toggle motion card' }).click()
+    await expect(page.getByTestId('motion-card')).toHaveCSS('opacity', '1')
+
+    await expect(page.getByTestId('motion-indicator')).toHaveText('Left active')
+  })
+
+  test('shares atom state across components and preserves it across Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/atom')
+    await waitForResumedRoute(page)
+
+    await expect(page).toHaveTitle('Atom | E2E')
+    await expect(page.getByRole('heading', { name: 'Atom Playground' })).toBeVisible()
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 0')
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: idle')
+
+    await page.getByTestId('atom-left').click()
+
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-left')).toHaveText('Left atom count: 1')
+    await expect(page.getByTestId('atom-right')).toHaveText('Right atom count: 1')
+
+    await page.getByTestId('atom-label-toggle').click()
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: updated')
+
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+
+    await page.getByRole('link', { name: 'Back home with Link' }).click()
+    await expect(page).toHaveURL(/\/$/)
+
+    await page.getByRole('link', { name: 'Open atom route' }).click()
+
+    await expect(page).toHaveURL(/\/atom$/)
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-left')).toHaveText('Left atom count: 1')
+    await expect(page.getByTestId('atom-right')).toHaveText('Right atom count: 1')
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: updated')
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 0')
+  })
+
+  test('replays motion animate hook transitions across repeated toggles', async ({ page }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByRole('button', { name: 'Toggle motion card' })
+    const card = page.getByTestId('motion-card')
+
+    await expect(card).toHaveCSS('opacity', '1')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '0')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '1')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '0')
+  })
+
+  test('applies declarative motion animate transforms without imperative animate() calls', async ({
+    page,
+  }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByRole('button', { name: 'Toggle motion card' })
+    const card = page.getByTestId('motion-card')
+
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+    await toggle.click()
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -16, 0)')
+    await toggle.click()
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+  })
+
   test('updates projection-slot sidebar link state inside a shared layout on Link navigation', async ({
     page,
   }) => {
@@ -289,6 +381,91 @@ test.describe('example app in dev mode', () => {
         .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
         .toBe('1')
     }
+  })
+
+  test('keeps layout-local signal toggles working after resuming a shared projection-slot layout', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+    await waitForResumedRoute(page)
+
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('closed')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+  })
+
+  test('keeps the first layout-local signal toggle working after resume when the layout also reads location', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+    await waitForResumedRoute(page)
+
+    await expect(page.getByTestId('slot-nav-pathname')).toHaveText('/slot-nav/overview')
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('closed')
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByTestId('slot-nav-pathname')).toHaveText('/slot-nav/overview')
+  })
+
+  test('keeps declarative motion sidebar toggles working after resume inside a shared layout', async ({
+    page,
+  }) => {
+    await page.goto('/slot-motion-nav/overview')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByTestId('slot-motion-nav-toggle')
+    const state = page.getByTestId('slot-motion-nav-toggle-state')
+    const panel = page.getByTestId('slot-motion-nav-panel')
+
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await toggle.click()
+    await expect(state).toHaveText('closed')
+    await expect(panel).toHaveCSS('max-height', '0px')
+
+    await toggle.click()
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-motion-nav-overview-link')).toHaveClass(/active/)
+  })
+
+  test('keeps declarative motion sidebar toggles working after resume across nested layouts', async ({
+    page,
+  }) => {
+    await page.goto('/resume-motion-root/overview')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByTestId('resume-motion-toggle')
+    const state = page.getByTestId('resume-motion-toggle-state')
+    const panel = page.getByTestId('resume-motion-panel')
+
+    await expect(page.getByTestId('resume-motion-root-path')).toHaveText('/resume-motion-root/overview')
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+
+    await toggle.click()
+    await expect(state).toHaveText('closed')
+    await expect(panel).toHaveCSS('max-height', '0px')
+
+    await toggle.click()
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByTestId('resume-motion-overview-link')).toHaveClass(/active/)
   })
 
   test('renders responsive image metadata and keeps it stable across navigation', async ({
@@ -420,6 +597,7 @@ test.describe('example app in dev mode', () => {
 
   test('navigates imperatively and updates the counter', async ({ page }) => {
     await page.goto('/')
+    await waitForResumedRoute(page)
 
     await page.getByRole('button', { name: 'Go to counter with navigate()' }).click()
 

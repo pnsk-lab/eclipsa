@@ -51,6 +51,9 @@ export default () => {
       <p>
         <Link href="/content">Open content route</Link>
       </p>
+      <p>
+        <Link href="/atom">Open atom route</Link>
+      </p>
       <input onInput={handleInput} value={inputting.value} />
       <button onClick={addTodo}>Add</button>
       <button type="button" onClick={goToCounter}>

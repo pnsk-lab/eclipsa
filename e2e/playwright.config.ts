@@ -1,4 +1,6 @@
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import * as path from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
 const host = '127.0.0.1'
@@ -7,6 +9,11 @@ const port =
   ((process.env.PLAYWRIGHT_E2E_PORT = String(await getAvailablePort(host))),
   Number(process.env.PLAYWRIGHT_E2E_PORT))
 const baseURL = `http://${host}:${port}`
+const artifactsRoot = path.join(
+  tmpdir(),
+  'eclipsa-playwright',
+  `${process.pid}-${process.env.PLAYWRIGHT_E2E_PORT ?? 'default'}`,
+)
 
 function getAvailablePort(hostname: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -38,8 +45,8 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['list'], ['html', { open: 'never' }]],
-  outputDir: './test-results',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: path.join(artifactsRoot, 'report') }]],
+  outputDir: path.join(artifactsRoot, 'test-results'),
   use: {
     ...devices['Desktop Chrome'],
     baseURL,

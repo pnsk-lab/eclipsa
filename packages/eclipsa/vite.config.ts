@@ -3,6 +3,8 @@ import { defineConfig } from 'vite-plus'
 export default defineConfig({
   test: {
     include: [
+      'atom/**/*.test.ts',
+      'atom/**/*.test.tsx',
       'core/**/*.test.ts',
       'core/**/*.test.tsx',
       'compiler/**/*.test.ts',

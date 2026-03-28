@@ -66,7 +66,6 @@ export default (props: { children?: unknown }) => {
           </svg>
         </a>
       </nav>
-      <div class="h-18" />
       <div>{props.children}</div>
     </div>
   );

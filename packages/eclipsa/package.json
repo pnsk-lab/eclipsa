@@ -17,6 +17,10 @@
       "types": "./mod.ts",
       "import": "./mod.ts"
     },
+    "./atom": {
+      "types": "./atom/mod.ts",
+      "import": "./atom/mod.ts"
+    },
     "./vite": {
       "types": "./vite/mod.ts",
       "import": "./vite/mod.ts"
@@ -55,6 +59,10 @@
       ".": {
         "types": "./mod.d.mts",
         "import": "./mod.mjs"
+      },
+      "./atom": {
+        "types": "./atom/mod.d.mts",
+        "import": "./atom/mod.mjs"
       },
       "./vite": {
         "types": "./vite/mod.d.mts",

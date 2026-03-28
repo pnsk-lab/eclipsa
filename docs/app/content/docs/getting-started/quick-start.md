@@ -43,3 +43,17 @@ export default function App() {
   )
 }
 ```
+
+Animation primitives are available from `@eclipsa/motion`:
+
+```tsx
+import { motion } from '@eclipsa/motion'
+
+export default function Hero() {
+  return (
+    <motion.h1 initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+      Hello motion
+    </motion.h1>
+  )
+}
+```

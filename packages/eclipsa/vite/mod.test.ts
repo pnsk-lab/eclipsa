@@ -297,7 +297,7 @@ describe('vite plugin hotUpdate', () => {
       } as any,
       {
         file: filePath,
-        modules: [],
+        modules: [{ url: '/tmp/image-page.tsx' }],
         read: () => nextSource,
         server: {},
       } as any,
@@ -308,6 +308,52 @@ describe('vite plugin hotUpdate', () => {
     expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
     expect(send.mock.calls[0]?.[1]).toMatchObject({
       fileUrl: '/resumable-page.tsx',
+      fullReload: false,
+    })
+  })
+
+  it('does not source-sniff route component imports when emitting resumable payloads', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const filePath = '/tmp/image-page.tsx'
+    const previousSource = `
+      import { Image } from "@eclipsa/image";
+      export default () => <main><p>before</p><Image alt="demo" src="/demo.png" /></main>;
+    `
+    const nextSource = `
+      import { Image } from "@eclipsa/image";
+      export default () => <main><p>after</p><Image alt="demo" src="/demo.png" /></main>;
+    `
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/image-page.tsx',
       fullReload: false,
     })
   })

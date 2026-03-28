@@ -11,6 +11,7 @@ import {
 } from './hooks.ts'
 import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
+import type { Insertable } from './client/types.ts'
 import { getContextProviderMeta } from './context.ts'
 import {
   ROUTE_METADATA_HEAD_ATTR,
@@ -253,8 +254,10 @@ interface ComponentState {
   id: string
   mountCleanupSlots: CleanupSlot[]
   parentId: string | null
+  prefersEffectOnlyLocalSignalWrites?: boolean
   props: unknown
   projectionSlots: Record<string, number> | null
+  rawProps?: Record<string, unknown> | null
   reuseExistingDomOnActivate?: boolean
   reuseProjectionSlotDomOnActivate?: boolean
   scopeId: string
@@ -284,6 +287,12 @@ interface RenderFrame {
   watchCursor: number
 }
 
+export interface ClientInsertOwner {
+  childIndex: number
+  componentId: string
+  projectionCounters: Array<[string, number]>
+}
+
 interface ScopedStyleEntry {
   attributes: Record<string, unknown>
   cssText: string
@@ -306,6 +315,7 @@ interface RouterState {
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
+  routeModuleBusts: Map<string, number>
   routePrefetches: Map<string, Promise<RoutePrefetchResult>>
   sequence: number
 }
@@ -344,6 +354,8 @@ export interface RuntimeContainer {
   router: RouterState | null
   asyncSignalStates: Map<string, unknown>
   asyncSignalSnapshotCache: Map<string, unknown>
+  atoms: WeakMap<object, string>
+  nextAtomId: number
   scopes: Map<string, SerializedValue[]>
   signals: Map<string, SignalRecord>
   symbols: Map<string, string>
@@ -521,6 +533,8 @@ const withResumeHmrTimestamp = (url: string, timestamp: number) => {
   return `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
 
+const canBustRuntimeSymbolUrl = (url: string) => parseSymbolIdFromUrl(url) !== null
+
 export const bustRuntimeSymbolUrls = (
   container: RuntimeContainer,
   symbolIds: Iterable<string>,
@@ -528,7 +542,7 @@ export const bustRuntimeSymbolUrls = (
 ) => {
   for (const symbolId of symbolIds) {
     const current = container.symbols.get(symbolId)
-    if (!current) {
+    if (!current || !canBustRuntimeSymbolUrl(current)) {
       continue
     }
     container.symbols.set(symbolId, withResumeHmrTimestamp(current, timestamp))
@@ -1103,6 +1117,14 @@ const serializeRenderObjectReference = (
   container: RuntimeContainer,
   value: RenderObject,
 ): SerializedReference => {
+  if (typeof value.type === 'function' && !getComponentMeta(value.type)) {
+    const resolved = resolveRenderable((value.type as Component)(value.props))
+    if (!isRenderObject(resolved)) {
+      throw new TypeError('Only resumable component render objects can be serialized.')
+    }
+    return serializeRenderObjectReference(container, resolved)
+  }
+
   const evaluatedProps = evaluateProps(value.props)
   const key = value.key ?? null
   const metadata = value.metadata ?? null
@@ -1469,7 +1491,11 @@ export const assignRuntimeRef = (
 
   const record = container?.signals.get(signalMeta.id)
   if (record) {
+    const changed = record.value !== element
     record.value = element
+    if (changed) {
+      notifySignalWrite(container, record)
+    }
     return true
   }
 
@@ -1487,7 +1513,11 @@ const restoreSignalRefs = (container: RuntimeContainer, root: ParentNode) => {
     if (!record) {
       return
     }
+    const changed = record.value !== element
     record.value = element
+    if (changed) {
+      notifySignalWrite(container, record)
+    }
   }
 
   if (isElementNode(root) && root.getAttribute(REF_SIGNAL_ATTR)) {
@@ -1522,6 +1552,9 @@ const shouldWrapProjectionSlotValue = (value: unknown): boolean => {
   if (value === null || value === undefined || value === false) {
     return false
   }
+  if (isProjectionSlot(value) || isRouteSlot(value)) {
+    return false
+  }
   if (Array.isArray(value)) {
     return value.some((entry) => shouldWrapProjectionSlotValue(entry))
   }
@@ -1531,18 +1564,42 @@ const shouldWrapProjectionSlotValue = (value: unknown): boolean => {
   return typeof value === 'object'
 }
 
+const getComponentProjectionSlotProps = (component: ComponentState) => {
+  if (component.rawProps && typeof component.rawProps === 'object') {
+    return component.rawProps
+  }
+  return component.props && typeof component.props === 'object'
+    ? (component.props as Record<string, unknown>)
+    : null
+}
+
+const hasDynamicProjectionSlotDom = (component: ComponentState) => {
+  if (!component.projectionSlots || Object.keys(component.projectionSlots).length === 0) {
+    return false
+  }
+
+  const props = getComponentProjectionSlotProps(component)
+  if (!props) {
+    return false
+  }
+
+  return Object.keys(component.projectionSlots).some(
+    (name) => hasProjectionSlotValue(props, name) && shouldWrapProjectionSlotValue(props[name]),
+  )
+}
+
 const createRenderProps = (
   componentId: string,
   meta: ComponentMeta,
   props: Record<string, unknown>,
 ): Record<string, unknown> => {
+  const nextProps = Object.create(null) as Record<string, unknown>
+  Object.defineProperties(nextProps, Object.getOwnPropertyDescriptors(props))
+
   if (!meta.projectionSlots || Object.keys(meta.projectionSlots).length === 0) {
-    return props
+    return nextProps
   }
 
-  const nextProps: Record<string, unknown> = {
-    ...props,
-  }
   const counters = new Map<string, number>()
 
   for (const [name, totalOccurrences] of Object.entries(meta.projectionSlots)) {
@@ -1573,7 +1630,12 @@ const preloadComponentProps = async (
   meta: ComponentMeta,
   props: unknown,
 ) => {
-  if (!props || typeof props !== 'object' || !meta.projectionSlots) {
+  if (!props || typeof props !== 'object') {
+    await preloadResumableValue(container, props)
+    return
+  }
+
+  if (!meta.projectionSlots) {
     await preloadResumableValue(container, props)
     return
   }
@@ -1582,6 +1644,7 @@ const preloadComponentProps = async (
   const entries: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(props as Record<string, unknown>)) {
     if (projectionNames.has(key)) {
+      await preloadResumableValue(container, value)
       continue
     }
     entries[key] = value
@@ -1598,6 +1661,7 @@ const createContainer = (
   actionStates: new Map(),
   asyncSignalStates: new Map(),
   asyncSignalSnapshotCache: asyncSignalSnapshotCache ?? new Map(),
+  atoms: new WeakMap(),
   components: new Map(),
   dirty: new Set(),
   doc,
@@ -1607,6 +1671,7 @@ const createContainer = (
   imports: new Map(),
   loaderStates: new Map(),
   loaders: new Map(),
+  nextAtomId: 0,
   nextComponentId: 0,
   nextElementId: 0,
   nextScopeId: 0,
@@ -1694,6 +1759,8 @@ const isRouterSignalId = (id: string) =>
   id === ROUTER_CURRENT_URL_SIGNAL_ID ||
   id === ROUTER_IS_NAVIGATING_SIGNAL_ID
 
+const isAtomSignalId = (id: string) => id.startsWith('a')
+
 const createStandaloneNavigate = (): Navigate => {
   const navigate = (async (href: string, options?: NavigateOptions) => {
     if (typeof window === 'undefined') {
@@ -1746,19 +1813,33 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     if (!component?.start || !component.end) {
       continue
     }
+    if (
+      component.prefersEffectOnlyLocalSignalWrites &&
+      component.signalIds.includes(record.id) &&
+      record.effects.size > 0
+    ) {
+      continue
+    }
+    const hasProjectionSlotDom = hasDynamicProjectionSlotDom(component)
     component.active = false
     if (component.activateModeOnFlush !== 'replace') {
-      component.activateModeOnFlush = 'patch'
+      component.activateModeOnFlush = hasProjectionSlotDom ? 'replace' : 'patch'
     }
-    component.reuseProjectionSlotDomOnActivate = true
-    container.dirty.add(componentId)
+    component.reuseExistingDomOnActivate = !hasProjectionSlotDom
+    component.reuseProjectionSlotDomOnActivate = !hasProjectionSlotDom
+    container.dirty.add(component.id)
   }
 }
 
 const writeRouterLocation = (router: RouterState, href: string | URL) => {
   const url = href instanceof URL ? href : parseLocationHref(href)
-  router.currentPath.value = normalizeRoutePath(url.pathname)
-  router.currentUrl.value = url.href
+  const nextPath = normalizeRoutePath(url.pathname)
+  if (router.currentPath.value !== nextPath) {
+    router.currentPath.value = nextPath
+  }
+  if (router.currentUrl.value !== url.href) {
+    router.currentUrl.value = url.href
+  }
 }
 
 const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
@@ -1793,6 +1874,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     manifest: [],
     navigate: undefined as unknown as Navigate,
     prefetchedLoaders: new Map(),
+    routeModuleBusts: new Map(),
     routePrefetches: new Map(),
     sequence: 0,
   }
@@ -1980,8 +2062,10 @@ const getOrCreateComponentState = (
     id,
     mountCleanupSlots: [],
     parentId,
+    prefersEffectOnlyLocalSignalWrites: false,
     props: {},
     projectionSlots: null,
+    rawProps: null,
     reuseExistingDomOnActivate: true,
     reuseProjectionSlotDomOnActivate: false,
     scopeId: registerScope(container, []),
@@ -2002,7 +2086,9 @@ const resetComponentForSymbolChange = (
 ) => {
   disposeComponentMountCleanups(component)
   component.didMount = false
+  component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
+  component.rawProps = null
   component.scopeId = registerScope(container, meta.captures())
   component.signalIds = []
   component.suspensePromise = null
@@ -2567,7 +2653,7 @@ const collectPatchSequenceUnits = (nodes: Node[]): PatchSequenceUnit[] | null =>
   return units
 }
 
-const patchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Node[]) => {
+export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Node[]) => {
   const currentUnits = collectPatchSequenceUnits(currentNodes)
   const nextUnits = collectPatchSequenceUnits(nextNodes)
   if (!currentUnits || !nextUnits || currentUnits.length !== nextUnits.length) {
@@ -2631,7 +2717,7 @@ const patchNodeInPlace = (current: Node, next: Node): boolean => {
 
   patchElementAttributes(current, next)
 
-  return patchNodeSequenceInPlace(Array.from(current.childNodes), Array.from(next.childNodes))
+  return tryPatchNodeSequenceInPlace(Array.from(current.childNodes), Array.from(next.childNodes))
 }
 
 export const tryPatchBoundaryContentsInPlace = (
@@ -2640,7 +2726,7 @@ export const tryPatchBoundaryContentsInPlace = (
   nextNodes: Node[],
 ) => {
   const currentNodes = getBoundaryChildren(start, end)
-  return patchNodeSequenceInPlace(currentNodes, nextNodes)
+  return tryPatchNodeSequenceInPlace(currentNodes, nextNodes)
 }
 
 interface FocusSnapshot {
@@ -2663,6 +2749,11 @@ const getBoundaryChildren = (start: Comment, end: Comment) => {
   }
   return nodes
 }
+
+const collectMountedBoundaryDescendants = (component: ComponentState) =>
+  component.start && component.end
+    ? collectComponentBoundaryIds(getBoundaryChildren(component.start, component.end))
+    : new Set<string>()
 
 const collectProjectionSlotComponentIds = (roots: Node[]) => {
   const preserved = new Set<string>()
@@ -3197,7 +3288,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     component.projectionSlots = meta.projectionSlots ?? null
     const frame = createFrame(container, component, 'ssr')
     clearComponentSubscriptions(container, component.id)
-    const renderProps = createRenderProps(componentId, meta, evaluatedProps)
+    const renderProps = createRenderProps(componentId, meta, resolved.props)
 
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
@@ -3300,13 +3391,14 @@ const renderComponentToNodes = (
   props: Record<string, unknown>,
   container: RuntimeContainer,
   mode: RenderFrame['mode'],
+  rawProps?: Record<string, unknown>,
 ): Node[] => {
   if (!container.doc) {
     throw new Error('Client rendering requires a document.')
   }
   const meta = getComponentMeta(componentFn)
   if (!meta) {
-    return renderClientNodes(componentFn(props), container)
+    return renderClientNodes(componentFn((rawProps ?? props) as Record<string, unknown>), container)
   }
 
   const position = nextComponentPosition(container)
@@ -3324,6 +3416,7 @@ const renderComponentToNodes = (
     resetComponentForSymbolChange(container, component, meta)
   }
   component.props = props
+  component.rawProps = rawProps ?? null
   component.projectionSlots = meta.projectionSlots ?? null
   const parentFrame = getCurrentFrame()
   const shouldReuseProjectionSlotDom = parentFrame?.projectionState.reuseProjectionSlotDom ?? false
@@ -3339,7 +3432,7 @@ const renderComponentToNodes = (
   const end = container.doc.createComment(`ec:c:${componentId}:end`)
   component.start = start
   component.end = end
-  const renderProps = createRenderProps(componentId, meta, props)
+  const renderProps = createRenderProps(componentId, meta, rawProps ?? props)
   let rendered: Node[]
   try {
     rendered = pushFrame(frame, () => toMountedNodes(componentFn(renderProps), container))
@@ -3490,19 +3583,24 @@ export const renderClientNodes = (
   }
 
   if (typeof resolved.type === 'function') {
-    const evaluatedProps = evaluateProps(resolved.props)
     const providerMeta = getContextProviderMeta(resolved.type)
     if (providerMeta) {
-      return renderContextProviderToNodes(providerMeta.token, evaluatedProps, container)
+      return renderContextProviderToNodes(providerMeta.token, evaluateProps(resolved.props), container)
     }
 
     const componentFn = resolved.type as Component
     if (getComponentMeta(resolved.type)) {
       return withoutTrackedEffect(() =>
-        renderComponentToNodes(componentFn, evaluatedProps, container, 'client'),
+        renderComponentToNodes(
+          componentFn,
+          evaluateProps(resolved.props),
+          container,
+          'client',
+          resolved.props,
+        ),
       )
     }
-    return renderComponentToNodes(componentFn, evaluatedProps, container, 'client')
+    return renderComponentToNodes(componentFn, resolved.props as Record<string, unknown>, container, 'client', resolved.props)
   }
 
   if (resolved.type === FRAGMENT) {
@@ -3636,6 +3734,44 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
 
 export const getRuntimeContainer = () => getCurrentContainer()
 
+export const captureClientInsertOwner = (
+  container: RuntimeContainer | null,
+): ClientInsertOwner | null => {
+  const frame = getCurrentFrame()
+  if (!container || !frame || frame.container !== container) {
+    return null
+  }
+
+  return {
+    childIndex: frame.childCursor,
+    componentId: frame.component.id,
+    projectionCounters: [...frame.projectionState.counters.entries()],
+  }
+}
+
+export const renderClientInsertableForOwner = (
+  value: Insertable,
+  container: RuntimeContainer,
+  owner: ClientInsertOwner | null,
+) => {
+  if (!owner) {
+    return renderClientInsertable(value, container)
+  }
+
+  const component = container.components.get(owner.componentId)
+  if (!component) {
+    return renderClientInsertable(value, container)
+  }
+
+  const frame = createFrame(container, component, 'client', {
+    reuseExistingDom: false,
+    reuseProjectionSlotDom: false,
+  })
+  frame.childCursor = owner.childIndex
+  frame.projectionState.counters = new Map(owner.projectionCounters)
+  return pushContainer(container, () => pushFrame(frame, () => renderClientInsertable(value, container)))
+}
+
 export const serializeContainerValue = (
   container: RuntimeContainer | null,
   value: unknown,
@@ -3722,7 +3858,7 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
     }
     record.effects.clear()
     record.subscribers.clear()
-    if (!isRouterSignalId(id)) {
+    if (!isRouterSignalId(id) && !isAtomSignalId(id)) {
       container.signals.delete(id)
     }
   }
@@ -4030,8 +4166,23 @@ const renderRouteIntoRoot = (
   scheduleVisibleCallbacksCheck(container)
 }
 
-const loadRouteModule = async (url: string): Promise<LoadedRouteModule> => {
-  const module = (await import(/* @vite-ignore */ url)) as {
+const getRouteModuleImportUrl = (router: RouterState, url: string) => {
+  const token = router.routeModuleBusts.get(url)
+  if (token == null) {
+    return url
+  }
+
+  const baseUrl = typeof window === 'undefined' ? 'http://localhost' : window.location.href
+  const nextUrl = new URL(url, baseUrl)
+  nextUrl.searchParams.set('t', token.toString())
+  if (/^[a-z]+:\/\//i.test(url)) {
+    return nextUrl.href
+  }
+  return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+}
+
+const loadRouteModule = async (router: RouterState, url: string): Promise<LoadedRouteModule> => {
+  const module = (await import(/* @vite-ignore */ getRouteModuleImportUrl(router, url))) as {
     default?: RouteRenderer
     metadata?: RouteMetadataExport
   }
@@ -4143,8 +4294,8 @@ const loadResolvedRoute = async (
   }
 
   const [page, ...layouts] = await Promise.all([
-    loadRouteModule(moduleUrl),
-    ...matched.entry.layouts.map((layoutUrl) => loadRouteModule(layoutUrl)),
+    loadRouteModule(router, moduleUrl),
+    ...matched.entry.layouts.map((layoutUrl) => loadRouteModule(router, layoutUrl)),
   ])
   let route!: LoadedRoute
   route = {
@@ -4193,7 +4344,13 @@ const findRouteComponentChain = (
   const [symbol, ...rest] = symbols
   const candidates = [...container.components.values()]
     .filter((component) => {
-      if (!component.start || !component.end || component.symbol !== symbol) {
+      if (
+        !component.start ||
+        !component.end ||
+        !component.start.parentNode ||
+        !component.end.parentNode ||
+        component.symbol !== symbol
+      ) {
         return false
       }
       if (parentId === null) {
@@ -4297,6 +4454,14 @@ const markSidebarLikeDescendantsDirtyForPatch = (
   }
 }
 
+const withUpdatedComponentChildren = (props: Record<string, unknown> | null, children: unknown) => {
+  const next = {}
+  if (props) {
+    Object.defineProperties(next, Object.getOwnPropertyDescriptors(props))
+  }
+  return Object.assign(next, { children }) as Record<string, unknown>
+}
+
 const countSharedLayouts = (current: LoadedRoute | null, next: LoadedRoute) => {
   if (!current) {
     return 0
@@ -4330,6 +4495,8 @@ const updateSharedLayoutBoundary = async (
   if (!boundary?.start || !boundary.end) {
     return false
   }
+
+  const nextChildren = createRouteElement(next, sharedLayoutCount)
   if ((boundary.projectionSlots?.children ?? 0) !== 1) {
     return false
   }
@@ -4349,10 +4516,42 @@ const updateSharedLayoutBoundary = async (
     return false
   }
 
-  boundary.props = {
-    children: createRouteElement(next, sharedLayoutCount),
+  const currentRouteRoot = currentRouteRootId
+    ? container.components.get(currentRouteRootId) ?? null
+    : null
+  const needsFullBoundaryRerender =
+    (currentRouteRoot?.watchCount ?? 0) > 0 || (currentRouteRoot?.visibleCount ?? 0) > 0
+
+  if (needsFullBoundaryRerender) {
+    const focusSnapshot = captureBoundaryFocus(container.doc!, boundary.start, boundary.end)
+    const boundaryProps =
+      boundary.props && typeof boundary.props === 'object'
+        ? (boundary.props as Record<string, unknown>)
+        : null
+    const boundaryRawProps =
+      boundary.rawProps && typeof boundary.rawProps === 'object'
+        ? boundary.rawProps
+        : boundaryProps
+    boundary.props = withUpdatedComponentChildren(boundaryProps, nextChildren)
+    boundary.rawProps = withUpdatedComponentChildren(boundaryRawProps, nextChildren)
+    boundary.active = false
+    boundary.activateModeOnFlush = 'replace'
+    boundary.reuseExistingDomOnActivate = false
+    boundary.reuseProjectionSlotDomOnActivate = false
+    container.dirty.add(boundaryId)
+    if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
+      bindRouterLinks(container, boundary.start.parentNode as ParentNode)
+    }
+    if (container.dirty.size > 0) {
+      await flushDirtyComponents(container)
+    }
+    restoreBoundaryFocus(container.doc!, boundary.start, boundary.end, focusSnapshot)
+    return true
   }
-  const nextChildren = (boundary.props as { children: unknown }).children
+
+  boundary.props = {
+    children: nextChildren,
+  }
   const focusSnapshot = captureBoundaryFocus(container.doc!, slotRange.start, slotRange.end)
   const { nodes, visitedDescendants } = renderRouteSubtreeForProjectionSlot(
     container,
@@ -4644,6 +4843,8 @@ const navigateContainer = async (
     return
   }
 
+  await waitForPendingDirtyFlush()
+
   const mode = options?.mode ?? 'push'
   const force = options?.force ?? false
   const redirectDepth = options?.redirectDepth ?? 0
@@ -4837,6 +5038,108 @@ export const refreshRouteContainer = async (container: RuntimeContainer) => {
   return true
 }
 
+const routeEntryReferencesModuleUrl = (entry: RouteModuleManifest, fileUrl: string) =>
+  entry.page === fileUrl ||
+  entry.loading === fileUrl ||
+  entry.error === fileUrl ||
+  entry.notFound === fileUrl ||
+  entry.layouts.includes(fileUrl)
+
+const routeReferencesModuleUrl = (route: LoadedRoute, fileUrl: string) =>
+  route.page.url === fileUrl ||
+  route.layouts.some((layout) => layout.url === fileUrl) ||
+  routeEntryReferencesModuleUrl(route.entry, fileUrl)
+
+const resolveCurrentRouteManifestEntry = (router: RouterState) => {
+  const currentPath = normalizeRoutePath(router.currentPath.value)
+  const matched = matchRouteManifest(router.manifest, currentPath)
+  if (matched?.entry.page) {
+    return matched.entry
+  }
+  return findSpecialManifestEntry(router.manifest, currentPath, 'notFound')?.entry ?? null
+}
+
+export const invalidateRouteModulesForHmr = (
+  container: RuntimeContainer,
+  fileUrl: string,
+  bustToken = Date.now(),
+) => {
+  const router = container.router
+  if (!router) {
+    return false
+  }
+
+  let invalidated = false
+  for (const [cacheKey, route] of [...router.loadedRoutes.entries()]) {
+    if (!routeReferencesModuleUrl(route, fileUrl)) {
+      continue
+    }
+    router.loadedRoutes.delete(cacheKey)
+    invalidated = true
+  }
+
+  if (router.currentRoute && routeReferencesModuleUrl(router.currentRoute, fileUrl)) {
+    router.currentRoute = null
+    invalidated = true
+  }
+
+  const currentEntry = resolveCurrentRouteManifestEntry(router)
+  if (currentEntry && routeEntryReferencesModuleUrl(currentEntry, fileUrl)) {
+    invalidated = true
+  }
+
+  if (!invalidated) {
+    return false
+  }
+
+  router.routeModuleBusts.set(fileUrl, bustToken)
+
+  if (container.doc) {
+    const currentUrl = new URL(container.doc.location.href)
+    const currentKey = routePrefetchKey(currentUrl)
+    router.prefetchedLoaders.delete(currentKey)
+    router.routePrefetches.delete(currentKey)
+  }
+
+  return true
+}
+
+export const refreshRouteContainerForHmr = async (
+  container: RuntimeContainer,
+  fileUrl: string,
+  bustToken = Date.now(),
+) => {
+  const doc = container.doc
+  if (!doc || !invalidateRouteModulesForHmr(container, fileUrl, bustToken)) {
+    return false
+  }
+
+  const router = ensureRouterState(container)
+  const pathname = normalizeRoutePath(router.currentPath.value)
+
+  try {
+    const nextRoute =
+      (await loadRouteComponent(container, pathname)) ??
+      (await loadResolvedRouteFromSpecial(container, pathname, 'notFound'))
+    if (!nextRoute) {
+      await refreshRouteContainer(container)
+      return true
+    }
+
+    renderRouteIntoRoot(
+      container,
+      nextRoute.render,
+      `route:${pathname}:${nextRoute.page.url === fileUrl ? 'hmr' : 'refresh'}`,
+    )
+    router.currentRoute = nextRoute
+    applyRouteMetadata(doc, nextRoute, new URL(doc.location.href), router.defaultTitle)
+    return true
+  } catch {
+    await refreshRouteContainer(container)
+    return true
+  }
+}
+
 export const refreshRegisteredRouteContainers = async () => {
   for (const container of getResumeContainers()) {
     await refreshRouteContainer(container)
@@ -4848,6 +5151,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   if (!component?.start || !component.end || component.active) {
     return false
   }
+  const activateSymbol = component.symbol
   const activateMode = component.activateModeOnFlush ?? 'replace'
   component.activateModeOnFlush = undefined
 
@@ -4860,6 +5164,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     })
     component.reuseExistingDomOnActivate = true
     component.reuseProjectionSlotDomOnActivate = false
+    const parentRoot = component.start.parentNode
     const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
     const nodes = pushContainer(container, () =>
       pushFrame(frame, () =>
@@ -4878,11 +5183,16 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
           preserveProjectionSlots: frame.projectionState.reuseExistingDom,
         })
     restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
-    if (patched && component.start.parentNode) {
-      bindComponentBoundaries(container, component.start.parentNode as ParentNode)
+    if (parentRoot) {
+      bindComponentBoundaries(container, parentRoot)
+      restoreSignalRefs(container, parentRoot)
     }
     component.active = true
-    const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
+    const keptDescendants = new Set([
+      ...frame.visitedDescendants,
+      ...preservedDescendants,
+      ...collectMountedBoundaryDescendants(component),
+    ])
     pruneRemovedComponents(container, componentId, keptDescendants)
     for (const descendantId of oldDescendants) {
       if (keptDescendants.has(descendantId)) {
@@ -4897,7 +5207,14 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, component.scopeId)
   await preloadResumableValue(container, scope)
-  const module = await loadSymbol(container, component.symbol)
+  const module = await loadSymbol(container, activateSymbol)
+  const rawProps =
+    component.rawProps && typeof component.rawProps === 'object'
+      ? component.rawProps
+      : null
+  if (rawProps) {
+    component.props = evaluateProps(rawProps)
+  }
   await preloadComponentProps(
     container,
     {
@@ -4913,17 +5230,28 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   })
   component.reuseExistingDomOnActivate = true
   component.reuseProjectionSlotDomOnActivate = false
+  const parentRoot = component.start.parentNode
   const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => {
       const renderProps =
-        component.props && typeof component.props === 'object'
+        rawProps
           ? createRenderProps(
               component.id,
               {
                 captures: () => [],
                 projectionSlots: component.projectionSlots ?? undefined,
-                symbol: component.symbol,
+                symbol: activateSymbol,
+              },
+              rawProps,
+            )
+          : component.props && typeof component.props === 'object'
+          ? createRenderProps(
+              component.id,
+              {
+                captures: () => [],
+                projectionSlots: component.projectionSlots ?? undefined,
+                symbol: activateSymbol,
               },
               component.props as Record<string, unknown>,
             )
@@ -4947,13 +5275,18 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     bindRouterLinks(container, component.start.parentNode as ParentNode)
   }
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
-  if (patched && component.start.parentNode) {
-    bindComponentBoundaries(container, component.start.parentNode as ParentNode)
+  if (parentRoot) {
+    bindComponentBoundaries(container, parentRoot)
+    restoreSignalRefs(container, parentRoot)
   }
 
   component.active = true
 
-  const keptDescendants = new Set([...frame.visitedDescendants, ...preservedDescendants])
+  const keptDescendants = new Set([
+    ...frame.visitedDescendants,
+    ...preservedDescendants,
+    ...collectMountedBoundaryDescendants(component),
+  ])
   pruneRemovedComponents(container, componentId, keptDescendants)
 
   for (const descendantId of oldDescendants) {
@@ -4962,7 +5295,6 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     }
     clearComponentSubscriptions(container, descendantId)
   }
-  clearComponentSubscriptions(container, componentId)
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
   return patched
@@ -4974,6 +5306,26 @@ const sortDirtyComponents = (ids: Iterable<string>) =>
 const parseSymbolIdFromUrl = (url: string) => {
   const parsed = new URL(url, 'http://localhost')
   return parsed.searchParams.get('eclipsa-symbol')
+}
+
+export const resolveResumeHmrBoundarySymbols = (payload: ResumeHmrUpdatePayload) => {
+  const symbolIds = new Set([
+    ...payload.rerenderComponentSymbols,
+    ...payload.rerenderOwnerSymbols,
+  ])
+
+  for (const symbolId of [...symbolIds]) {
+    const replacementUrl = payload.symbolUrlReplacements[symbolId]
+    if (!replacementUrl) {
+      continue
+    }
+    const replacementSymbolId = parseSymbolIdFromUrl(replacementUrl)
+    if (replacementSymbolId) {
+      symbolIds.add(replacementSymbolId)
+    }
+  }
+
+  return [...symbolIds]
 }
 
 const findNearestMountedBoundary = (container: RuntimeContainer, componentId: string) => {
@@ -5095,23 +5447,22 @@ export const applyResumeHmrUpdate = async (
     return 'reload' as const
   }
 
-  const boundaryIds = collectResumeHmrBoundaryIds(container, [
-    ...payload.rerenderComponentSymbols,
-    ...payload.rerenderOwnerSymbols,
-  ])
-  if (boundaryIds === null) {
+  const rerenderSymbolIds = resolveResumeHmrBoundarySymbols(payload)
+  const boundaryIds = collectResumeHmrBoundaryIds(container, rerenderSymbolIds)
+  if (boundaryIds === null || (rerenderSymbolIds.length > 0 && boundaryIds.length === 0)) {
     return 'reload' as const
   }
 
   applyResumeHmrSymbolReplacements(container, payload.symbolUrlReplacements)
-  const rerenderSymbolIds = [
-    ...payload.rerenderComponentSymbols,
-    ...payload.rerenderOwnerSymbols,
-  ]
-  bustRuntimeSymbolUrls(container, rerenderSymbolIds, Date.now())
-  invalidateRuntimeSymbolCaches(container, [
-    ...rerenderSymbolIds,
-  ])
+  const invalidatedSymbolIds = rerenderSymbolIds.filter((symbolId) => {
+    if (Object.hasOwn(payload.symbolUrlReplacements, symbolId)) {
+      return true
+    }
+    const currentUrl = container.symbols.get(symbolId)
+    return !!currentUrl && canBustRuntimeSymbolUrl(currentUrl)
+  })
+  bustRuntimeSymbolUrls(container, invalidatedSymbolIds, Date.now())
+  invalidateRuntimeSymbolCaches(container, invalidatedSymbolIds)
 
   for (const boundaryId of boundaryIds) {
     markResumeHmrBoundaryDirty(container, boundaryId)
@@ -5127,14 +5478,25 @@ export const applyResumeHmrUpdate = async (
 export const applyResumeHmrUpdateToRegisteredContainers = async (
   payload: ResumeHmrUpdatePayload,
 ) => {
+  const routeRefreshBustToken = Date.now()
+  let handled = false
   for (const container of getResumeContainers()) {
+    const refreshed = await refreshRouteContainerForHmr(
+      container,
+      payload.fileUrl,
+      routeRefreshBustToken,
+    )
+    if (refreshed) {
+      handled = true
+      continue
+    }
     const result = await applyResumeHmrUpdate(container, payload)
-    if (result === 'reload') {
-      return 'reload' as const
+    if (result === 'updated') {
+      handled = true
     }
   }
 
-  return 'updated' as const
+  return handled ? ('updated' as const) : ('reload' as const)
 }
 
 export const flushDirtyComponents = async (container: RuntimeContainer) => {
@@ -5187,6 +5549,13 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
   }
 }
 
+const waitForPendingDirtyFlush = async () => {
+  const existing = (globalThis as Record<PropertyKey, unknown>)[DIRTY_FLUSH_PROMISE_KEY]
+  if (existing instanceof Promise) {
+    await existing
+  }
+}
+
 export const beginSSRContainer = <T>(
   symbols: Record<string, string>,
   render: () => T,
@@ -5203,6 +5572,7 @@ export const beginSSRContainer = <T>(
     parentId: null,
     props: {},
     projectionSlots: null,
+    rawProps: null,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
@@ -5239,6 +5609,7 @@ export const beginAsyncSSRContainer = async <T>(
     parentId: null,
     props: {},
     projectionSlots: null,
+    rawProps: null,
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
@@ -5265,6 +5636,13 @@ const createResumePayload = (
     ([id]) => !keepComponents || keepComponents.has(id),
   )
   const keepSignals = new Set(componentEntries.flatMap(([, component]) => component.signalIds))
+  if (keepComponents) {
+    for (const [id, record] of container.signals.entries()) {
+      if ([...record.subscribers].some((componentId) => keepComponents.has(componentId))) {
+        keepSignals.add(id)
+      }
+    }
+  }
 
   return {
     actions: Object.fromEntries(
@@ -5406,10 +5784,12 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       id,
       mountCleanupSlots: [],
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
+      prefersEffectOnlyLocalSignalWrites: false,
       props: deserializeRuntimeValue(container, componentPayload.props),
       projectionSlots: componentPayload.projectionSlots
         ? { ...componentPayload.projectionSlots }
         : null,
+      rawProps: null,
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
@@ -5427,6 +5807,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
     record.subscribers = new Set(subscribers)
   }
   container.nextSignalId = findNextNumericId(container.signals.keys(), 's')
+  container.nextAtomId = findNextNumericId(container.signals.keys(), 'a')
 
   for (const [id, watchPayload] of Object.entries(payload.watches)) {
     const watch = getOrCreateWatchState(container, id, watchPayload.componentId)
@@ -5595,10 +5976,59 @@ export const createResumeContainer = (
 
   const router = ensureRouterState(container)
   writeRouterLocation(router, doc.location.href)
-  router.isNavigating.value = false
+  if (router.isNavigating.value !== false) {
+    router.isNavigating.value = false
+  }
   scheduleVisibleCallbacksCheck(container)
 
   return container
+}
+
+const canRestoreResumedLocalSignalEffects = (
+  container: RuntimeContainer,
+  component: ComponentState,
+) =>
+  !!component.start &&
+  !!component.end &&
+  !component.active &&
+  component.signalIds.length > 0 &&
+  (component.symbol === SUSPENSE_COMPONENT_SYMBOL ||
+    container.imports.has(component.symbol) ||
+    container.symbols.has(component.symbol))
+
+export const restoreResumedLocalSignalEffects = async (container: RuntimeContainer) => {
+  let queued = false
+  const restoredIds: string[] = []
+
+  for (const componentId of sortDirtyComponents(
+    [...container.components.values()]
+      .filter((component) => canRestoreResumedLocalSignalEffects(container, component))
+      .map((component) => component.id),
+  )) {
+    const component = container.components.get(componentId)
+    if (!component || component.active) {
+      continue
+    }
+    component.active = false
+    component.activateModeOnFlush = 'replace'
+    component.reuseExistingDomOnActivate = false
+    component.reuseProjectionSlotDomOnActivate = false
+    container.dirty.add(component.id)
+    restoredIds.push(component.id)
+    queued = true
+  }
+
+  if (queued) {
+    await flushDirtyComponents(container)
+  }
+
+  for (const componentId of restoredIds) {
+    const component = container.components.get(componentId)
+    if (!component?.active) {
+      continue
+    }
+    component.prefersEffectOnlyLocalSignalWrites = true
+  }
 }
 
 export const restoreRegisteredRpcHandles = (container: RuntimeContainer) => {
@@ -5852,9 +6282,10 @@ export const dispatchResumeEvent = async (container: RuntimeContainer, event: Ev
 
   const { scopeId, symbolId } = parseBinding(binding)
   const module = await loadSymbol(container, symbolId)
+  const scope = materializeScope(container, scopeId)
   await withClientContainer(container, async () => {
     await module.default(
-      materializeScope(container, scopeId),
+      scope,
       createDelegatedEvent(event, interactiveTarget),
     )
   })
@@ -5975,12 +6406,34 @@ export const useRuntimeSignal = <T>(fallback: T): { value: T } => {
   return ensureSignalRecord(container, signalId, fallback).handle
 }
 
+export const useRuntimeAtom = <T>(atom: object, fallback: T): { value: T } => {
+  const container = getCurrentContainer()
+  const frame = getCurrentFrame()
+
+  if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID) {
+    throw new Error('useAtom() can only be used while rendering a component.')
+  }
+
+  const signalIndex = frame.signalCursor++
+  const existingId = frame.component.signalIds[signalIndex]
+  const mappedId = container.atoms.get(atom)
+  const signalId = existingId ?? mappedId ?? `a${container.nextAtomId++}`
+  if (!existingId) {
+    frame.component.signalIds.push(signalId)
+  }
+  if (mappedId !== signalId) {
+    container.atoms.set(atom, signalId)
+  }
+  return ensureSignalRecord(container, signalId, fallback).handle
+}
+
 export const createDetachedRuntimeSignal = <T>(
   container: RuntimeContainer,
   id: string,
   fallback: T,
 ): { value: T } => ensureSignalRecord(container, id, fallback).handle
 
+export const getRuntimeComponentId = () => getCurrentFrame()?.component.id ?? null
 export const getRuntimeSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
 
 export const useRuntimeNavigate = (): Navigate => {

@@ -8,11 +8,11 @@
     "deploy": "bun run build && wrangler deploy",
     "deploy:dry-run": "bun run build && wrangler deploy --dry-run",
     "start": "bun ./scripts/serve-static.ts",
-    "test": "bun x vitest run app/landing-scene.test.ts app/docs/content-page.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@eclipsa/content": "workspace:*",
+    "@eclipsa/motion": "workspace:*",
     "@iconify-json/tabler": "^1.2.31",
     "clsx": "^2.1.1",
     "eclipsa": "workspace:*",

@@ -9,6 +9,10 @@ export const DEV_EXPORTS = {
     types: './mod.ts',
     import: './mod.ts',
   },
+  './atom': {
+    types: './atom/mod.ts',
+    import: './atom/mod.ts',
+  },
   './vite': {
     types: './vite/mod.ts',
     import: './vite/mod.ts',
@@ -47,6 +51,10 @@ export const PUBLISH_EXPORTS = {
   '.': {
     types: './dist/mod.d.mts',
     import: './dist/mod.mjs',
+  },
+  './atom': {
+    types: './dist/atom/mod.d.mts',
+    import: './dist/atom/mod.mjs',
   },
   './vite': {
     types: './dist/vite/mod.d.mts',

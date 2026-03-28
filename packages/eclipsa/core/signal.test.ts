@@ -54,6 +54,7 @@ const createContainer = () =>
   ({
     actions: new Map(),
     actionStates: new Map(),
+    atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -61,6 +62,7 @@ const createContainer = () =>
     loaderStates: new Map(),
     loaders: new Map(),
     id: 'rt-test',
+    nextAtomId: 0,
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,
@@ -118,6 +120,107 @@ describe('useSignal', () => {
 })
 
 describe('useWatch', () => {
+  it('reacts to signal changes read through managed component prop getters', () => {
+    withFakeNodeGlobal(() => {
+      let visible!: { value: boolean }
+      const values: number[] = []
+
+      const Child = __eclipsaComponent(
+        (props: { animate: { opacity: number } }) => {
+          useWatch(() => {
+            values.push(props.animate.opacity)
+          }, [() => props.animate])
+
+          return 'ready'
+        },
+        'component-prop-watch-child',
+        () => [],
+      )
+
+      const App = __eclipsaComponent(
+        () => {
+          visible = useSignal(true)
+
+          return jsxDEV(
+            Child as never,
+            {
+              get animate() {
+                return visible.value ? { opacity: 1 } : { opacity: 0 }
+              },
+            },
+            null,
+            false,
+            {},
+          )
+        },
+        'component-prop-watch-app',
+        () => [],
+      )
+
+      const container = createContainer()
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)
+      })
+
+      visible.value = false
+      visible.value = true
+
+      expect(values).toEqual([1, 0, 1])
+    })
+  })
+
+  it('preserves getter props through non-managed wrapper components on the client', () => {
+    withFakeNodeGlobal(() => {
+      let visible!: { value: boolean }
+      const values: number[] = []
+
+      const Child = __eclipsaComponent(
+        (props: { animate: { opacity: number } }) => {
+          useWatch(() => {
+            values.push(props.animate.opacity)
+          }, [() => props.animate])
+
+          return 'ready'
+        },
+        'component-prop-watch-wrapper-child',
+        () => [],
+      )
+
+      const Wrapper = (props: { animate: { opacity: number } }) =>
+        jsxDEV(Child as never, props, null, false, {})
+
+      const App = __eclipsaComponent(
+        () => {
+          visible = useSignal(true)
+
+          return jsxDEV(
+            Wrapper as never,
+            {
+              get animate() {
+                return visible.value ? { opacity: 1 } : { opacity: 0 }
+              },
+            },
+            null,
+            false,
+            {},
+          )
+        },
+        'component-prop-watch-wrapper-app',
+        () => [],
+      )
+
+      const container = createContainer()
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)
+      })
+
+      visible.value = false
+      visible.value = true
+
+      expect(values).toEqual([1, 0, 1])
+    })
+  })
+
   it('auto-tracks callback reads when dependencies are omitted', () => {
     withFakeNodeGlobal(() => {
       let tracked!: { value: number }

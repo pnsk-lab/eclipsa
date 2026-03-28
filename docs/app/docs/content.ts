@@ -19,7 +19,10 @@ export const getDocsStaticPaths: GetStaticPaths = async () => {
 }
 
 export const getFirstDocHref = async () => {
-  const [entry] = await getCollection(docs)
+  const entries = await getCollection(docs)
+  const entry =
+    entries.find((candidate) => candidate.id.endsWith('/overview') || candidate.id === 'overview') ??
+    entries[0]
   if (!entry) {
     throw new Error('Expected at least one docs markdown entry.')
   }

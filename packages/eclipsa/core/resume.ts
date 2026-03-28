@@ -8,6 +8,7 @@ import {
   primeRouteModules,
   RESUME_STATE_ELEMENT_ID,
   restoreRegisteredRpcHandles,
+  restoreResumedLocalSignalEffects,
   registerResumeContainer,
   type ResumePayload,
 } from './runtime.ts'
@@ -105,6 +106,7 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
 
   await primeRouteModules(container)
   restoreRegisteredRpcHandles(container)
+  await restoreResumedLocalSignalEffects(container)
   registerResumeContainer(container)
   root.setAttribute('data-e-resume', 'resumed')
   installResumeListeners(container)

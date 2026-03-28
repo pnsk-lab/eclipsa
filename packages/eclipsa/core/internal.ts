@@ -3,6 +3,7 @@ import type { Navigate } from './router-shared.ts'
 
 export { __eclipsaAction } from './action.ts'
 export { __eclipsaLoader } from './loader.ts'
+export { getRuntimeComponentId } from './runtime.ts'
 
 const COMPONENT_META_KEY = Symbol.for('eclipsa.component-meta')
 const LAZY_META_KEY = Symbol.for('eclipsa.lazy-meta')

@@ -13,8 +13,14 @@ interface ContextProviderMeta<T = unknown> {
   token: RuntimeContextToken<T>
 }
 
+interface RuntimeContextState<T> {
+  defaultValue: T | undefined
+  hasDefault: boolean
+  token: RuntimeContextToken<T>
+}
+
 interface RuntimeContext<T> extends Context<T> {
-  [CONTEXT_TOKEN_KEY]: RuntimeContextToken<T>
+  [CONTEXT_TOKEN_KEY]: RuntimeContextState<T>
 }
 
 interface ContextProviderComponent<T> extends Component<ContextProviderProps<T>> {
@@ -30,12 +36,12 @@ export interface Context<T> {
   Provider: Component<ContextProviderProps<T>>
 }
 
-const getContextToken = <T>(context: Context<T>): RuntimeContextToken<T> => {
-  const token = (context as RuntimeContext<T>)[CONTEXT_TOKEN_KEY]
-  if (!token) {
+const getContextState = <T>(context: Context<T>): RuntimeContextState<T> => {
+  const state = (context as RuntimeContext<T>)[CONTEXT_TOKEN_KEY]
+  if (!state) {
     throw new TypeError('useContext() expects a context created by createContext().')
   }
-  return token
+  return state
 }
 
 export const getContextProviderMeta = (value: unknown): ContextProviderMeta | null => {
@@ -49,7 +55,9 @@ export const getContextProviderMeta = (value: unknown): ContextProviderMeta | nu
   )
 }
 
-export const createContext = <T>(): Context<T> => {
+export const createContext = <T>(...args: [defaultValue?: T]): Context<T> => {
+  const hasDefault = args.length > 0
+  const defaultValue = args[0]
   const token = Symbol('eclipsa.context') as RuntimeContextToken<T>
   const Provider = ((props: ContextProviderProps<T>) => props.children) as ContextProviderComponent<T>
 
@@ -69,7 +77,11 @@ export const createContext = <T>(): Context<T> => {
   Object.defineProperty(context, CONTEXT_TOKEN_KEY, {
     configurable: false,
     enumerable: false,
-    value: token,
+    value: {
+      defaultValue,
+      hasDefault,
+      token,
+    } satisfies RuntimeContextState<T>,
     writable: false,
   })
 
@@ -81,8 +93,12 @@ export const useContext = <T>(context: Context<T>): T => {
     throw new Error('useContext() can only be used while rendering a component.')
   }
 
-  const resolved = getRuntimeContextValue(getContextToken(context))
+  const state = getContextState(context)
+  const resolved = getRuntimeContextValue(state.token)
   if (!resolved.found) {
+    if (state.hasDefault) {
+      return state.defaultValue as T
+    }
     throw new Error('useContext() could not find a matching context provider.')
   }
 

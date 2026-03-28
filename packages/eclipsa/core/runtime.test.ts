@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import type { JSX } from '../jsx/types.ts'
+import { attr, insert } from './client/dom.ts'
 import { __eclipsaComponent, __eclipsaWatch } from './internal.ts'
 import { onCleanup, onMount, useSignal, useWatch } from './signal.ts'
 import {
+  createDetachedRuntimeSignal,
+  flushDirtyComponents,
   renderClientInsertable,
+  restoreResumedLocalSignalEffects,
   tryPatchBoundaryContentsInPlace,
   type RuntimeContainer,
   withRuntimeContainer,
@@ -17,12 +22,31 @@ class FakeNode {
   nodeType = 0
   parentNode: FakeNode | null = null
 
+  remove() {
+    if (!this.parentNode) {
+      return
+    }
+    const index = this.parentNode.childNodes.indexOf(this)
+    if (index >= 0) {
+      this.parentNode.childNodes.splice(index, 1)
+    }
+    this.parentNode = null
+  }
+
   get nextSibling(): FakeNode | null {
     if (!this.parentNode) {
       return null
     }
     const index = this.parentNode.childNodes.indexOf(this)
     return index >= 0 ? this.parentNode.childNodes[index + 1] ?? null : null
+  }
+
+  get firstChild(): FakeNode | null {
+    return this.childNodes[0] ?? null
+  }
+
+  get lastChild(): FakeNode | null {
+    return this.childNodes.length > 0 ? this.childNodes[this.childNodes.length - 1]! : null
   }
 
   get textContent() {
@@ -74,10 +98,52 @@ class FakeElement extends FakeNode {
     this.nodeType = 1
   }
 
+  #detachFromCurrentParent(node: FakeNode) {
+    if (!node.parentNode) {
+      return
+    }
+    const index = node.parentNode.childNodes.indexOf(node)
+    if (index >= 0) {
+      node.parentNode.childNodes.splice(index, 1)
+    }
+    node.parentNode = null
+  }
+
   appendChild(node: FakeNode) {
+    this.#detachFromCurrentParent(node)
     node.parentNode = this
     this.childNodes.push(node)
     return node
+  }
+
+  insertBefore(node: FakeNode, referenceNode: FakeNode | null) {
+    this.#detachFromCurrentParent(node)
+    node.parentNode = this
+    if (!referenceNode) {
+      this.childNodes.push(node)
+      return node
+    }
+    const index = this.childNodes.indexOf(referenceNode)
+    if (index < 0) {
+      this.childNodes.push(node)
+      return node
+    }
+    this.childNodes.splice(index, 0, node)
+    return node
+  }
+
+  replaceChild(node: FakeNode, child: FakeNode) {
+    this.#detachFromCurrentParent(node)
+    const index = this.childNodes.indexOf(child)
+    if (index < 0) {
+      this.childNodes.push(node)
+      node.parentNode = this
+      return child
+    }
+    this.childNodes[index] = node
+    node.parentNode = this
+    child.parentNode = null
+    return child
   }
 
   setAttribute(name: string, value: string) {
@@ -119,6 +185,7 @@ const createContainer = () =>
   ({
     actions: new Map(),
     actionStates: new Map(),
+    atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
     doc: new FakeDocument() as unknown as Document,
@@ -126,6 +193,7 @@ const createContainer = () =>
     loaderStates: new Map(),
     loaders: new Map(),
     id: 'rt-test',
+    nextAtomId: 0,
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,
@@ -315,6 +383,421 @@ describe('renderClientInsertable', () => {
       })
 
       expect(events).toEqual(['mount', 'cleanup'])
+    })
+  })
+
+  it('keeps signal subscriptions after resumable signal rerenders', async () => {
+    await withFakeNodeGlobal(async () => {
+      let count!: { value: number }
+
+      const CounterBody = () => {
+        count = useSignal(0)
+        return jsxDEV('button', { children: `Count ${count.value}` }, null, false, {})
+      }
+
+      const Counter = __eclipsaComponent(
+        CounterBody,
+        'component-counter',
+        () => [],
+      )
+
+      const container = createContainer()
+      container.imports.set(
+        'component-counter',
+        Promise.resolve({
+          default: () => CounterBody(),
+        }),
+      )
+      const parent = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Counter, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        parent.appendChild(node)
+      }
+
+      const getButton = () =>
+        parent.childNodes.find((node) => node instanceof FakeElement) as
+        | FakeElement
+        | undefined
+
+      const initialButton = getButton()
+
+      expect(initialButton?.textContent).toBe('Count 0')
+      expect(container.signals.get('s0')?.subscribers.has('c0')).toBe(true)
+
+      count.value = 1
+      await flushDirtyComponents(container)
+      expect(getButton()).toBe(initialButton)
+      expect(getButton()?.textContent).toBe('Count 1')
+      expect(container.signals.get('s0')?.subscribers.has('c0')).toBe(true)
+
+      count.value = 2
+      await flushDirtyComponents(container)
+      expect(getButton()).toBe(initialButton)
+      expect(getButton()?.textContent).toBe('Count 2')
+      expect(container.signals.get('s0')?.subscribers.has('c0')).toBe(true)
+    })
+  })
+
+  it('patches projection-slot metadata components when the slot value is plain text', async () => {
+    await withFakeNodeGlobal(async () => {
+      let open!: { value: boolean }
+
+      const DirBody = (props: { title?: string }) => {
+        open = useSignal(true)
+        return jsxDEV(
+          'div',
+          {
+            children: [
+              jsxDEV('button', { children: props.title ?? '' }, null, false, {}),
+              jsxDEV(
+                'div',
+                {
+                  style: open.value ? 'max-height: 64px; opacity: 1' : 'max-height: 0px; opacity: 0',
+                },
+                null,
+                false,
+                {},
+              ),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Dir = __eclipsaComponent(DirBody, 'component-dir-plain-title', () => [], { title: 1 })
+
+      const container = createContainer()
+      container.imports.set(
+        'component-dir-plain-title',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            DirBody((propsOrArg as { title?: string } | undefined) ?? {}),
+        }),
+      )
+
+      const parent = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Dir as any, { title: 'Materials' }, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        parent.appendChild(node)
+      }
+
+      const getPanel = () => {
+        const root = parent.childNodes.find((node) => node instanceof FakeElement) as
+          | FakeElement
+          | undefined
+        return root?.childNodes[1] as FakeElement | undefined
+      }
+      const initialPanel = getPanel()
+
+      expect(initialPanel?.getAttribute('style')).toBe('max-height: 64px; opacity: 1')
+
+      open.value = false
+      await flushDirtyComponents(container)
+
+      expect(getPanel()).toBe(initialPanel)
+      expect(getPanel()?.getAttribute('style')).toBe('max-height: 0px; opacity: 0')
+      expect(container.signals.get('s0')?.subscribers.has('c0')).toBe(true)
+    })
+  })
+
+  it('restores local signal effects for resumed components before navigation', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const parent = new FakeElement('div')
+      const start = container.doc!.createComment('ec:c:c0:start') as unknown as FakeNode
+      const initialPanel = new FakeElement('div')
+      const end = container.doc!.createComment('ec:c:c0:end') as unknown as FakeNode
+      const originalDocument = globalThis.document
+
+      parent.appendChild(start)
+      parent.appendChild(initialPanel)
+      parent.appendChild(end)
+
+      const open = createDetachedRuntimeSignal(container, 's0', true)
+      const signalRecord = container.signals.get('s0')
+      if (!signalRecord) {
+        throw new Error('Missing signal record')
+      }
+
+      container.components.set('c0', {
+        active: false,
+        didMount: false,
+        end: end as unknown as Comment,
+        id: 'c0',
+        mountCleanupSlots: [],
+        parentId: '$root',
+        props: {},
+        projectionSlots: null,
+        rawProps: null,
+        reuseExistingDomOnActivate: true,
+        reuseProjectionSlotDomOnActivate: false,
+        scopeId: 'sc0',
+        signalIds: ['s0'],
+        start: start as unknown as Comment,
+        symbol: 'component-local-signal',
+        suspensePromise: null,
+        visibleCount: 0,
+        watchCount: 0,
+      })
+      container.scopes.set('sc0', [])
+      signalRecord.subscribers.add('c0')
+      container.imports.set(
+        'component-local-signal',
+        Promise.resolve({
+          default: () => {
+            const panel = document.createElement('div')
+            const visible = useSignal(true)
+            attr(panel, 'style', () => ({
+              opacity: visible.value ? '1' : '0',
+            }))
+            return panel
+          },
+        }),
+      )
+
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
+      try {
+        expect(signalRecord.effects.size).toBe(0)
+
+        await restoreResumedLocalSignalEffects(container)
+
+        const livePanel = parent.childNodes[1] as FakeElement | undefined
+        expect(livePanel).toBeInstanceOf(FakeElement)
+        expect(livePanel).not.toBe(initialPanel)
+        expect(livePanel?.getAttribute('style')).toBe('opacity: 1')
+        expect(signalRecord.effects.size).toBe(1)
+
+        open.value = false
+
+        expect(container.dirty.size).toBe(0)
+        expect(parent.childNodes[1]).toBe(livePanel)
+        expect(livePanel?.getAttribute('style')).toBe('opacity: 0')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('patches inserted nodes in place so animated nodes keep identity', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+      const open = createDetachedRuntimeSignal(container, 's0', true)
+      const renderPanel = (() =>
+        jsxDEV(
+          'div',
+          {
+            children: open.value
+              ? jsxDEV('span', { children: 'open' }, null, false, {})
+              : jsxDEV('strong', { children: 'closed' }, null, false, {}),
+            style: open.value ? 'opacity: 1; max-height: 64px' : 'opacity: 0; max-height: 0px',
+          },
+          null,
+          false,
+          {},
+        )) as unknown as () => Node
+
+      withRuntimeContainer(container, () => {
+        insert(
+          renderPanel,
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const panel = host.childNodes[0] as FakeElement | undefined
+      expect(panel).toBeInstanceOf(FakeElement)
+      expect(panel?.getAttribute('style')).toBe('opacity: 1; max-height: 64px')
+      expect((panel?.childNodes[0] as FakeElement | undefined)?.tagName).toBe('span')
+
+      ;(panel as FakeElement & { __debugMarker?: string }).__debugMarker = 'live'
+      open.value = false
+
+      const nextPanel = host.childNodes[0] as FakeElement | undefined
+      expect(nextPanel).toBe(panel)
+      expect((nextPanel as FakeElement & { __debugMarker?: string }).__debugMarker).toBe('live')
+      expect(nextPanel?.getAttribute('style')).toBe('opacity: 0; max-height: 0px')
+      expect((nextPanel?.childNodes[0] as FakeElement | undefined)?.tagName).toBe('strong')
+    })
+  })
+
+  it('keeps inserted panel identity when insert rerenders managed child boundaries', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const open = createDetachedRuntimeSignal(container, 's0', true)
+
+      const ItemBody = (props: { href: string; label: string }) =>
+        jsxDEV('a', { href: props.href, children: props.label }, null, false, {})
+
+      const Item = __eclipsaComponent(ItemBody, 'component-insert-item', () => [])
+
+      const ParentBody = () => {
+        const root = document.createElement('div')
+        const marker = document.createComment('insert-marker')
+        root.appendChild(marker)
+        insert(
+          (() =>
+            jsxDEV(
+              'div',
+              {
+                class: 'overflow-hidden',
+                children: [
+                  jsxDEV(Item as any, { href: '/a', label: 'A' }, null, false, {}),
+                  jsxDEV(Item as any, { href: '/b', label: 'B' }, null, false, {}),
+                ],
+                style: open.value ? 'opacity: 1; max-height: 64px' : 'opacity: 0; max-height: 0px',
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          root,
+          marker,
+        )
+        return root as unknown as JSX.Element
+      }
+
+      const Parent = __eclipsaComponent(ParentBody, 'component-insert-parent', () => [])
+
+      const host = new FakeElement('div')
+      const originalDocument = globalThis.document
+      let nodes!: FakeNode[]
+      ;(globalThis as typeof globalThis & { document: Document }).document = container.doc as Document
+      try {
+        nodes = withRuntimeContainer(container, () =>
+          renderClientInsertable(jsxDEV(Parent as any, {}, null, false, {}), container),
+        ) as unknown as FakeNode[]
+      } finally {
+        globalThis.document = originalDocument
+      }
+
+      for (const node of nodes) {
+        host.appendChild(node)
+      }
+
+      const outer = host.childNodes[1] as FakeElement | undefined
+      const panel = outer?.childNodes[0] as FakeElement | undefined
+      expect(panel).toBeInstanceOf(FakeElement)
+      expect(panel?.getAttribute('style')).toBe('opacity: 1; max-height: 64px')
+      expect(collectComments(panel?.childNodes ?? [])).toEqual([
+        'ec:c:c0.0:start',
+        'ec:c:c0.0:end',
+        'ec:c:c0.1:start',
+        'ec:c:c0.1:end',
+      ])
+
+      ;(panel as FakeElement & { __debugMarker?: string }).__debugMarker = 'live'
+      open.value = false
+
+      const nextOuter = host.childNodes[1] as FakeElement | undefined
+      const nextPanel = nextOuter?.childNodes[0] as FakeElement | undefined
+      expect(nextPanel).toBe(panel)
+      expect((nextPanel as FakeElement & { __debugMarker?: string }).__debugMarker).toBe('live')
+      expect(nextPanel?.getAttribute('style')).toBe('opacity: 0; max-height: 0px')
+      expect(collectComments(nextPanel?.childNodes ?? [])).toEqual([
+        'ec:c:c0.0:start',
+        'ec:c:c0.0:end',
+        'ec:c:c0.1:start',
+        'ec:c:c0.1:end',
+      ])
+    })
+  })
+
+  it('preloads projection slot render refs before rerendering resumable children', async () => {
+    await withFakeNodeGlobal(async () => {
+      let open!: { value: boolean }
+
+      const PageLinkBody = (props: { label: string }) =>
+        jsxDEV('span', { children: props.label }, null, false, {})
+
+      const PageLink = __eclipsaComponent(
+        PageLinkBody,
+        'component-page-link',
+        () => [],
+      )
+
+      const DirBody = (props: { children?: unknown }) => {
+        open = useSignal(true)
+        return jsxDEV(
+          'section',
+          {
+            children: [
+              jsxDEV('button', { children: open.value ? 'open' : 'closed' }, null, false, {}),
+              jsxDEV('div', { children: props.children }, null, false, {}),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Dir = __eclipsaComponent(
+        DirBody,
+        'component-dir',
+        () => [],
+        { children: 1 },
+      )
+
+      const container = createContainer()
+      container.imports.set(
+        'component-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            DirBody((propsOrArg as { children?: unknown } | undefined) ?? {}),
+        }),
+      )
+      container.imports.set(
+        'component-page-link',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            PageLinkBody(propsOrArg as { label: string }),
+        }),
+      )
+
+      const parent = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Dir as any,
+            {
+              children: jsxDEV(PageLink as any, { label: 'Overview' }, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        parent.appendChild(node)
+      }
+
+      expect(parent.textContent).toContain('open')
+      expect(parent.textContent).toContain('Overview')
+
+      open.value = false
+      await flushDirtyComponents(container)
+      expect(parent.textContent).toContain('closed')
+      expect(parent.textContent).toContain('Overview')
+
+      open.value = true
+      await flushDirtyComponents(container)
+      expect(parent.textContent).toContain('open')
+      expect(parent.textContent).toContain('Overview')
     })
   })
 

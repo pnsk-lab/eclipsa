@@ -15,6 +15,7 @@
   "dependencies": {
     "@eclipsa/content": "workspace:*",
     "@eclipsa/image": "workspace:*",
+    "@eclipsa/motion": "workspace:*",
     "eclipsa": "workspace:*",
     "zod": "^4.3.6"
   },
