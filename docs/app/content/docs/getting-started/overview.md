@@ -25,3 +25,10 @@ export default function Counter() {
   )
 }
 ```
+
+## Why eclipsa?
+
+* Resumability: No hydration, no JavaScript on the client until interaction.
+* Reactivity: Fine-grained reactivity with signals and effects.
+* JSX Compile: Compile-time optimizations for fast updates.
+* TypeScript First: Built with TypeScript for type safety and developer experience.

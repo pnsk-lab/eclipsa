@@ -3,7 +3,7 @@ import { motion } from "@eclipsa/motion";
 import { Link, useLocation, useSignal } from "eclipsa";
 import type { JSX } from "eclipsa/jsx-runtime";
 
-const Dir = (props: { activeHref: string; links: { href: string; label: string }[]; title: string }) => {
+const Dir = (props: { activeHref: string; links: { href: string; label: string }[]; title: string, icon: string }) => {
   const open = useSignal(true);
 
   return (
@@ -17,7 +17,7 @@ const Dir = (props: { activeHref: string; links: { href: string; label: string }
         }}
       >
         <div class="bg-linear-to-br from-emerald-700 to-teal-400 rounded-lg p-1">
-          <div class="i-tabler-north-star text-white" />
+          <div class={`${props.icon} text-white`} />
         </div>
         <div class="text-zinc-700 text-base font-medium">{props.title}</div>
         <div class="grow" />
@@ -76,6 +76,7 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
       <div class="sticky top-18 w-68 shrink-0 self-start px-8 py-6 text-zinc-500 flex flex-col gap-4">
         <Dir
           title="Getting Started"
+          icon="i-tabler-north-star"
           activeHref={loc.pathname}
           links={[
             { label: "Overview", href: "/docs/getting-started/overview" },
@@ -84,14 +85,17 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
         />
         <Dir
           title="Materials"
+          icon="i-tabler-square-rotated"
           activeHref={loc.pathname}
           links={[
+            { label: "Routing", href: "/docs/materials/routing" },
             { label: "Signal", href: "/docs/materials/signal" },
             { label: "Atom", href: "/docs/materials/atom" },
           ]}
         />
         <Dir
           title="Integrations"
+          icon="i-tabler-plug-connected"
           activeHref={loc.pathname}
           links={[
             { label: "Motion", href: "/docs/integrations/motion" },
