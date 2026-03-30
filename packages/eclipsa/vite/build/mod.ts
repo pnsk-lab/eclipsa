@@ -33,8 +33,12 @@ import {
   createBuildSymbolUrl,
 } from '../compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from '../options.ts'
+import { xxHash32 } from '../../utils/xxhash32.ts'
 
 const joinHonoPath = (left: string, right: string) => `${left}/${right}`.replaceAll(/\/+/g, '/')
+const CHUNK_CACHE_NAME_PREFIX = 'eclipsa-chunk-cache'
+const CHUNK_CACHE_SW_URL = '/eclipsa-chunk-cache-sw.js'
+const CHUNK_CACHEABLE_PATH_PREFIXES = ['/chunks/', '/entries/']
 
 const toPublicAssetUrl = (root: string, filePath: string) =>
   `/${path.relative(root, filePath).split(path.sep).join('/')}`
@@ -72,6 +76,120 @@ const collectClientStylesheetUrls = async (clientDir: string) => {
     }
     throw error
   }
+}
+
+interface ClientChunkCacheAsset {
+  hash: string
+  url: string
+}
+
+const collectClientChunkCacheAssets = async (
+  clientDir: string,
+): Promise<ClientChunkCacheAsset[]> => {
+  try {
+    const files = await collectFiles(clientDir)
+    const assetFiles = files
+      .filter((filePath) => path.extname(filePath) === '.js')
+      .map((filePath) => ({
+        filePath,
+        url: toPublicAssetUrl(clientDir, filePath),
+      }))
+      .filter((entry) =>
+        CHUNK_CACHEABLE_PATH_PREFIXES.some((prefix) => entry.url.startsWith(prefix)),
+      )
+      .sort((left, right) => left.url.localeCompare(right.url))
+
+    return Promise.all(
+      assetFiles.map(async (asset) => ({
+        hash: xxHash32(await fs.readFile(asset.filePath)).toString(16).padStart(8, '0'),
+        url: asset.url,
+      })),
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
+}
+
+const createClientChunkCacheVersion = (assets: ClientChunkCacheAsset[]) =>
+  xxHash32(assets.map((asset) => `${asset.url}:${asset.hash}`).join('\n'))
+    .toString(16)
+    .padStart(8, '0')
+
+const renderChunkCacheServiceWorker = (version: string) => `const CACHE_NAME = "${CHUNK_CACHE_NAME_PREFIX}-${version}";
+const CACHE_PREFIX = "${CHUNK_CACHE_NAME_PREFIX}-";
+const PATH_PREFIXES = ${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)};
+
+const isCacheableRequest = (request) => {
+  if (request.method !== "GET") {
+    return false;
+  }
+  const url = new URL(request.url);
+  return url.origin === self.location.origin && PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix));
+};
+
+const fetchAndCache = async (cache, request) => {
+  const response = await fetch(request);
+  if (response.ok && (response.type === "basic" || response.type === "cors")) {
+    await cache.put(request, response.clone());
+  }
+  return response;
+};
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(
+      names
+        .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+        .map((name) => caches.delete(name)),
+    );
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  if (!isCacheableRequest(event.request)) {
+    return;
+  }
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(event.request);
+    if (cached) {
+      event.waitUntil(fetchAndCache(cache, event.request).catch(() => undefined));
+      return cached;
+    }
+
+    try {
+      return await fetchAndCache(cache, event.request);
+    } catch (error) {
+      const fallback = await cache.match(event.request);
+      if (fallback) {
+        return fallback;
+      }
+      throw error;
+    }
+  })());
+});
+`
+
+const renderChunkCacheRegistrationScript = () =>
+  `(()=>{if(!("serviceWorker" in navigator))return;void navigator.serviceWorker.register(${JSON.stringify(CHUNK_CACHE_SW_URL)},{scope:"/",updateViaCache:"none"}).catch((error)=>{console.error("Failed to register Eclipsa chunk cache service worker.",error);});})();`
+
+const writeClientChunkCacheServiceWorker = async (clientDir: string) => {
+  const assets = await collectClientChunkCacheAssets(clientDir)
+  const version = createClientChunkCacheVersion(assets)
+  const serviceWorkerPath = path.join(clientDir, CHUNK_CACHE_SW_URL.slice(1))
+  await fs.mkdir(path.dirname(serviceWorkerPath), { recursive: true })
+  await fs.writeFile(serviceWorkerPath, renderChunkCacheServiceWorker(version))
+  return renderChunkCacheRegistrationScript()
 }
 
 const resolveRouteRenderMode = (
@@ -373,6 +491,7 @@ const renderAppModule = (
   serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
   stylesheetUrls: string[],
+  chunkCacheRegistrationScript: string,
 ) => {
   const serializedRoutes = createSerializedRoutes(routes)
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
@@ -836,6 +955,13 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               isStatic: true,
               props: {
                 dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
+                dangerouslySetInnerHTML: ${JSON.stringify(chunkCacheRegistrationScript)},
               },
             },
             {
@@ -1364,6 +1490,7 @@ export const build = async (
     ? createBuildServerModuleUrl({ entryName: 'server_hooks', filePath: serverHooksPath })
     : null
   const stylesheetUrls = await collectClientStylesheetUrls(clientDir)
+  const chunkCacheRegistrationScript = await writeClientChunkCacheServiceWorker(clientDir)
   const serverDir = path.join(root, 'dist/server')
   const appModulePath = path.join(root, 'dist/ssr/eclipsa_app.mjs')
   await fs.mkdir(path.dirname(appModulePath), { recursive: true })
@@ -1379,6 +1506,7 @@ export const build = async (
       serverHooksUrl,
       symbolUrls,
       stylesheetUrls,
+      chunkCacheRegistrationScript,
     ),
   )
   const staticPrerenderTargets = await resolveStaticPrerenderTargets(root, staticPageRoutes)

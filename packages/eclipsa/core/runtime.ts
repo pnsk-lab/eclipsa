@@ -2189,6 +2189,14 @@ const writeRouterLocation = (router: RouterState, href: string | URL) => {
   }
 }
 
+const syncRouterLocationSilently = (container: RuntimeContainer, href: string | URL) => {
+  const url = href instanceof URL ? href : parseLocationHref(href)
+  const nextPath = normalizeRoutePath(url.pathname)
+  ensureSignalRecord(container, ROUTER_CURRENT_PATH_SIGNAL_ID, nextPath).value = nextPath
+  ensureSignalRecord(container, ROUTER_CURRENT_URL_SIGNAL_ID, url.href).value = url.href
+  ensureSignalRecord(container, ROUTER_IS_NAVIGATING_SIGNAL_ID, false).value = false
+}
+
 const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest) => {
   if (container.router) {
     if (manifest) {
@@ -5832,48 +5840,122 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
   }
 }
 
-const requestRouteData = async (href: string): Promise<RouteDataResponse> => {
+const isRouteDataSuccess = (body: RouteDataResponse): body is RouteDataSuccess =>
+  body.ok === true &&
+  typeof body.finalHref === 'string' &&
+  typeof body.finalPathname === 'string' &&
+  (body.kind === 'page' || body.kind === 'not-found') &&
+  !!body.loaders &&
+  typeof body.loaders === 'object'
+
+const extractScriptTextById = (html: string, id: string) => {
+  const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
+  const idPattern = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i
+
+  for (const match of html.matchAll(scriptPattern)) {
+    const attrs = match[1] ?? ''
+    const idMatch = attrs.match(idPattern)
+    if (!idMatch) {
+      continue
+    }
+    if ((idMatch[1] ?? idMatch[2]) === id) {
+      return match[2] ?? ''
+    }
+  }
+
+  return null
+}
+
+const parseRouteDataFromHtml = (
+  container: RuntimeContainer,
+  requestUrl: URL,
+  response: {
+    url?: string
+  },
+  html: string,
+): RouteDataResponse => {
+  const finalUrl = new URL(response.url || requestUrl.href, requestUrl.href)
+  if (finalUrl.origin !== requestUrl.origin) {
+    return {
+      location: finalUrl.href,
+      ok: false,
+    }
+  }
+
+  const payloadText =
+    extractScriptTextById(html, RESUME_FINAL_STATE_ELEMENT_ID) ??
+    extractScriptTextById(html, RESUME_STATE_ELEMENT_ID)
+  if (!payloadText) {
+    return {
+      document: true,
+      ok: false,
+    }
+  }
+
+  let payload: ResumePayload
   try {
-    const baseUrl = typeof window === 'undefined' ? 'http://localhost' : window.location.href
-    const requestUrl = new URL(href, baseUrl)
+    payload = JSON.parse(payloadText) as ResumePayload
+  } catch {
+    return {
+      document: true,
+      ok: false,
+    }
+  }
+
+  const finalPathname = normalizeRoutePath(finalUrl.pathname)
+  const router = ensureRouterState(container)
+  const matched = matchRouteManifest(router.manifest, finalPathname)
+  const notFoundMatched = !matched
+    ? findSpecialManifestEntry(router.manifest, finalPathname, 'notFound')
+    : null
+  if (!matched?.entry.page && !notFoundMatched?.entry.notFound) {
+    return {
+      document: true,
+      ok: false,
+    }
+  }
+
+  return {
+    finalHref: finalUrl.href,
+    finalPathname,
+    kind: matched?.entry.page ? 'page' : 'not-found',
+    loaders: payload.loaders ?? {},
+    ok: true,
+  }
+}
+
+const requestRouteData = async (
+  container: RuntimeContainer,
+  href: string,
+): Promise<RouteDataResponse> => {
+  const baseUrl = typeof window === 'undefined' ? 'http://localhost' : window.location.href
+  const requestUrl = new URL(href, baseUrl)
+
+  try {
     const endpointUrl = new URL(ROUTE_DATA_ENDPOINT, requestUrl)
     endpointUrl.searchParams.set('href', requestUrl.href)
     const response = await fetch(endpointUrl.href)
-    if (response.status < 200 || response.status >= 300) {
-      return {
-        document: true,
-        ok: false,
-      }
-    }
-
-    const body = (await response.json()) as RouteDataResponse
-    if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
-      return {
-        document: true,
-        ok: false,
-      }
-    }
-    if (body.ok) {
-      if (
-        typeof body.finalHref !== 'string' ||
-        typeof body.finalPathname !== 'string' ||
-        (body.kind !== 'page' && body.kind !== 'not-found') ||
-        !body.loaders ||
-        typeof body.loaders !== 'object'
-      ) {
+    if (response.status >= 200 && response.status < 300) {
+      const body = (await response.json()) as RouteDataResponse
+      if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
         return {
           document: true,
           ok: false,
         }
       }
-      return body
+      if (isRouteDataSuccess(body)) {
+        return body
+      }
+      if ('location' in body && typeof body.location === 'string') {
+        return body
+      }
     }
-    if ('location' in body && typeof body.location === 'string') {
-      return body
-    }
-    if ('document' in body && body.document) {
-      return body
-    }
+  } catch {}
+
+  try {
+    const response = await fetch(requestUrl.href)
+    const html = await response.text()
+    return parseRouteDataFromHtml(container, requestUrl, response, html)
   } catch {}
 
   return {
@@ -5991,7 +6073,7 @@ const prefetchRoute = async (container: RuntimeContainer, href: string) => {
 
   const prefetchPromise = (async () => {
     try {
-      const result = await requestRouteData(requestUrl.href)
+      const result = await requestRouteData(container, requestUrl.href)
       if (!result.ok) {
         return result
       }
@@ -7217,11 +7299,8 @@ export const createResumeContainer = (
 
   restoreRegisteredRpcHandles(container)
 
-  const router = ensureRouterState(container)
-  writeRouterLocation(router, doc.location.href)
-  if (router.isNavigating.value !== false) {
-    router.isNavigating.value = false
-  }
+  ensureRouterState(container)
+  syncRouterLocationSilently(container, doc.location.href)
   scheduleVisibleCallbacksCheck(container)
 
   return container

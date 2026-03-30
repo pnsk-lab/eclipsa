@@ -2176,6 +2176,273 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('falls back to static HTML resume payloads when the route-data endpoint is unavailable', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalFetch = globalThis.fetch
+      const OriginalMouseEvent = globalThis.MouseEvent
+      const OriginalHTMLAnchorElement = globalThis.HTMLAnchorElement
+
+      class FakeMouseEvent extends Event {
+        altKey = false
+        button = 0
+        ctrlKey = false
+        metaKey = false
+        shiftKey = false
+
+        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+          super(type, { bubbles: true, cancelable: true })
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      globalThis.MouseEvent = FakeMouseEvent as unknown as typeof MouseEvent
+      globalThis.HTMLAnchorElement = FakeElement as unknown as typeof HTMLAnchorElement
+
+      try {
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument & {
+          defaultView: {
+            addEventListener: () => void
+            history: {
+              pushState: (_data: unknown, _unused: string, url: string) => void
+              replaceState: (_data: unknown, _unused: string, url: string) => void
+            }
+            location: {
+              assign: (url: string) => void
+              replace: (url: string) => void
+            }
+            removeEventListener: () => void
+            requestAnimationFrame: (callback: FrameRequestCallback) => number
+            setTimeout: (callback: () => void) => number
+          }
+          location: Location
+        }
+        const applyLocation = (href: string) => {
+          const url = new URL(href)
+          doc.location = {
+            hash: url.hash,
+            href: url.href,
+            origin: url.origin,
+            pathname: url.pathname,
+            search: url.search,
+          } as Location
+        }
+        applyLocation('http://local/')
+        doc.defaultView = {
+          ...doc.defaultView,
+          history: {
+            pushState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+            replaceState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+          },
+          location: {
+            assign: (url) => {
+              applyLocation(url)
+            },
+            replace: (url) => {
+              applyLocation(url)
+            },
+          },
+        }
+
+        const htmlPayload = JSON.stringify({
+          actions: {},
+          components: {},
+          loaders: {},
+          scopes: {},
+          signals: {},
+          subscriptions: {},
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const url =
+            typeof input === 'string'
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url
+
+          if (url === 'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fquick-start') {
+            return {
+              json: async () => ({ document: true, ok: false }),
+              status: 404,
+              text: async () => '',
+              url,
+            } as Response
+          }
+
+          if (url === 'http://local/docs/quick-start') {
+            return {
+              status: 200,
+              text: async () =>
+                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script></body></html>`,
+              url,
+            } as Response
+          }
+
+          throw new Error(`Unexpected fetch: ${url}`)
+        }) as typeof fetch
+
+        const currentPage = () => jsxDEV('p', { children: 'home' }, null, false, {})
+        const nextPage = () => jsxDEV('p', { children: 'quick start' }, null, false, {})
+
+        container.rootElement = doc.body as unknown as HTMLElement
+        container.router = {
+          currentPath: { value: '/' },
+          currentRoute: {
+            entry: {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/',
+              segments: [],
+              server: null,
+            },
+            error: undefined,
+            layouts: [],
+            params: {},
+            pathname: '/',
+            page: {
+              metadata: null,
+              renderer: currentPage,
+              symbol: null,
+              url: '/entries/home.js',
+            },
+            render: () => jsxDEV(currentPage, {}, null, false, {}),
+          },
+          currentUrl: { value: 'http://local/' },
+          defaultTitle: '',
+          isNavigating: { value: false },
+          loadedRoutes: new Map([
+            [
+              '/::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: [],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/home.js',
+                  routePath: '/',
+                  segments: [],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [],
+                params: {},
+                pathname: '/',
+                page: {
+                  metadata: null,
+                  renderer: currentPage,
+                  symbol: null,
+                  url: '/entries/home.js',
+                },
+                render: () => jsxDEV(currentPage, {}, null, false, {}),
+              },
+            ],
+            [
+              '/docs/quick-start::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: [],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/quick-start.js',
+                  routePath: '/docs/quick-start',
+                  segments: [
+                    { kind: 'static', value: 'docs' },
+                    { kind: 'static', value: 'quick-start' },
+                  ],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [],
+                params: {},
+                pathname: '/docs/quick-start',
+                page: {
+                  metadata: null,
+                  renderer: nextPage,
+                  symbol: null,
+                  url: '/entries/quick-start.js',
+                },
+                render: () => jsxDEV(nextPage, {}, null, false, {}),
+              },
+            ],
+          ]),
+          location: doc.location,
+          manifest: [
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/',
+              segments: [],
+              server: null,
+            },
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/quick-start.js',
+              routePath: '/docs/quick-start',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'quick-start' },
+              ],
+              server: null,
+            },
+          ],
+          navigate: (async () => {}) as any,
+          prefetchedLoaders: new Map(),
+          routeModuleBusts: new Map(),
+          routePrefetches: new Map(),
+          sequence: 0,
+        } as unknown as RuntimeContainer['router']
+
+        const link = doc.createElement('a') as unknown as FakeElement
+        link.setAttribute('href', '/docs/quick-start')
+        link.setAttribute('data-e-link', '')
+        ;(doc.body as unknown as FakeElement).appendChild(link)
+
+        const cleanup = installResumeListeners(container)
+        const event = new FakeMouseEvent('click', link as unknown as EventTarget)
+        doc.dispatchEvent(event)
+        await container.eventDispatchPromise
+        await flushAsync()
+        await flushAsync()
+
+        expect(event.defaultPrevented).toBe(true)
+        expect((doc.body as unknown as FakeElement).textContent).toContain('quick start')
+        expect(doc.location.pathname).toBe('/docs/quick-start')
+        cleanup()
+      } finally {
+        globalThis.fetch = OriginalFetch
+        globalThis.MouseEvent = OriginalMouseEvent
+        globalThis.HTMLAnchorElement = OriginalHTMLAnchorElement
+      }
+    })
+  })
+
   it('dispatches delegated keyboard and composition events through document listeners', async () => {
     await withFakeNodeGlobal(async () => {
       class TargetedEvent extends Event {

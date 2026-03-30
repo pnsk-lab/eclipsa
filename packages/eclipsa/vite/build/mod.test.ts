@@ -102,14 +102,20 @@ const writeMinimalRuntimeEntry = async (
 const writeMinimalSsrEntries = async (root: string) => {
   const entriesDir = path.join(root, 'dist/ssr/entries')
   const assetsDir = path.join(root, 'dist/client/assets')
+  const clientEntriesDir = path.join(root, 'dist/client/entries')
+  const clientChunksDir = path.join(root, 'dist/client/chunks')
 
   await fs.mkdir(entriesDir, { recursive: true })
   await fs.mkdir(assetsDir, { recursive: true })
+  await fs.mkdir(clientEntriesDir, { recursive: true })
+  await fs.mkdir(clientChunksDir, { recursive: true })
   await fs.writeFile(
     path.join(entriesDir, 'server_entry.mjs'),
     'import { Hono } from "hono"; const app = new Hono(); export default app;\n',
   )
   await fs.writeFile(path.join(entriesDir, 'ssr_root.mjs'), 'export default (props) => props;\n')
+  await fs.writeFile(path.join(clientEntriesDir, 'client_boot.js'), 'console.log("boot");\n')
+  await fs.writeFile(path.join(clientChunksDir, 'shared.js'), 'export const shared = true;\n')
   await writeMinimalRuntimeEntry(root)
 }
 
@@ -436,6 +442,28 @@ describe('build', () => {
       'const stylesheetUrls = ["/assets/layout.css"];',
     )
     await expect(fs.stat(path.join(root, 'dist/server'))).rejects.toThrow()
+  })
+
+  it('emits a chunk cache service worker and registers it from the built app shell', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-sw-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    await expect(
+      fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
+    ).resolves.toContain('const PATH_PREFIXES = ["/chunks/","/entries/"];')
+    await expect(
+      fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
+    ).resolves.toContain('caches.open(CACHE_NAME)')
+    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
+      '/eclipsa-chunk-cache-sw.js',
+    )
+    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
+      'navigator.serviceWorker.register',
+    )
   })
 
   it('rejects ssg output when route middleware is present', async () => {

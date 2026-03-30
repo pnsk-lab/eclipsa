@@ -58,6 +58,7 @@ const resetRegisteredResumeContainers = () => {
 
 const withFakeResumeDocument = <T>(
   options: {
+    href?: string
     pathname?: string
     comments?: string[]
   },
@@ -76,7 +77,17 @@ const withFakeResumeDocument = <T>(
   }
   class FakeDocument {
     body: HTMLElement
-    location = { pathname: options.pathname ?? '/' } as Location
+    location = (() => {
+      const href = options.href ?? `http://example.com${options.pathname ?? '/'}`
+      const url = new URL(href)
+      return {
+        hash: url.hash,
+        href: url.href,
+        origin: url.origin,
+        pathname: url.pathname,
+        search: url.search,
+      } as Location
+    })()
 
     constructor() {
       this.body = { ownerDocument: this } as unknown as HTMLElement
@@ -507,6 +518,55 @@ describe('resume HMR runtime helpers', () => {
 
         container.signals.get('s0')!.handle.value = 2
         expect(container.dirty).toEqual(new Set(['c0']))
+      },
+    )
+  })
+
+  it('syncs resumed router URLs without queueing location-driven rerenders', () => {
+    withFakeResumeDocument(
+      {
+        comments: ['ec:c:c0:start', 'ec:c:c0:end'],
+        href: 'http://localhost:4173/docs/getting-started/overview',
+      },
+      (doc) => {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: [],
+              symbol: 'layout-symbol',
+              visibleCount: 0,
+              watchCount: 0,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+          },
+          signals: {
+            '$router:isNavigating': false,
+            '$router:path': '/docs/getting-started/overview',
+            '$router:url': 'http://localhost/docs/getting-started/overview',
+          },
+          subscriptions: {
+            '$router:isNavigating': [],
+            '$router:path': [],
+            '$router:url': ['c0'],
+          },
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+
+        expect(container.router?.currentUrl.value).toBe(
+          'http://localhost:4173/docs/getting-started/overview',
+        )
+        expect(container.dirty).toEqual(new Set())
       },
     )
   })
