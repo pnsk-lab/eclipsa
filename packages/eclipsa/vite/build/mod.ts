@@ -48,19 +48,6 @@ const fileExists = async (filePath: string) => {
   }
 }
 
-const getRequestUrl = (request: Request) => {
-  const url = new URL(request.url)
-  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
-  const proto = request.headers.get('x-forwarded-proto')
-  if (host) {
-    url.host = host
-  }
-  if (proto) {
-    url.protocol = `${proto}:`
-  }
-  return url
-}
-
 const collectFiles = async (directory: string): Promise<string[]> => {
   const entries = await fs.readdir(directory, { withFileTypes: true })
   const files = await Promise.all(

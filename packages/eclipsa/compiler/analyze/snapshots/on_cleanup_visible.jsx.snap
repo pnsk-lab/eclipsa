@@ -1,7 +1,7 @@
 // ================= ENTRY (on_cleanup_visible.jsx) ==
 import { onCleanup, onVisible } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const value = 'visible'
 
   onVisible(() => {
@@ -12,14 +12,14 @@ export default (() => {
   })
 
   return <button>{value}</button>
-});
+}
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
 import { onCleanup, onVisible } from 'eclipsa'
 
-export default (__eclipsaComponent(() => {
+export default __eclipsaComponent(() => {
   const value = 'visible'
 
   onVisible(__eclipsaLazy("5ugvuh", () => {
@@ -30,7 +30,7 @@ export default (__eclipsaComponent(() => {
   }, ()=>[value]))
 
   return <button>{value}</button>
-}, "pxa3kp", ()=>[]));
+}, "pxa3kp", ()=>[])
 
 
 // ================= 5ugvuh (lazy) ==

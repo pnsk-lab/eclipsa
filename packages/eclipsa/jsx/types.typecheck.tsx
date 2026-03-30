@@ -22,6 +22,24 @@ type _FormSubmitEvent = Expect<
   Equal<FormSubmitEvent, DelegatedEvent<HTMLFormElement, globalThis.SubmitEvent>>
 >
 
+type DialogCancelHandler = NonNullable<JSX.IntrinsicElements['dialog']['onCancel']>
+type DialogCancelEvent = Parameters<DialogCancelHandler>[0]
+type _DialogCancelEvent = Expect<Equal<DialogCancelEvent, DelegatedEvent<HTMLDialogElement, Event>>>
+
+type InputKeyDownHandler = NonNullable<JSX.IntrinsicElements['input']['onKeyDown']>
+type InputKeyDownEvent = Parameters<InputKeyDownHandler>[0]
+type _InputKeyDownEvent = Expect<
+  Equal<InputKeyDownEvent, DelegatedEvent<HTMLInputElement, globalThis.KeyboardEvent>>
+>
+
+type InputCompositionStartHandler = NonNullable<
+  JSX.IntrinsicElements['input']['onCompositionStart']
+>
+type InputCompositionStartEvent = Parameters<InputCompositionStartHandler>[0]
+type _InputCompositionStartEvent = Expect<
+  Equal<InputCompositionStartEvent, DelegatedEvent<HTMLInputElement, globalThis.CompositionEvent>>
+>
+
 type ButtonType = JSX.IntrinsicElements['button']['type']
 type _ButtonType = Expect<Equal<ButtonType, 'button' | 'reset' | 'submit' | undefined>>
 
@@ -71,6 +89,34 @@ type _InputBindChecked = Expect<
     void submitter
   }}
 />
+
+;<dialog
+  onCancel={(event) => {
+    const currentTarget: HTMLDialogElement = event.currentTarget
+    event.preventDefault()
+    void currentTarget
+  }}
+/>
+
+;<input
+  autoFocus
+  onCompositionStart={(event) => {
+    const currentTarget: HTMLInputElement = event.currentTarget
+    void currentTarget
+  }}
+  onKeyDown={(event) => {
+    const currentTarget: HTMLInputElement = event.currentTarget
+    const key: string = event.key
+    void currentTarget
+    void key
+  }}
+/>
+
+;<ul>
+  {[1, 2].map((item) => (
+    <li key={item}>{item}</li>
+  ))}
+</ul>
 
 ;<div
   class="card"

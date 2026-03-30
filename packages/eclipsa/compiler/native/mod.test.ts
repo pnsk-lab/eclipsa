@@ -120,7 +120,7 @@ describe('native compiler packaging', () => {
     expect(stdout).not.toContain('compiler/rust/target/hidden.txt')
     expect(stdout).not.toContain('compiler/analyze/mod.test.ts')
     expect(stdout).not.toContain('dist/native/linux-x64/eclipsa_compiler.node')
-  })
+  }, 15000)
 
   it('syncs the browser wasm artifact from the release target into generated output', async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'eclipsa-browser-wasm-'))

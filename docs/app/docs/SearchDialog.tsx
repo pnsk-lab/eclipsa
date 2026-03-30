@@ -1,12 +1,56 @@
 import type { ContentSearchResult } from '@eclipsa/content'
-import { onCleanup, onVisible, useSignal } from 'eclipsa'
+import { onCleanup, onMount, useSignal } from 'eclipsa'
 import clsx from 'clsx'
 
 const DEFAULT_PLACEHOLDER = 'Search docs'
 const DEFAULT_HOTKEY = 'k'
+type DialogRefTarget = {
+  __openToken?: number
+  value: HTMLDialogElement | undefined
+}
+type InputRefTarget = {
+  value: HTMLInputElement | undefined
+}
 
 const formatHotkey = (value: string) =>
   value.trim().slice(0, 1).toUpperCase() || DEFAULT_HOTKEY.toUpperCase()
+
+const scheduleRetry = (callback: () => void) => {
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => callback())
+    return
+  }
+  setTimeout(callback, 0)
+}
+
+const focusInputWhenReady = (
+  dialogRef: DialogRefTarget,
+  inputRef: InputRefTarget,
+  token: number,
+) => {
+  const retryFocus = () => {
+    if (dialogRef.__openToken !== token) {
+      return
+    }
+
+    const input = inputRef.value
+    if (!input || !input.isConnected || !input.ownerDocument?.contains(input)) {
+      scheduleRetry(retryFocus)
+      return
+    }
+
+    input.focus({ preventScroll: true })
+    input.select()
+
+    if (input.ownerDocument.activeElement === input) {
+      return
+    }
+
+    scheduleRetry(retryFocus)
+  }
+
+  retryFocus()
+}
 
 const SearchResultsBody = (props: {
   loading: boolean
@@ -63,7 +107,8 @@ const SearchResultsBody = (props: {
 }
 
 export const DocsSearchDialog = () => {
-  const inputRef: { value: HTMLInputElement | undefined } = { value: undefined }
+  const dialogRef = useSignal<HTMLDialogElement | undefined>() as DialogRefTarget
+  const inputRef = useSignal<HTMLInputElement | undefined>()
   const open = useSignal(false)
   const query = useSignal('')
   const placeholder = useSignal(DEFAULT_PLACEHOLDER)
@@ -85,10 +130,71 @@ export const DocsSearchDialog = () => {
     }
   } | null>(null)
   const searchTimeout = useSignal<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const disposed = useSignal(false)
+  const isComposing = useSignal(false)
+
+  const ensureSearchModule = () => {
+    if (searchModule.value) {
+      return
+    }
+
+    void import('virtual:eclipsa-content:search')
+      .then((mod) => {
+        searchModule.value = mod
+        hotkey.value = mod.searchOptions.hotkey
+        placeholder.value = mod.searchOptions.placeholder
+        if (query.value.trim() !== '') {
+          scheduleSearch(query.value)
+        }
+      })
+      .catch(() => {})
+  }
+
+  const finalizeDialogOpen = (token: number) => {
+    ensureSearchModule()
+    focusInputWhenReady(dialogRef, inputRef, token)
+  }
+
+  const openDialog = () => {
+    if (open.value && dialogRef.value?.open) {
+      ensureSearchModule()
+      const token = dialogRef.__openToken ?? 0
+      focusInputWhenReady(dialogRef, inputRef, token)
+      return
+    }
+
+    const token = (dialogRef.__openToken ?? 0) + 1
+    dialogRef.__openToken = token
+    open.value = true
+
+    const retryOpen = () => {
+      if (dialogRef.__openToken !== token) {
+        return
+      }
+      const dialog = dialogRef.value
+      if (!dialog || !dialog.isConnected || !dialog.ownerDocument?.contains(dialog)) {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(retryOpen)
+        } else {
+          setTimeout(retryOpen, 0)
+        }
+        return
+      }
+      if (!dialog.open) {
+        dialog.showModal()
+      }
+      finalizeDialogOpen(token)
+    }
+
+    retryOpen()
+  }
 
   const close = () => {
+    dialogRef.__openToken = (dialogRef.__openToken ?? 0) + 1
+    if (dialogRef.value?.open) {
+      dialogRef.value.close()
+    }
     open.value = false
+    isComposing.value = false
     query.value = ''
     results.value = []
     selectedIndex.value = 0
@@ -97,14 +203,6 @@ export const DocsSearchDialog = () => {
       clearTimeout(searchTimeout.value)
       searchTimeout.value = undefined
     }
-  }
-
-  const openDialog = () => {
-    open.value = true
-    queueMicrotask(() => {
-      inputRef.value?.focus()
-      inputRef.value?.select()
-    })
   }
 
   const navigateToSelected = () => {
@@ -117,6 +215,9 @@ export const DocsSearchDialog = () => {
   }
 
   const scheduleSearch = (nextQuery: string) => {
+    if (query.value !== nextQuery) {
+      query.value = nextQuery
+    }
     if (searchTimeout.value) {
       clearTimeout(searchTimeout.value)
       searchTimeout.value = undefined
@@ -165,23 +266,49 @@ export const DocsSearchDialog = () => {
     }
   }
 
-  onVisible(() => {
-    disposed.value = false
+  const handleInputKeyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || isComposing.value) {
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      selectedIndex.value = Math.min(selectedIndex.value + 1, Math.max(results.value.length - 1, 0))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      navigateToSelected()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      close()
+    }
+  }
 
-    void import('virtual:eclipsa-content:search')
-      .then((mod) => {
-        if (disposed.value) {
-          return
-        }
-        searchModule.value = mod
-        hotkey.value = mod.searchOptions.hotkey
-        placeholder.value = mod.searchOptions.placeholder
-        if (query.value.trim() !== '') {
-          scheduleSearch(query.value)
-        }
-      })
-      .catch(() => {})
+  const handleInput = (event: Event) => {
+    if (!(event.currentTarget instanceof HTMLInputElement)) {
+      return
+    }
+    if ((event as InputEvent).isComposing || isComposing.value) {
+      return
+    }
+    scheduleSearch(event.currentTarget.value)
+  }
 
+  const handleCompositionStart = () => {
+    isComposing.value = true
+  }
+
+  const handleCompositionEnd = (event: CompositionEvent) => {
+    isComposing.value = false
+    if (!(event.currentTarget instanceof HTMLInputElement)) {
+      return
+    }
+    scheduleSearch(event.currentTarget.value)
+  }
+
+  onMount(() => {
+    ensureSearchModule()
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && open.value) {
         event.preventDefault()
@@ -202,45 +329,14 @@ export const DocsSearchDialog = () => {
       }
     }
 
-    const handleInputKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        selectedIndex.value = Math.min(
-          selectedIndex.value + 1,
-          Math.max(results.value.length - 1, 0),
-        )
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        navigateToSelected()
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        close()
-      }
-    }
-
-    const handleInput = (event: Event) => {
-      if (!(event.currentTarget instanceof HTMLInputElement)) {
-        return
-      }
-      scheduleSearch(event.currentTarget.value)
-    }
-
     document.addEventListener('keydown', handleKeyDown)
-    inputRef.value?.addEventListener('input', handleInput)
-    inputRef.value?.addEventListener('keydown', handleInputKeyDown)
 
     onCleanup(() => {
-      disposed.value = true
       if (searchTimeout.value) {
         clearTimeout(searchTimeout.value)
         searchTimeout.value = undefined
       }
       document.removeEventListener('keydown', handleKeyDown)
-      inputRef.value?.removeEventListener('input', handleInput)
-      inputRef.value?.removeEventListener('keydown', handleInputKeyDown)
     })
   })
 
@@ -261,50 +357,61 @@ export const DocsSearchDialog = () => {
         </kbd>
       </button>
 
-      <div
-        class={clsx(
-          'fixed inset-0 z-[90] flex items-start justify-center bg-zinc-950/28 px-4 pt-24 backdrop-blur-sm transition-opacity',
-          open.value ? 'opacity-100' : 'pointer-events-none opacity-0',
-        )}
+      <dialog
+        class="fixed inset-0 z-[90] m-0 h-full max-h-none w-full max-w-none overflow-visible border-none bg-transparent p-0 text-inherit"
         data-testid="docs-search-overlay"
-        onClick={handleOverlayClick}
+        ref={dialogRef}
+        onCancel={(event) => {
+          event.preventDefault()
+          close()
+        }}
       >
         <div
-          class="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-zinc-200 bg-white shadow-[0_40px_120px_rgba(15,23,42,0.18)]"
-          id="docs-search-dialog"
+          class="flex min-h-full w-full items-start justify-center px-4 pt-24"
+          onClick={handleOverlayClick}
         >
-          <div class="flex items-center gap-3 border-b border-zinc-100 px-5 py-4">
-            <div class="i-tabler-search text-lg text-zinc-400" />
-            <input
-              autoComplete="off"
-              bind:value={query}
-              class="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
-              data-testid="docs-search-input"
-              placeholder={placeholder.value}
-              ref={inputRef}
-              type="text"
-            />
-            <button
-              aria-label="Close search"
-              class="inline-flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-              type="button"
-              onClick={close}
-            >
-              <div class="i-tabler-x text-lg" />
-            </button>
-          </div>
+          <div
+            class="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-zinc-200 bg-white shadow-[0_40px_120px_rgba(15,23,42,0.18)]"
+            id="docs-search-dialog"
+          >
+            <div class="flex items-center gap-3 border-b border-zinc-100 px-5 py-4">
+              <div class="i-tabler-search text-lg text-zinc-400" />
+              <input
+                autoComplete="off"
+                autoFocus
+                class="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
+                data-testid="docs-search-input"
+                placeholder={placeholder.value}
+                ref={inputRef}
+                type="text"
+                value={query.value}
+                onCompositionEnd={handleCompositionEnd}
+                onCompositionStart={handleCompositionStart}
+                onInput={handleInput}
+                onKeyDown={handleInputKeyDown}
+              />
+              <button
+                aria-label="Close search"
+                class="inline-flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+                type="button"
+                onClick={close}
+              >
+                <div class="i-tabler-x text-lg" />
+              </button>
+            </div>
 
-          <div class="max-h-[60vh] overflow-y-auto px-3 py-3">
-            <SearchResultsBody
-              loading={loading.value}
-              onResultClick={handleResultClick}
-              query={query.value}
-              results={results.value}
-              selectedIndex={selectedIndex.value}
-            />
+            <div class="max-h-[60vh] overflow-y-auto px-3 py-3">
+              {SearchResultsBody({
+                loading: loading.value,
+                onResultClick: handleResultClick,
+                query: query.value,
+                results: results.value,
+                selectedIndex: selectedIndex.value,
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      </dialog>
     </div>
   )
 }

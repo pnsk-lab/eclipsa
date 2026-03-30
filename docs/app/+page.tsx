@@ -1,6 +1,5 @@
 import { Link, onCleanup, onMount, useSignal } from 'eclipsa'
 import { setupLandingScene } from './landing-scene.ts'
-import { Logo } from '../components/logo.tsx'
 
 export default () => {
   const canvasRef = useSignal<HTMLCanvasElement | undefined>()

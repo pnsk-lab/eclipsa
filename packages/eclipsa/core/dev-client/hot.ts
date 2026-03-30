@@ -1,6 +1,5 @@
 import type { Component } from '../component.ts'
 import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
-import type { JSX } from '../../jsx/jsx-runtime.ts'
 
 const HOT_COMPONENT_TARGET_KEY = Symbol.for('eclipsa.hot-component-target')
 

@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "playwright test",
-    "e2e:headed": "playwright test --headed",
-    "e2e:ui": "playwright test --ui",
+    "e2e": "bun run --cwd ../packages/eclipsa build:native:dev && playwright test",
+    "e2e:headed": "bun run --cwd ../packages/eclipsa build:native:dev && playwright test --headed",
+    "e2e:ui": "bun run --cwd ../packages/eclipsa build:native:dev && playwright test --ui",
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",

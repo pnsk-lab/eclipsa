@@ -14,7 +14,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:e2e": "turbo run e2e --filter=./e2e",
-    "fmt": "vp fmt"
+    "lint": "vp check",
+    "fmt": "vp check --fix"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

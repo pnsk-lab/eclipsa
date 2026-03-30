@@ -282,13 +282,6 @@ const serializeStyle = (style: Record<string, string>) =>
     .map(([name, value]) => `${toCssPropertyName(name)}: ${value}`)
     .join('; ')
 
-const applyResolvedStyle = (element: Element, style: Record<string, string>) => {
-  const typed = element as HTMLElement | SVGElement
-  for (const [name, value] of Object.entries(style)) {
-    typed.style.setProperty(toCssPropertyName(name), value)
-  }
-}
-
 const toCssEasing = (value: MotionAnimateOptions['ease']) => {
   if (typeof value === 'string') {
     return value

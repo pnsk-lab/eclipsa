@@ -19,7 +19,7 @@ Use this skill to finish repository work cleanly once code changes are ready. Fo
 - When Codex creates a commit, include this trailer in the commit message:
 
 ```text
-Co-authored-by: chatgpt-codex-connector[bot] <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+Co-authored-by: codex <codex@openai.com>
 ```
 
 - Add the trailer as part of the actual commit message, not as a separate note in the response.

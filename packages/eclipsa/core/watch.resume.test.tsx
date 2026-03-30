@@ -15,7 +15,7 @@ describe('useWatch resume payload', () => {
           __eclipsaWatch(
             'watch-symbol',
             () => {
-              explicit.value
+              void explicit.value
             },
             () => [explicit],
           ),

@@ -153,6 +153,16 @@ const useCreateTodo = action(validator(todoSchema), async (c) => {
 
 After validation, the transformed value is available as `c.var.input`.
 
+In validation, schema follows Standard Schema, so you can also use libraries like Zod, valibot, ArkType, and more with adapters.
+
+```ts
+import * as z from 'zod'
+validator(z.object({ title: z.string() }))
+
+import * as v from 'valibot'
+validator(v.object({ title: v.string() }))
+```
+
 ## Middleware
 
 Actions can use middleware the same way loaders do.

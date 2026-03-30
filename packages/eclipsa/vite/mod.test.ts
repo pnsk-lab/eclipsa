@@ -117,12 +117,7 @@ describe('vite plugin hotUpdate', () => {
           },
           moduleGraph: {
             getModulesByFile() {
-              return new Set([
-                {
-                  type: 'js',
-                  url: '/src/non-resumable.tsx',
-                },
-              ])
+              return new Set([tsxModule])
             },
           },
         },
@@ -172,12 +167,7 @@ describe('vite plugin hotUpdate', () => {
           },
           moduleGraph: {
             getModulesByFile() {
-              return new Set([
-                {
-                  type: 'js',
-                  url: '/src/non-resumable.tsx',
-                },
-              ])
+              return new Set([tsxModule])
             },
           },
         },

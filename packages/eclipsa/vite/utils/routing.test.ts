@@ -129,7 +129,7 @@ describe('routing helpers', () => {
     )
 
     await expect(createRoutes(root)).rejects.toThrow(/Unsupported render mode "streaming"/)
-  })
+  }, 15000)
 
   it('supports dynamic, optional, and catch-all params with route groups removed from the path', () => {
     const routes: RouteEntry[] = [

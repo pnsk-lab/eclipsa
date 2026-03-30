@@ -49,6 +49,8 @@ const createContainer = (overrides?: Partial<RuntimeContainer>) =>
     ...overrides,
   }) as RuntimeContainer
 
+const createCleanupSlot = () => ({ callbacks: [] })
+
 const resetRegisteredResumeContainers = () => {
   ;(globalThis as Record<PropertyKey, unknown>)[Symbol.for('eclipsa.resume-containers')] =
     new Set<RuntimeContainer>()
@@ -75,10 +77,8 @@ const withFakeResumeDocument = <T>(
   class FakeDocument {
     body: HTMLElement
     location = { pathname: options.pathname ?? '/' } as Location
-    #comments: FakeComment[]
 
     constructor() {
-      this.#comments = (options.comments ?? []).map((data) => new FakeComment(data))
       this.body = { ownerDocument: this } as unknown as HTMLElement
     }
 
@@ -145,6 +145,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -236,6 +237,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -254,6 +256,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: 'c0',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-header',
             signalIds: [],
             symbol: 'header-symbol',
@@ -281,6 +284,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -309,6 +313,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -368,6 +373,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: { children: 1 },
+            renderEffectCleanupSlot: createCleanupSlot(),
             reuseExistingDomOnActivate: true,
             reuseProjectionSlotDomOnActivate: true,
             scopeId: 'scope-root',

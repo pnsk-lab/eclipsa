@@ -1,4 +1,3 @@
-import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
   type AppContext,
@@ -53,7 +52,7 @@ export type LoaderHandler<E extends Env = Env, Output = unknown> = (
 ) => Output | Promise<Output>
 
 type LoaderUse<
-  Middlewares extends readonly LoaderMiddleware<any>[],
+  _Middlewares extends readonly LoaderMiddleware<any>[],
   Output,
 > = () => LoaderHandle<Output>
 

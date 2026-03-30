@@ -31,7 +31,8 @@ describe('serializeValue', () => {
   })
 
   it('rejects sparse arrays', () => {
-    const value = new Array(2)
+    const value: unknown[] = []
+    value.length = 2
     value[1] = 'x'
 
     expect(() => serializeValue(value)).toThrow('Sparse arrays cannot be serialized.')
@@ -101,7 +102,9 @@ describe('serializeValue', () => {
     }
     expect(() => serializeValue(deep)).toThrow('maximum depth')
 
-    expect(() => serializeValue(new Array(10_100).fill(0))).toThrow('maximum entry budget')
+    expect(() => serializeValue(Array.from({ length: 10_100 }, () => 0))).toThrow(
+      'maximum entry budget',
+    )
   })
 
   it('escapes script-breaking content', () => {

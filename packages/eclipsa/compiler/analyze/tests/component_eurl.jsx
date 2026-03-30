@@ -1,4 +1,3 @@
-import { useSignal } from 'eclipsa'
 export default () => {
   const a = 0
   const add = async () => {

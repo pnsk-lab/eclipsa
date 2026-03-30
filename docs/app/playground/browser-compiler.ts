@@ -25,8 +25,8 @@ interface BrowserCompilerBinding {
 
 type MonacoModule = typeof Monaco
 export const PLAYGROUND_MONACO_LANGUAGE_CONTRIBUTIONS = [
-  'monaco-editor/esm/vs/language/typescript/monaco.contribution',
-  'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution',
+  'monaco-editor/esm/vs/language/typescript/monaco.contribution.js',
+  'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js',
 ] as const
 const PLAYGROUND_ECLIPSA_DIST_GLOB_PREFIX = '../../../packages/eclipsa/dist/'
 const PLAYGROUND_ECLIPSA_DIST_TYPE_FILES = import.meta.glob(
@@ -82,6 +82,10 @@ export type MiddlewareHandler<E = any> = (...args: any[]) => any
 } as const
 type TypeScriptContributionModule =
   typeof import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
+
+const unwrapModuleDefault = <TModule extends object>(
+  module: TModule | { default: TModule },
+): TModule => ('default' in module ? module.default : module)
 
 let compilerPromise: Promise<BrowserCompilerBinding> | null = null
 let monacoPromise: Promise<MonacoModule> | null = null
@@ -211,12 +215,14 @@ export const loadPlaygroundMonaco = async () => {
 
   if (!typeScriptContributionPromise) {
     typeScriptContributionPromise =
-      import('monaco-editor/esm/vs/language/typescript/monaco.contribution')
+      import('monaco-editor/esm/vs/language/typescript/monaco.contribution.js').then(
+        (module) => unwrapModuleDefault(module) as TypeScriptContributionModule,
+      )
   }
 
   if (!typeScriptTokenizerContributionPromise) {
     typeScriptTokenizerContributionPromise =
-      import('monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution')
+      import('monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js')
   }
 
   const [monaco, typeScriptContribution] = await Promise.all([
@@ -231,7 +237,6 @@ export const loadPlaygroundMonaco = async () => {
     monaco.editor.defineTheme('eclipsa-playground', {
       base: 'vs-dark',
       inherit: true,
-      semanticHighlighting: true,
       colors: {
         'editor.background': '#0b1020',
         'editor.lineHighlightBackground': '#151c30',

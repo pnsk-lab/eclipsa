@@ -22,10 +22,10 @@ describe('playground editor configuration', () => {
 
   it('loads both the TypeScript language service and tokenizer contributions', () => {
     expect(PLAYGROUND_MONACO_LANGUAGE_CONTRIBUTIONS).toContain(
-      'monaco-editor/esm/vs/language/typescript/monaco.contribution',
+      'monaco-editor/esm/vs/language/typescript/monaco.contribution.js',
     )
     expect(PLAYGROUND_MONACO_LANGUAGE_CONTRIBUTIONS).toContain(
-      'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution',
+      'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js',
     )
   })
 

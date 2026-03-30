@@ -5,15 +5,94 @@ import {
   assignRuntimeRef,
   bindRuntimeEvent,
   captureClientInsertOwner,
+  createDetachedClientInsertOwner,
+  getRuntimeSignalId,
   getRuntimeContainer,
+  rememberManagedAttributesForNode,
+  rememberManagedAttributesForNodes,
+  rememberInsertMarkerRange,
   renderClientInsertable,
   renderClientInsertableForOwner,
+  restoreSignalRefs,
+  syncManagedAttributeSnapshot,
+  syncRuntimeRefMarker,
+  shouldReconnectDetachedInsertMarkers,
+  tryPatchElementShellInPlace,
   tryPatchNodeSequenceInPlace,
 } from '../runtime.ts'
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
+
+const INSERT_MARKER_PREFIX = 'ec:i:'
+
+const ensureInsertMarkerKey = (
+  marker: Node | undefined,
+  runtimeContainer: ReturnType<typeof getRuntimeContainer>,
+) => {
+  if (!(marker instanceof Comment) || !runtimeContainer) {
+    return null
+  }
+
+  if (marker.data.startsWith(INSERT_MARKER_PREFIX)) {
+    return marker.data
+  }
+
+  const key = `${INSERT_MARKER_PREFIX}${runtimeContainer.nextElementId++}`
+  marker.data = key
+  return key
+}
+
+const findLiveInsertMarker = (doc: Document | undefined, markerKey: string | null) => {
+  if (!doc?.body || !markerKey || typeof doc.createTreeWalker !== 'function') {
+    return null
+  }
+
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT)
+  let next = walker.nextNode()
+  while (next) {
+    if (next instanceof Comment && next.data === markerKey) {
+      return next
+    }
+    next = walker.nextNode()
+  }
+  return null
+}
+
+const isConnectedNode = (node: Node | null | undefined) =>
+  !!node &&
+  (!('isConnected' in node) ||
+    (
+      node as Node & {
+        isConnected?: boolean
+      }
+    ).isConnected !== false)
+
+const isUsableInsertParent = (
+  candidate: Node | null | undefined,
+  stableParents: Array<Node | null | undefined>,
+) => !!candidate && (isConnectedNode(candidate) || stableParents.includes(candidate))
+
+const hasUsableInsertParent = (
+  node: Node | null | undefined,
+  stableParents: Array<Node | null | undefined>,
+) => isUsableInsertParent(node?.parentNode, stableParents)
+
+const collectNodesBeforeMarker = (marker: Node | null | undefined, count: number) => {
+  if (!marker?.parentNode || count === 0) {
+    return [] as Node[]
+  }
+
+  const nodes: Node[] = []
+  let cursor = marker.previousSibling
+  while (cursor && nodes.length < count) {
+    nodes.unshift(cursor)
+    cursor = cursor.previousSibling
+  }
+
+  return nodes.length === count ? nodes : []
+}
 
 export const createTemplate = (html: string): (() => Node) => {
   let template: HTMLTemplateElement | null = null
@@ -23,7 +102,9 @@ export const createTemplate = (html: string): (() => Node) => {
       template = document.createElement('template')
       template.innerHTML = html
     }
-    return (template.cloneNode(true) as HTMLTemplateElement).content.firstChild as Node
+    const node = (template.cloneNode(true) as HTMLTemplateElement).content.firstChild as Node
+    rememberManagedAttributesForNode(node)
+    return node
   }
 }
 
@@ -34,17 +115,29 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   if (!runtimeContainer) {
     throw new Error('Client insertions require an active runtime container.')
   }
-  const owner = captureClientInsertOwner(runtimeContainer)
-  let initialized = false
-  const collectCurrentNodes = () => {
-    if (!lastFirstNode || lastNodeLength === 0) {
-      return [] as Node[]
+  const ownerSiteKey =
+    marker instanceof Comment && !marker.data.startsWith(INSERT_MARKER_PREFIX) ? marker.data : null
+  const owner =
+    captureClientInsertOwner(runtimeContainer, ownerSiteKey) ??
+    createDetachedClientInsertOwner(runtimeContainer)
+  const markerKey = ensureInsertMarkerKey(marker, runtimeContainer)
+  const collectCurrentNodes = (
+    liveMarker: Node | undefined,
+    stableParents: Array<Node | null | undefined>,
+  ) => {
+    if (
+      !lastFirstNode ||
+      lastNodeLength === 0 ||
+      !hasUsableInsertParent(lastFirstNode, stableParents)
+    ) {
+      const liveNodes = collectNodesBeforeMarker(liveMarker, lastNodeLength)
+      return liveNodes.every((node) => hasUsableInsertParent(node, stableParents)) ? liveNodes : []
     }
     const nodes = [lastFirstNode]
     let cursor = lastFirstNode
     while (nodes.length < lastNodeLength) {
       const next = cursor.nextSibling
-      if (!next) {
+      if (!next || !hasUsableInsertParent(next, stableParents)) {
         return [] as Node[]
       }
       cursor = next
@@ -54,11 +147,29 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   }
 
   effect(() => {
-    const newNodes =
-      initialized && owner
-        ? renderClientInsertableForOwner(value, runtimeContainer, owner)
-        : renderClientInsertable(value, runtimeContainer)
-    const currentNodes = collectCurrentNodes()
+    const shouldReconnect = shouldReconnectDetachedInsertMarkers(runtimeContainer)
+    const liveMarker = !(marker instanceof Comment)
+      ? marker
+      : isConnectedNode(marker.parentNode)
+        ? marker
+        : shouldReconnect
+          ? (findLiveInsertMarker(runtimeContainer.doc, markerKey) ?? marker)
+          : marker
+    const stableParents = liveMarker?.parentNode
+      ? [liveMarker.parentNode, parent === liveMarker.parentNode ? parent : null]
+      : [parent, marker?.parentNode]
+    const liveLastParent = isUsableInsertParent(lastFirstNode?.parentNode, stableParents)
+      ? lastFirstNode?.parentNode
+      : null
+    const liveMarkerParent = isUsableInsertParent(liveMarker?.parentNode, stableParents)
+      ? liveMarker?.parentNode
+      : null
+    const resolvedParent = (liveLastParent ?? liveMarkerParent ?? parent) as ParentNode | null
+    const targetParent = resolvedParent ?? (parent as ParentNode)
+    const newNodes = owner
+      ? renderClientInsertableForOwner(value, runtimeContainer, owner)
+      : renderClientInsertable(value, runtimeContainer)
+    const currentNodes = collectCurrentNodes(liveMarker, stableParents)
 
     if (
       currentNodes.length === lastNodeLength &&
@@ -67,28 +178,32 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
       (tryPatchNodeSequenceInPlace(currentNodes, newNodes) ||
         tryPatchSingleElementShellInPlace(currentNodes, newNodes))
     ) {
+      restoreSignalRefs(runtimeContainer, targetParent)
+      rememberInsertMarkerRange(liveMarker, currentNodes)
       lastFirstNode = currentNodes[0]
       lastNodeLength = currentNodes.length
       return
     }
 
-    if (lastFirstNode && newNodes.length !== 0) {
+    if (currentNodes.length !== 0 && lastFirstNode && newNodes.length !== 0) {
       for (let i = 1; i < lastNodeLength; i++) {
         lastFirstNode.nextSibling?.remove()
       }
-      parent.replaceChild(newNodes[0], lastFirstNode)
+      targetParent.replaceChild(newNodes[0], lastFirstNode)
       for (let i = 1; i < newNodes.length; i++) {
-        parent.insertBefore(newNodes[i], newNodes[i - 1].nextSibling)
+        targetParent.insertBefore(newNodes[i], newNodes[i - 1].nextSibling)
       }
     } else {
       for (const node of newNodes) {
-        parent.appendChild(node)
+        targetParent.insertBefore(node, liveMarker ?? null)
       }
     }
 
+    rememberManagedAttributesForNodes(newNodes)
+    rememberInsertMarkerRange(liveMarker, newNodes)
+
     lastFirstNode = newNodes[0]
     lastNodeLength = newNodes.length
-    initialized = true
   })
 }
 
@@ -96,6 +211,8 @@ const EVENT_ATTR_REGEX = /^on[A-Z].+$/
 const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
 const BIND_VALUE_PROP = 'bind:value'
 const BIND_CHECKED_PROP = 'bind:checked'
+const BIND_VALUE_ATTR = 'data-e-bind-value'
+const BIND_CHECKED_ATTR = 'data-e-bind-checked'
 const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
   isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
 
@@ -119,39 +236,6 @@ const readValueBinding = (elem: Element, currentValue: unknown) => {
   return (elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value
 }
 
-const syncElementAttributes = (current: Element, next: Element) => {
-  const nextNames = new Set(next.getAttributeNames())
-
-  for (const name of current.getAttributeNames()) {
-    if (!nextNames.has(name)) {
-      current.removeAttribute(name)
-    }
-  }
-
-  for (const name of nextNames) {
-    const nextValue = next.getAttribute(name)
-    if (nextValue === null) {
-      current.removeAttribute(name)
-      continue
-    }
-    if (current.getAttribute(name) !== nextValue) {
-      current.setAttribute(name, nextValue)
-    }
-  }
-}
-
-const hasComponentBoundaryMarkers = (node: Node): boolean => {
-  if (node.nodeType === Node.COMMENT_NODE) {
-    return /^ec:c:.+:(start|end)$/.test((node as Comment).data)
-  }
-  for (const child of node.childNodes) {
-    if (hasComponentBoundaryMarkers(child)) {
-      return true
-    }
-  }
-  return false
-}
-
 const tryPatchSingleElementShellInPlace = (currentNodes: Node[], nextNodes: Node[]) => {
   if (currentNodes.length !== 1 || nextNodes.length !== 1) {
     return false
@@ -166,26 +250,27 @@ const tryPatchSingleElementShellInPlace = (currentNodes: Node[], nextNodes: Node
   ) {
     return false
   }
-  if (hasComponentBoundaryMarkers(current) || hasComponentBoundaryMarkers(next)) {
-    return false
-  }
-
-  syncElementAttributes(current, next)
-  while (current.firstChild) {
-    current.firstChild.remove()
-  }
-  while (next.firstChild) {
-    current.appendChild(next.firstChild)
-  }
-  return true
+  return tryPatchElementShellInPlace(current, next)
 }
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
 
   if (name === BIND_VALUE_PROP) {
-    const syncSignalFromElement = () => {
+    const readBinding = () => {
       const binding = value()
+      const signalId = getRuntimeSignalId(binding)
+      if (signalId) {
+        elem.setAttribute(BIND_VALUE_ATTR, signalId)
+      } else {
+        elem.removeAttribute(BIND_VALUE_ATTR)
+      }
+      syncManagedAttributeSnapshot(elem, BIND_VALUE_ATTR)
+      return binding
+    }
+
+    const syncSignalFromElement = () => {
+      const binding = readBinding()
       if (!isBindableSignal(binding)) {
         return
       }
@@ -196,7 +281,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     elem.addEventListener('change', syncSignalFromElement)
 
     effect(() => {
-      const binding = value()
+      const binding = readBinding()
       if (!isBindableSignal(binding)) {
         return
       }
@@ -212,8 +297,20 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
       return
     }
 
-    const syncSignalFromElement = () => {
+    const readBinding = () => {
       const binding = value()
+      const signalId = getRuntimeSignalId(binding)
+      if (signalId) {
+        elem.setAttribute(BIND_CHECKED_ATTR, signalId)
+      } else {
+        elem.removeAttribute(BIND_CHECKED_ATTR)
+      }
+      syncManagedAttributeSnapshot(elem, BIND_CHECKED_ATTR)
+      return binding
+    }
+
+    const syncSignalFromElement = () => {
+      const binding = readBinding()
       if (!isBindableSignal(binding)) {
         return
       }
@@ -224,7 +321,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     elem.addEventListener('change', syncSignalFromElement)
 
     effect(() => {
-      const binding = value()
+      const binding = readBinding()
       if (!isBindableSignal(binding)) {
         return
       }
@@ -256,6 +353,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
               .join('; ')
           : String(resolved ?? '')
       elem.setAttribute('style', styleValue)
+      syncManagedAttributeSnapshot(elem, 'style')
     })
     return
   }
@@ -264,15 +362,19 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     effect(() => {
       if (isSVG) {
         elem.setAttribute('class', String(value()))
+        syncManagedAttributeSnapshot(elem, 'class')
         return
       }
       ;(elem as Element & { className: string }).className = String(value())
+      syncManagedAttributeSnapshot(elem, 'class')
     })
     return
   }
 
   if (name === 'ref') {
-    assignRuntimeRef(value(), elem, getRuntimeContainer())
+    const resolved = value()
+    syncRuntimeRefMarker(elem, resolved)
+    assignRuntimeRef(resolved, elem, getRuntimeContainer())
     return
   }
 
@@ -288,10 +390,12 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   effect(() => {
     if (shouldUseAttributeAssignment(elem, name, isSVG)) {
       elem.setAttribute(name, String(value()))
+      syncManagedAttributeSnapshot(elem, name)
       return
     }
     // @ts-expect-error DOM property assignment uses dynamic keys.
     elem[name] = String(value())
+    syncManagedAttributeSnapshot(elem, name)
   })
 }
 

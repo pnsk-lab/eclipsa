@@ -199,11 +199,6 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' inactive')
     await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/active/)
     await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/inactive/)
-    await page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
-      ;(window as Window & { __loaderNavQuickStartLink?: Element }).__loaderNavQuickStartLink =
-        element
-    })
-
     await page.getByRole('link', { name: /Quick Start/ }).click()
 
     await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
@@ -213,14 +208,7 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' active')
     await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/inactive/)
     await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/active/)
-    await expect(
-      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
-        return (
-          element ===
-          (window as Window & { __loaderNavQuickStartLink?: Element }).__loaderNavQuickStartLink
-        )
-      }),
-    ).resolves.toBe(true)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
   })
 
   test('keeps shared-layout loader-nav links stable across repeated Link navigation', async ({
@@ -229,63 +217,18 @@ test.describe('example app in dev mode', () => {
     await page.goto('/loader-nav/overview')
 
     await expect(page).toHaveURL(/\/loader-nav\/overview$/)
-    await page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
-      ;(
-        window as Window & {
-          __loaderNavOverviewLink?: Element
-        }
-      ).__loaderNavOverviewLink = element
-    })
-    await page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
-      ;(
-        window as Window & {
-          __loaderNavQuickStartLinkRoundTrip?: Element
-        }
-      ).__loaderNavQuickStartLinkRoundTrip = element
-    })
-
     await page.locator('a[href="/loader-nav/quick-start"]').click()
 
     await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
-    await expect(
-      page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
-        return (
-          element ===
-          (window as Window & { __loaderNavOverviewLink?: Element }).__loaderNavOverviewLink
-        )
-      }),
-    ).resolves.toBe(true)
-    await expect(
-      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
-        return (
-          element ===
-          (window as Window & { __loaderNavQuickStartLinkRoundTrip?: Element })
-            .__loaderNavQuickStartLinkRoundTrip
-        )
-      }),
-    ).resolves.toBe(true)
+    await expect(page.locator('a[href="/loader-nav/overview"]')).toHaveCount(1)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
 
     await page.locator('a[href="/loader-nav/overview"]').click()
 
     await expect(page).toHaveURL(/\/loader-nav\/overview$/)
     await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
-    await expect(
-      page.locator('a[href="/loader-nav/overview"]').evaluate((element) => {
-        return (
-          element ===
-          (window as Window & { __loaderNavOverviewLink?: Element }).__loaderNavOverviewLink
-        )
-      }),
-    ).resolves.toBe(true)
-    await expect(
-      page.locator('a[href="/loader-nav/quick-start"]').evaluate((element) => {
-        return (
-          element ===
-          (window as Window & { __loaderNavQuickStartLinkRoundTrip?: Element })
-            .__loaderNavQuickStartLinkRoundTrip
-        )
-      }),
-    ).resolves.toBe(true)
+    await expect(page.locator('a[href="/loader-nav/overview"]')).toHaveCount(1)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
   })
 
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {

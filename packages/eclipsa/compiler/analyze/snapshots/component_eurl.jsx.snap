@@ -1,26 +1,24 @@
 // ================= ENTRY (component_eurl.jsx) ==
-import { useSignal } from 'eclipsa'
-export default (() => {
+export default () => {
   const a = 0
   const add = async () => {
     console.log(a)
   }
 
   return <button onClick={add}>Add</button>
-});
+}
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
-import { useSignal } from 'eclipsa'
-export default (__eclipsaComponent(() => {
+export default __eclipsaComponent(() => {
   const a = 0
   const add = __eclipsaLazy("wrvk12", async () => {
     console.log(a)
   }, ()=>[a])
 
   return <button onClick={add}>Add</button>
-}, "jqsdkp", ()=>[]));
+}, "jqsdkp", ()=>[])
 
 
 // ================= wrvk12 (lazy) ==

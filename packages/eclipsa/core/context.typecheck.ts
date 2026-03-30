@@ -29,6 +29,8 @@ const readDefaultNumber = () => {
   return value
 }
 
+void readDefaultNumber()
+
 declare const NumberProvider: typeof NumberContext.Provider
 
 NumberProvider({

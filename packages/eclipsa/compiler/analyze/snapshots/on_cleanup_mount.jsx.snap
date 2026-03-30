@@ -1,7 +1,7 @@
 // ================= ENTRY (on_cleanup_mount.jsx) ==
 import { onCleanup, onMount } from 'eclipsa'
 
-export default (() => {
+export default () => {
   const value = 'mounted'
 
   onMount(() => {
@@ -12,14 +12,14 @@ export default (() => {
   })
 
   return <button>{value}</button>
-});
+}
 
 
 // ================= analyzed ==
 import { __eclipsaComponent } from "eclipsa/internal";
 import { onCleanup, onMount } from 'eclipsa'
 
-export default (__eclipsaComponent(() => {
+export default __eclipsaComponent(() => {
   const value = 'mounted'
 
   onMount(() => {
@@ -30,7 +30,7 @@ export default (__eclipsaComponent(() => {
   })
 
   return <button>{value}</button>
-}, "1tn7zho", ()=>[]));
+}, "1tn7zho", ()=>[])
 
 
 // ================= 1tn7zho (component) ==

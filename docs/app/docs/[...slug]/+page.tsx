@@ -1,6 +1,5 @@
 import { Content } from '@eclipsa/content'
-import { Link, loader, type GetStaticPaths, type MetadataContext } from 'eclipsa'
-import { Logo } from '../../../components/logo.tsx'
+import { loader, type GetStaticPaths, type MetadataContext } from 'eclipsa'
 import { getDocPage, getDocsStaticPaths } from '../content.ts'
 
 export const metadata = ({ url }: MetadataContext) => ({

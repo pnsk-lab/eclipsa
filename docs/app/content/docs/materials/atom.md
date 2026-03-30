@@ -75,10 +75,10 @@ If you call `atom()` during render, you create a new shared container every time
 
 ## Derived values
 
-Atoms do not have a built-in derived API. Use them together with `useComputed$()` or `useWatch()` when needed.
+Atoms do not have a built-in derived API. Use them together with `useComputed()` or `useWatch()` when needed.
 
 ```tsx
-import { useComputed$ } from 'eclipsa'
+import { useComputed } from 'eclipsa'
 import { atom, useAtom } from 'eclipsa/atom'
 
 const itemsAtom = atom([
@@ -88,7 +88,7 @@ const itemsAtom = atom([
 
 function Summary() {
   const items = useAtom(itemsAtom)
-  const completed = useComputed$(() => items.value.filter((item) => item.done).length)
+  const completed = useComputed(() => items.value.filter((item) => item.done).length, [items])
 
   return <p>{completed.value} completed</p>
 }

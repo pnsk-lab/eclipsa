@@ -83,35 +83,41 @@ useWatch(() => {
 
 ## Derived state
 
-Use `useComputed$()` for values derived from other signals.
+Use `useComputed()` for values derived from other signals.
 
 ```tsx
-import { useComputed$, useSignal } from 'eclipsa'
+import { useComputed, useSignal } from 'eclipsa'
 
 export default function Price() {
   const quantity = useSignal(2)
   const price = useSignal(1200)
-  const total = useComputed$(() => quantity.value * price.value)
+  const total = useComputed(() => quantity.value * price.value)
 
   return <p>Total: {total.value}</p>
 }
 ```
 
-You also read `useComputed$()` values through `.value`.
+If you want to make dependencies explicit, use the second argument.
+
+```tsx
+const total = useComputed(() => quantity.value * price.value, [quantity, price])
+```
+
+You also read `useComputed()` values through `.value`.
 
 ## Async computed values
 
 You can also model asynchronous derived values.
 
 ```tsx
-import { Suspense, useComputed$, useSignal } from 'eclipsa'
+import { Suspense, useComputed, useSignal } from 'eclipsa'
 
 function SearchResult() {
   const query = useSignal('eclipsa')
-  const result = useComputed$(async () => {
+  const result = useComputed(async () => {
     const response = await fetch(`/api/search?q=${query.value}`)
     return response.json()
-  })
+  }, [query])
 
   return <pre>{JSON.stringify(result.value, null, 2)}</pre>
 }
@@ -137,4 +143,4 @@ If you need to share state across distant components, use `atom()` from `eclipsa
 
 - Call `useSignal()` at the top level of the component
 - Read and write values through `.value`
-- Keep derived values in `useComputed$()` and side effects in `useWatch()` for clearer code
+- Keep derived values in `useComputed()` and side effects in `useWatch()` for clearer code

@@ -9,7 +9,6 @@ import {
   type SerializedValue,
   type SerializeValueOptions,
 } from './serialize.ts'
-import type { RouteParams } from './router-shared.ts'
 
 export type { DeserializeValueOptions, SerializeValueOptions, SerializedReference, SerializedValue }
 

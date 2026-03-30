@@ -50,6 +50,16 @@ html[data-docs-theme='dark'] {
   color-scheme: dark;
 }
 
+dialog[data-testid='docs-search-overlay'] {
+  max-width: none;
+  max-height: none;
+}
+
+dialog[data-testid='docs-search-overlay']::backdrop {
+  background: rgba(24, 24, 27, 0.28);
+  backdrop-filter: blur(8px);
+}
+
 .markdown-content {
   @apply px-0 py-1 text-[15px]/7 font-normal sm:px-1 sm:text-base/7;
   color: var(--docs-text-muted);

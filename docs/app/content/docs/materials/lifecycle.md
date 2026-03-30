@@ -125,6 +125,6 @@ Common cases:
 
 ## Rule of thumb
 
-- Keep UI values in `useSignal()` or `useComputed$()`
+- Keep UI values in `useSignal()` or `useComputed()`
 - Put console, analytics, DOM APIs, and timers in hooks
 - Keep setup and cleanup close together

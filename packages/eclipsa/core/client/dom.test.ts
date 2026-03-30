@@ -6,9 +6,36 @@ import { Suspense } from '../suspense.ts'
 
 const createContainer = () =>
   ({
+    actionStates: new Map(),
+    actions: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
     atoms: new WeakMap(),
+    components: new Map(),
+    dirty: new Set(),
+    dirtyFlushQueued: false,
+    eventDispatchPromise: null,
+    id: 'rt-client-dom-test',
+    imports: new Map(),
+    interactivePrefetchCheckQueued: false,
+    loaderStates: new Map(),
+    loaders: new Map(),
     nextAtomId: 0,
+    nextComponentId: 0,
+    nextElementId: 0,
+    nextScopeId: 0,
+    nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    resumeReadyPromise: null,
+    rootChildCursor: 0,
+    router: null,
+    scopes: new Map(),
     signals: new Map(),
+    symbols: new Map(),
+    visibilityCheckQueued: false,
+    visibilityListenersCleanup: null,
+    visibles: new Map(),
+    watches: new Map(),
   }) as RuntimeContainer
 
 describe('core/client dom attr', () => {

@@ -112,7 +112,7 @@ describe('useStyleScoped', () => {
   it('scopes tagged template styles during SSR', () => {
     const App = __eclipsaComponent(
       () => {
-        useStyleScoped`h1 { color: red; }`
+        void useStyleScoped`h1 { color: red; }`
         return (
           <div>
             <h1>hello</h1>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { __eclipsaComponent } from './internal.ts'
-import { renderSSR, renderSSRAsync, renderSSRStream } from './ssr.ts'
+import { renderSSRAsync, renderSSRStream } from './ssr.ts'
 import { signal, useSignal } from './signal.ts'
 import { Suspense, isSuspenseType } from './suspense.ts'
 

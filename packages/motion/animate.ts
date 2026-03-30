@@ -1,4 +1,4 @@
-import { cubicBezier, easeIn, easeInOut, easeOut, type Easing } from 'motion-utils'
+import { easeIn, easeInOut, easeOut, type Easing } from 'motion-utils'
 import {
   MotionValue,
   isMotionValue,

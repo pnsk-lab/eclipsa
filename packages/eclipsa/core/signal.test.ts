@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { __eclipsaComponent } from './internal.ts'
-import { onCleanup, useSignal, useWatch } from './signal.ts'
+import { onCleanup, useComputed, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
 
 class FakeNode {}
@@ -54,11 +54,16 @@ const createContainer = () =>
   ({
     actions: new Map(),
     actionStates: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
     atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
+    dirtyFlushQueued: false,
     doc: new FakeDocument() as unknown as Document,
+    eventDispatchPromise: null,
     imports: new Map(),
+    interactivePrefetchCheckQueued: false,
     loaderStates: new Map(),
     loaders: new Map(),
     id: 'rt-test',
@@ -67,6 +72,8 @@ const createContainer = () =>
     nextElementId: 0,
     nextScopeId: 0,
     nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    resumeReadyPromise: null,
     rootChildCursor: 0,
     rootElement: undefined,
     router: null,
@@ -346,6 +353,89 @@ describe('useWatch', () => {
       tracked.value = 1
 
       expect(values).toEqual(['a', 'b'])
+    })
+  })
+})
+
+describe('useComputed', () => {
+  it('auto-tracks callback reads when dependencies are omitted', () => {
+    withFakeNodeGlobal(() => {
+      let tracked!: { value: number }
+      let untracked!: { value: string }
+      let computed!: { value: string }
+      const values: string[] = []
+
+      renderComponent(() => {
+        tracked = useSignal(0)
+        untracked = useSignal('a')
+        computed = useComputed(() => {
+          const snapshot = `${tracked.value}:${untracked.value}`
+          values.push(snapshot)
+          return snapshot
+        })
+
+        return 'ready'
+      })
+
+      untracked.value = 'b'
+      tracked.value = 1
+
+      expect(values).toEqual(['0:a', '0:b', '1:b'])
+      expect(computed.value).toBe('1:b')
+    })
+  })
+
+  it('re-runs only for explicitly listed signal dependencies', () => {
+    withFakeNodeGlobal(() => {
+      let tracked!: { value: number }
+      let untracked!: { value: string }
+      let computed!: { value: string }
+      const values: string[] = []
+
+      renderComponent(() => {
+        tracked = useSignal(0)
+        untracked = useSignal('a')
+        computed = useComputed(() => {
+          const snapshot = `${tracked.value}:${untracked.value}`
+          values.push(snapshot)
+          return snapshot
+        }, [tracked])
+
+        return 'ready'
+      })
+
+      untracked.value = 'b'
+      tracked.value = 1
+
+      expect(values).toEqual(['0:a', '1:b'])
+      expect(computed.value).toBe('1:b')
+    })
+  })
+
+  it('accepts getter dependencies without auto-tracking callback reads', () => {
+    withFakeNodeGlobal(() => {
+      let tracked!: { value: number }
+      let untracked!: { value: string }
+      let computed!: { value: string }
+      const values: string[] = []
+
+      renderComponent(() => {
+        tracked = useSignal(0)
+        untracked = useSignal('a')
+        computed = useComputed(() => {
+          const snapshot = `${tracked.value}:${untracked.value}`
+          values.push(snapshot)
+          return snapshot
+        }, [() => tracked.value])
+
+        return 'ready'
+      })
+
+      untracked.value = 'b'
+      tracked.value = 1
+
+      expect(values).toEqual(['0:a', '1:b'])
+      expect(computed.value).toBe('1:b')
     })
   })
 })

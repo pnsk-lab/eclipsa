@@ -7,7 +7,6 @@ import {
   collectPendingSuspenseBoundaryIds,
   getResumePayloadScriptContent,
   getStreamingResumeBootstrapScriptContent as getStreamingResumeBootstrapScriptContentFromRuntime,
-  renderResolvedSuspenseBoundaryToString,
   toResumePayload,
   toResumePayloadSubset,
   type ResumePayload,

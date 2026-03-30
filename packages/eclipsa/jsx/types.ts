@@ -1,9 +1,21 @@
-type SupportedDelegatedEventName = 'change' | 'click' | 'input' | 'submit'
+type SupportedDelegatedEventName =
+  | 'cancel'
+  | 'change'
+  | 'click'
+  | 'compositionend'
+  | 'compositionstart'
+  | 'input'
+  | 'keydown'
+  | 'submit'
 
 type DelegatedEventMap = {
+  cancel: Event
   change: Event
   click: MouseEvent
+  compositionend: CompositionEvent
+  compositionstart: CompositionEvent
   input: InputEvent
+  keydown: KeyboardEvent
   submit: SubmitEvent
 }
 
@@ -45,8 +57,18 @@ export type EventHandler<
   TEvent extends Event = Event,
 > = (event: DelegatedEvent<TCurrentTarget, TEvent>) => unknown
 
+type DelegatedEventPropName<TName extends SupportedDelegatedEventName> = TName extends 'cancel'
+  ? 'onCancel'
+  : TName extends 'compositionend'
+    ? 'onCompositionEnd'
+    : TName extends 'compositionstart'
+      ? 'onCompositionStart'
+      : TName extends 'keydown'
+        ? 'onKeyDown'
+        : `on${Capitalize<TName>}`
+
 type DelegatedEventProps<TElement extends globalThis.Element> = {
-  [TName in SupportedDelegatedEventName as `on${Capitalize<TName>}`]?: EventHandler<
+  [TName in SupportedDelegatedEventName as DelegatedEventPropName<TName>]?: EventHandler<
     TElement,
     DelegatedEventMap[TName]
   >
@@ -58,6 +80,7 @@ interface BaseIntrinsicElementProps<TElement extends globalThis.Element>
   class?: string | undefined
   dangerouslySetInnerHTML?: string | null | undefined
   id?: string | undefined
+  key?: string | number | symbol | null | undefined
   ref?: RefProp<TElement> | RefProp<globalThis.Element> | undefined
   role?: string | undefined
   slot?: string | undefined

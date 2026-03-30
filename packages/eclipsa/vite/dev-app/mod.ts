@@ -21,7 +21,6 @@ import {
   runHandleError,
   type AppContext,
   type AppHooksModule,
-  type PublicError,
   type ServerHooksModule,
   withServerRequestContext,
 } from '../../core/hooks.ts'
@@ -927,7 +926,7 @@ const createDevApp = async (init: DevAppInit) => {
 
   app.post('/__eclipsa/action/:id', async (c) =>
     resolveRequest(c, async (requestContext) => {
-      const [{ executeAction, hasAction }] = await Promise.all([init.runner.import('eclipsa')])
+      const { executeAction, hasAction } = await init.runner.import('eclipsa')
       const id = requestContext.req.param('id')
       if (!id) {
         return requestContext.text('Not Found', 404)
@@ -945,7 +944,7 @@ const createDevApp = async (init: DevAppInit) => {
 
   app.get('/__eclipsa/loader/:id', async (c) =>
     resolveRequest(c, async (requestContext) => {
-      const [{ executeLoader, hasLoader }] = await Promise.all([init.runner.import('eclipsa')])
+      const { executeLoader, hasLoader } = await init.runner.import('eclipsa')
       const id = requestContext.req.param('id')
       if (!id) {
         return requestContext.text('Not Found', 404)
@@ -1043,17 +1042,15 @@ const createDevApp = async (init: DevAppInit) => {
 
       if (requestContext.req.method === 'POST' && match.route.page) {
         return composeRouteMiddlewares(match.route, requestContext, match.params, async () => {
-          const [
-            {
-              ACTION_CONTENT_TYPE,
-              deserializePublicValue,
-              executeAction,
-              getNormalizedActionInput,
-              getActionFormSubmissionId,
-              hasAction,
-              primeActionState,
-            },
-          ] = await Promise.all([init.runner.import('eclipsa')])
+          const {
+            ACTION_CONTENT_TYPE,
+            deserializePublicValue,
+            executeAction,
+            getNormalizedActionInput,
+            getActionFormSubmissionId,
+            hasAction,
+            primeActionState,
+          } = await init.runner.import('eclipsa')
           const actionId = await getActionFormSubmissionId(requestContext)
           if (!actionId) {
             return match.route.server

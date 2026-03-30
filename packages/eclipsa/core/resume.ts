@@ -90,22 +90,31 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
   const container = createResumeContainer(root, payload, {
     routeManifest: getRouteManifest(doc),
   })
+  let resolveResumeReady!: () => void
+  container.resumeReadyPromise = new Promise<void>((resolve) => {
+    resolveResumeReady = resolve
+  })
   installResumeListeners(container)
 
-  const appHooksManifest = getAppHooksManifest(doc)
-  if (appHooksManifest.client) {
-    const module = (await import(/* @vite-ignore */ appHooksManifest.client)) as AppHooksModule
-    registerClientHooks({
-      reroute: module.reroute,
-      transport: module.transport,
-    })
-  } else {
-    registerClientHooks({})
-  }
+  try {
+    const appHooksManifest = getAppHooksManifest(doc)
+    if (appHooksManifest.client) {
+      const module = (await import(/* @vite-ignore */ appHooksManifest.client)) as AppHooksModule
+      registerClientHooks({
+        reroute: module.reroute,
+        transport: module.transport,
+      })
+    } else {
+      registerClientHooks({})
+    }
 
-  await primeRouteModules(container)
-  restoreRegisteredRpcHandles(container)
-  await restoreResumedLocalSignalEffects(container)
-  registerResumeContainer(container)
-  root.setAttribute('data-e-resume', 'resumed')
+    await primeRouteModules(container)
+    restoreRegisteredRpcHandles(container)
+    await restoreResumedLocalSignalEffects(container)
+    registerResumeContainer(container)
+    root.setAttribute('data-e-resume', 'resumed')
+  } finally {
+    resolveResumeReady()
+    container.resumeReadyPromise = null
+  }
 }

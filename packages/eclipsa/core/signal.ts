@@ -20,7 +20,7 @@ export interface Signal<T> {
 interface SignalFactory {
   <T>(value: T): Signal<T>
   <T>(value?: T | undefined): Signal<T | undefined>
-  computed<T>(value: () => T | Promise<T>): Signal<T>
+  computed<T>(value: () => T | Promise<T>, dependencies?: WatchDependency[]): Signal<T>
 }
 
 interface ComputedSnapshot<T> {
@@ -48,7 +48,7 @@ const createComputedSnapshot = <T>(
 
 const createComputedSignalFactory =
   (createBaseSignal: <T>(value: T) => Signal<T>): SignalFactory['computed'] =>
-  <T>(fn: () => T | Promise<T>) => {
+  <T>(fn: () => T | Promise<T>, dependencies?: WatchDependency[]) => {
     const state = createBaseSignal<ComputedSnapshot<T>>(
       createComputedSnapshot({
         status: 'pending',
@@ -63,89 +63,98 @@ const createComputedSignalFactory =
     let useSeededSnapshot = !!seededSnapshot && seededSnapshot.status !== 'pending'
     let version = 0
 
-    effect(() => {
-      if (useSeededSnapshot && seededSnapshot) {
-        useSeededSnapshot = false
-        state.value = seededSnapshot
-        if (signalId !== null) {
-          writeAsyncSignalSnapshot(signalId, seededSnapshot, runtimeContainer)
-        }
-        return
-      }
-
-      const currentVersion = ++version
-      try {
-        const nextValue = fn()
-        if (isPromiseLike<T>(nextValue)) {
-          const pending = createComputedSnapshot<T>({
-            promise: nextValue,
-            status: 'pending',
-          })
-          state.value = pending
+    createEffect(
+      () => {
+        if (useSeededSnapshot && seededSnapshot) {
+          useSeededSnapshot = false
+          state.value = seededSnapshot
           if (signalId !== null) {
-            writeAsyncSignalSnapshot(signalId, pending, runtimeContainer)
-          }
-          nextValue.then(
-            (resolved) => {
-              if (currentVersion !== version) {
-                return
-              }
-              const completed = createComputedSnapshot<T>({
-                status: 'resolved',
-                value: resolved,
-              })
-              state.value = completed
-              if (signalId !== null) {
-                writeAsyncSignalSnapshot(signalId, completed, runtimeContainer)
-              }
-            },
-            (error) => {
-              if (currentVersion !== version) {
-                return
-              }
-              const failed = createComputedSnapshot<T>({
-                error,
-                status: 'rejected',
-              })
-              state.value = failed
-              if (signalId !== null) {
-                writeAsyncSignalSnapshot(signalId, failed, runtimeContainer)
-              }
-            },
-          )
-          return
-        }
-
-        const resolved = createComputedSnapshot<T>({
-          status: 'resolved',
-          value: nextValue,
-        })
-        state.value = resolved
-        if (signalId !== null) {
-          writeAsyncSignalSnapshot(signalId, resolved, runtimeContainer)
-        }
-      } catch (error) {
-        if (isPendingSignalError(error)) {
-          const pending = createComputedSnapshot<T>({
-            promise: error.promise as Promise<T>,
-            status: 'pending',
-          })
-          state.value = pending
-          if (signalId !== null) {
-            writeAsyncSignalSnapshot(signalId, pending, runtimeContainer)
+            writeAsyncSignalSnapshot(signalId, seededSnapshot, runtimeContainer)
           }
           return
         }
-        const failed = createComputedSnapshot<T>({
-          error,
-          status: 'rejected',
-        })
-        state.value = failed
-        if (signalId !== null) {
-          writeAsyncSignalSnapshot(signalId, failed, runtimeContainer)
+
+        const currentVersion = ++version
+        try {
+          const nextValue = fn()
+          if (isPromiseLike<T>(nextValue)) {
+            const pending = createComputedSnapshot<T>({
+              promise: nextValue,
+              status: 'pending',
+            })
+            state.value = pending
+            if (signalId !== null) {
+              writeAsyncSignalSnapshot(signalId, pending, runtimeContainer)
+            }
+            nextValue.then(
+              (resolved) => {
+                if (currentVersion !== version) {
+                  return
+                }
+                const completed = createComputedSnapshot<T>({
+                  status: 'resolved',
+                  value: resolved,
+                })
+                state.value = completed
+                if (signalId !== null) {
+                  writeAsyncSignalSnapshot(signalId, completed, runtimeContainer)
+                }
+              },
+              (error) => {
+                if (currentVersion !== version) {
+                  return
+                }
+                const failed = createComputedSnapshot<T>({
+                  error,
+                  status: 'rejected',
+                })
+                state.value = failed
+                if (signalId !== null) {
+                  writeAsyncSignalSnapshot(signalId, failed, runtimeContainer)
+                }
+              },
+            )
+            return
+          }
+
+          const resolved = createComputedSnapshot<T>({
+            status: 'resolved',
+            value: nextValue,
+          })
+          state.value = resolved
+          if (signalId !== null) {
+            writeAsyncSignalSnapshot(signalId, resolved, runtimeContainer)
+          }
+        } catch (error) {
+          if (isPendingSignalError(error)) {
+            const pending = createComputedSnapshot<T>({
+              promise: error.promise as Promise<T>,
+              status: 'pending',
+            })
+            state.value = pending
+            if (signalId !== null) {
+              writeAsyncSignalSnapshot(signalId, pending, runtimeContainer)
+            }
+            return
+          }
+          const failed = createComputedSnapshot<T>({
+            error,
+            status: 'rejected',
+          })
+          state.value = failed
+          if (signalId !== null) {
+            writeAsyncSignalSnapshot(signalId, failed, runtimeContainer)
+          }
         }
-      }
-    })
+      },
+      dependencies
+        ? {
+            dependencies,
+            errorLabel: 'useComputed',
+            untracked: true,
+          }
+        : undefined,
+    )
 
     const handle = {} as Signal<T>
     Object.defineProperty(handle, 'value', {
@@ -182,4 +191,6 @@ export const onVisible = (fn: () => void) => createOnVisible(fn)
 export const useWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   createWatch(fn, dependencies)
 
-export const useComputed$ = <T>(fn: () => T | Promise<T>) => useSignal.computed(fn)
+export const useComputed = <T>(fn: () => T | Promise<T>, dependencies?: WatchDependency[]) =>
+  useSignal.computed(fn, dependencies)
+export const useComputed$ = useComputed

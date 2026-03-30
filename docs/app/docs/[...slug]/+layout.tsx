@@ -13,6 +13,7 @@ type DocSection = {
   icon: string
   links: DocLink[]
   title: string
+  gradientClass: string
 }
 
 type TocHeading = {
@@ -29,6 +30,7 @@ const DOC_SECTIONS: DocSection[] = [
       { label: 'Overview', href: '/docs/getting-started/overview' },
       { label: 'Quick Start', href: '/docs/getting-started/quick-start' },
     ],
+    gradientClass: 'bg-linear-to-br from-emerald-700 to-teal-400',
   },
   {
     title: 'Materials',
@@ -41,6 +43,7 @@ const DOC_SECTIONS: DocSection[] = [
       { label: 'Loader', href: '/docs/materials/loader' },
       { label: 'Action', href: '/docs/materials/action' },
     ],
+    gradientClass: 'bg-linear-to-br from-blue-700 to-cyan-400',
   },
   {
     title: 'Integrations',
@@ -49,6 +52,7 @@ const DOC_SECTIONS: DocSection[] = [
       { label: 'Motion', href: '/docs/integrations/motion' },
       { label: 'Ox Content', href: '/docs/integrations/content' },
     ],
+    gradientClass: 'bg-linear-to-br from-purple-700 to-pink-400',
   },
 ]
 
@@ -65,6 +69,7 @@ const Dir = (props: {
   links: { href: string; label: string }[]
   title: string
   icon: string
+  gradientClass: string
 }) => {
   const { activeHref, icon, links, title } = props
   const open = useSignal(true)
@@ -79,7 +84,7 @@ const Dir = (props: {
           open.value = !open.value
         }}
       >
-        <div class="bg-linear-to-br from-emerald-700 to-teal-400 rounded-lg p-1">
+        <div class={`${props.gradientClass} rounded-lg p-1`}>
           <div class={`${icon} text-white`} />
         </div>
         <div class="text-[color:var(--docs-text)] text-base font-medium">{title}</div>
@@ -292,6 +297,7 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
                 icon={section.icon}
                 links={[...section.links]}
                 title={section.title}
+                gradientClass={section.gradientClass}
               />
             ))}
           </div>
@@ -306,6 +312,7 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
             icon={section.icon}
             links={[...section.links]}
             title={section.title}
+            gradientClass={section.gradientClass}
           />
         ))}
       </div>
