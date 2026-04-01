@@ -6138,7 +6138,12 @@ const navigateContainer = async (
     return
   }
 
-  const pendingPrefetch = router.routePrefetches.get(routePrefetchKey(url))
+  const prefetchKey = routePrefetchKey(url)
+  let pendingPrefetch = router.routePrefetches.get(prefetchKey)
+  if (!pendingPrefetch && (matched?.entry.page || specialPreflightTarget?.entry.notFound)) {
+    await prefetchRoute(container, url.href)
+    pendingPrefetch = router.routePrefetches.get(prefetchKey)
+  }
   const prefetched = pendingPrefetch ? await pendingPrefetch : null
   if (prefetched && !prefetched.ok) {
     if ('location' in prefetched) {
@@ -7561,11 +7566,21 @@ const bindRouterLinkPrefetch = (container: RuntimeContainer, link: HTMLAnchorEle
     void prefetchRoute(container, href)
   }
 
+  const runPointerIntentPrefetch = (event: Event) => {
+    if (event instanceof MouseEvent && event.button !== 0) {
+      return
+    }
+    runPrefetch()
+  }
+
   if (mode === 'hover' || mode === 'intent') {
     link.addEventListener('mouseenter', runPrefetch)
   }
   if (mode === 'focus' || mode === 'intent') {
     link.addEventListener('focus', runPrefetch)
+  }
+  if (mode === 'intent') {
+    link.addEventListener('pointerdown', runPointerIntentPrefetch)
   }
 }
 

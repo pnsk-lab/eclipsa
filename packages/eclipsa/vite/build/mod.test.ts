@@ -57,6 +57,8 @@ const createBuilder = () =>
 const writeMinimalRuntimeEntry = async (
   root: string,
   options?: {
+    escapeInlineScriptTextSource?: string
+    escapeJSONScriptTextSource?: string
     renderSSRAsyncSource?: string
   },
 ) => {
@@ -68,7 +70,10 @@ const writeMinimalRuntimeEntry = async (
       'export const Fragment = Symbol.for("fragment");',
       'export const executeAction = async () => new Response(null, { status: 204 });',
       'export const executeLoader = async () => new Response(null, { status: 204 });',
-      'export const escapeJSONScriptText = (value) => value;',
+      options?.escapeInlineScriptTextSource ??
+        'export const escapeInlineScriptText = (value) => value;',
+      options?.escapeJSONScriptTextSource ??
+        'export const escapeJSONScriptText = (value) => value;',
       'export const hasAction = () => false;',
       'export const hasLoader = () => false;',
       'export const jsxDEV = () => ({});',
@@ -458,12 +463,58 @@ describe('build', () => {
     await expect(
       fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
     ).resolves.toContain('caches.open(CACHE_NAME)')
+    await expect(
+      fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
+    ).resolves.toContain('addEventListener("message"')
     await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
       '/eclipsa-chunk-cache-sw.js',
     )
     await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
       'navigator.serviceWorker.register',
     )
+    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
+      'eclipsa:chunk-cache-precache',
+    )
+  })
+
+  it('escapes chunk cache bootstrap scripts as inline javascript instead of json', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-sw-inline-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      escapeInlineScriptTextSource: [
+        'export const escapeInlineScriptText = (value) =>',
+        "  value.replaceAll('<', '\\\\u003C').replaceAll('&', '\\\\u0026').replaceAll('\\u2028', '\\\\u2028').replaceAll('\\u2029', '\\\\u2029');",
+      ].join('\n'),
+      escapeJSONScriptTextSource: [
+        'export const escapeJSONScriptText = (value) =>',
+        "  value.replaceAll('<', '\\\\u003C').replaceAll('>', '\\\\u003E').replaceAll('&', '\\\\u0026').replaceAll('\\u2028', '\\\\u2028').replaceAll('\\u2029', '\\\\u2029');",
+      ].join('\n'),
+      renderSSRAsyncSource: [
+        'export const renderSSRAsync = async () => ({',
+        '  html: "<html><head><script>__ECLIPSA_CHUNK_CACHE__</script><script id=\\"eclipsa-route-manifest\\" type=\\"application/eclipsa-route-manifest+json\\">__ECLIPSA_ROUTE_MANIFEST__</script><script id=\\"eclipsa-app-hooks\\" type=\\"application/eclipsa-app-hooks+json\\">__ECLIPSA_APP_HOOKS__</script></head><body><script id=\\"eclipsa-resume\\" type=\\"application/eclipsa-resume+json\\">__ECLIPSA_RESUME_PAYLOAD__</script></body></html>",',
+        '  payload: {},',
+        '});',
+      ].join('\n'),
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(new Request('http://localhost/'))
+
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('eclipsa:chunk-cache-precache')
+    expect(html).toContain('(()=>{const message=')
+    expect(html).toContain('=>navigator.serviceWorker.ready')
+    expect(html).not.toContain('\\u003E')
   })
 
   it('rejects ssg output when route middleware is present', async () => {

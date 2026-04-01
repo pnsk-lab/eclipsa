@@ -3,6 +3,7 @@ import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
 import { attr, insert } from './client/dom.ts'
 import { __eclipsaComponent, __eclipsaEvent, __eclipsaWatch } from './internal.ts'
+import { __eclipsaLoader } from './loader.ts'
 import { Link, useLocation, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
 import {
@@ -2430,10 +2431,772 @@ describe('renderClientInsertable', () => {
         await container.eventDispatchPromise
         await flushAsync()
         await flushAsync()
+        await flushAsync()
+        await flushAsync()
 
         expect(event.defaultPrevented).toBe(true)
         expect((doc.body as unknown as FakeElement).textContent).toContain('quick start')
         expect(doc.location.pathname).toBe('/docs/quick-start')
+        cleanup()
+      } finally {
+        globalThis.fetch = OriginalFetch
+        globalThis.MouseEvent = OriginalMouseEvent
+        globalThis.HTMLAnchorElement = OriginalHTMLAnchorElement
+      }
+    })
+  })
+
+  it('prefetches route loader snapshots on pointer intent so mobile taps can render loader-backed routes without loader endpoints', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalFetch = globalThis.fetch
+      const OriginalMouseEvent = globalThis.MouseEvent
+      const OriginalHTMLAnchorElement = globalThis.HTMLAnchorElement
+
+      class FakeMouseEvent extends Event {
+        altKey = false
+        button = 0
+        ctrlKey = false
+        metaKey = false
+        shiftKey = false
+
+        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+          super(type, { bubbles: true, cancelable: true })
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      globalThis.MouseEvent = FakeMouseEvent as unknown as typeof MouseEvent
+      globalThis.HTMLAnchorElement = FakeElement as unknown as typeof HTMLAnchorElement
+
+      try {
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument & {
+          defaultView: {
+            addEventListener: () => void
+            history: {
+              pushState: (_data: unknown, _unused: string, url: string) => void
+              replaceState: (_data: unknown, _unused: string, url: string) => void
+            }
+            location: {
+              assign: (url: string) => void
+              replace: (url: string) => void
+            }
+            removeEventListener: () => void
+            requestAnimationFrame: (callback: FrameRequestCallback) => number
+            setTimeout: (callback: () => void) => number
+          }
+          location: Location
+        }
+        const applyLocation = (href: string) => {
+          const url = new URL(href)
+          doc.location = {
+            hash: url.hash,
+            href: url.href,
+            origin: url.origin,
+            pathname: url.pathname,
+            search: url.search,
+          } as Location
+        }
+        applyLocation('http://local/docs/getting-started/overview')
+        doc.defaultView = {
+          ...doc.defaultView,
+          history: {
+            pushState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+            replaceState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+          },
+          location: {
+            assign: (url) => {
+              applyLocation(url)
+            },
+            replace: (url) => {
+              applyLocation(url)
+            },
+          },
+        }
+
+        const layoutLoaderId = 'mobile-route-layout-loader'
+        const pageLoaderId = 'mobile-route-page-loader'
+        const loaderRequests: string[] = []
+        const routeDataRequests: string[] = []
+
+        const htmlPayload = JSON.stringify({
+          actions: {},
+          components: {},
+          loaders: {
+            [layoutLoaderId]: {
+              data: 'prefetched layout',
+              error: null,
+              loaded: true,
+            },
+            [pageLoaderId]: {
+              data: 'prefetched page',
+              error: null,
+              loaded: true,
+            },
+          },
+          scopes: {},
+          signals: {},
+          subscriptions: {},
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const url =
+            typeof input === 'string'
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url
+
+          if (
+            url ===
+            'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fmaterials%2Frouting'
+          ) {
+            routeDataRequests.push(url)
+            return {
+              json: async () => ({ document: true, ok: false }),
+              status: 404,
+              text: async () => '',
+              url,
+            } as Response
+          }
+
+          if (url === 'http://local/docs/materials/routing') {
+            return {
+              status: 200,
+              text: async () =>
+                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script></body></html>`,
+              url,
+            } as Response
+          }
+
+          if (url.startsWith('http://local/__eclipsa/loader/')) {
+            loaderRequests.push(url)
+            return {
+              json: async () => ({
+                error: { message: 'unexpected loader fetch' },
+                ok: false,
+              }),
+              status: 404,
+              url,
+            } as Response
+          }
+
+          throw new Error(`Unexpected fetch: ${url}`)
+        }) as typeof fetch
+
+        const useLayoutLoader = __eclipsaLoader(layoutLoaderId, [], async () => 'live layout')
+        const usePageLoader = __eclipsaLoader(pageLoaderId, [], async () => 'live page')
+
+        const PageBody = () => {
+          const page = usePageLoader()
+          return jsxDEV(
+            'h1',
+            { children: `page:${String(page.data ?? 'missing')}` },
+            null,
+            false,
+            {},
+          )
+        }
+
+        const LayoutBody = (props: { children: JSX.Childable }) => {
+          const layout = useLayoutLoader()
+          return jsxDEV(
+            'main',
+            {
+              children: [
+                jsxDEV(
+                  'p',
+                  { children: `layout:${String(layout.data ?? 'missing')}` },
+                  null,
+                  false,
+                  {},
+                ),
+                props.children,
+              ],
+            },
+            null,
+            false,
+            {},
+          )
+        }
+
+        const Page = __eclipsaComponent(PageBody, 'mobile-route-loader-page', () => [])
+        const Layout = __eclipsaComponent(LayoutBody, 'mobile-route-loader-layout', () => [], {
+          children: 1,
+        })
+
+        const currentPage = () => jsxDEV('p', { children: 'home' }, null, false, {})
+        const nextRender = () =>
+          jsxDEV(
+            Layout as any,
+            {
+              children: jsxDEV(Page as any, {}, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          )
+
+        container.rootElement = doc.body as unknown as HTMLElement
+        container.router = {
+          currentPath: { value: '/docs/getting-started/overview' },
+          currentRoute: {
+            entry: {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/docs/getting-started/overview',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'getting-started' },
+                { kind: 'static', value: 'overview' },
+              ],
+              server: null,
+            },
+            error: undefined,
+            layouts: [],
+            params: {},
+            pathname: '/docs/getting-started/overview',
+            page: {
+              metadata: null,
+              renderer: currentPage,
+              symbol: null,
+              url: '/entries/home.js',
+            },
+            render: () => jsxDEV(currentPage, {}, null, false, {}),
+          },
+          currentUrl: { value: 'http://local/docs/getting-started/overview' },
+          defaultTitle: '',
+          isNavigating: { value: false },
+          loadedRoutes: new Map([
+            [
+              '/docs/getting-started/overview::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: [],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/home.js',
+                  routePath: '/docs/getting-started/overview',
+                  segments: [
+                    { kind: 'static', value: 'docs' },
+                    { kind: 'static', value: 'getting-started' },
+                    { kind: 'static', value: 'overview' },
+                  ],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [],
+                params: {},
+                pathname: '/docs/getting-started/overview',
+                page: {
+                  metadata: null,
+                  renderer: currentPage,
+                  symbol: null,
+                  url: '/entries/home.js',
+                },
+                render: () => jsxDEV(currentPage, {}, null, false, {}),
+              },
+            ],
+            [
+              '/docs/materials/routing::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: ['/entries/docs-layout.js'],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/docs-routing.js',
+                  routePath: '/docs/materials/routing',
+                  segments: [
+                    { kind: 'static', value: 'docs' },
+                    { kind: 'static', value: 'materials' },
+                    { kind: 'static', value: 'routing' },
+                  ],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [
+                  {
+                    metadata: null,
+                    renderer: Layout as unknown as JSX.Type,
+                    symbol: 'mobile-route-loader-layout',
+                    url: '/entries/docs-layout.js',
+                  },
+                ],
+                params: {},
+                pathname: '/docs/materials/routing',
+                page: {
+                  metadata: null,
+                  renderer: Page as unknown as JSX.Type,
+                  symbol: 'mobile-route-loader-page',
+                  url: '/entries/docs-routing.js',
+                },
+                render: nextRender,
+              },
+            ],
+          ]),
+          location: doc.location,
+          manifest: [
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/docs/getting-started/overview',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'getting-started' },
+                { kind: 'static', value: 'overview' },
+              ],
+              server: null,
+            },
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: ['/entries/docs-layout.js'],
+              loading: null,
+              notFound: null,
+              page: '/entries/docs-routing.js',
+              routePath: '/docs/materials/routing',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'materials' },
+                { kind: 'static', value: 'routing' },
+              ],
+              server: null,
+            },
+          ],
+          navigate: (async () => {}) as any,
+          prefetchedLoaders: new Map(),
+          routeModuleBusts: new Map(),
+          routePrefetches: new Map(),
+          sequence: 0,
+        } as unknown as RuntimeContainer['router']
+
+        const link = doc.createElement('a') as unknown as FakeElement
+        link.setAttribute('href', '/docs/materials/routing')
+        link.setAttribute('data-e-link', '')
+        ;(doc.body as unknown as FakeElement).appendChild(link)
+
+        const cleanup = installResumeListeners(container)
+
+        link.dispatchEvent(new FakeMouseEvent('pointerdown', link as unknown as EventTarget))
+        await flushAsync()
+        await flushAsync()
+
+        link.dispatchEvent(new FakeMouseEvent('click', link as unknown as EventTarget))
+        await flushAsync()
+        await flushAsync()
+        await flushAsync()
+
+        expect(routeDataRequests).toEqual([
+          'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fmaterials%2Frouting',
+        ])
+        expect(loaderRequests).toEqual([])
+        expect((doc.body as unknown as FakeElement).textContent).toContain(
+          'layout:prefetched layout',
+        )
+        expect((doc.body as unknown as FakeElement).textContent).toContain('page:prefetched page')
+        expect(doc.location.pathname).toBe('/docs/materials/routing')
+        cleanup()
+      } finally {
+        globalThis.fetch = OriginalFetch
+        globalThis.MouseEvent = OriginalMouseEvent
+        globalThis.HTMLAnchorElement = OriginalHTMLAnchorElement
+      }
+    })
+  })
+
+  it('requests route loader snapshots during click navigation when intent prefetch has not run yet', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalFetch = globalThis.fetch
+      const OriginalMouseEvent = globalThis.MouseEvent
+      const OriginalHTMLAnchorElement = globalThis.HTMLAnchorElement
+
+      class FakeMouseEvent extends Event {
+        altKey = false
+        button = 0
+        ctrlKey = false
+        metaKey = false
+        shiftKey = false
+
+        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+          super(type, { bubbles: true, cancelable: true })
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      globalThis.MouseEvent = FakeMouseEvent as unknown as typeof MouseEvent
+      globalThis.HTMLAnchorElement = FakeElement as unknown as typeof HTMLAnchorElement
+
+      try {
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument & {
+          defaultView: {
+            addEventListener: () => void
+            history: {
+              pushState: (_data: unknown, _unused: string, url: string) => void
+              replaceState: (_data: unknown, _unused: string, url: string) => void
+            }
+            location: {
+              assign: (url: string) => void
+              replace: (url: string) => void
+            }
+            removeEventListener: () => void
+            requestAnimationFrame: (callback: FrameRequestCallback) => number
+            setTimeout: (callback: () => void) => number
+          }
+          location: Location
+        }
+        const applyLocation = (href: string) => {
+          const url = new URL(href)
+          doc.location = {
+            hash: url.hash,
+            href: url.href,
+            origin: url.origin,
+            pathname: url.pathname,
+            search: url.search,
+          } as Location
+        }
+        applyLocation('http://local/docs/getting-started/overview')
+        doc.defaultView = {
+          ...doc.defaultView,
+          history: {
+            pushState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+            replaceState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+          },
+          location: {
+            assign: (url) => {
+              applyLocation(url)
+            },
+            replace: (url) => {
+              applyLocation(url)
+            },
+          },
+        }
+
+        const layoutLoaderId = 'mobile-click-route-layout-loader'
+        const pageLoaderId = 'mobile-click-route-page-loader'
+        const loaderRequests: string[] = []
+        const routeDataRequests: string[] = []
+
+        const htmlPayload = JSON.stringify({
+          actions: {},
+          components: {},
+          loaders: {
+            [layoutLoaderId]: {
+              data: 'prefetched layout',
+              error: null,
+              loaded: true,
+            },
+            [pageLoaderId]: {
+              data: 'prefetched page',
+              error: null,
+              loaded: true,
+            },
+          },
+          scopes: {},
+          signals: {},
+          subscriptions: {},
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const url =
+            typeof input === 'string'
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url
+
+          if (
+            url ===
+            'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fmaterials%2Frouting'
+          ) {
+            routeDataRequests.push(url)
+            return {
+              json: async () => ({ document: true, ok: false }),
+              status: 404,
+              text: async () => '',
+              url,
+            } as Response
+          }
+
+          if (url === 'http://local/docs/materials/routing') {
+            return {
+              status: 200,
+              text: async () =>
+                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script></body></html>`,
+              url,
+            } as Response
+          }
+
+          if (url.startsWith('http://local/__eclipsa/loader/')) {
+            loaderRequests.push(url)
+            return {
+              json: async () => ({
+                error: { message: 'unexpected loader fetch' },
+                ok: false,
+              }),
+              status: 404,
+              url,
+            } as Response
+          }
+
+          throw new Error(`Unexpected fetch: ${url}`)
+        }) as typeof fetch
+
+        const useLayoutLoader = __eclipsaLoader(layoutLoaderId, [], async () => 'live layout')
+        const usePageLoader = __eclipsaLoader(pageLoaderId, [], async () => 'live page')
+
+        const PageBody = () => {
+          const page = usePageLoader()
+          return jsxDEV(
+            'h1',
+            { children: `page:${String(page.data ?? 'missing')}` },
+            null,
+            false,
+            {},
+          )
+        }
+
+        const LayoutBody = (props: { children: JSX.Childable }) => {
+          const layout = useLayoutLoader()
+          return jsxDEV(
+            'main',
+            {
+              children: [
+                jsxDEV(
+                  'p',
+                  { children: `layout:${String(layout.data ?? 'missing')}` },
+                  null,
+                  false,
+                  {},
+                ),
+                props.children,
+              ],
+            },
+            null,
+            false,
+            {},
+          )
+        }
+
+        const Page = __eclipsaComponent(PageBody, 'mobile-click-route-loader-page', () => [])
+        const Layout = __eclipsaComponent(LayoutBody, 'mobile-click-route-loader-layout', () => [], {
+          children: 1,
+        })
+
+        const currentPage = () => jsxDEV('p', { children: 'home' }, null, false, {})
+        const nextRender = () =>
+          jsxDEV(
+            Layout as any,
+            {
+              children: jsxDEV(Page as any, {}, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          )
+
+        container.rootElement = doc.body as unknown as HTMLElement
+        container.router = {
+          currentPath: { value: '/docs/getting-started/overview' },
+          currentRoute: {
+            entry: {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/docs/getting-started/overview',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'getting-started' },
+                { kind: 'static', value: 'overview' },
+              ],
+              server: null,
+            },
+            error: undefined,
+            layouts: [],
+            params: {},
+            pathname: '/docs/getting-started/overview',
+            page: {
+              metadata: null,
+              renderer: currentPage,
+              symbol: null,
+              url: '/entries/home.js',
+            },
+            render: () => jsxDEV(currentPage, {}, null, false, {}),
+          },
+          currentUrl: { value: 'http://local/docs/getting-started/overview' },
+          defaultTitle: '',
+          isNavigating: { value: false },
+          loadedRoutes: new Map([
+            [
+              '/docs/getting-started/overview::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: [],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/home.js',
+                  routePath: '/docs/getting-started/overview',
+                  segments: [
+                    { kind: 'static', value: 'docs' },
+                    { kind: 'static', value: 'getting-started' },
+                    { kind: 'static', value: 'overview' },
+                  ],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [],
+                params: {},
+                pathname: '/docs/getting-started/overview',
+                page: {
+                  metadata: null,
+                  renderer: currentPage,
+                  symbol: null,
+                  url: '/entries/home.js',
+                },
+                render: () => jsxDEV(currentPage, {}, null, false, {}),
+              },
+            ],
+            [
+              '/docs/materials/routing::page',
+              {
+                entry: {
+                  error: null,
+                  hasMiddleware: false,
+                  layouts: ['/entries/docs-layout.js'],
+                  loading: null,
+                  notFound: null,
+                  page: '/entries/docs-routing.js',
+                  routePath: '/docs/materials/routing',
+                  segments: [
+                    { kind: 'static', value: 'docs' },
+                    { kind: 'static', value: 'materials' },
+                    { kind: 'static', value: 'routing' },
+                  ],
+                  server: null,
+                },
+                error: undefined,
+                layouts: [
+                  {
+                    metadata: null,
+                    renderer: Layout as unknown as JSX.Type,
+                    symbol: 'mobile-click-route-loader-layout',
+                    url: '/entries/docs-layout.js',
+                  },
+                ],
+                params: {},
+                pathname: '/docs/materials/routing',
+                page: {
+                  metadata: null,
+                  renderer: Page as unknown as JSX.Type,
+                  symbol: 'mobile-click-route-loader-page',
+                  url: '/entries/docs-routing.js',
+                },
+                render: nextRender,
+              },
+            ],
+          ]),
+          location: doc.location,
+          manifest: [
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: [],
+              loading: null,
+              notFound: null,
+              page: '/entries/home.js',
+              routePath: '/docs/getting-started/overview',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'getting-started' },
+                { kind: 'static', value: 'overview' },
+              ],
+              server: null,
+            },
+            {
+              error: null,
+              hasMiddleware: false,
+              layouts: ['/entries/docs-layout.js'],
+              loading: null,
+              notFound: null,
+              page: '/entries/docs-routing.js',
+              routePath: '/docs/materials/routing',
+              segments: [
+                { kind: 'static', value: 'docs' },
+                { kind: 'static', value: 'materials' },
+                { kind: 'static', value: 'routing' },
+              ],
+              server: null,
+            },
+          ],
+          navigate: (async () => {}) as any,
+          prefetchedLoaders: new Map(),
+          routeModuleBusts: new Map(),
+          routePrefetches: new Map(),
+          sequence: 0,
+        } as unknown as RuntimeContainer['router']
+
+        const link = doc.createElement('a') as unknown as FakeElement
+        link.setAttribute('href', '/docs/materials/routing')
+        link.setAttribute('data-e-link', '')
+        ;(doc.body as unknown as FakeElement).appendChild(link)
+
+        const cleanup = installResumeListeners(container)
+
+        link.dispatchEvent(new FakeMouseEvent('click', link as unknown as EventTarget))
+        await container.eventDispatchPromise
+        await flushAsync()
+        await flushAsync()
+        await flushAsync()
+        await flushAsync()
+        await flushAsync()
+        await flushAsync()
+
+        expect(routeDataRequests).toEqual([
+          'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fmaterials%2Frouting',
+        ])
+        expect(loaderRequests).toEqual([])
+        expect((doc.body as unknown as FakeElement).textContent).toContain(
+          'layout:prefetched layout',
+        )
+        expect((doc.body as unknown as FakeElement).textContent).toContain('page:prefetched page')
+        expect(doc.location.pathname).toBe('/docs/materials/routing')
         cleanup()
       } finally {
         globalThis.fetch = OriginalFetch
@@ -4529,7 +5292,7 @@ describe('renderClientInsertable', () => {
         container.doc as Document
       try {
         const host = new FakeElement('div')
-        ;(container.doc as unknown as FakeDocument).body.appendChild(host)
+        ;(container.doc as unknown as FakeDocument).body.appendChild(host as unknown as Node)
         const nodes = withRuntimeContainer(container, () =>
           renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
         ) as unknown as FakeNode[]
@@ -4867,9 +5630,9 @@ describe('renderClientInsertable', () => {
         insert(
           () => (isActive ? ' active' : ' inactive'),
           stateSpan as unknown as Node,
-          stateMarker,
+          stateMarker as unknown as Node,
         )
-        insert(() => 'Quick Start', labelSpan as unknown as Node, labelMarker)
+        insert(() => 'Quick Start', labelSpan as unknown as Node, labelMarker as unknown as Node)
 
         return link as unknown as JSX.Element
       }

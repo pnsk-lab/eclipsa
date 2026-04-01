@@ -381,6 +381,13 @@ export const escapeJSONScriptText = (json: string) =>
     .replaceAll('\u2028', '\\u2028')
     .replaceAll('\u2029', '\\u2029')
 
+export const escapeInlineScriptText = (script: string) =>
+  script
+    .replaceAll('<', '\\u003C')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029')
+
 export const serializeJSONScriptContent = (value: unknown, options?: SerializeValueOptions) =>
   escapeJSONScriptText(JSON.stringify(serializeValue(value, options)))
 

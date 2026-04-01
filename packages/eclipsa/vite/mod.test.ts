@@ -102,6 +102,11 @@ describe('vite plugin hotUpdate', () => {
     const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)
     const send = vi.fn()
+    const tsxModule = {
+      id: '/src/non-resumable.tsx',
+      type: 'js',
+      url: '/src/non-resumable.tsx',
+    }
     const cssModule = {
       id: '/src/app/style.css',
       type: 'css',

@@ -121,6 +121,8 @@ const createClientChunkCacheVersion = (assets: ClientChunkCacheAsset[]) =>
 const renderChunkCacheServiceWorker = (version: string) => `const CACHE_NAME = "${CHUNK_CACHE_NAME_PREFIX}-${version}";
 const CACHE_PREFIX = "${CHUNK_CACHE_NAME_PREFIX}-";
 const PATH_PREFIXES = ${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)};
+const PRECACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";
+const pendingPrecacheUrls = new Set();
 
 const isCacheableRequest = (request) => {
   if (request.method !== "GET") {
@@ -136,6 +138,37 @@ const fetchAndCache = async (cache, request) => {
     await cache.put(request, response.clone());
   }
   return response;
+};
+
+const precacheUrl = async (cache, url) => {
+  if (pendingPrecacheUrls.has(url)) {
+    return;
+  }
+  pendingPrecacheUrls.add(url);
+  try {
+    const request = new Request(new URL(url, self.location.origin).href, {
+      credentials: "same-origin",
+    });
+    if (await cache.match(request)) {
+      return;
+    }
+    await fetchAndCache(cache, request);
+  } finally {
+    pendingPrecacheUrls.delete(url);
+  }
+};
+
+const precacheUrls = async (priorityUrls, urls) => {
+  const cache = await caches.open(CACHE_NAME);
+  const queue = [...new Set([...priorityUrls, ...urls])].filter((url) =>
+    PATH_PREFIXES.some((prefix) => {
+      const pathname = new URL(url, self.location.origin).pathname;
+      return pathname.startsWith(prefix);
+    }),
+  );
+  for (const url of queue) {
+    await precacheUrl(cache, url);
+  }
 };
 
 self.addEventListener("install", (event) => {
@@ -178,18 +211,30 @@ self.addEventListener("fetch", (event) => {
     }
   })());
 });
+
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== PRECACHE_MESSAGE_TYPE) {
+    return;
+  }
+
+  event.waitUntil(
+    precacheUrls(
+      Array.isArray(data.priorityUrls) ? data.priorityUrls : [],
+      Array.isArray(data.urls) ? data.urls : [],
+    ),
+  );
+});
 `
 
-const renderChunkCacheRegistrationScript = () =>
-  `(()=>{if(!("serviceWorker" in navigator))return;void navigator.serviceWorker.register(${JSON.stringify(CHUNK_CACHE_SW_URL)},{scope:"/",updateViaCache:"none"}).catch((error)=>{console.error("Failed to register Eclipsa chunk cache service worker.",error);});})();`
-
-const writeClientChunkCacheServiceWorker = async (clientDir: string) => {
-  const assets = await collectClientChunkCacheAssets(clientDir)
+const writeClientChunkCacheServiceWorker = async (
+  clientDir: string,
+  assets: ClientChunkCacheAsset[],
+) => {
   const version = createClientChunkCacheVersion(assets)
   const serviceWorkerPath = path.join(clientDir, CHUNK_CACHE_SW_URL.slice(1))
   await fs.mkdir(path.dirname(serviceWorkerPath), { recursive: true })
   await fs.writeFile(serviceWorkerPath, renderChunkCacheServiceWorker(version))
-  return renderChunkCacheRegistrationScript()
 }
 
 const resolveRouteRenderMode = (
@@ -491,7 +536,7 @@ const renderAppModule = (
   serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
   stylesheetUrls: string[],
-  chunkCacheRegistrationScript: string,
+  chunkCacheUrls: string[],
 ) => {
   const serializedRoutes = createSerializedRoutes(routes)
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
@@ -505,10 +550,11 @@ const renderAppModule = (
   const serializedRouteManifest = JSON.stringify(routeManifest)
   const serializedServerHooksUrl = JSON.stringify(serverHooksUrl)
   const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
+  const serializedChunkCacheUrls = JSON.stringify(chunkCacheUrls)
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -525,13 +571,16 @@ const routeManifest = ${serializedRouteManifest};
 const serverHooksUrl = ${serializedServerHooksUrl};
 const symbolUrls = ${serializedSymbolUrls};
 const stylesheetUrls = ${serializedStylesheetUrls};
+const chunkCacheUrls = ${serializedChunkCacheUrls};
 const RESUME_PAYLOAD_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_RESUME_PAYLOAD__')};
 const APP_HOOKS_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_APP_HOOKS__')};
+const CHUNK_CACHE_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_CHUNK_CACHE__')};
 const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
 const ROUTE_ERROR_PROP = "__eclipsa_route_error";
 const ROUTE_DATA_REQUEST_HEADER = ${JSON.stringify(ROUTE_DATA_REQUEST_HEADER)};
 const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
+const CHUNK_CACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";
 const hooksPromise = (async () => {
   const appHooks = appHooksServerUrl ? await import(appHooksServerUrl) : {};
   const serverHooks = serverHooksUrl ? await import(serverHooksUrl) : {};
@@ -618,6 +667,62 @@ const matchRoute = (pathname) => {
     }
   }
   return null;
+};
+
+const matchRouteManifestEntry = (pathname) => {
+  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  for (const entry of routeManifest) {
+    const params = matchSegments(entry.segments, pathnameSegments);
+    if (params) {
+      return { entry, params };
+    }
+  }
+  return null;
+};
+
+const uniqueChunkCacheUrls = (urls) =>
+  [...new Set(urls)].filter(
+    (url) =>
+      typeof url === "string" &&
+      (${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)}).some((prefix) => url.startsWith(prefix)),
+  );
+
+const getChunkCacheUrlPriority = (url) => {
+  if (url.startsWith("/chunks/")) {
+    return 0;
+  }
+  if (url.startsWith("/entries/")) {
+    return 1;
+  }
+  return 2;
+};
+
+const sortChunkCacheUrls = (urls) =>
+  [...urls].sort(
+    (left, right) =>
+      getChunkCacheUrlPriority(left) - getChunkCacheUrlPriority(right) || left.localeCompare(right),
+  );
+
+const createChunkCacheMessage = (pathname, payload) => {
+  const matched = matchRouteManifestEntry(pathname);
+  const priorityUrls = uniqueChunkCacheUrls([
+    "/entries/client_boot.js",
+    ...(matched
+      ? [...matched.entry.layouts, matched.entry.page, matched.entry.notFound, matched.entry.error]
+      : []),
+    ...Object.values(payload.symbols ?? {}),
+  ]);
+  const priorityUrlSet = new Set(priorityUrls);
+  return {
+    priorityUrls,
+    type: CHUNK_CACHE_MESSAGE_TYPE,
+    urls: sortChunkCacheUrls(chunkCacheUrls.filter((url) => !priorityUrlSet.has(url))),
+  };
+};
+
+const createChunkCacheRegistrationScript = (pathname, payload) => {
+  const message = createChunkCacheMessage(pathname, payload);
+  return \`(()=>{const message=\${JSON.stringify(message)};if(!("serviceWorker" in navigator))return;const key="__eclipsa_chunk_cache";const state=window[key]??={registrationPromise:null,post(nextMessage){const post=(registration)=>{const worker=registration.active??registration.waiting??registration.installing;if(worker){worker.postMessage(nextMessage);}};this.registrationPromise=this.registrationPromise??navigator.serviceWorker.register(${JSON.stringify(CHUNK_CACHE_SW_URL)},{scope:"/",updateViaCache:"none"}).then(()=>navigator.serviceWorker.ready);void this.registrationPromise.then((registration)=>{post(registration);}).catch((error)=>{console.error("Failed to register Eclipsa chunk cache service worker.",error);});}};state.post(message);})();\`;
 };
 
 const scoreSpecialRoute = (route, pathname) => {
@@ -961,7 +1066,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               type: "script",
               isStatic: true,
               props: {
-                dangerouslySetInnerHTML: ${JSON.stringify(chunkCacheRegistrationScript)},
+                dangerouslySetInnerHTML: CHUNK_CACHE_PLACEHOLDER,
               },
             },
             {
@@ -988,7 +1093,11 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
   });
   const shellHtml = replaceHeadPlaceholder(
     replaceHeadPlaceholder(
-      replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+        replaceHeadPlaceholder(
+          replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+          CHUNK_CACHE_PLACEHOLDER,
+          escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, payload)),
+        ),
       ROUTE_MANIFEST_PLACEHOLDER,
       escapeJSONScriptText(JSON.stringify(routeManifest)),
     ),
@@ -1019,7 +1128,9 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 
           controller.enqueue(
             encoder.encode(
-              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(latestPayload) + "</script>" + suffix,
+              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(latestPayload) + "</script>" +
+                "<script>" + escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, latestPayload)) + "</script>" +
+                suffix,
             ),
           );
           controller.close();
@@ -1490,7 +1601,8 @@ export const build = async (
     ? createBuildServerModuleUrl({ entryName: 'server_hooks', filePath: serverHooksPath })
     : null
   const stylesheetUrls = await collectClientStylesheetUrls(clientDir)
-  const chunkCacheRegistrationScript = await writeClientChunkCacheServiceWorker(clientDir)
+  const chunkCacheAssets = await collectClientChunkCacheAssets(clientDir)
+  await writeClientChunkCacheServiceWorker(clientDir, chunkCacheAssets)
   const serverDir = path.join(root, 'dist/server')
   const appModulePath = path.join(root, 'dist/ssr/eclipsa_app.mjs')
   await fs.mkdir(path.dirname(appModulePath), { recursive: true })
@@ -1506,7 +1618,7 @@ export const build = async (
       serverHooksUrl,
       symbolUrls,
       stylesheetUrls,
-      chunkCacheRegistrationScript,
+      chunkCacheAssets.map((asset) => asset.url),
     ),
   )
   const staticPrerenderTargets = await resolveStaticPrerenderTargets(root, staticPageRoutes)

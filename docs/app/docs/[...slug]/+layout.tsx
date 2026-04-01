@@ -70,9 +70,13 @@ const Dir = (props: {
   title: string
   icon: string
   gradientClass: string
+  onLinkClick?: () => void
 }) => {
-  const { activeHref, icon, links, title } = props
+  const { activeHref, icon, links, title, onLinkClick } = props
   const open = useSignal(true)
+  const handleLinkClick = () => {
+    onLinkClick?.()
+  }
 
   return (
     <div>
@@ -113,24 +117,46 @@ const Dir = (props: {
         }}
       >
         {links.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            class={clsx(
-              'flex h-8 items-center rounded-lg transition-colors',
-              activeHref === link.href
-                ? 'bg-[color:var(--docs-accent-bg)] text-[color:var(--docs-accent-fg)]'
-                : 'hover:bg-[color:var(--docs-accent-bg-soft)] text-[color:var(--docs-text-muted)]',
-            )}
-          >
-            <div
+          onLinkClick ? (
+            <Link
+              key={link.href}
+              href={link.href}
               class={clsx(
-                'h-full w-px bg-[color:var(--docs-border-strong)] transition-all',
-                activeHref === link.href ? 'scale-y-60 bg-[color:var(--docs-accent-line)]' : '',
+                'flex h-8 items-center rounded-lg transition-colors',
+                activeHref === link.href
+                  ? 'bg-[color:var(--docs-accent-bg)] text-[color:var(--docs-accent-fg)]'
+                  : 'hover:bg-[color:var(--docs-accent-bg-soft)] text-[color:var(--docs-text-muted)]',
               )}
-            ></div>
-            <div class="pl-4 py-1 text-sm">{link.label}</div>
-          </Link>
+              onClick={handleLinkClick}
+            >
+              <div
+                class={clsx(
+                  'h-full w-px bg-[color:var(--docs-border-strong)] transition-all',
+                  activeHref === link.href ? 'scale-y-60 bg-[color:var(--docs-accent-line)]' : '',
+                )}
+              ></div>
+              <div class="pl-4 py-1 text-sm">{link.label}</div>
+            </Link>
+          ) : (
+            <Link
+              key={link.href}
+              href={link.href}
+              class={clsx(
+                'flex h-8 items-center rounded-lg transition-colors',
+                activeHref === link.href
+                  ? 'bg-[color:var(--docs-accent-bg)] text-[color:var(--docs-accent-fg)]'
+                  : 'hover:bg-[color:var(--docs-accent-bg-soft)] text-[color:var(--docs-text-muted)]',
+              )}
+            >
+              <div
+                class={clsx(
+                  'h-full w-px bg-[color:var(--docs-border-strong)] transition-all',
+                  activeHref === link.href ? 'scale-y-60 bg-[color:var(--docs-accent-line)]' : '',
+                )}
+              ></div>
+              <div class="pl-4 py-1 text-sm">{link.label}</div>
+            </Link>
+          )
         ))}
       </motion.div>
     </div>
@@ -298,6 +324,7 @@ export default function DocsLayout(props: { children: JSX.Childable }) {
                 links={[...section.links]}
                 title={section.title}
                 gradientClass={section.gradientClass}
+                onLinkClick={closeMobileNav}
               />
             ))}
           </div>

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { deserializeValue, escapeJSONScriptText, serializeValue } from './serialize.ts'
+import {
+  deserializeValue,
+  escapeInlineScriptText,
+  escapeJSONScriptText,
+  serializeValue,
+} from './serialize.ts'
 
 describe('serializeValue', () => {
   it('round-trips nested plain data, maps, and sets', () => {
@@ -111,8 +116,19 @@ describe('serializeValue', () => {
     const escaped = escapeJSONScriptText('"</script>\u2028\u2029&<>"')
     expect(escaped).not.toContain('</script>')
     expect(escaped).toContain('\\u003C')
+    expect(escaped).toContain('\\u003E')
     expect(escaped).toContain('\\u2028')
     expect(escaped).toContain('\\u2029')
     expect(escaped).toContain('\\u0026')
+  })
+
+  it('keeps raw inline script operators intact while escaping html terminators', () => {
+    const escaped = escapeInlineScriptText('(()=>a > b && c < d)</script>\u2028\u2029')
+    expect(escaped).not.toContain('</script>')
+    expect(escaped).toContain('=>a > b')
+    expect(escaped).not.toContain('\\u003E')
+    expect(escaped).toContain('\\u003C')
+    expect(escaped).toContain('\\u2028')
+    expect(escaped).toContain('\\u2029')
   })
 })

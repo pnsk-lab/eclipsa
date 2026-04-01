@@ -8,6 +8,7 @@ describe('vite build runtime exports', () => {
       Fragment: expect.anything(),
       composeRouteMetadata: expect.any(Function),
       deserializeValue: expect.any(Function),
+      escapeInlineScriptText: expect.any(Function),
       escapeJSONScriptText: expect.any(Function),
       executeAction: expect.any(Function),
       executeLoader: expect.any(Function),

@@ -41,7 +41,7 @@ export {
 } from '../../core/loader.ts'
 export { composeRouteMetadata, renderRouteMetadataHead } from '../../core/metadata.ts'
 export { deserializeValue } from '../../core/serialize.ts'
-export { escapeJSONScriptText } from '../../core/serialize.ts'
+export { escapeInlineScriptText, escapeJSONScriptText } from '../../core/serialize.ts'
 export {
   getStreamingResumeBootstrapScriptContent,
   renderSSR,
