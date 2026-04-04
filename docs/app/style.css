@@ -102,3 +102,273 @@ dialog[data-testid='docs-search-overlay']::backdrop {
 .markdown-content :is(h1, h2, h3, h4, h5, h6)[id] {
   scroll-margin-top: 5.5rem;
 }
+
+.landing-features-orbit-anchor {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+}
+
+.landing-features-orbit {
+  --feature-count: 1;
+  --feature-radius: clamp(7rem, 24vw, 17rem);
+  --feature-rotation: 0deg;
+  --orbit-follow-x: 0px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(100%, 38rem);
+  aspect-ratio: 1;
+  transform: translate3d(var(--orbit-follow-x), 0, 0);
+  will-change: transform;
+}
+
+.landing-feature-orbit-item {
+  --feature-index: 0;
+  --feature-anchor-x: 14%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max-content;
+  opacity: 0.5;
+  transition: opacity 180ms ease;
+  transform: translate(calc(var(--feature-anchor-x) * -1), -50%)
+    rotate(calc(360deg / var(--feature-count) * var(--feature-index) + var(--feature-rotation)))
+    translateY(calc(var(--feature-radius) * -1))
+    rotate(calc(-360deg / var(--feature-count) * var(--feature-index) - var(--feature-rotation)));
+}
+
+.landing-feature-orbit-item[data-active='true'] {
+  opacity: 1;
+}
+
+.landing-feature-card {
+  width: max-content;
+}
+
+.landing-feature-card-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: #9d00ff;
+}
+
+.landing-compile-flow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.landing-compile-rail {
+  position: relative;
+  overflow: visible;
+}
+
+.landing-compile-rail::before {
+  content: '';
+  position: absolute;
+  top: 1.75rem;
+  left: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid rgb(224 187 255 / 0.65);
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    rgb(249 232 255 / 0.95) 0,
+    rgb(176 38 255 / 0.9) 42%,
+    rgb(176 38 255 / 0.18) 100%
+  );
+  box-shadow:
+    0 0 0 0.18rem rgb(176 38 255 / 0.12),
+    0 0 18px rgb(176 38 255 / 0.45);
+  transform: translate(-50%, -50%);
+}
+
+.landing-compile-segment {
+  position: relative;
+  overflow: visible;
+  background: linear-gradient(
+    90deg,
+    rgb(120 56 255 / 0.3),
+    rgb(176 38 255 / 0.95),
+    rgb(244 114 182 / 0.45)
+  );
+  box-shadow:
+    0 0 0.45rem rgb(176 38 255 / 0.2),
+    0 0 1rem rgb(176 38 255 / 0.12);
+}
+
+.landing-compile-segment::after {
+  content: '';
+  position: absolute;
+  inset: -0.18rem;
+  border-radius: 999px;
+  background: inherit;
+  opacity: 0.35;
+  filter: blur(0.3rem);
+}
+
+.landing-compile-segment-vertical {
+  background: linear-gradient(
+    180deg,
+    rgb(120 56 255 / 0.24),
+    rgb(176 38 255 / 0.96),
+    rgb(244 114 182 / 0.3)
+  );
+}
+
+.landing-compile-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 999px;
+  background: #b026ff;
+  box-shadow:
+    0 0 0 0.2rem rgb(176 38 255 / 0.18),
+    0 0 20px rgb(176 38 255 / 0.9);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  animation-play-state: paused;
+  isolation: isolate;
+}
+
+.landing-compile-dot::after {
+  content: '';
+  position: absolute;
+  inset: 18% 38% 18% -165%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgb(176 38 255 / 0),
+    rgb(176 38 255 / 0.55),
+    rgb(244 114 182 / 0.12)
+  );
+  filter: blur(0.22rem);
+  opacity: 0.85;
+  z-index: -1;
+}
+
+.landing-compile-flow[data-visible='true'] .landing-compile-dot {
+  animation-play-state: running;
+}
+
+.landing-compile-flow[data-visible='true'] .landing-compile-rail::before {
+  animation: landing-compile-node-pulse 1.8s ease-in-out infinite;
+}
+
+.landing-compile-dot-source {
+  animation: landing-compile-dot-source 1.2s linear infinite;
+}
+
+.landing-compile-dot-client {
+  animation: landing-compile-dot-client 1.2s linear infinite;
+  animation-delay: -0.4s;
+}
+
+.landing-compile-dot-ssr {
+  animation: landing-compile-dot-ssr 1.2s linear infinite;
+  animation-delay: -0.8s;
+}
+
+@keyframes landing-compile-dot-source {
+  0% {
+    top: 1.75rem;
+    left: 100%;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  45% {
+    top: 1.75rem;
+    left: 0;
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    left: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes landing-compile-dot-client {
+  0% {
+    top: 0;
+    left: 0;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  45% {
+    top: 1.75rem;
+    left: 0;
+    opacity: 1;
+  }
+  100% {
+    top: 1.75rem;
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes landing-compile-dot-ssr {
+  0% {
+    top: 0;
+    left: 0;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  45% {
+    top: 1.75rem;
+    left: 0;
+    opacity: 1;
+  }
+  100% {
+    top: 1.75rem;
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes landing-compile-node-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0.18rem rgb(176 38 255 / 0.12),
+      0 0 18px rgb(176 38 255 / 0.45);
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    box-shadow:
+      0 0 0 0.32rem rgb(176 38 255 / 0.08),
+      0 0 24px rgb(176 38 255 / 0.72);
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-compile-dot {
+    display: none;
+  }
+
+  .landing-compile-flow[data-visible='true'] .landing-compile-rail::before {
+    animation: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .landing-features-orbit {
+    --feature-radius: clamp(6rem, 30vw, 8.5rem);
+    width: min(100%, 24rem);
+  }
+
+  .landing-feature-orbit-item {
+    --feature-anchor-x: 12%;
+  }
+}

@@ -47,6 +47,69 @@ describe('vite plugin hotUpdate', () => {
     resetCompilerCache()
   })
 
+  it('transforms resumable app-local .ts hook modules in both client and ssr environments', async () => {
+    const [plugin] = getPlugins()
+    const transform = getTransform(plugin)
+    const source = `
+      import { useSignal } from "eclipsa";
+
+      export const useCounterApi = () => {
+        const count = useSignal(0);
+        const increment = () => {
+          count.value += 1;
+        };
+
+        return {
+          increment,
+        };
+      };
+    `
+
+    const clientTransformed = await transform?.call(
+      {
+        environment: {
+          name: 'client',
+        },
+      } as any,
+      source,
+      '/tmp/app/use-counter-api.ts',
+    )
+    const ssrTransformed = await transform?.call(
+      {
+        environment: {
+          name: 'ssr',
+        },
+      } as any,
+      source,
+      '/tmp/app/use-counter-api.ts',
+    )
+
+    expect(clientTransformed).toBeTruthy()
+    expect(ssrTransformed).toBeTruthy()
+    expect(clientTransformed).toMatchObject({
+      code: expect.stringContaining('__eclipsaLazy'),
+    })
+    expect(ssrTransformed).toMatchObject({
+      code: expect.stringContaining('__eclipsaLazy'),
+    })
+  })
+
+  it('leaves non-app .ts modules to Vite', async () => {
+    const [plugin] = getPlugins()
+    const transform = getTransform(plugin)
+    const transformed = await transform?.call(
+      {
+        environment: {
+          name: 'ssr',
+        },
+      } as any,
+      'export const value = 1;',
+      '/tmp/packages/eclipsa/core/action.ts',
+    )
+
+    expect(transformed).toBeUndefined()
+  })
+
   it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {
     const [plugin] = getPlugins()
 

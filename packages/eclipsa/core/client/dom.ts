@@ -94,6 +94,79 @@ const collectNodesBeforeMarker = (marker: Node | null | undefined, count: number
   return nodes.length === count ? nodes : []
 }
 
+const COMPONENT_BOUNDARY_START_REGEX = /^ec:c:(.+):start$/
+const COMPONENT_BOUNDARY_END_REGEX = /^ec:c:(.+):end$/
+
+const getBoundaryMarker = (node: Node | null | undefined) => {
+  if (!(node instanceof Comment)) {
+    return null
+  }
+
+  const start = node.data.match(COMPONENT_BOUNDARY_START_REGEX)
+  if (start?.[1]) {
+    return {
+      id: start[1],
+      kind: 'start' as const,
+    }
+  }
+
+  const end = node.data.match(COMPONENT_BOUNDARY_END_REGEX)
+  if (end?.[1]) {
+    return {
+      id: end[1],
+      kind: 'end' as const,
+    }
+  }
+
+  return null
+}
+
+const canReconnectOwnerRange = (currentNodes: Node[], newNodes: Node[]) => {
+  if (currentNodes.length === 0 || currentNodes.length !== newNodes.length) {
+    return false
+  }
+
+  let sawBoundary = false
+
+  for (let index = 0; index < newNodes.length; index += 1) {
+    const currentNode = currentNodes[index]!
+    const newNode = newNodes[index]!
+    if (currentNode.nodeType !== newNode.nodeType) {
+      return false
+    }
+
+    const currentBoundary = getBoundaryMarker(currentNode)
+    const newBoundary = getBoundaryMarker(newNode)
+    if (currentBoundary || newBoundary) {
+      if (
+        !currentBoundary ||
+        !newBoundary ||
+        currentBoundary.kind !== newBoundary.kind ||
+        currentBoundary.id !== newBoundary.id
+      ) {
+        return false
+      }
+      sawBoundary = true
+      continue
+    }
+
+    if (currentNode instanceof Element && newNode instanceof Element) {
+      if (currentNode.tagName !== newNode.tagName) {
+        return false
+      }
+      continue
+    }
+
+    if (currentNode.nodeType === Node.TEXT_NODE && newNode.nodeType === Node.TEXT_NODE) {
+      continue
+    }
+
+    return false
+  }
+
+  return sawBoundary
+}
+
 export const createTemplate = (html: string): (() => Node) => {
   let template: HTMLTemplateElement | null = null
 
@@ -169,7 +242,21 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
     const newNodes = owner
       ? renderClientInsertableForOwner(value, runtimeContainer, owner)
       : renderClientInsertable(value, runtimeContainer)
-    const currentNodes = collectCurrentNodes(liveMarker, stableParents)
+    const seededCurrentNodes =
+      lastNodeLength === 0 && liveMarker instanceof Comment
+        ? collectNodesBeforeMarker(liveMarker, newNodes.length)
+        : []
+    const currentNodes =
+      seededCurrentNodes.length !== 0 &&
+      seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents)) &&
+      canReconnectOwnerRange(seededCurrentNodes, newNodes)
+        ? seededCurrentNodes
+        : collectCurrentNodes(liveMarker, stableParents)
+
+    if (currentNodes.length !== 0 && lastNodeLength === 0) {
+      lastFirstNode = currentNodes[0]
+      lastNodeLength = currentNodes.length
+    }
 
     if (
       currentNodes.length === lastNodeLength &&
@@ -194,8 +281,9 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
         targetParent.insertBefore(newNodes[i], newNodes[i - 1].nextSibling)
       }
     } else {
+      const insertReference = liveMarker?.parentNode === targetParent ? liveMarker : null
       for (const node of newNodes) {
-        targetParent.insertBefore(node, liveMarker ?? null)
+        targetParent.insertBefore(node, insertReference)
       }
     }
 

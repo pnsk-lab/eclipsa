@@ -7,6 +7,8 @@ export default defineConfig({
       'atom/**/*.test.tsx',
       'core/**/*.test.ts',
       'core/**/*.test.tsx',
+      'web-utils/**/*.test.ts',
+      'web-utils/**/*.test.tsx',
       'compiler/**/*.test.ts',
       'vite/**/*.test.ts',
     ],
@@ -15,6 +17,7 @@ export default defineConfig({
   pack: {
     entry: [
       'mod.ts',
+      'web-utils/mod.ts',
       'vite/mod.ts',
       'jsx/mod.ts',
       'jsx/jsx-runtime.ts',

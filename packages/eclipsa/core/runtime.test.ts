@@ -12,6 +12,7 @@ import {
   dispatchDocumentEvent,
   flushDirtyComponents,
   installResumeListeners,
+  rememberInsertMarkerRange,
   renderClientInsertable,
   restoreResumedLocalSignalEffects,
   syncBoundElementSignal,
@@ -2190,7 +2191,10 @@ describe('renderClientInsertable', () => {
         metaKey = false
         shiftKey = false
 
-        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+        constructor(
+          type: string,
+          private readonly eventTarget: EventTarget | null,
+        ) {
           super(type, { bubbles: true, cancelable: true })
         }
 
@@ -2266,13 +2270,11 @@ describe('renderClientInsertable', () => {
 
         globalThis.fetch = (async (input: RequestInfo | URL) => {
           const url =
-            typeof input === 'string'
-              ? input
-              : input instanceof URL
-                ? input.href
-                : input.url
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
 
-          if (url === 'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fquick-start') {
+          if (
+            url === 'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fquick-start'
+          ) {
             return {
               json: async () => ({ document: true, ok: false }),
               status: 404,
@@ -2459,7 +2461,10 @@ describe('renderClientInsertable', () => {
         metaKey = false
         shiftKey = false
 
-        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+        constructor(
+          type: string,
+          private readonly eventTarget: EventTarget | null,
+        ) {
           super(type, { bubbles: true, cancelable: true })
         }
 
@@ -2551,11 +2556,7 @@ describe('renderClientInsertable', () => {
 
         globalThis.fetch = (async (input: RequestInfo | URL) => {
           const url =
-            typeof input === 'string'
-              ? input
-              : input instanceof URL
-                ? input.href
-                : input.url
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
 
           if (
             url ===
@@ -2839,7 +2840,10 @@ describe('renderClientInsertable', () => {
         metaKey = false
         shiftKey = false
 
-        constructor(type: string, private readonly eventTarget: EventTarget | null) {
+        constructor(
+          type: string,
+          private readonly eventTarget: EventTarget | null,
+        ) {
           super(type, { bubbles: true, cancelable: true })
         }
 
@@ -2931,11 +2935,7 @@ describe('renderClientInsertable', () => {
 
         globalThis.fetch = (async (input: RequestInfo | URL) => {
           const url =
-            typeof input === 'string'
-              ? input
-              : input instanceof URL
-                ? input.href
-                : input.url
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
 
           if (
             url ===
@@ -3011,9 +3011,14 @@ describe('renderClientInsertable', () => {
         }
 
         const Page = __eclipsaComponent(PageBody, 'mobile-click-route-loader-page', () => [])
-        const Layout = __eclipsaComponent(LayoutBody, 'mobile-click-route-loader-layout', () => [], {
-          children: 1,
-        })
+        const Layout = __eclipsaComponent(
+          LayoutBody,
+          'mobile-click-route-loader-layout',
+          () => [],
+          {
+            children: 1,
+          },
+        )
 
         const currentPage = () => jsxDEV('p', { children: 'home' }, null, false, {})
         const nextRender = () =>
@@ -3846,6 +3851,13 @@ describe('renderClientInsertable', () => {
       const doc = container.doc as unknown as FakeDocument
       const host = new FakeElement('div')
       host.ownerDocument = doc
+      const originalInsertBefore = host.insertBefore.bind(host)
+      host.insertBefore = ((node: FakeNode, referenceNode: FakeNode | null) => {
+        if (referenceNode && referenceNode.parentNode !== host) {
+          throw new Error('insertBefore reference node must be a child of the target parent')
+        }
+        return originalInsertBefore(node, referenceNode)
+      }) as typeof host.insertBefore
       const detachedParent = new FakeElement('div')
       detachedParent.ownerDocument = doc
       const marker = new FakeComment('marker')
@@ -3924,6 +3936,159 @@ describe('renderClientInsertable', () => {
         const detachedRoot = rendered[1] as FakeElement | undefined
         expect(detachedRoot).toBeInstanceOf(FakeElement)
         expect(detachedRoot?.textContent).toContain('detached')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('reconnects existing owner-insert ranges when a boundary activates over resumed DOM', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+
+      const PanelBody = () =>
+        jsxDEV('div', { 'data-panel': '', children: 'panel' }, null, false, {})
+
+      const Panel = __eclipsaComponent(PanelBody, 'resume-owner-insert-panel', () => [])
+
+      const SearchDialogBody = () => {
+        const host = document.createElement('div')
+        const marker = document.createComment('ec:i:resume-owner-range')
+        host.appendChild(marker)
+        insert(
+          asInsertable(jsxDEV(Panel as any, {}, null, false, {})),
+          host as unknown as Node,
+          marker,
+        )
+        return host as unknown as JSX.Element
+      }
+
+      const SearchDialog = __eclipsaComponent(
+        SearchDialogBody,
+        'resume-owner-insert-search-dialog',
+        () => [],
+      )
+
+      container.imports.set(
+        'resume-owner-insert-search-dialog',
+        Promise.resolve({
+          default: () => SearchDialogBody(),
+        }),
+      )
+      container.imports.set(
+        'resume-owner-insert-panel',
+        Promise.resolve({
+          default: () => PanelBody(),
+        }),
+      )
+
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
+      try {
+        const host = new FakeElement('div')
+        const nodes = withRuntimeContainer(container, () =>
+          renderClientInsertable(jsxDEV(SearchDialog as any, {}, null, false, {}), container),
+        ) as unknown as FakeNode[]
+
+        for (const node of nodes) {
+          host.appendChild(node)
+        }
+
+        expect(queryFakeElements(host, 'div[data-panel]')).toHaveLength(1)
+
+        const boundary = [...container.components.values()].find(
+          (component) => component.symbol === 'resume-owner-insert-search-dialog',
+        )
+        expect(boundary).toBeTruthy()
+
+        boundary!.active = false
+        boundary!.reuseExistingDomOnActivate = true
+        boundary!.reuseProjectionSlotDomOnActivate = false
+        container.dirty.add(boundary!.id)
+
+        await flushDirtyComponents(container)
+
+        expect(queryFakeElements(host, 'div[data-panel]')).toHaveLength(1)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('does not duplicate nested managed children when a resumed parent boundary is reactivated', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+
+      const ChildBody = () =>
+        jsxDEV('div', { 'data-panel': '', children: 'panel' }, null, false, {})
+      const Child = __eclipsaComponent(ChildBody, 'resume-nested-child', () => [])
+
+      const ParentBody = () =>
+        jsxDEV(
+          'div',
+          {
+            children: jsxDEV(
+              'div',
+              {
+                class: 'mx-auto',
+                children: jsxDEV(Child as any, {}, null, false, {}),
+              },
+              null,
+              false,
+              {},
+            ),
+          },
+          null,
+          false,
+          {},
+        )
+
+      const Parent = __eclipsaComponent(ParentBody, 'resume-nested-parent', () => [])
+
+      container.imports.set(
+        'resume-nested-parent',
+        Promise.resolve({
+          default: () => ParentBody(),
+        }),
+      )
+      container.imports.set(
+        'resume-nested-child',
+        Promise.resolve({
+          default: () => ChildBody(),
+        }),
+      )
+
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
+      try {
+        const host = new FakeElement('div')
+        const nodes = withRuntimeContainer(container, () =>
+          renderClientInsertable(jsxDEV(Parent as any, {}, null, false, {}), container),
+        ) as unknown as FakeNode[]
+
+        for (const node of nodes) {
+          host.appendChild(node)
+        }
+
+        expect(queryFakeElements(host, 'div[data-panel]')).toHaveLength(1)
+
+        for (const component of container.components.values()) {
+          component.active = false
+          component.reuseExistingDomOnActivate = true
+          component.reuseProjectionSlotDomOnActivate = false
+        }
+
+        const parentBoundary = [...container.components.values()].find(
+          (component) => component.symbol === 'resume-nested-parent',
+        )
+        expect(parentBoundary).toBeTruthy()
+        container.dirty.add(parentBoundary!.id)
+
+        await flushDirtyComponents(container)
+
+        expect(queryFakeElements(host, 'div[data-panel]')).toHaveLength(1)
       } finally {
         globalThis.document = originalDocument
       }
@@ -4573,6 +4738,71 @@ describe('renderClientInsertable', () => {
         'ec:s:parent:children:0:start',
         'ec:s:parent:children:0:end',
       ])
+    })
+  })
+
+  it('does not duplicate resumed owner ranges when insert marker ownership has not been measured yet', () => {
+    withFakeNodeGlobal(() => {
+      const doc = new FakeDocument()
+      const current = doc.createElement('section') as unknown as FakeElement
+      const next = doc.createElement('section') as unknown as FakeElement
+
+      current.appendChild(doc.createComment('ec:c:c0.$i0.0:start') as unknown as FakeNode)
+      const currentPanel = doc.createElement('div') as unknown as FakeElement
+      currentPanel.setAttribute('data-panel', '')
+      currentPanel.appendChild(doc.createTextNode('panel') as unknown as FakeNode)
+      current.appendChild(currentPanel)
+      current.appendChild(doc.createComment('ec:c:c0.$i0.0:end') as unknown as FakeNode)
+      current.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
+
+      next.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
+      next.appendChild(doc.createComment('ec:c:c0.$i0.0:start') as unknown as FakeNode)
+      const nextPanel = doc.createElement('div') as unknown as FakeElement
+      nextPanel.setAttribute('data-panel', '')
+      nextPanel.appendChild(doc.createTextNode('panel') as unknown as FakeNode)
+      next.appendChild(nextPanel)
+      next.appendChild(doc.createComment('ec:c:c0.$i0.0:end') as unknown as FakeNode)
+
+      expect(
+        tryPatchElementShellInPlace(current as unknown as Element, next as unknown as Element),
+      ).toBe(true)
+
+      expect(queryFakeElements(current as unknown as FakeNode, 'div[data-panel]')).toHaveLength(1)
+      expect(collectComments([current as unknown as FakeNode])).toEqual([
+        'ec:i:42',
+        'ec:c:c0.$i0.0:start',
+        'ec:c:c0.$i0.0:end',
+      ])
+    })
+  })
+
+  it('does not preserve component boundaries through insert markers during shell patching', () => {
+    withFakeNodeGlobal(() => {
+      const doc = new FakeDocument()
+      const current = doc.createElement('section') as unknown as FakeElement
+      const next = doc.createElement('section') as unknown as FakeElement
+
+      const start = doc.createComment('ec:c:c0.$i0.0:start') as unknown as FakeNode
+      const panel = doc.createElement('div') as unknown as FakeElement
+      panel.setAttribute('data-panel', '')
+      panel.appendChild(doc.createTextNode('panel') as unknown as FakeNode)
+      const end = doc.createComment('ec:c:c0.$i0.0:end') as unknown as FakeNode
+      const marker = doc.createComment('ec:i:42') as unknown as FakeNode
+
+      current.appendChild(start)
+      current.appendChild(panel)
+      current.appendChild(end)
+      current.appendChild(marker)
+      rememberInsertMarkerRange(marker as unknown as Comment, [start, panel, end] as Node[])
+
+      next.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
+
+      expect(
+        tryPatchElementShellInPlace(current as unknown as Element, next as unknown as Element),
+      ).toBe(true)
+
+      expect(queryFakeElements(current as unknown as FakeNode, 'div[data-panel]')).toHaveLength(0)
+      expect(collectComments([current as unknown as FakeNode])).toEqual(['ec:i:42'])
     })
   })
 

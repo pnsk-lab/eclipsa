@@ -21,6 +21,10 @@
       "types": "./atom/mod.ts",
       "import": "./atom/mod.ts"
     },
+    "./web-utils": {
+      "types": "./web-utils/mod.ts",
+      "import": "./web-utils/mod.ts"
+    },
     "./vite": {
       "types": "./vite/mod.ts",
       "import": "./vite/mod.ts"
@@ -63,6 +67,10 @@
       "./atom": {
         "types": "./atom/mod.d.mts",
         "import": "./atom/mod.mjs"
+      },
+      "./web-utils": {
+        "types": "./web-utils/mod.d.mts",
+        "import": "./web-utils/mod.mjs"
       },
       "./vite": {
         "types": "./vite/mod.d.mts",

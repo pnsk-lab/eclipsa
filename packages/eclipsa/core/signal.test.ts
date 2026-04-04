@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { __eclipsaComponent } from './internal.ts'
-import { onCleanup, useComputed, useSignal, useWatch } from './signal.ts'
+import { effect, onCleanup, signal, useComputed, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
 
 class FakeNode {}
@@ -126,7 +126,54 @@ describe('useSignal', () => {
   })
 })
 
+describe('signal', () => {
+  it('does not re-run effects for equal primitive values or the same object reference', () => {
+    const count = signal(1)
+    const initialObject = { label: 'same' }
+    const state = signal(initialObject)
+    const values: string[] = []
+
+    effect(() => {
+      values.push(`${count.value}:${state.value === initialObject ? 'same' : 'new'}`)
+    })
+
+    count.value = 1
+    state.value = initialObject
+    state.value = { label: 'same' }
+    count.value = 2
+
+    expect(values).toEqual(['1:same', '1:new', '2:new'])
+  })
+})
+
 describe('useWatch', () => {
+  it('does not re-run for equal primitive values or the same object reference', () => {
+    withFakeNodeGlobal(() => {
+      let count!: { value: number }
+      let state!: { value: { label: string } }
+      const initialObject = { label: 'same' }
+      const values: string[] = []
+
+      renderComponent(() => {
+        count = useSignal(1)
+        state = useSignal(initialObject)
+
+        useWatch(() => {
+          values.push(`${count.value}:${state.value === initialObject ? 'same' : 'new'}`)
+        })
+
+        return 'ready'
+      })
+
+      count.value = 1
+      state.value = initialObject
+      state.value = { label: 'same' }
+      count.value = 2
+
+      expect(values).toEqual(['1:same', '1:new', '2:new'])
+    })
+  })
+
   it('reacts to signal changes read through managed component prop getters', () => {
     withFakeNodeGlobal(() => {
       let visible!: { value: boolean }

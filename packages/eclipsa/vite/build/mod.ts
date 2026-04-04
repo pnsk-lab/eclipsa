@@ -101,7 +101,9 @@ const collectClientChunkCacheAssets = async (
 
     return Promise.all(
       assetFiles.map(async (asset) => ({
-        hash: xxHash32(await fs.readFile(asset.filePath)).toString(16).padStart(8, '0'),
+        hash: xxHash32(await fs.readFile(asset.filePath))
+          .toString(16)
+          .padStart(8, '0'),
         url: asset.url,
       })),
     )
@@ -118,7 +120,9 @@ const createClientChunkCacheVersion = (assets: ClientChunkCacheAsset[]) =>
     .toString(16)
     .padStart(8, '0')
 
-const renderChunkCacheServiceWorker = (version: string) => `const CACHE_NAME = "${CHUNK_CACHE_NAME_PREFIX}-${version}";
+const renderChunkCacheServiceWorker = (
+  version: string,
+) => `const CACHE_NAME = "${CHUNK_CACHE_NAME_PREFIX}-${version}";
 const CACHE_PREFIX = "${CHUNK_CACHE_NAME_PREFIX}-";
 const PATH_PREFIXES = ${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)};
 const PRECACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";

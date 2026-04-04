@@ -1,4 +1,4 @@
-import { onMount, onCleanup, useSignal, type Signal } from 'eclipsa'
+import { onMount, onCleanup, useSignal, useWatch, type Signal } from 'eclipsa'
 import {
   MotionValue,
   mapValue,
@@ -92,9 +92,21 @@ export const useMotionValueEvent = <T, EventName extends Parameters<MotionValue<
   callback: Parameters<MotionValue<T>['on']>[1],
 ) => {
   onMount(() => {
+    // Prime derived motion values so change subscriptions receive upstream updates.
+    value.get()
     const cleanup = value.on(eventName, callback as never)
     onCleanup(cleanup)
   })
+}
+
+export const useMotionValueSignal = <T>(value: MotionValue<T>): Signal<T> => {
+  const mirrored = useSignal<T>(value.get())
+
+  useMotionValueEvent(value, 'change', (nextValue) => {
+    mirrored.value = nextValue as T
+  })
+
+  return mirrored
 }
 
 export const useReducedMotion = (): Signal<boolean> => {
@@ -126,7 +138,12 @@ export const useInView = (
   options?: IntersectionObserverInit,
 ): Signal<boolean> => {
   const inView = useSignal(false)
-  onMount(() => {
+  const targetDependencies =
+    target && typeof target === 'object' && 'value' in target
+      ? [target as Signal<Element | undefined>]
+      : undefined
+
+  useWatch(() => {
     const element = resolveTargetElement(target)
     if (!element || typeof IntersectionObserver === 'undefined') {
       inView.value = !!element
@@ -137,7 +154,7 @@ export const useInView = (
     }, options)
     observer.observe(element)
     onCleanup(() => observer.disconnect())
-  })
+  }, targetDependencies)
   return inView
 }
 

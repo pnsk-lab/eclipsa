@@ -5,6 +5,7 @@ import {
   escapeJSONScriptText,
   serializeValue,
 } from './serialize.ts'
+import { noSerialize } from './no-serialize.ts'
 
 describe('serializeValue', () => {
   it('round-trips nested plain data, maps, and sets', () => {
@@ -56,15 +57,44 @@ describe('serializeValue', () => {
   })
 
   it('rejects unsupported objects commonly involved in server gadget chains', () => {
-    expect(() => serializeValue(new Date())).toThrow('Unsupported object')
-    expect(() => serializeValue(new URL('https://example.com'))).toThrow('Unsupported object')
-    expect(() => serializeValue(new Error('boom'))).toThrow('Unsupported object')
+    expect(() => serializeValue(new Date())).toThrow('[object Date]')
+    expect(() => serializeValue(new URL('https://example.com'))).toThrow('[object URL]')
+    expect(() => serializeValue(new Error('boom'))).toThrow('[object Error]')
+    expect(() => serializeValue(new Date())).toThrow(
+      'Only primitives, plain objects, arrays, Map, Set',
+    )
+    expect(() => serializeValue(new Date())).toThrow('noSerialize()')
+  })
+
+  it('includes the constructor name for custom non-serializable instances', () => {
+    class MotionValueLike {
+      current = 1
+    }
+
+    expect(() => serializeValue(new MotionValueLike())).toThrow(
+      'Unsupported object [object Object] (constructor: MotionValueLike).',
+    )
   })
 
   it('rejects non-finite numbers', () => {
     expect(() => serializeValue(NaN)).toThrow('Non-finite numbers cannot be serialized.')
     expect(() => serializeValue(Infinity)).toThrow('Non-finite numbers cannot be serialized.')
     expect(() => serializeValue(-Infinity)).toThrow('Non-finite numbers cannot be serialized.')
+  })
+
+  it('serializes noSerialize values as undefined', () => {
+    const serialized = serializeValue({
+      fn: noSerialize(() => 'hidden'),
+      nested: noSerialize({ answer: 42 }),
+    })
+
+    expect(serialized).toEqual({
+      __eclipsa_type: 'object',
+      entries: [
+        ['fn', { __eclipsa_type: 'undefined' }],
+        ['nested', { __eclipsa_type: 'undefined' }],
+      ],
+    })
   })
 
   it('keeps hostile keys inert on decode', () => {

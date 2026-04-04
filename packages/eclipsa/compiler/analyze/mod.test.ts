@@ -77,6 +77,25 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('accepts useSignal() inside a top-level custom hook', async () => {
+    const analyzed = await analyzeModule(`
+      import { useSignal } from "eclipsa";
+
+      const useCounter = () => {
+        const count = useSignal(0);
+        return count;
+      };
+
+      export default () => {
+        const count = useCounter();
+        return <button>{count.value}</button>;
+      };
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaComponent')
+    expect(analyzed?.code).toContain('const useCounter = () => {')
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (
@@ -186,15 +205,14 @@ describe('analyzeModule()', () => {
     `)
 
     const component = [...analyzed.symbols.values()].find(
-      (symbol) =>
-        symbol.kind === 'component' &&
-        symbol.code.includes('export default (__scope) => <Item />;'),
+      (symbol) => symbol.kind === 'component' && symbol.code.includes('return <Item />;'),
     )
 
+    expect(component?.code).toContain('export default (__scope) => {')
     expect(component?.code).toContain(
       'const Item = __eclipsaComponent(() => <span>{__scope[0]}</span>',
     )
-    expect(component?.code).toContain('export default (__scope) => <Item />;')
+    expect(component?.code).toContain('return <Item />;')
   })
 
   it('analyzes the docs slug layout when it references a same-file helper component', async () => {
@@ -318,6 +336,41 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('auto-wraps returned hook methods so resumable callers can capture the API object', async () => {
+    const analyzed = await analyzeModule(`
+      import { useSignal, useWatch } from "eclipsa";
+
+      const useCounterApi = () => {
+        const count = useSignal(0);
+        const increment = () => {
+          count.value += 1;
+        };
+
+        return {
+          increment,
+        };
+      };
+
+      export default () => {
+        const api = useCounterApi();
+
+        useWatch(() => {
+          api.increment();
+        });
+
+        return <button>{'ready'}</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('return {\n          increment: __eclipsaLazy(')
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
+      1,
+    )
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'watch')).toHaveLength(
+      1,
+    )
+  })
+
   it('rejects plain event handlers that are not component-local functions', async () => {
     await expect(
       analyzeModule(`
@@ -340,6 +393,46 @@ describe('analyzeModule()', () => {
     ).rejects.toThrowError(
       'Unsupported plain event handler for "onClick". Use an inline function, a component-local function declaration, or a component-local const function value.',
     )
+  })
+
+  it('explains how to fix mutable props captures in resumable callbacks', async () => {
+    await expect(
+      analyzeModule(`
+        import { useWatch } from "eclipsa";
+
+        export default (props) => {
+          useWatch(() => {
+            console.log(props.label);
+          });
+
+          return <div>{props.label}</div>;
+        };
+      `),
+    ).rejects.toThrowError(
+      'Unsupported resumable capture "props". Mutable locals are not resumable. Read the needed value into a const before the resumable callback (for example, `const value = props.foo`) or store runtime state in a signal/atom.',
+    )
+  })
+
+  it('keeps same-file helper functions that capture top-level constants inside the resumable scope', async () => {
+    const analyzed = await analyzeModule(`
+      import { useWatch } from "eclipsa";
+
+      const threshold = 0.5;
+      const pick = (value) => value > threshold ? 1 : 0;
+
+      export default () => {
+        useWatch(() => {
+          pick(1);
+        });
+
+        return <div>ok</div>;
+      };
+    `)
+
+    const watch = [...analyzed.symbols.values()].find((symbol) => symbol.kind === 'watch')
+    expect(watch?.code).toContain('const pick = (value) => value > __scope[0] ? 1 : 0;')
+    expect(watch?.code).toContain('export default (__scope) => {')
+    expect(watch?.code).toContain('pick(1);')
   })
 
   it('keeps concrete local symbol ids in emitted component code while preserving HMR metadata', async () => {

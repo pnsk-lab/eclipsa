@@ -116,7 +116,7 @@ const Dir = (props: {
           duration: 0.2,
         }}
       >
-        {links.map((link) => (
+        {links.map((link) =>
           onLinkClick ? (
             <Link
               key={link.href}
@@ -156,8 +156,8 @@ const Dir = (props: {
               ></div>
               <div class="pl-4 py-1 text-sm">{link.label}</div>
             </Link>
-          )
-        ))}
+          ),
+        )}
       </motion.div>
     </div>
   )

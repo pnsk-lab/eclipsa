@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@eclipsa/content": "workspace:*",
+    "@eclipsa/image": "workspace:*",
     "@eclipsa/motion": "workspace:*",
     "@iconify-json/simple-icons": "^1.2.75",
     "@iconify-json/tabler": "^1.2.31",
@@ -20,11 +21,13 @@
     "eclipsa": "workspace:*",
     "monaco-editor": "^0.55.1",
     "shiki": "^4.0.2",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "@egoist/tailwindcss-icons": "^1.9.2",
     "@tailwindcss/vite": "^4.2.1",
+    "@types/three": "^0.180.0",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1",
     "wrangler": "^4.73.0"
   }

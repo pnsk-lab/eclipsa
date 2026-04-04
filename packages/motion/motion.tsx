@@ -1,4 +1,12 @@
-import { createContext, signal, useContext, useSignal, type JSX, type Signal } from 'eclipsa'
+import {
+  createContext,
+  noSerialize,
+  signal,
+  useContext,
+  useSignal,
+  type JSX,
+  type Signal,
+} from 'eclipsa'
 import { __eclipsaComponent } from 'eclipsa/internal'
 import { MotionValue, type MotionNodeOptions, type PanInfo } from 'motion-dom'
 import type { MotionAnimateOptions } from './animate.ts'
@@ -39,16 +47,37 @@ interface ReorderGroupContextValue<T> {
 const asManagedComponent = <T extends object>(name: string, component: (props: T) => JSX.Element) =>
   __eclipsaComponent(component, `@eclipsa/motion:${name}`, () => [])
 
-export type MotionProps = Partial<MotionNodeOptions> & {
-  [key: string]: unknown
+type MotionBaseProps = Partial<MotionNodeOptions> & {
   as?: string
   children?: JSX.Element | JSX.Element[]
   dragControls?: DragControls
   inViewOptions?: IntersectionObserverInit
   layoutDependency?: unknown
-  ref?: Signal<Element | undefined> | { value?: Element | undefined }
   style?: StyleLike
 }
+
+export type MotionProps = MotionBaseProps & {
+  ref?: Signal<Element | undefined> | { value?: Element | undefined }
+}
+
+type MotionRenderProps = MotionProps & Record<string, unknown>
+type CustomIntrinsicElementName = `${string}-${string}` | `${string}:${string}`
+type KnownIntrinsicElementName = Exclude<keyof JSX.IntrinsicElements, CustomIntrinsicElementName>
+
+export type MotionIntrinsicProps<TTag extends keyof JSX.IntrinsicElements> = Omit<
+  JSX.IntrinsicElements[TTag],
+  keyof MotionBaseProps | 'children' | 'ref' | 'style'
+> &
+  MotionBaseProps & {
+    children?: JSX.IntrinsicElements[TTag]['children']
+    ref?: JSX.IntrinsicElements[TTag]['ref']
+    style?: JSX.IntrinsicElements[TTag]['style'] | StyleLike
+  }
+
+type MotionComponent<TProps extends object> = (props: TProps) => JSX.Element
+type MotionIntrinsicComponent<TTag extends keyof JSX.IntrinsicElements> = MotionComponent<
+  MotionIntrinsicProps<TTag>
+>
 
 const DEFAULT_CONFIG: MotionConfigState = {
   reducedMotion: 'user',
@@ -68,6 +97,8 @@ const MotionConfigContext = createContext(DEFAULT_CONFIG)
 const LayoutGroupContext = createContext<LayoutGroupState | null>(null)
 const PresenceContext = createContext(EMPTY_PRESENCE)
 const ReorderGroupContext = createContext<ReorderGroupContextValue<unknown> | null>(null)
+const INTERNAL_DEFAULT_TAG_PROP = '__motionDefaultTag'
+const INTERNAL_LIVE_PROPS_PROP = '__motionLiveProps'
 
 const MOTION_PROP_NAMES = new Set([
   'animate',
@@ -130,6 +161,33 @@ const TRANSFORM_PROP_NAMES = [
 const UNITLESS_STYLES = new Set(['opacity', 'scale', 'scaleX', 'scaleY', 'scaleZ', 'zIndex'])
 
 const isMotionValue = <T,>(value: unknown): value is MotionValue<T> => value instanceof MotionValue
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+const materializeAccessorValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => materializeAccessorValue(entry))
+  }
+  if (!isPlainObject(value)) {
+    return value
+  }
+
+  const next = Object.create(null) as Record<string, unknown>
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (descriptor.get) {
+      next[key] = materializeAccessorValue(descriptor.get.call(value))
+      continue
+    }
+    next[key] = materializeAccessorValue(descriptor.value)
+  }
+  return next
+}
 
 const resolveValue = (value: MaybeMotionValue<string | number> | undefined) =>
   isMotionValue(value) ? value.get() : value
@@ -368,38 +426,69 @@ export const AnimatePresence = asManagedComponent<{
   children?: JSX.Element | JSX.Element[]
 }>('AnimatePresence', ({ children }) => children as JSX.Element)
 
-const createMotionRenderer = (defaultTag: string) => (rawProps: MotionProps) => {
+const MotionRenderer = asManagedComponent<MotionRenderProps>('motion', (rawProps) => {
   const motionProps = rawProps ?? {}
-  const baseTag = typeof motionProps.as === 'string' ? motionProps.as : defaultTag
-  const resolveAnimateTarget = () =>
-    createStyleTarget(resolveVariant(motionProps.animate, motionProps))
+  const baseTag =
+    typeof motionProps.as === 'string'
+      ? motionProps.as
+      : typeof motionProps[INTERNAL_DEFAULT_TAG_PROP] === 'string'
+        ? (motionProps[INTERNAL_DEFAULT_TAG_PROP] as string)
+        : 'div'
+  const config = useContext(MotionConfigContext)
+  const getLiveProps = () =>
+    ((motionProps[INTERNAL_LIVE_PROPS_PROP] as MotionProps | undefined) ??
+      motionProps) as MotionProps
+  const getLiveAnimate = () => getLiveProps().animate as MotionProps['animate']
+  const getLiveInitial = () => getLiveProps().initial as MotionProps['initial']
+  const getLiveStyle = () => getLiveProps().style as MotionProps['style']
+  const getLiveTransition = () => getLiveProps().transition as MotionProps['transition']
+  const getResolvedMotionProps = () =>
+    ({
+      ...motionProps,
+      animate: getLiveAnimate(),
+      initial: getLiveInitial(),
+      style: getLiveStyle(),
+      transition: getLiveTransition(),
+    }) as MotionProps
+  const resolveAnimateTarget = () => {
+    const liveAnimate = getLiveAnimate()
+    return createStyleTarget(resolveVariant(liveAnimate, getResolvedMotionProps()))
+  }
   const resolveInitialTarget = () =>
-    motionProps.initial === false
+    getLiveInitial() === false
       ? resolveAnimateTarget()
-      : createStyleTarget(resolveVariant(motionProps.initial ?? motionProps.animate, motionProps))
+      : createStyleTarget(
+          resolveVariant(getLiveInitial() ?? getLiveAnimate(), getResolvedMotionProps()),
+        )
 
   const forwardedProps: Record<string, unknown> = {}
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(motionProps))) {
-    if (MOTION_PROP_NAMES.has(key) || key === 'as' || key === 'style' || key === 'ref') {
+    if (
+      MOTION_PROP_NAMES.has(key) ||
+      key === 'as' ||
+      key === 'style' ||
+      key === INTERNAL_DEFAULT_TAG_PROP ||
+      key === INTERNAL_LIVE_PROPS_PROP
+    ) {
       continue
     }
     Object.defineProperty(forwardedProps, key, descriptor)
   }
-
-  const animateTarget = resolveAnimateTarget()
-  const renderInitialStyle = motionProps.initial === false ? animateTarget : resolveInitialTarget()
-  const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
-  const mergedStyle = serializeStyle({
-    ...parseStyle(motionProps.style),
-    ...resolvedStyle,
-    ...createTransitionCss(animateTarget, resolveTransition(motionProps, DEFAULT_CONFIG)),
+  Object.defineProperty(forwardedProps, 'style', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      const animateTarget = resolveAnimateTarget()
+      const renderInitialStyle = getLiveInitial() === false ? animateTarget : resolveInitialTarget()
+      const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
+      const mergedStyle = serializeStyle({
+        ...parseStyle(getLiveStyle()),
+        ...resolvedStyle,
+        ...createTransitionCss(animateTarget, resolveTransition(getResolvedMotionProps(), config)),
+      })
+      return mergedStyle === '' ? undefined : mergedStyle
+    },
   })
-  if (motionProps.ref !== undefined) {
-    forwardedProps.ref = motionProps.ref
-  }
-  if (mergedStyle !== '') {
-    forwardedProps.style = mergedStyle
-  }
 
   return {
     isStatic: false,
@@ -409,16 +498,76 @@ const createMotionRenderer = (defaultTag: string) => (rawProps: MotionProps) => 
     },
     type: baseTag,
   } as JSX.Element
+})
+
+const motionRendererCache = new Map<string, MotionComponent<MotionRenderProps>>()
+
+function createMotionRenderer<TTag extends keyof JSX.IntrinsicElements>(
+  defaultTag: TTag,
+): MotionIntrinsicComponent<TTag>
+function createMotionRenderer(defaultTag: string): MotionComponent<MotionRenderProps>
+function createMotionRenderer(defaultTag: string) {
+  const cached = motionRendererCache.get(defaultTag)
+  if (cached) {
+    return cached
+  }
+
+  const renderer: MotionComponent<MotionRenderProps> = (rawProps) => {
+    const props = Object.create(null) as Record<string, unknown>
+    const descriptors = Object.getOwnPropertyDescriptors(rawProps ?? {})
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      const value = descriptor.get ? descriptor.get.call(rawProps ?? {}) : descriptor.value
+
+      if (key === 'animate' || key === 'initial' || key === 'style' || key === 'transition') {
+        Object.defineProperty(props, key, {
+          configurable: descriptor.configurable ?? true,
+          enumerable: descriptor.enumerable ?? true,
+          value: materializeAccessorValue(value),
+          writable: true,
+        })
+        continue
+      }
+
+      Object.defineProperty(props, key, descriptor)
+    }
+    Object.defineProperty(props, INTERNAL_LIVE_PROPS_PROP, {
+      configurable: true,
+      enumerable: false,
+      value:
+        rawProps && (typeof rawProps === 'object' || typeof rawProps === 'function')
+          ? noSerialize(rawProps)
+          : rawProps,
+      writable: true,
+    })
+    Object.defineProperty(props, INTERNAL_DEFAULT_TAG_PROP, {
+      configurable: true,
+      enumerable: true,
+      value: defaultTag,
+      writable: true,
+    })
+
+    return {
+      isStatic: false,
+      props,
+      type: MotionRenderer,
+    } as JSX.Element
+  }
+
+  motionRendererCache.set(defaultTag, renderer)
+  return renderer
 }
 
 type MotionFactory = {
-  <T extends string>(tag: T): (props: MotionProps) => JSX.Element
-  create<T extends string>(tag: T): (props: MotionProps) => JSX.Element
-  [key: string]: any
+  <TTag extends keyof JSX.IntrinsicElements>(tag: TTag): MotionIntrinsicComponent<TTag>
+  <TTag extends string>(tag: TTag): MotionComponent<MotionRenderProps>
+  create<TTag extends keyof JSX.IntrinsicElements>(tag: TTag): MotionIntrinsicComponent<TTag>
+  create<TTag extends string>(tag: TTag): MotionComponent<MotionRenderProps>
+} & {
+  [TTag in KnownIntrinsicElementName]: MotionIntrinsicComponent<TTag>
 }
 
 const motionFactory = ((tag: string) => createMotionRenderer(tag)) as MotionFactory
-motionFactory.create = (tag: string) => createMotionRenderer(tag)
+motionFactory.create = ((tag: string) => createMotionRenderer(tag)) as MotionFactory['create']
 
 export const motion = new Proxy(motionFactory, {
   get(target, prop, receiver) {

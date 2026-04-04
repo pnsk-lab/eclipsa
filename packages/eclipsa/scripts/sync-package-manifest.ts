@@ -13,6 +13,10 @@ export const DEV_EXPORTS = {
     types: './atom/mod.ts',
     import: './atom/mod.ts',
   },
+  './web-utils': {
+    types: './web-utils/mod.ts',
+    import: './web-utils/mod.ts',
+  },
   './vite': {
     types: './vite/mod.ts',
     import: './vite/mod.ts',
@@ -55,6 +59,10 @@ export const PUBLISH_EXPORTS = {
   './atom': {
     types: './dist/atom/mod.d.mts',
     import: './dist/atom/mod.mjs',
+  },
+  './web-utils': {
+    types: './dist/web-utils/mod.d.mts',
+    import: './dist/web-utils/mod.mjs',
   },
   './vite': {
     types: './dist/vite/mod.d.mts',

@@ -1,3 +1,5 @@
+import { isNoSerialize } from './no-serialize.ts'
+
 export interface SerializedUndefined {
   __eclipsa_type: 'undefined'
 }
@@ -59,6 +61,32 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   }
   const proto = Object.getPrototypeOf(value)
   return proto === Object.prototype || proto === null
+}
+
+const getSerializedObjectTag = (value: object) => Object.prototype.toString.call(value)
+
+const getSerializedConstructorName = (value: object) => {
+  const constructor = value.constructor
+  if (typeof constructor !== 'function') {
+    return null
+  }
+  const name = constructor.name
+  return typeof name === 'string' && name.length > 0 ? name : null
+}
+
+const createUnsupportedObjectError = (value: object) => {
+  const tag = getSerializedObjectTag(value)
+  const constructorName = getSerializedConstructorName(value)
+  const constructorLabel =
+    constructorName && constructorName !== 'Object' && constructorName !== 'Array'
+      ? ` (constructor: ${constructorName})`
+      : ''
+
+  return new TypeError(
+    `Unsupported object ${tag}${constructorLabel}. ` +
+      'Only primitives, plain objects, arrays, Map, Set, undefined, and registered references can be serialized. ' +
+      'For runtime-only values, wrap them with noSerialize() or avoid capturing them in resumable props, state, or callbacks.',
+  )
 }
 
 const assertSafeEntryBudget = (count: number, maxEntries: number) => {
@@ -125,6 +153,14 @@ const serializeUnknown = (
 ): SerializedValue => {
   assertSafeDepth(depth, state.maxDepth)
 
+  if (isNoSerialize(value)) {
+    state.entryCount += 1
+    assertSafeEntryBudget(state.entryCount, state.maxEntries)
+    return {
+      __eclipsa_type: 'undefined',
+    }
+  }
+
   const reference = state.serializeReference?.(value) ?? null
   if (reference) {
     state.entryCount += 1
@@ -175,7 +211,7 @@ const serializeUnknown = (
     value instanceof ArrayBuffer ||
     ArrayBuffer.isView(value)
   ) {
-    throw new TypeError(`Unsupported object ${Object.prototype.toString.call(value)}.`)
+    throw createUnsupportedObjectError(value)
   }
   if (stack.has(value)) {
     throw new TypeError('Circular values cannot be serialized.')
@@ -230,7 +266,7 @@ const serializeUnknown = (
       }
     }
 
-    throw new TypeError(`Unsupported object ${Object.prototype.toString.call(value)}.`)
+    throw createUnsupportedObjectError(value)
   } finally {
     stack.delete(value)
   }

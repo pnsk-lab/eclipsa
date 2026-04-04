@@ -38,8 +38,7 @@ describe('docs layout', () => {
     expect(result.html).toContain('>On this page</span>')
     expect(result.html).toContain('>Route tree</a>')
 
-    const routingLinks =
-      result.html.match(/<a[^>]*href="\/docs\/materials\/routing"[^>]*>/g) ?? []
+    const routingLinks = result.html.match(/<a[^>]*href="\/docs\/materials\/routing"[^>]*>/g) ?? []
     const mobileClosableRoutingLinks = routingLinks.filter((tag) => tag.includes('data-e-onclick='))
 
     expect(routingLinks).toHaveLength(2)

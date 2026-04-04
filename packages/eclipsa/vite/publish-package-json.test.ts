@@ -17,6 +17,7 @@ describe('publish package metadata', () => {
     const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
 
     expect(packConfig?.entry).toContain('core/internal.ts')
+    expect(packConfig?.entry).toContain('web-utils/mod.ts')
     expect(publishPackageJson.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/pnsk-lab/eclipsa.git',
@@ -25,6 +26,10 @@ describe('publish package metadata', () => {
     expect(exportsMap['./internal']).toEqual({
       types: './core/internal.d.mts',
       import: './core/internal.mjs',
+    })
+    expect(exportsMap['./web-utils']).toEqual({
+      types: './web-utils/mod.d.mts',
+      import: './web-utils/mod.mjs',
     })
     expect(exportsMap['.']).toEqual({
       types: './mod.d.mts',

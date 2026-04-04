@@ -14,11 +14,40 @@ import {
 } from './compiler.ts'
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from '../core/resume-hmr.ts'
 
+const ECLIPSA_SOURCE_EXTENSIONS = new Set([
+  '.cjs',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.mts',
+  '.ts',
+  '.tsx',
+])
+
+const stripRequestQuery = (value: string) => value.replace(/[?#].*$/, '')
+
+const isAppSourceRequest = (value: string) =>
+  /(^|\/)app\//.test(stripRequestQuery(value).replaceAll('\\', '/'))
+
+const isEclipsaSourceRequest = (value: string) => {
+  const normalized = stripRequestQuery(value)
+  const extensionIndex = normalized.lastIndexOf('.')
+  if (extensionIndex < 0) {
+    return false
+  }
+  const extension = normalized.slice(extensionIndex)
+  if (!ECLIPSA_SOURCE_EXTENSIONS.has(extension)) {
+    return false
+  }
+  return extension === '.tsx' || isAppSourceRequest(normalized)
+}
+
 const isCssRequest = (value: string | undefined) => {
   if (!value) {
     return false
   }
-  const normalized = value.replace(/[#?].*$/, '')
+  const normalized = stripRequestQuery(value)
   return normalized.endsWith('.css')
 }
 
@@ -104,7 +133,7 @@ const handleHotUpdate = async (
   options: HotUpdateContext,
 ) => {
   const config = state.config
-  if (!config || !options.file.endsWith('.tsx')) {
+  if (!config || !isEclipsaSourceRequest(options.file)) {
     return
   }
   const source = await options.read()
@@ -252,7 +281,7 @@ const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = 
         : loadSymbolModuleForSSR(id)
     },
     async transform(code, id) {
-      if (!id.endsWith('.tsx') || parseSymbolRequest(id)) {
+      if (!isEclipsaSourceRequest(id) || parseSymbolRequest(id)) {
         return
       }
       const config = state.config

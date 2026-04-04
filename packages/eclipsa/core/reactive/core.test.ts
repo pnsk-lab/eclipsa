@@ -32,4 +32,25 @@ describe('signal', () => {
     expect(cb).toHaveBeenCalledTimes(2)
     expect(cb).toHaveBeenNthCalledWith(2, 1)
   })
+
+  it('does not re-run effects for equal primitive values or the same object reference', () => {
+    const count = signal(1)
+    const initialObject = { label: 'same' }
+    const state = signal(initialObject)
+
+    const cb = vi.fn()
+    effect(() => {
+      cb(`${count.get()}:${state.get() === initialObject ? 'same' : 'new'}`)
+    })
+
+    count.set(1)
+    state.set(initialObject)
+    state.set({ label: 'same' })
+    count.set(2)
+
+    expect(cb).toHaveBeenCalledTimes(3)
+    expect(cb).toHaveBeenNthCalledWith(1, '1:same')
+    expect(cb).toHaveBeenNthCalledWith(2, '1:new')
+    expect(cb).toHaveBeenNthCalledWith(3, '2:new')
+  })
 })

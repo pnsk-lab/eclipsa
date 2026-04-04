@@ -1768,11 +1768,7 @@ export const assignRuntimeRef = (
 
   const record = container?.signals.get(signalMeta.id)
   if (record) {
-    const changed = record.value !== element
-    record.value = element
-    if (changed) {
-      notifySignalWrite(container, record)
-    }
+    writeSignalValue(container, record, element)
     return true
   }
 
@@ -1790,11 +1786,7 @@ export const restoreSignalRefs = (container: RuntimeContainer, root: ParentNode)
     if (!record) {
       return
     }
-    const changed = record.value !== element
-    record.value = element
-    if (changed) {
-      notifySignalWrite(container, record)
-    }
+    writeSignalValue(container, record, element)
   }
 
   if (isElementNode(root) && root.getAttribute(REF_SIGNAL_ATTR)) {
@@ -2010,19 +2002,42 @@ const createSignalHandle = <T>(record: SignalRecord<T>, container: RuntimeContai
       return record.value
     },
     set(value: T) {
-      record.value = value
-      notifySignalWrite(container, record)
+      writeSignalValue(container, record, value)
     },
   })
   setSignalMeta(handle, {
     get: () => record.value,
     id: record.id,
     set: (value) => {
-      record.value = value
-      notifySignalWrite(container, record)
+      writeSignalValue(container, record, value)
     },
   } satisfies SignalMeta<T>)
   return handle
+}
+
+const isPrimitiveSignalValue = (value: unknown) =>
+  value === null || (typeof value !== 'object' && typeof value !== 'function')
+
+const didSignalValueChange = (previous: unknown, next: unknown) => {
+  if (isPrimitiveSignalValue(previous) && isPrimitiveSignalValue(next)) {
+    return !Object.is(previous, next)
+  }
+
+  return previous !== next
+}
+
+const writeSignalValue = <T>(
+  container: RuntimeContainer | null,
+  record: SignalRecord<T>,
+  nextValue: T,
+) => {
+  if (!didSignalValueChange(record.value, nextValue)) {
+    return false
+  }
+
+  record.value = nextValue
+  notifySignalWrite(container, record)
+  return true
 }
 
 const ensureSignalRecord = <T>(
@@ -3154,13 +3169,19 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
 
         const currentMarker = currentChildren[markerIndex]! as Comment
         const explicitCount = insertMarkerNodeCounts.get(currentMarker)
+        if (explicitCount === undefined) {
+          currentIndex = markerIndex + 1
+          continue
+        }
         const ownedStartIndex =
-          explicitCount !== undefined &&
-          explicitCount >= 0 &&
-          markerIndex - explicitCount >= currentIndex
+          explicitCount >= 0 && markerIndex - explicitCount >= currentIndex
             ? markerIndex - explicitCount
             : currentIndex
         const movedRoots = currentChildren.slice(ownedStartIndex, markerIndex)
+        if (collectComponentBoundaryIds(movedRoots).size > 0) {
+          currentIndex = markerIndex + 1
+          continue
+        }
 
         for (const node of movedRoots) {
           nextChild.parentNode?.insertBefore(node, nextChild)
@@ -7701,10 +7722,7 @@ export const syncBoundElementSignal = (container: RuntimeContainer, target: Even
     const record = container.signals.get(valueSignalId)
     if (record) {
       const nextValue = readBoundElementValue(target, record.value)
-      if (record.value !== nextValue) {
-        record.value = nextValue
-        notifySignalWrite(container, record)
-      }
+      writeSignalValue(container, record, nextValue)
       didSync = true
     }
   }
@@ -7715,10 +7733,7 @@ export const syncBoundElementSignal = (container: RuntimeContainer, target: Even
       const record = container.signals.get(checkedSignalId)
       if (record) {
         const nextChecked = target.checked
-        if (record.value !== nextChecked) {
-          record.value = nextChecked
-          notifySignalWrite(container, record)
-        }
+        writeSignalValue(container, record, nextChecked)
         didSync = true
       }
     }

@@ -466,15 +466,15 @@ describe('build', () => {
     await expect(
       fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
     ).resolves.toContain('addEventListener("message"')
-    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
-      '/eclipsa-chunk-cache-sw.js',
-    )
-    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
-      'navigator.serviceWorker.register',
-    )
-    await expect(fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).resolves.toContain(
-      'eclipsa:chunk-cache-precache',
-    )
+    await expect(
+      fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8'),
+    ).resolves.toContain('/eclipsa-chunk-cache-sw.js')
+    await expect(
+      fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8'),
+    ).resolves.toContain('navigator.serviceWorker.register')
+    await expect(
+      fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8'),
+    ).resolves.toContain('eclipsa:chunk-cache-precache')
   })
 
   it('escapes chunk cache bootstrap scripts as inline javascript instead of json', async () => {

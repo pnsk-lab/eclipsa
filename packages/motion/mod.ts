@@ -32,6 +32,7 @@ export {
   useMotionTemplate,
   useMotionValue,
   useMotionValueEvent,
+  useMotionValueSignal,
   useReducedMotion,
   useScroll,
   useSpring,

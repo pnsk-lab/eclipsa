@@ -10,8 +10,9 @@ use oxc_ast::{
     ast::{
         Argument, ArrowFunctionExpression, AssignmentExpression, AssignmentTarget, CallExpression,
         ExportDefaultDeclaration, ExportDefaultDeclarationKind, Expression, Function,
-        ImportDeclarationSpecifier, JSXAttributeName, JSXElementName, JSXExpression, Program,
-        Statement, TSType, TSTypeAnnotation, VariableDeclarationKind, VariableDeclarator,
+        ImportDeclarationSpecifier, JSXAttributeName, JSXElementName, JSXExpression,
+        ObjectProperty, ObjectPropertyKind, Program, PropertyKind, ReturnStatement, Statement,
+        TSType, TSTypeAnnotation, VariableDeclarationKind, VariableDeclarator,
     },
 };
 use oxc_ast_visit::{Visit, walk};
@@ -372,6 +373,15 @@ fn is_component_name(name: &str) -> bool {
     }) || name.contains('.')
 }
 
+fn is_hook_name(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix("use") else {
+        return false;
+    };
+    suffix.chars().next().is_some_and(|ch| {
+        ch.to_ascii_lowercase() != ch || !ch.is_ascii_alphabetic()
+    })
+}
+
 fn render_span_with_replacements(source: &str, span: Span, replacements: &[Replacement]) -> Result<String, String> {
     let mut nested = replacements
         .iter()
@@ -391,7 +401,7 @@ fn render_span_with_replacements(source: &str, span: Span, replacements: &[Repla
     apply_replacements(base, &mut nested)
 }
 
-fn inject_scope_parameter(function_source: &str) -> Result<String, String> {
+fn inject_scope_parameter(function_source: &str, local_prefix: Option<&str>) -> Result<String, String> {
     let allocator = Allocator::default();
     let module = format!("export default {function_source};");
     let program = parse_program(
@@ -407,10 +417,51 @@ fn inject_scope_parameter(function_source: &str) -> Result<String, String> {
         return Err("failed to build symbol module: expected export default statement".to_string());
     };
 
-    let params_span = match &declaration.declaration {
-        ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => function.params.span,
-        ExportDefaultDeclarationKind::FunctionExpression(function) => function.params.span,
-        ExportDefaultDeclarationKind::FunctionDeclaration(function) => function.params.span,
+    let (params_span, body_replacement) = match &declaration.declaration {
+        ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => {
+            let replacement = local_prefix.map(|prefix| {
+                if function.expression {
+                    let body_range = function.body.span.start as usize..function.body.span.end as usize;
+                    Replacement {
+                        start: body_range.start,
+                        end: body_range.end,
+                        code: format!("{{\n{prefix}\nreturn {};\n}}", &module[body_range]),
+                    }
+                } else {
+                    let insertion = if let Some(last_directive) = function.body.directives.last() {
+                        last_directive.span.end as usize
+                    } else {
+                        function.body.span.start as usize + 1
+                    };
+                    Replacement {
+                        start: insertion,
+                        end: insertion,
+                        code: format!("\n{prefix}\n"),
+                    }
+                }
+            });
+            (function.params.span, replacement)
+        }
+        ExportDefaultDeclarationKind::FunctionExpression(function)
+        | ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+            let body = function
+                .body
+                .as_ref()
+                .ok_or_else(|| "failed to build symbol module: exported symbol must have a body".to_string())?;
+            let replacement = local_prefix.map(|prefix| {
+                let insertion = if let Some(last_directive) = body.directives.last() {
+                    last_directive.span.end as usize
+                } else {
+                    body.span.start as usize + 1
+                };
+                Replacement {
+                    start: insertion,
+                    end: insertion,
+                    code: format!("\n{prefix}\n"),
+                }
+            });
+            (function.params.span, replacement)
+        }
         _ => {
             return Err(
                 "failed to build symbol module: exported symbol must be a function".to_string()
@@ -430,12 +481,16 @@ fn inject_scope_parameter(function_source: &str) -> Result<String, String> {
         format!("(__scope, {params_source})")
     };
 
-    Ok(format!(
-        "{}{}{}",
-        &module[..params_range.start],
-        replacement,
-        &module[params_range.end..]
-    ))
+    let mut replacements = vec![Replacement {
+        start: params_range.start,
+        end: params_range.end,
+        code: replacement,
+    }];
+    if let Some(body_replacement) = body_replacement {
+        replacements.push(body_replacement);
+    }
+
+    apply_replacements(&module, &mut replacements)
 }
 
 fn props_expression_property(expression: &Expression<'_>, props_name: &str) -> Option<String> {
@@ -851,7 +906,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         }
         if flags.is_variable() && !flags.is_const_variable() {
             return Err(format!(
-                "Unsupported resumable capture \"{name}\". Mutable locals are not resumable."
+                "Unsupported resumable capture \"{name}\". Mutable locals are not resumable. Read the needed value into a const before the resumable callback (for example, `const value = props.foo`) or store runtime state in a signal/atom."
             ));
         }
         let declaration = self.semantic.symbol_declaration(symbol_id);
@@ -988,6 +1043,7 @@ struct AnalyzeVisitor<'a, 's> {
     hmr_components: Vec<(String, ResumeHmrComponentEntry)>,
     hmr_key_by_symbol_id: HashMap<String, String>,
     hmr_symbols: Vec<(String, ResumeHmrSymbolEntry)>,
+    hook_functions: HashSet<SpanKey>,
     imports: ImportBindings,
     lazy_symbol_ids_by_span: HashMap<SpanKey, String>,
     file_id: String,
@@ -1020,6 +1076,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             hmr_components: Vec::new(),
             hmr_key_by_symbol_id: HashMap::new(),
             hmr_symbols: Vec::new(),
+            hook_functions: HashSet::new(),
             imports,
             lazy_symbol_ids_by_span: HashMap::new(),
             file_id: file_id.to_string(),
@@ -1070,10 +1127,11 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         None
     }
 
-    fn current_function_is_component(&self) -> bool {
-        self.current_functions
-            .last()
-            .is_some_and(|context| self.component_info_by_fn.contains_key(&context.span_key))
+    fn current_function_is_component_or_hook(&self) -> bool {
+        self.current_functions.last().is_some_and(|context| {
+            self.component_info_by_fn.contains_key(&context.span_key)
+                || self.hook_functions.contains(&context.span_key)
+        })
     }
 
     fn push_owner_local_symbol_key(&mut self, symbol_key: &str) {
@@ -1289,6 +1347,139 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         );
     }
 
+    fn maybe_emit_lazy_symbol_for_return_object(&mut self, expression: &Expression<'a>) {
+        match expression {
+            Expression::ParenthesizedExpression(expression) => {
+                self.maybe_emit_lazy_symbol_for_return_object(&expression.expression);
+            }
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    let ObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    self.maybe_emit_lazy_symbol_for_return_property(property);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn maybe_emit_lazy_symbol_for_return_property(&mut self, property: &ObjectProperty<'a>) {
+        if property.kind != PropertyKind::Init || property.computed || property.method {
+            return;
+        }
+
+        self.maybe_emit_lazy_symbol_for_return_property_value(property, &property.value);
+    }
+
+    fn maybe_emit_lazy_symbol_for_return_property_value(
+        &mut self,
+        property: &ObjectProperty<'a>,
+        value: &Expression<'a>,
+    ) {
+        match value {
+            Expression::ParenthesizedExpression(expression) => {
+                self.maybe_emit_lazy_symbol_for_return_property_value(property, &expression.expression);
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                let dependencies = self.collect_symbol_dependencies_from_expression(value).unwrap();
+                let replacement_code = self.emit_lazy_symbol_from_function(
+                    function.span,
+                    dependencies.captures,
+                    dependencies.import_spans,
+                    dependencies.local_definitions,
+                );
+                self.push_replacement(
+                    property.value.span().start as usize,
+                    property.value.span().end as usize,
+                    replacement_code,
+                );
+            }
+            Expression::FunctionExpression(function) => {
+                let dependencies = self.collect_symbol_dependencies_from_expression(value).unwrap();
+                let replacement_code = self.emit_lazy_symbol_from_function(
+                    function.span,
+                    dependencies.captures,
+                    dependencies.import_spans,
+                    dependencies.local_definitions,
+                );
+                self.push_replacement(
+                    property.value.span().start as usize,
+                    property.value.span().end as usize,
+                    replacement_code,
+                );
+            }
+            Expression::Identifier(identifier) => {
+                let reference = self.semantic.scoping().get_reference(identifier.reference_id());
+                let Some(symbol_id) = reference.symbol_id() else {
+                    return;
+                };
+                let flags = self.semantic.scoping().symbol_flags(symbol_id);
+                let symbol_scope = self.semantic.symbol_scope(symbol_id);
+                if flags.is_import() || symbol_scope == self.program.scope_id() {
+                    return;
+                }
+
+                let replacement_code = match self.semantic.symbol_declaration(symbol_id).kind() {
+                    AstKind::VariableDeclarator(variable) => {
+                        if !flags.is_const_variable() {
+                            return;
+                        }
+                        let Some(init) = variable.init.as_ref() else {
+                            return;
+                        };
+                        let Some(function_span) = function_expression_span(init) else {
+                            return;
+                        };
+                        if self.lazy_symbol_ids_by_span.contains_key(&SpanKey::from_span(function_span)) {
+                            return;
+                        }
+                        let dependencies = self.collect_symbol_dependencies_from_expression(init).unwrap();
+                        self.emit_lazy_symbol_from_function(
+                            function_span,
+                            dependencies.captures,
+                            dependencies.import_spans,
+                            dependencies.local_definitions,
+                        )
+                    }
+                    AstKind::Function(function) => {
+                        if self.lazy_symbol_ids_by_span.contains_key(&SpanKey::from_span(function.span)) {
+                            return;
+                        }
+                        let dependencies =
+                            CaptureCollector::collect_function(self.program, self.semantic, function).unwrap();
+                        self.emit_lazy_symbol_from_function(
+                            function.span,
+                            dependencies.captures,
+                            dependencies.import_spans,
+                            dependencies.local_definitions,
+                        )
+                    }
+                    _ => return,
+                };
+
+                if property.shorthand {
+                    let key_source =
+                        render_span_with_replacements(self.source, property.key.span(), &self.replacements)
+                            .unwrap();
+                    self.push_replacement(
+                        property.span.start as usize,
+                        property.span.end as usize,
+                        format!("{key_source}: {replacement_code}"),
+                    );
+                    return;
+                }
+
+                self.push_replacement(
+                    property.value.span().start as usize,
+                    property.value.span().end as usize,
+                    replacement_code,
+                );
+            }
+            _ => {}
+        }
+    }
+
     fn resolve_plain_event_handler_identifier(
         &mut self,
         attribute_name: &str,
@@ -1384,6 +1575,24 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         None
     }
 
+    fn hook_base_from_stack(&self) -> Option<String> {
+        if !self.current_functions.is_empty() {
+            return None;
+        }
+        for marker in self.node_stack.iter().rev().skip(1) {
+            match marker {
+                NodeMarker::VariableDeclarator(Some(name))
+                | NodeMarker::AssignmentExpression(Some(name))
+                    if is_hook_name(name) =>
+                {
+                    return Some(name.to_string());
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     fn register_component_if_needed(&mut self, span_key: SpanKey) {
         if self.component_info_by_fn.contains_key(&span_key) {
             return;
@@ -1400,6 +1609,15 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 local_symbol_keys: Vec::new(),
             },
         );
+    }
+
+    fn register_hook_if_needed(&mut self, span_key: SpanKey) {
+        if self.hook_functions.contains(&span_key) {
+            return;
+        }
+        if self.hook_base_from_stack().is_some() {
+            self.hook_functions.insert(span_key);
+        }
     }
 
     fn emit_component_symbol(
@@ -1555,11 +1773,10 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             .map(|definition| self.render_local_definition(definition))
             .collect::<Result<Vec<_>, _>>()?
             .join("\n");
-        let standalone_module = if local_prefix.is_empty() {
-            inject_scope_parameter(&standalone_source)?
-        } else {
-            format!("{local_prefix}\n{}", inject_scope_parameter(&standalone_source)?)
-        };
+        let standalone_module = inject_scope_parameter(
+            &standalone_source,
+            (!local_prefix.is_empty()).then_some(local_prefix.as_str()),
+        )?;
         let allocator = Allocator::default();
         let standalone_program = parse_program(
             &allocator,
@@ -1697,11 +1914,13 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             AstKind::ArrowFunctionExpression(function) => {
                 let span_key = SpanKey::from_span(function.span);
                 self.register_component_if_needed(span_key);
+                self.register_hook_if_needed(span_key);
                 self.current_functions.push(FunctionContext { span_key });
             }
             AstKind::Function(function) => {
                 let span_key = SpanKey::from_span(function.span);
                 self.register_component_if_needed(span_key);
+                self.register_hook_if_needed(span_key);
                 self.current_functions.push(FunctionContext { span_key });
             }
             _ => {}
@@ -1743,7 +1962,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .as_deref()
             .is_some_and(|identifier| identifier == callee_name)
         {
-            if !self.current_function_is_component() {
+            if !self.current_function_is_component_or_hook() {
                 self.fail(
                     "useSignal() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).",
                 );
@@ -1757,7 +1976,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .as_deref()
             .is_some_and(|identifier| identifier == callee_name)
         {
-            if !self.current_function_is_component() {
+            if !self.current_function_is_component_or_hook() {
                 self.fail(
                     "useAtom() can only be used while rendering a component and must be called at the top level of the component body (not inside nested functions).",
                 );
@@ -2015,6 +2234,23 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         }
         self.emit_component_symbol_for_expression(&expression.right);
         self.maybe_emit_local_lazy_symbol(&expression.right);
+    }
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        walk::walk_return_statement(self, statement);
+        if self.error.is_some() {
+            return;
+        }
+        if !self.current_function_is_component_or_hook() {
+            return;
+        }
+        let Some(argument) = &statement.argument else {
+            return;
+        };
+        self.maybe_emit_lazy_symbol_for_return_object(argument);
     }
 
     fn visit_export_default_declaration(&mut self, declaration: &ExportDefaultDeclaration<'a>) {
