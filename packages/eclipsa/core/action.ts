@@ -1203,34 +1203,37 @@ export const __eclipsaAction = <
       }
 
       const Form = (props: ActionFormProps) => {
-        if (typeof document !== 'undefined') {
-          return createActionFormNode(id, props) as unknown as JSX.Element
-        }
+        const body =
+          typeof document !== 'undefined'
+            ? (createActionFormNode(id, props) as unknown as JSX.Element)
+            : (() => {
+                const nextProps: Record<string, unknown> = {
+                  ...props,
+                  [ACTION_FORM_ATTR]: id,
+                  method: 'post',
+                  children: [
+                    {
+                      isStatic: true,
+                      props: {
+                        name: ACTION_FORM_FIELD,
+                        type: 'hidden',
+                        value: id,
+                      },
+                      type: 'input',
+                    },
+                    props.children,
+                  ],
+                }
+                delete nextProps.action
+                delete nextProps.method
+                return {
+                  isStatic: true,
+                  props: nextProps,
+                  type: 'form',
+                } satisfies JSX.Element
+              })()
 
-        const nextProps: Record<string, unknown> = {
-          ...props,
-          [ACTION_FORM_ATTR]: id,
-          method: 'post',
-          children: [
-            {
-              isStatic: true,
-              props: {
-                name: ACTION_FORM_FIELD,
-                type: 'hidden',
-                value: id,
-              },
-              type: 'input',
-            },
-            props.children,
-          ],
-        }
-        delete nextProps.action
-        delete nextProps.method
-        return {
-          isStatic: true,
-          props: nextProps,
-          type: 'form',
-        } satisfies JSX.Element
+        return body
       }
       const actionHandle = setActionHandleMeta(
         {

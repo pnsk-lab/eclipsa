@@ -103,6 +103,22 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
   })
 
+  test('restores the previous route when using the browser back button', async ({ page }) => {
+    await page.goto('/')
+    await waitForResumedRoute(page)
+
+    await page.getByRole('link', { name: 'Open counter with Link' }).click()
+
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByText('Counter page')).toBeVisible()
+
+    await page.goBack()
+
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', { name: 'Go to counter with navigate()' })).toBeVisible()
+    await expect(page.getByText('Counter page')).toHaveCount(0)
+  })
+
   test('does not duplicate route content when navigate() returns into a shared layout', async ({
     page,
   }) => {

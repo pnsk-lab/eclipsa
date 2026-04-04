@@ -96,6 +96,24 @@ describe('analyzeModule()', () => {
     expect(analyzed?.code).toContain('const useCounter = () => {')
   })
 
+  it('rejects early-return components', async () => {
+    await expect(
+      analyzeModule(`
+        import { useSignal } from "eclipsa";
+
+        export const Counter = () => {
+          const count = useSignal(0);
+          if (count.value > 0) {
+            return <button>positive</button>;
+          }
+          return <button>zero</button>;
+        };
+      `),
+    ).rejects.toThrowError(
+      'must use a single final return statement. Early returns are not supported.',
+    )
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (

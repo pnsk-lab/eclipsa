@@ -6153,7 +6153,8 @@ const navigateContainer = async (
     ? findSpecialManifestEntry(router.manifest, pathname, 'notFound')
     : null
 
-  const currentHref = `${doc.location.pathname}${doc.location.search}${doc.location.hash}`
+  const currentRouteUrl = new URL(router.currentUrl.value, doc.location.href)
+  const currentHref = `${currentRouteUrl.pathname}${currentRouteUrl.search}${currentRouteUrl.hash}`
   const nextHref = `${url.pathname}${url.search}${url.hash}`
   if (!force && nextHref === currentHref) {
     return

@@ -2448,6 +2448,214 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('navigates to the previous route on popstate after the browser location has already changed', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalFetch = globalThis.fetch
+
+      try {
+        globalThis.fetch = (async () => {
+          throw new Error('Unexpected fetch during popstate navigation test')
+        }) as typeof fetch
+
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument & {
+          defaultView: {
+            addEventListener: (
+              type: string,
+              listener: EventListenerOrEventListenerObject,
+            ) => void
+            history: {
+              pushState: (_data: unknown, _unused: string, url: string) => void
+              replaceState: (_data: unknown, _unused: string, url: string) => void
+            }
+            location: {
+              assign: (url: string) => void
+              replace: (url: string) => void
+            }
+            removeEventListener: (
+              type: string,
+              listener: EventListenerOrEventListenerObject,
+            ) => void
+            requestAnimationFrame: (callback: FrameRequestCallback) => number
+            setTimeout: (callback: () => void) => number
+          }
+          location: Location
+        }
+
+        const applyLocation = (href: string) => {
+          const url = new URL(href)
+          doc.location = {
+            hash: url.hash,
+            href: url.href,
+            origin: url.origin,
+            pathname: url.pathname,
+            search: url.search,
+          } as Location
+        }
+
+        let popstateListener: EventListenerOrEventListenerObject | null = null
+        applyLocation('http://local/counter')
+        doc.defaultView = {
+          ...doc.defaultView,
+          addEventListener: (type, listener) => {
+            if (type === 'popstate') {
+              popstateListener = listener
+            }
+          },
+          history: {
+            pushState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+            replaceState: (_data, _unused, url) => {
+              applyLocation(url)
+            },
+          },
+          location: {
+            assign: (url) => {
+              applyLocation(url)
+            },
+            replace: (url) => {
+              applyLocation(url)
+            },
+          },
+          removeEventListener: (type, listener) => {
+            if (type === 'popstate' && popstateListener === listener) {
+              popstateListener = null
+            }
+          },
+        }
+
+        const homeEntry = {
+          error: null,
+          hasMiddleware: false,
+          layouts: [],
+          loading: null,
+          notFound: null,
+          page: '/entries/home.js',
+          routePath: '/',
+          segments: [],
+          server: null,
+        }
+        const counterEntry = {
+          error: null,
+          hasMiddleware: false,
+          layouts: [],
+          loading: null,
+          notFound: null,
+          page: '/entries/counter.js',
+          routePath: '/counter',
+          segments: [{ kind: 'static' as const, value: 'counter' }],
+          server: null,
+        }
+        const Home = () => jsxDEV('p', { children: 'home' }, null, false, {})
+        const Counter = () => jsxDEV('p', { children: 'counter' }, null, false, {})
+        const homeRoute = {
+          entry: homeEntry,
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/',
+          page: {
+            metadata: null,
+            renderer: Home,
+            symbol: null,
+            url: '/entries/home.js',
+          },
+          render: () => jsxDEV(Home, {}, null, false, {}),
+        }
+        const counterRoute = {
+          entry: counterEntry,
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/counter',
+          page: {
+            metadata: null,
+            renderer: Counter,
+            symbol: null,
+            url: '/entries/counter.js',
+          },
+          render: () => jsxDEV(Counter, {}, null, false, {}),
+        }
+
+        container.rootElement = doc.body as unknown as HTMLElement
+        container.router = {
+          currentPath: { value: '/counter' },
+          currentRoute: counterRoute,
+          currentUrl: { value: 'http://local/counter' },
+          defaultTitle: '',
+          isNavigating: { value: false },
+          loadedRoutes: new Map([
+            ['/::page', homeRoute],
+            ['/counter::page', counterRoute],
+          ]),
+          location: doc.location,
+          manifest: [homeEntry, counterEntry],
+          navigate: (async () => {}) as any,
+          prefetchedLoaders: new Map(),
+          routeModuleBusts: new Map(),
+          routePrefetches: new Map([
+            [
+              '/',
+              Promise.resolve({
+                finalHref: 'http://local/',
+                finalPathname: '/',
+                kind: 'page' as const,
+                loaders: {},
+                ok: true as const,
+              }),
+            ],
+          ]),
+          sequence: 0,
+        } as unknown as RuntimeContainer['router']
+
+        const originalDocument = globalThis.document
+        ;(globalThis as typeof globalThis & { document: Document }).document =
+          container.doc as Document
+
+        try {
+          const nodes = withRuntimeContainer(container, () =>
+            renderClientInsertable(counterRoute.render(), container),
+          ) as unknown as FakeNode[]
+
+          for (const node of nodes) {
+            ;(doc.body as unknown as FakeElement).appendChild(node)
+          }
+
+          expect((doc.body as unknown as FakeElement).textContent).toContain('counter')
+
+          const cleanup = installResumeListeners(container)
+
+          applyLocation('http://local/')
+          expect(doc.location.pathname).toBe('/')
+          expect(container.router.currentPath.value).toBe('/counter')
+
+          const popstateEvent = new Event('popstate')
+          if (typeof popstateListener === 'function') {
+            popstateListener.call(doc.defaultView, popstateEvent)
+          } else {
+            popstateListener?.handleEvent(popstateEvent)
+          }
+
+          await flushAsync()
+          await flushAsync()
+          await flushAsync()
+
+          expect(container.router.currentPath.value).toBe('/')
+          expect(container.router.currentUrl.value).toBe('http://local/')
+          expect((doc.body as unknown as FakeElement).textContent).toContain('home')
+          expect((doc.body as unknown as FakeElement).textContent).not.toContain('counter')
+
+          cleanup()
+        } finally {
+          globalThis.document = originalDocument
+        }
+      } finally {
+        globalThis.fetch = OriginalFetch
+      }
+    })
+  })
+
   it('prefetches route loader snapshots on pointer intent so mobile taps can render loader-backed routes without loader endpoints', async () => {
     await withFakeNodeGlobal(async () => {
       const OriginalFetch = globalThis.fetch

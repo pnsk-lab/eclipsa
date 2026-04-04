@@ -65,23 +65,15 @@ const SearchResultsBody = (props: {
     onResultClick(event)
   }
 
-  if (props.loading) {
-    return <div class="px-3 py-10 text-center text-sm text-zinc-400">Searching…</div>
-  }
-
-  if (props.query.trim() === '') {
-    return (
-      <div class="px-3 py-10 text-center text-sm text-zinc-400">
-        Search titles, headings, content, and code.
-      </div>
-    )
-  }
-
-  if (props.results.length === 0) {
-    return <div class="px-3 py-10 text-center text-sm text-zinc-400">No results found.</div>
-  }
-
-  return (
+  const body = props.loading ? (
+    <div class="px-3 py-10 text-center text-sm text-zinc-400">Searching…</div>
+  ) : props.query.trim() === '' ? (
+    <div class="px-3 py-10 text-center text-sm text-zinc-400">
+      Search titles, headings, content, and code.
+    </div>
+  ) : props.results.length === 0 ? (
+    <div class="px-3 py-10 text-center text-sm text-zinc-400">No results found.</div>
+  ) : (
     <div class="flex flex-col gap-1">
       {props.results.map((result, index) => (
         <a
@@ -104,6 +96,8 @@ const SearchResultsBody = (props: {
       ))}
     </div>
   )
+
+  return body
 }
 
 export const DocsSearchDialog = () => {

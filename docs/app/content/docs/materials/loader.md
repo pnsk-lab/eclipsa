@@ -22,11 +22,11 @@ const useProfile = loader(async () => {
 export default function Page() {
   const profile = useProfile()
 
-  if (profile.error) {
-    return <p>Failed to load profile.</p>
-  }
-
-  return <pre>{JSON.stringify(profile.data, null, 2)}</pre>
+  return profile.error ? (
+    <p>Failed to load profile.</p>
+  ) : (
+    <pre>{JSON.stringify(profile.data, null, 2)}</pre>
+  )
 }
 ```
 

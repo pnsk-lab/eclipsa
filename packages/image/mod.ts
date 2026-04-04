@@ -49,29 +49,33 @@ export const Image = ({
   width,
   ...props
 }: ImageProps) => {
-  if (typeof src === 'string') {
-    return createImageElement({
-      ...props,
-      alt,
-      decoding,
-      height,
-      loading,
-      sizes,
-      src,
-      srcset,
-      width,
-    })
-  }
+  const imageProps =
+    typeof src === 'string'
+      ? {
+          ...props,
+          alt,
+          decoding,
+          height,
+          loading,
+          sizes,
+          src,
+          srcset,
+          width,
+        }
+      : {
+          ...props,
+          alt,
+          decoding,
+          height: height ?? src.height,
+          loading,
+          sizes: sizes ?? (src.variants.length > 1 ? '100vw' : undefined),
+          src: src.src,
+          srcset:
+            srcset ?? src.variants.map((variant) => `${variant.src} ${variant.width}w`).join(', '),
+          width: width ?? src.width,
+        }
 
   return createImageElement({
-    ...props,
-    alt,
-    decoding,
-    height: height ?? src.height,
-    loading,
-    sizes: sizes ?? (src.variants.length > 1 ? '100vw' : undefined),
-    src: src.src,
-    srcset: srcset ?? src.variants.map((variant) => `${variant.src} ${variant.width}w`).join(', '),
-    width: width ?? src.width,
+    ...imageProps,
   })
 }
