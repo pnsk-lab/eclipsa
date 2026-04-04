@@ -99,11 +99,12 @@ const validateSingleReturnComponent = (
   fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
   label: string,
 ) => {
-  if (!ts.isBlock(fn.body)) {
+  const body = fn.body
+  if (!body || !ts.isBlock(body)) {
     return
   }
 
-  const statements = fn.body.statements
+  const statements = body.statements
   const lastStatement = statements.at(-1)
   if (!lastStatement || !ts.isReturnStatement(lastStatement)) {
     throw new Error(
@@ -162,15 +163,46 @@ const validateSingleReturnComponents = (source: string, id: string) => {
   visit(sourceFile)
 }
 
+const annotateOptimizedRootComponents = (source: string, id: string) => {
+  const sourceFile = ts.createSourceFile(id, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const insertions: number[] = []
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === '__eclipsaComponent'
+    ) {
+      insertions.push(node.end - 1)
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+
+  if (insertions.length === 0) {
+    return source
+  }
+
+  let nextSource = source
+  for (const index of [...insertions].sort((left, right) => right - left)) {
+    nextSource =
+      nextSource.slice(0, index) + ', { optimizedRoot: true }' + nextSource.slice(index)
+  }
+
+  return nextSource
+}
+
 export const analyzeModule = async (
   source: string,
   id = 'analyze-input.tsx',
 ): Promise<AnalyzedModule> => {
   validateSingleReturnComponents(source, id)
   const analyzed = await runRustAnalyzeCompiler(id, source)
+  const code = annotateOptimizedRootComponents(analyzed.code, id)
   return {
     actions: new Map(analyzed.actions),
-    code: analyzed.code,
+    code,
     hmrManifest: {
       components: new Map(analyzed.hmrManifest.components),
       symbols: new Map(analyzed.hmrManifest.symbols),

@@ -114,6 +114,14 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('marks compiled components as optimized roots', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => <button>ready</button>;
+    `)
+
+    expect(analyzed.code).toContain('optimizedRoot: true')
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (
@@ -429,6 +437,19 @@ describe('analyzeModule()', () => {
     ).rejects.toThrowError(
       'Unsupported resumable capture "props". Mutable locals are not resumable. Read the needed value into a const before the resumable callback (for example, `const value = props.foo`) or store runtime state in a signal/atom.',
     )
+  })
+
+  it('rejects useWatch() when the first argument is not a function expression', async () => {
+    await expect(
+      analyzeModule(`
+        import { useWatch } from "eclipsa";
+
+        export default () => {
+          useWatch(1);
+          return <div>ok</div>;
+        };
+      `),
+    ).rejects.toThrowError('useWatch() expects a function expression as the first argument.')
   })
 
   it('keeps same-file helper functions that capture top-level constants inside the resumable scope', async () => {

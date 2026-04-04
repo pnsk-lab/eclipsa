@@ -106,6 +106,7 @@ type DomConstructorName =
   | 'HTMLFormElement'
 
 export interface ResumeComponentPayload {
+  optimizedRoot?: boolean
   props: SerializedValue
   projectionSlots?: Record<string, number>
   scope: string
@@ -265,6 +266,7 @@ interface ComponentState {
   end?: Comment
   id: string
   mountCleanupSlots: CleanupSlot[]
+  optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
   props: unknown
@@ -1185,6 +1187,10 @@ const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
 const resetComponentRenderEffects = (component: ComponentState) => {
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   component.renderEffectCleanupSlot = createCleanupSlot()
+}
+
+const syncEffectOnlyLocalSignalPreference = (component: ComponentState) => {
+  component.prefersEffectOnlyLocalSignalWrites = component.optimizedRoot === true
 }
 
 const clearEffectSignals = (effect: ReactiveEffect) => {
@@ -2430,6 +2436,7 @@ const getOrCreateComponentState = (
     didMount: false,
     id,
     mountCleanupSlots: [],
+    optimizedRoot: false,
     parentId,
     prefersEffectOnlyLocalSignalWrites: false,
     props: {},
@@ -2458,6 +2465,7 @@ const resetComponentForSymbolChange = (
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   component.renderEffectCleanupSlot = createCleanupSlot()
   component.didMount = false
+  component.optimizedRoot = meta.optimizedRoot === true
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.rawProps = null
@@ -4249,6 +4257,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       position.parentId,
     )
     component.scopeId = registerScope(container, meta.captures())
+    component.optimizedRoot = meta.optimizedRoot === true
     component.props = evaluatedProps
     component.projectionSlots = meta.projectionSlots ?? null
     const frame = createFrame(container, component, 'ssr')
@@ -4408,6 +4417,7 @@ const renderComponentToNodes = (
   if (!existing || symbolChanged) {
     resetComponentForSymbolChange(container, component, meta)
   }
+  component.optimizedRoot = meta.optimizedRoot === true
   component.props = props
   component.rawProps = rawProps ?? null
   component.projectionSlots = meta.projectionSlots ?? null
@@ -4520,6 +4530,7 @@ const renderComponentToNodes = (
 
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
+  syncEffectOnlyLocalSignalPreference(component)
 
   return [start, ...renderFrameScopedStylesToNodes(frame, container), ...rendered, end]
 }
@@ -6509,6 +6520,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       }
       clearComponentSubscriptions(container, descendantId)
     }
+    syncEffectOnlyLocalSignalPreference(component)
     return patched
   }
 
@@ -6625,6 +6637,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   }
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
+  syncEffectOnlyLocalSignalPreference(component)
   return patched
 }
 
@@ -7009,6 +7022,7 @@ const createResumePayload = (
       componentEntries.map(([id, component]) => [
         id,
         {
+          ...(component.optimizedRoot ? { optimizedRoot: true } : {}),
           props: serializeRuntimeValue(container, component.props),
           ...(component.projectionSlots
             ? { projectionSlots: { ...component.projectionSlots } }
@@ -7133,6 +7147,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       didMount: false,
       id,
       mountCleanupSlots: [],
+      optimizedRoot: componentPayload.optimizedRoot === true,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
       prefersEffectOnlyLocalSignalWrites: false,
       props: deserializeRuntimeValue(container, componentPayload.props),
@@ -7376,7 +7391,7 @@ export const restoreResumedLocalSignalEffects = async (container: RuntimeContain
     if (!component?.active) {
       continue
     }
-    component.prefersEffectOnlyLocalSignalWrites = true
+    syncEffectOnlyLocalSignalPreference(component)
   }
 }
 

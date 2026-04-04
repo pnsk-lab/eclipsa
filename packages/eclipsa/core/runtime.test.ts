@@ -371,7 +371,20 @@ class FakeDocument {
   activeElement: Element | null = null
   body: HTMLElement
   #eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
-  defaultView = {
+  defaultView: {
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+    history?: {
+      pushState: (data: unknown, unused: string, url?: string | URL | null) => void
+      replaceState: (data: unknown, unused: string, url?: string | URL | null) => void
+    }
+    location?: {
+      assign: (url: string | URL) => void
+      replace: (url: string | URL) => void
+    }
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+    requestAnimationFrame: (callback: FrameRequestCallback) => number
+    setTimeout: (callback: () => void) => number
+  } = {
     addEventListener() {},
     removeEventListener() {},
     requestAnimationFrame(callback: FrameRequestCallback) {
@@ -2225,8 +2238,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -2482,8 +2498,11 @@ describe('renderClientInsertable', () => {
           location: Location
         }
 
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -2493,7 +2512,7 @@ describe('renderClientInsertable', () => {
           } as Location
         }
 
-        let popstateListener: EventListenerOrEventListenerObject | null = null
+        let popstateListener: unknown = null
         applyLocation('http://local/counter')
         doc.defaultView = {
           ...doc.defaultView,
@@ -2579,7 +2598,7 @@ describe('renderClientInsertable', () => {
         }
 
         container.rootElement = doc.body as unknown as HTMLElement
-        container.router = {
+        const router = {
           currentPath: { value: '/counter' },
           currentRoute: counterRoute,
           currentUrl: { value: 'http://local/counter' },
@@ -2607,7 +2626,8 @@ describe('renderClientInsertable', () => {
             ],
           ]),
           sequence: 0,
-        } as unknown as RuntimeContainer['router']
+        } as NonNullable<RuntimeContainer['router']>
+        container.router = router
 
         const originalDocument = globalThis.document
         ;(globalThis as typeof globalThis & { document: Document }).document =
@@ -2628,21 +2648,21 @@ describe('renderClientInsertable', () => {
 
           applyLocation('http://local/')
           expect(doc.location.pathname).toBe('/')
-          expect(container.router.currentPath.value).toBe('/counter')
+          expect(router.currentPath.value).toBe('/counter')
 
           const popstateEvent = new Event('popstate')
           if (typeof popstateListener === 'function') {
-            popstateListener.call(doc.defaultView, popstateEvent)
-          } else {
-            popstateListener?.handleEvent(popstateEvent)
+            ;(popstateListener as (event: Event) => void)(popstateEvent)
+          } else if (popstateListener && typeof popstateListener === 'object') {
+            ;(popstateListener as { handleEvent(event: Event): void }).handleEvent(popstateEvent)
           }
 
           await flushAsync()
           await flushAsync()
           await flushAsync()
 
-          expect(container.router.currentPath.value).toBe('/')
-          expect(container.router.currentUrl.value).toBe('http://local/')
+          expect(router.currentPath.value).toBe('/')
+          expect(router.currentUrl.value).toBe('http://local/')
           expect((doc.body as unknown as FakeElement).textContent).toContain('home')
           expect((doc.body as unknown as FakeElement).textContent).not.toContain('counter')
 
@@ -2703,8 +2723,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -3082,8 +3105,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -5001,7 +5027,7 @@ describe('renderClientInsertable', () => {
       current.appendChild(panel)
       current.appendChild(end)
       current.appendChild(marker)
-      rememberInsertMarkerRange(marker as unknown as Comment, [start, panel, end] as Node[])
+      rememberInsertMarkerRange(marker as unknown as Comment, [start, panel, end] as unknown as Node[])
 
       next.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
 

@@ -223,6 +223,43 @@ describe('useWatch', () => {
     })
   })
 
+  it('skips component re-renders for optimized roots when local signals only drive watches', () => {
+    withFakeNodeGlobal(() => {
+      let trigger!: { value: number }
+      let renderCount = 0
+      const watchValues: number[] = []
+
+      const App = __eclipsaComponent(
+        () => {
+          renderCount += 1
+          trigger = useSignal(0)
+
+          useWatch(() => {
+            watchValues.push(trigger.value)
+          })
+
+          return 'ready'
+        },
+        'component-optimized-root-watch-only',
+        () => [],
+        undefined,
+        {
+          optimizedRoot: true,
+        },
+      )
+
+      const container = createContainer()
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)
+      })
+
+      trigger.value = 1
+
+      expect(renderCount).toBe(1)
+      expect(watchValues).toEqual([0, 1])
+    })
+  })
+
   it('preserves getter props through non-managed wrapper components on the client', () => {
     withFakeNodeGlobal(() => {
       let visible!: { value: boolean }
