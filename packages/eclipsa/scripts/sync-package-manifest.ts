@@ -98,11 +98,7 @@ export const PUBLISH_EXPORTS = {
   },
 }
 
-export const PUBLISH_FILES = [
-  'dist/**/*.mjs',
-  'dist/**/*.mjs.map',
-  'dist/**/*.d.mts',
-]
+export const PUBLISH_FILES = ['dist/**/*.mjs', 'dist/**/*.mjs.map', 'dist/**/*.d.mts']
 
 export const buildPackageManifest = (packageJson: PackageJson, mode: ManifestMode): PackageJson => {
   const nextManifest: PackageJson = {

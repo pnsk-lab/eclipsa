@@ -37,7 +37,10 @@ describe('optimizer packaging', () => {
   })
 
   it('produces a publish manifest that points at built dist entries', async () => {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
     const publishManifest = buildPackageManifest(packageJson, 'publish')
 
     expect(publishManifest.exports).toEqual(PUBLISH_EXPORTS)
@@ -47,7 +50,10 @@ describe('optimizer packaging', () => {
   })
 
   it('packs only publish artifacts and excludes native binaries', async () => {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<string, unknown>
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
     const publishManifest = buildPackageManifest(packageJson, 'publish')
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-pack-'))
 
@@ -62,7 +68,10 @@ describe('optimizer packaging', () => {
     await writePlaceholder(tempRoot, 'generated/browser.js')
     await writePlaceholder(tempRoot, 'generated/wasi-worker.mjs')
     await writePlaceholder(tempRoot, 'generated/index.d.ts')
-    await writeFile(path.join(tempRoot, 'generated/optimizer.linux-x64-gnu.node'), new Uint8Array([0x00]))
+    await writeFile(
+      path.join(tempRoot, 'generated/optimizer.linux-x64-gnu.node'),
+      new Uint8Array([0x00]),
+    )
     await writeFile(
       path.join(tempRoot, 'generated/optimizer.wasm32-wasi.wasm'),
       new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
