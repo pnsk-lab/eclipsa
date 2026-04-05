@@ -97,6 +97,67 @@ describe('publish package metadata', () => {
     })
   })
 
+  it('rewrites @eclipsa/content metadata for dist publishing', async () => {
+    const packageJson = await readPackageJson('../../content/package.json')
+    const publishPackageJson = createPublishPackageJson(
+      packageJson,
+      new Map([['eclipsa', '0.2.0-alpha.0']]),
+    )
+    const exportsMap = publishPackageJson.exports as Record<string, Record<string, string>>
+
+    expect(publishPackageJson.private).toBe(false)
+    expect(publishPackageJson.repository).toEqual({
+      type: 'git',
+      url: 'git+https://github.com/pnsk-lab/eclipsa.git',
+      directory: 'packages/content',
+    })
+    expect(publishPackageJson.dependencies).toEqual({
+      '@ox-content/napi': '^0.17.0',
+      eclipsa: '0.2.0-alpha.0',
+      'fast-glob': '^3.3.2',
+      shiki: '^4.0.2',
+      yaml: '^2.8.1',
+    })
+    expect(exportsMap['.']).toEqual({
+      types: './mod.d.mts',
+      import: './mod.mjs',
+    })
+    expect(exportsMap['./vite']).toEqual({
+      types: './vite.d.mts',
+      import: './vite.mjs',
+    })
+    expect(exportsMap['./internal']).toEqual({
+      types: './internal.d.mts',
+      import: './internal.mjs',
+    })
+  })
+
+  it('rewrites @eclipsa/motion metadata for dist publishing', async () => {
+    const packageJson = await readPackageJson('../../motion/package.json')
+    const publishPackageJson = createPublishPackageJson(
+      packageJson,
+      new Map([['eclipsa', '0.2.0-alpha.0']]),
+    )
+
+    expect(publishPackageJson.private).toBe(false)
+    expect(publishPackageJson.repository).toEqual({
+      type: 'git',
+      url: 'git+https://github.com/pnsk-lab/eclipsa.git',
+      directory: 'packages/motion',
+    })
+    expect(publishPackageJson.dependencies).toEqual({
+      eclipsa: '0.2.0-alpha.0',
+      'motion-dom': '12.38.0',
+      'motion-utils': '12.36.0',
+    })
+    expect(publishPackageJson.exports).toEqual({
+      '.': {
+        types: './mod.d.mts',
+        import: './mod.mjs',
+      },
+    })
+  })
+
   it('rewrites workspace protocol dependency ranges for publishing', () => {
     const publishPackageJson = createPublishPackageJson(
       {

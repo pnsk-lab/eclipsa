@@ -11,6 +11,8 @@ on:
           - eclipsa
           - create-eclipsa
           - image
+          - content
+          - motion
       release_type:
         description: 'Version bump type'
         required: true
@@ -107,6 +109,12 @@ jobs:
               ;;
             image)
               package_dir="packages/image"
+              ;;
+            content)
+              package_dir="packages/content"
+              ;;
+            motion)
+              package_dir="packages/motion"
               ;;
             *)
               echo "Unsupported package: $PACKAGE_KEY"
