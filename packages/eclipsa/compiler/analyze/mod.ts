@@ -1,5 +1,5 @@
 import ts from 'typescript'
-import { runRustAnalyzeCompiler } from '../native/mod.ts'
+import { runRustAnalyzeCompiler } from '@eclipsa/optimizer'
 
 type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
 

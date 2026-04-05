@@ -60,11 +60,8 @@ interface CompilerRequest {
   target: CompilerTarget
 }
 
-const GENERATED_ARTIFACT_RELATIVE_DIRS = [
-  './generated',
-  '../compiler/native/generated',
-  '../../compiler/native/generated',
-]
+const OPTIMIZER_PACKAGE_NAME = '@eclipsa/optimizer'
+const GENERATED_ARTIFACT_RELATIVE_DIRS = ['./generated', '../generated', '../../generated']
 
 const require = createRequire(import.meta.url)
 
@@ -112,6 +109,8 @@ const isMusl = () => {
   }
 }
 
+const getTargetPackageName = (suffix: string) => `${OPTIMIZER_PACKAGE_NAME}-${suffix}`
+
 export const resolveGeneratedArtifactPath = (fileName: string) => {
   for (const relativeDir of GENERATED_ARTIFACT_RELATIVE_DIRS) {
     const absolutePath = fileURLToPath(new URL(`${relativeDir}/${fileName}`, import.meta.url))
@@ -150,8 +149,8 @@ const requireOptionalBinding = (packageName: string) => {
 
 const requireWasiBinding = () => {
   return (
-    requireGeneratedArtifact('eclipsa.wasi.cjs') ??
-    requireOptionalBinding('eclipsa-wasm32-wasip1-threads')
+    requireGeneratedArtifact('optimizer.wasi.cjs') ??
+    requireOptionalBinding(getTargetPackageName('wasm32-wasi'))
   )
 }
 
@@ -175,19 +174,31 @@ const requireNativeBinding = () => {
 
   if (process.platform === 'darwin') {
     if (process.arch === 'arm64') {
-      return requirePreferredBinding('eclipsa.darwin-arm64.node', 'eclipsa-darwin-arm64')
+      return requirePreferredBinding(
+        'optimizer.darwin-arm64.node',
+        getTargetPackageName('darwin-arm64'),
+      )
     }
     if (process.arch === 'x64') {
-      return requirePreferredBinding('eclipsa.darwin-x64.node', 'eclipsa-darwin-x64')
+      return requirePreferredBinding(
+        'optimizer.darwin-x64.node',
+        getTargetPackageName('darwin-x64'),
+      )
     }
   }
 
   if (process.platform === 'win32') {
     if (process.arch === 'arm64') {
-      return requirePreferredBinding('eclipsa.win32-arm64-msvc.node', 'eclipsa-win32-arm64-msvc')
+      return requirePreferredBinding(
+        'optimizer.win32-arm64-msvc.node',
+        getTargetPackageName('win32-arm64-msvc'),
+      )
     }
     if (process.arch === 'x64') {
-      return requirePreferredBinding('eclipsa.win32-x64-msvc.node', 'eclipsa-win32-x64-msvc')
+      return requirePreferredBinding(
+        'optimizer.win32-x64-msvc.node',
+        getTargetPackageName('win32-x64-msvc'),
+      )
     }
   }
 
@@ -195,12 +206,15 @@ const requireNativeBinding = () => {
     const libc = isMusl() ? 'musl' : 'gnu'
     if (process.arch === 'arm64') {
       return requirePreferredBinding(
-        `eclipsa.linux-arm64-${libc}.node`,
-        `eclipsa-linux-arm64-${libc}`,
+        `optimizer.linux-arm64-${libc}.node`,
+        getTargetPackageName(`linux-arm64-${libc}`),
       )
     }
     if (process.arch === 'x64') {
-      return requirePreferredBinding(`eclipsa.linux-x64-${libc}.node`, `eclipsa-linux-x64-${libc}`)
+      return requirePreferredBinding(
+        `optimizer.linux-x64-${libc}.node`,
+        getTargetPackageName(`linux-x64-${libc}`),
+      )
     }
   }
 
@@ -217,8 +231,8 @@ const loadNativeBinding = async () => {
 
       const localBuildHint =
         process.env.NAPI_RS_FORCE_WASI === '1'
-          ? 'Run "bun run build:native --filter eclipsa -- --target wasm32-wasip1-threads" or install the matching optional package.'
-          : 'Run "bun run build:native:dev --filter eclipsa" before using the compiler in the workspace, or install the matching optional package.'
+          ? 'Run "bun run build:native --filter @eclipsa/optimizer -- --target wasm32-wasip1-threads" or install the matching optional package.'
+          : 'Run "bun run build:native:dev --filter @eclipsa/optimizer" before using the compiler in the workspace, or install the matching optional package.'
       const details =
         loadErrors.length === 0
           ? 'No matching generated artifact or optional package was found.'

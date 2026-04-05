@@ -102,11 +102,6 @@ export const PUBLISH_FILES = [
   'dist/**/*.mjs',
   'dist/**/*.mjs.map',
   'dist/**/*.d.mts',
-  'compiler/native/generated/**/*.js',
-  'compiler/native/generated/**/*.d.ts',
-  'compiler/native/generated/**/*.cjs',
-  'compiler/native/generated/**/*.mjs',
-  'compiler/native/generated/**/*.wasm',
 ]
 
 export const buildPackageManifest = (packageJson: PackageJson, mode: ManifestMode): PackageJson => {

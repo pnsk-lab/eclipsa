@@ -107,43 +107,20 @@
     }
   },
   "scripts": {
-    "artifacts": "bunx @napi-rs/cli artifacts --package-json-path ./package.json --output-dir ./compiler/native/generated --npm-dir ./npm --build-output-dir ./artifacts",
-    "build": "bun run build:js && bun run build:native",
-    "build:js": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
-    "build:native:dev": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa && bun ./scripts/sync-browser-wasm.ts",
-    "build:native": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa && bun ./scripts/sync-browser-wasm.ts",
-    "create:npm-dirs": "node -e \"require('node:fs').rmSync('./npm', { recursive: true, force: true })\" && bunx @napi-rs/cli create-npm-dirs --package-json-path ./package.json --npm-dir ./npm",
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "pack": "bun run build",
-    "prepublishOnly": "bun ./scripts/sync-package-manifest.ts publish && bunx @napi-rs/cli pre-publish -t npm --package-json-path ./package.json --npm-dir ./npm",
-    "restore:manifest": "bun ./scripts/sync-package-manifest.ts dev",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "version:napi": "bunx @napi-rs/cli version --package-json-path ./package.json --npm-dir ./npm",
-    "test": "bun run build:native:dev && vp test --run"
+    "test": "bun run --filter @eclipsa/optimizer build:native:dev && vp test --run"
   },
   "dependencies": {
-    "@napi-rs/wasm-runtime": "^1.1.1",
+    "@eclipsa/optimizer": "workspace:^",
     "fast-glob": "^3.3.2",
     "hono": "^4.6.4"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.5.1",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1"
   },
   "peerDependencies": {
     "vite": "*"
-  },
-  "napi": {
-    "binaryName": "eclipsa",
-    "targets": [
-      "x86_64-apple-darwin",
-      "aarch64-apple-darwin",
-      "x86_64-unknown-linux-gnu",
-      "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-musl",
-      "aarch64-unknown-linux-musl",
-      "x86_64-pc-windows-msvc",
-      "aarch64-pc-windows-msvc",
-      "wasm32-wasip1-threads"
-    ]
   }
 }

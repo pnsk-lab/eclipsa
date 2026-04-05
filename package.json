@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "turbo run dev --filter=./e2e",
     "build": "turbo run build",
-    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/motion",
+    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/optimizer --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/motion",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:e2e": "turbo run e2e --filter=./e2e",

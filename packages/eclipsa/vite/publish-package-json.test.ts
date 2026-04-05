@@ -12,7 +12,10 @@ const readPackageJson = async (relativePath: string) =>
 describe('publish package metadata', () => {
   it('packs eclipsa internal exports and build entries consistently', async () => {
     const packageJson = await readPackageJson('../package.json')
-    const publishPackageJson = createPublishPackageJson(packageJson)
+    const publishPackageJson = createPublishPackageJson(
+      packageJson,
+      new Map([['@eclipsa/optimizer', '0.2.0']]),
+    )
     const exportsMap = publishPackageJson.exports as Record<string, Record<string, string>>
     const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
 
@@ -22,6 +25,11 @@ describe('publish package metadata', () => {
       type: 'git',
       url: 'git+https://github.com/pnsk-lab/eclipsa.git',
       directory: 'packages/eclipsa',
+    })
+    expect(publishPackageJson.dependencies).toEqual({
+      '@eclipsa/optimizer': '^0.2.0',
+      'fast-glob': '^3.3.2',
+      hono: '^4.6.4',
     })
     expect(exportsMap['./internal']).toEqual({
       types: './core/internal.d.mts',
@@ -124,6 +132,18 @@ describe('publish package metadata', () => {
     })
     expect(publishPackageJson.optionalDependencies).toEqual({
       helper: '2.0.0',
+    })
+  })
+
+  it('pins the optimizer dependency to the synchronized eclipsa release version', async () => {
+    const packageJson = await readPackageJson('../package.json')
+    const publishPackageJson = createPublishPackageJson(
+      packageJson,
+      new Map([['@eclipsa/optimizer', '3.4.5']]),
+    )
+
+    expect(publishPackageJson.dependencies).toMatchObject({
+      '@eclipsa/optimizer': '^3.4.5',
     })
   })
 })

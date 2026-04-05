@@ -115,15 +115,9 @@ jobs:
           esac
 
           package_json_path="$package_dir/package.json"
-          if [ "$PACKAGE_KEY" = "eclipsa" ]; then
-            publish_dir="$package_dir"
-            publish_package_json_path="$package_json_path"
-            build_command="bun run --filter eclipsa build:js"
-          else
-            publish_dir="$package_dir/dist"
-            publish_package_json_path="$publish_dir/package.json"
-            build_command="bun run --filter ./$package_dir build"
-          fi
+          publish_dir="$package_dir/dist"
+          publish_package_json_path="$publish_dir/package.json"
+          build_command="bun run --filter ./$package_dir build"
 
           if [ ! -r "$package_json_path" ]; then
             echo "package.json not found or not readable: $package_json_path"
@@ -174,7 +168,7 @@ jobs:
             exit 1
           fi
 
-  build_eclipsa_bindings:
+  build_optimizer_bindings:
     if: ${{ inputs.package == 'eclipsa' }}
     needs: prepare
     runs-on: ${{ matrix.settings.host }}
@@ -184,31 +178,31 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-apple-darwin
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-apple-darwin
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-apple-darwin
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-apple-darwin
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-pc-windows-msvc
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-pc-windows-msvc
           - host: windows-latest
             target: aarch64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-pc-windows-msvc
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-unknown-linux-gnu --use-napi-cross
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-unknown-linux-gnu --use-napi-cross
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-unknown-linux-musl -x
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-unknown-linux-musl -x
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target wasm32-wasip1-threads
+            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target wasm32-wasip1-threads
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
 
@@ -256,32 +250,32 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
           pkg.version = version;
           fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          " 'packages/eclipsa/package.json' '${{ needs.prepare.outputs.version }}'
+          " 'packages/optimizer/package.json' '${{ needs.prepare.outputs.version }}'
 
       - name: Build binding
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: ${{ matrix.settings.build }}
 
       - name: Verify WASI binding entry
         if: ${{ matrix.settings.target == 'wasm32-wasip1-threads' }}
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: |
-          node -e "const binding = require('./compiler/native/generated/eclipsa.wasi.cjs'); if (typeof binding.compileClient !== 'function') { throw new Error('Expected compileClient export from WASI binding entry.'); }"
+          node -e "const binding = require('./generated/optimizer.wasi.cjs'); if (typeof binding.compileClient !== 'function') { throw new Error('Expected compileClient export from WASI binding entry.'); }"
 
       - name: Upload binding artifact
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
-          path: packages/eclipsa/compiler/native/generated/*
+          path: packages/optimizer/generated/*
           if-no-files-found: error
 
   publish_eclipsa:
     if: ${{ inputs.package == 'eclipsa' }}
     needs:
       - prepare
-      - build_eclipsa_bindings
+      - build_optimizer_bindings
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -312,49 +306,104 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Update package version for publish
+      - name: Update package versions for publish
         shell: bash
         run: |
           node -e "
           const fs = require('fs');
-          const path = process.argv[1];
-          const version = process.argv[2];
-          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-          pkg.version = version;
-          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          " '${{ needs.prepare.outputs.package_json_path }}' '${{ needs.prepare.outputs.version }}'
+          const version = process.argv[1];
+          const paths = process.argv.slice(2);
+          for (const path of paths) {
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = version;
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          }
+          " '${{ needs.prepare.outputs.version }}' 'packages/eclipsa/package.json' 'packages/optimizer/package.json'
 
-      - name: Build JS package
+      - name: Build optimizer JS package
         shell: bash
-        run: bun run --filter eclipsa build:js
+        run: bun run --filter @eclipsa/optimizer build:js
+
+      - name: Build eclipsa package
+        if: needs.prepare.outputs.build_command != ''
+        shell: bash
+        run: ${{ needs.prepare.outputs.build_command }}
+
+      - name: Verify eclipsa dist package metadata
+        shell: bash
+        run: |
+          publish_package_json_path='${{ needs.prepare.outputs.publish_package_json_path }}'
+
+          if [ ! -r "$publish_package_json_path" ]; then
+            echo "dist package.json not found or not readable: $publish_package_json_path"
+            exit 1
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const packageJsonPath = process.argv[1];
+          const expectedVersion = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+          if (pkg.private !== false) {
+            throw new Error(\`Expected private=false in \${packageJsonPath}\`);
+          }
+          if (pkg.version !== expectedVersion) {
+            throw new Error(\`Expected version \${expectedVersion} in \${packageJsonPath}, got \${pkg.version}\`);
+          }
+          if (!pkg.repository) {
+            throw new Error(\`Expected repository in \${packageJsonPath}\`);
+          }
+          if (!pkg.exports) {
+            throw new Error(\`Expected exports in \${packageJsonPath}\`);
+          }
+          " "$publish_package_json_path" '${{ needs.prepare.outputs.version }}'
 
       - name: Generate root WASI loader assets
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: bun run build:native -- --target wasm32-wasip1-threads
 
       - name: Create npm package directories
         shell: bash
-        run: bun run --filter eclipsa create:npm-dirs
+        run: bun run --filter @eclipsa/optimizer create:npm-dirs
 
       - name: Download all binding artifacts
         uses: actions/download-artifact@v4
         with:
-          path: packages/eclipsa/artifacts
+          path: packages/optimizer/artifacts
           pattern: bindings-*
           merge-multiple: false
 
       - name: Sync npm package versions
         shell: bash
-        run: bun run --filter eclipsa version:napi
+        run: bun run --filter @eclipsa/optimizer version:napi
 
       - name: Hydrate npm package artifacts
         shell: bash
-        run: bun run --filter eclipsa artifacts
+        run: bun run --filter @eclipsa/optimizer artifacts
 
-      - name: Publish eclipsa package
+      - name: Publish optimizer native packages
         shell: bash
-        working-directory: packages/eclipsa
+        run: |
+          publish_args=(--provenance --access public)
+
+          if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
+          fi
+
+          for package_dir in packages/optimizer/npm/*; do
+            if [[ ! -d "$package_dir" ]]; then
+              continue
+            fi
+
+            npm publish "$package_dir" "${publish_args[@]}"
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish optimizer package
+        shell: bash
+        working-directory: packages/optimizer
         run: |
           publish_args=(npm publish --provenance --access public)
 
@@ -366,20 +415,52 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Pack eclipsa tarball
+        id: pack_eclipsa
+        shell: bash
+        run: |
+          publish_dir='${{ needs.prepare.outputs.publish_dir }}'
+          tarball_output="$(cd "$publish_dir" && bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish eclipsa package
+        shell: bash
+        run: |
+          publish_args=(npm publish '${{ steps.pack_eclipsa.outputs.path }}' --provenance --access public)
+
+          if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
+          fi
+
+          "${publish_args[@]}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Restore development manifest
         shell: bash
-        run: bun run --filter eclipsa restore:manifest
+        run: bun run --filter @eclipsa/optimizer restore:manifest
 
       - name: Commit and push version update
         id: version_commit
         shell: bash
         run: |
-          file_path='${{ needs.prepare.outputs.package_json_path }}'
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-          git add "$file_path"
+          git add 'packages/eclipsa/package.json' 'packages/optimizer/package.json'
 
           if git diff --cached --quiet; then
             echo "No version updates to commit."
@@ -387,7 +468,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m 'chore(release): bump eclipsa to v${{ needs.prepare.outputs.version }}'
+          git commit -m 'chore(release): bump eclipsa and optimizer to v${{ needs.prepare.outputs.version }}'
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

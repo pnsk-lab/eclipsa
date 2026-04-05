@@ -1,4 +1,4 @@
-import { runRustCompiler } from '../native/mod.ts'
+import { runRustCompiler } from '@eclipsa/optimizer'
 
 export const compileSSRModule = async (code: string, id: string): Promise<string> => {
   return runRustCompiler({

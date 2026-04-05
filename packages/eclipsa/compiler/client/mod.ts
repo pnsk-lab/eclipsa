@@ -1,4 +1,4 @@
-import { runRustCompiler } from '../native/mod.ts'
+import { runRustCompiler } from '@eclipsa/optimizer'
 
 export const compileClientModule = async (
   input: string,

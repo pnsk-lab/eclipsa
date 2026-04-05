@@ -79,12 +79,11 @@
       "name": "eclipsa",
       "version": "0.2.0-alpha.0",
       "dependencies": {
-        "@napi-rs/wasm-runtime": "^1.1.1",
+        "@eclipsa/optimizer": "workspace:^",
         "fast-glob": "^3.3.2",
         "hono": "^4.6.4",
       },
       "devDependencies": {
-        "@napi-rs/cli": "^3.5.1",
         "@typescript/native-preview": "^7.0.0-dev.20260310.1",
       },
       "peerDependencies": {
@@ -107,6 +106,16 @@
         "eclipsa": "workspace:*",
         "motion-dom": "12.38.0",
         "motion-utils": "12.36.0",
+      },
+    },
+    "packages/optimizer": {
+      "name": "@eclipsa/optimizer",
+      "version": "0.2.0-alpha.0",
+      "dependencies": {
+        "@napi-rs/wasm-runtime": "^1.1.1",
+      },
+      "devDependencies": {
+        "@napi-rs/cli": "^3.5.1",
       },
     },
   },
@@ -144,6 +153,8 @@
     "@eclipsa/image": ["@eclipsa/image@workspace:packages/image"],
 
     "@eclipsa/motion": ["@eclipsa/motion@workspace:packages/motion"],
+
+    "@eclipsa/optimizer": ["@eclipsa/optimizer@workspace:packages/optimizer"],
 
     "@egoist/tailwindcss-icons": ["@egoist/tailwindcss-icons@1.9.2", "", { "dependencies": { "@iconify/utils": "^3.1.0" }, "peerDependencies": { "tailwindcss": "*" } }, "sha512-I6XsSykmhu2cASg5Hp/ICLsJ/K/1aXPaSKjgbWaNp2xYnb4We/arWMmkhhV+9CglOFCUbqx0A3mM2kWV32ZIhw=="],
 

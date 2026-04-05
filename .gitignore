@@ -5,6 +5,9 @@ target
 packages/eclipsa/compiler/native/generated
 packages/eclipsa/npm
 packages/eclipsa/artifacts
+packages/optimizer/generated
+packages/optimizer/npm
+packages/optimizer/artifacts
 
 # Tool caches
 .vite

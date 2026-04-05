@@ -1,4 +1,4 @@
-import { syncGeneratedBrowserWasm } from '../compiler/native/browser-artifacts.ts'
+import { syncGeneratedBrowserWasm } from '../browser-artifacts.ts'
 
 const syncedPath = syncGeneratedBrowserWasm()
 

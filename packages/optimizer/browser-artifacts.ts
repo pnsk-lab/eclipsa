@@ -2,12 +2,12 @@ import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const GENERATED_BROWSER_WASM_FILE_NAME = 'eclipsa.wasm32-wasi.wasm'
+export const GENERATED_BROWSER_WASM_FILE_NAME = 'optimizer.wasm32-wasi.wasm'
 
 const GENERATED_BROWSER_WASM_RELATIVE_PATH = `./generated/${GENERATED_BROWSER_WASM_FILE_NAME}`
 const BROWSER_WASM_SOURCE_RELATIVE_PATHS = [
-  '../rust/target/wasm32-wasip1-threads/release/eclipsa_compiler.wasm',
-  '../rust/target/wasm32-wasip1-threads/debug/eclipsa_compiler.wasm',
+  '../eclipsa/compiler/rust/target/wasm32-wasip1-threads/release/eclipsa_compiler.wasm',
+  '../eclipsa/compiler/rust/target/wasm32-wasip1-threads/debug/eclipsa_compiler.wasm',
 ]
 
 export const resolveGeneratedBrowserWasmPath = (baseUrl = import.meta.url) => {

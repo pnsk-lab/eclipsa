@@ -11,6 +11,7 @@ import {
   PLAYGROUND_EDITOR_LANGUAGE,
   type PlaygroundBuildResult,
 } from './shared.ts'
+import { createPlaygroundCompileQueue } from './compile-queue.ts'
 
 export const metadata = ({ url }: MetadataContext) => ({
   canonical: url.pathname,
@@ -54,71 +55,63 @@ export default () => {
 
     const state: {
       changeSubscription: IDisposable | null
-      compileTimer: number | null
-      currentRequest: number
+      compileQueue: ReturnType<typeof createPlaygroundCompileQueue<PlaygroundBuildResult>> | null
       disposed: boolean
       editorInstance: editor.IStandaloneCodeEditor | null
       editorModel: editor.ITextModel | null
+      latestCompileRequestId: number
       resizeObserver: ResizeObserver | null
     } = {
       changeSubscription: null,
-      compileTimer: null,
-      currentRequest: 0,
+      compileQueue: null,
       disposed: false,
       editorInstance: null,
       editorModel: null,
+      latestCompileRequestId: 0,
       resizeObserver: null,
     }
+    state.compileQueue = createPlaygroundCompileQueue({
+      async build(nextSource) {
+        return buildPlaygroundOutputInBrowser(nextSource)
+      },
+      onIdle() {
+        isCompiling.value = false
+      },
+      onResult({ requestId, result }) {
+        buildResult.value = result
 
-    const runCompile = async (nextSource: string, delay = 0) => {
-      const requestId = ++state.currentRequest
-
-      if (state.compileTimer !== null) {
-        window.clearTimeout(state.compileTimer)
-      }
-
-      if (delay > 0) {
-        state.compileTimer = window.setTimeout(() => {
-          void runCompile(nextSource)
-        }, delay)
-        return
-      }
-
-      isCompiling.value = true
-      highlightedFiles.value = {}
-      const result = await buildPlaygroundOutputInBrowser(nextSource)
-
-      if (state.disposed || requestId !== state.currentRequest) {
-        return
-      }
-
-      buildResult.value = result
-      isCompiling.value = false
-
-      if (!result.ok) {
-        selectedFilePath.value = null
-        return
-      }
-
-      selectedFilePath.value =
-        result.files.find((file) => file.path === selectedFilePath.value)?.path ??
-        result.files[0]?.path ??
-        null
-
-      try {
-        const highlightedEntries = await Promise.all(
-          result.files.map(
-            async (file) => [file.path, await highlightCode(file.code, file.language)] as const,
-          ),
-        )
-
-        if (state.disposed || requestId !== state.currentRequest) {
+        if (!result.ok) {
+          selectedFilePath.value = null
           return
         }
 
-        highlightedFiles.value = Object.fromEntries(highlightedEntries)
-      } catch {}
-    }
+        selectedFilePath.value =
+          result.files.find((file) => file.path === selectedFilePath.value)?.path ??
+          result.files[0]?.path ??
+          null
+
+        void (async () => {
+          try {
+            const highlightedEntries = await Promise.all(
+              result.files.map(
+                async (file) => [file.path, await highlightCode(file.code, file.language)] as const,
+              ),
+            )
+
+            if (state.disposed || requestId !== state.latestCompileRequestId) {
+              return
+            }
+
+            highlightedFiles.value = Object.fromEntries(highlightedEntries)
+          } catch {}
+        })()
+      },
+      onStart({ requestId }) {
+        state.latestCompileRequestId = requestId
+        isCompiling.value = true
+        highlightedFiles.value = {}
+      },
+    })
 
     void (async () => {
       try {
@@ -165,11 +158,11 @@ export default () => {
         state.changeSubscription = state.editorInstance!.onDidChangeModelContent(() => {
           const nextSource = state.editorModel?.getValue() ?? ''
           source.value = nextSource
-          void runCompile(nextSource, 180)
+          state.compileQueue?.queue(nextSource, 180)
         })
 
         editorReady.value = true
-        await runCompile(source.value)
+        state.compileQueue?.queue(source.value)
       } catch (error) {
         bootMessage.value = error instanceof Error ? error.message : String(error)
         buildResult.value = {
@@ -182,9 +175,7 @@ export default () => {
 
     onCleanup(() => {
       state.disposed = true
-      if (state.compileTimer !== null) {
-        window.clearTimeout(state.compileTimer)
-      }
+      state.compileQueue?.dispose()
       state.changeSubscription?.dispose()
       state.resizeObserver?.disconnect()
       state.editorInstance?.dispose()
