@@ -25,6 +25,7 @@
         "@iconify-json/tabler": "^1.2.31",
         "clsx": "^2.1.1",
         "eclipsa": "workspace:*",
+        "hono": "^4.6.4",
         "monaco-editor": "^0.55.1",
         "shiki": "^4.0.2",
         "tailwindcss": "^4.2.1",
