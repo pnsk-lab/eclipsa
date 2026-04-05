@@ -2527,10 +2527,7 @@ describe('renderClientInsertable', () => {
         const container = createContainer()
         const doc = container.doc as unknown as FakeDocument & {
           defaultView: {
-            addEventListener: (
-              type: string,
-              listener: EventListenerOrEventListenerObject,
-            ) => void
+            addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
             history: {
               pushState: (_data: unknown, _unused: string, url: string) => void
               replaceState: (_data: unknown, _unused: string, url: string) => void
@@ -5078,7 +5075,10 @@ describe('renderClientInsertable', () => {
       current.appendChild(panel)
       current.appendChild(end)
       current.appendChild(marker)
-      rememberInsertMarkerRange(marker as unknown as Comment, [start, panel, end] as unknown as Node[])
+      rememberInsertMarkerRange(
+        marker as unknown as Comment,
+        [start, panel, end] as unknown as Node[],
+      )
 
       next.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
 
@@ -7697,8 +7697,7 @@ describe('renderClientInsertable', () => {
                   For as any,
                   {
                     arr: todos.value,
-                    fn: (todo: string, i: number) =>
-                      jsxDEV('li', { children: todo }, i, false, {}),
+                    fn: (todo: string, i: number) => jsxDEV('li', { children: todo }, i, false, {}),
                   },
                   null,
                   false,

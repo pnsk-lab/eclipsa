@@ -104,7 +104,9 @@ describe('compileSSRModule', () => {
     expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
     expect(resultCode).toContain('_jsxDEV(__eclipsaShow')
     expect(resultCode).toContain('"children": (__e_showValue) => __e_showValue')
-    expect(resultCode).toContain('"fallback": (__e_showValue) => _ssrTemplate(["<span>empty</span>"])')
+    expect(resultCode).toContain(
+      '"fallback": (__e_showValue) => _ssrTemplate(["<span>empty</span>"])',
+    )
   })
 
   it('lowers direct JSX map expressions to For components', async () => {

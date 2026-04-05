@@ -32,11 +32,7 @@ export const For = <T>(props: {
     key: props.key,
   }) as ForValue<T> as unknown as JSX.Element
 
-export const Show = <T>(props: {
-  children: ShowBranch<T>
-  fallback?: ShowBranch<T>
-  when: T
-}) =>
+export const Show = <T>(props: { children: ShowBranch<T>; fallback?: ShowBranch<T>; when: T }) =>
   ({
     __e_show: true,
     children: props.children,

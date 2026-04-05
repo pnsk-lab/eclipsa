@@ -427,79 +427,87 @@ export const AnimatePresence = __eclipsaComponent(
   () => [],
 )
 
-const MotionRenderer = __eclipsaComponent((rawProps: MotionRenderProps) => {
-  const motionProps = rawProps ?? {}
-  const baseTag =
-    typeof motionProps.as === 'string'
-      ? motionProps.as
-      : typeof motionProps[INTERNAL_DEFAULT_TAG_PROP] === 'string'
-        ? (motionProps[INTERNAL_DEFAULT_TAG_PROP] as string)
-        : 'div'
-  const config = useContext(MotionConfigContext)
-  const getLiveProps = () =>
-    ((motionProps[INTERNAL_LIVE_PROPS_PROP] as MotionProps | undefined) ??
-      motionProps) as MotionProps
-  const getLiveAnimate = () => getLiveProps().animate as MotionProps['animate']
-  const getLiveInitial = () => getLiveProps().initial as MotionProps['initial']
-  const getLiveStyle = () => getLiveProps().style as MotionProps['style']
-  const getLiveTransition = () => getLiveProps().transition as MotionProps['transition']
-  const getResolvedMotionProps = () =>
-    ({
-      ...motionProps,
-      animate: getLiveAnimate(),
-      initial: getLiveInitial(),
-      style: getLiveStyle(),
-      transition: getLiveTransition(),
-    }) as MotionProps
-  const resolveAnimateTarget = () => {
-    const liveAnimate = getLiveAnimate()
-    return createStyleTarget(resolveVariant(liveAnimate, getResolvedMotionProps()))
-  }
-  const resolveInitialTarget = () =>
-    getLiveInitial() === false
-      ? resolveAnimateTarget()
-      : createStyleTarget(
-          resolveVariant(getLiveInitial() ?? getLiveAnimate(), getResolvedMotionProps()),
-        )
-
-  const forwardedProps: Record<string, unknown> = {}
-  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(motionProps))) {
-    if (
-      MOTION_PROP_NAMES.has(key) ||
-      key === 'as' ||
-      key === 'style' ||
-      key === INTERNAL_DEFAULT_TAG_PROP ||
-      key === INTERNAL_LIVE_PROPS_PROP
-    ) {
-      continue
+const MotionRenderer = __eclipsaComponent(
+  (rawProps: MotionRenderProps) => {
+    const motionProps = rawProps ?? {}
+    const baseTag =
+      typeof motionProps.as === 'string'
+        ? motionProps.as
+        : typeof motionProps[INTERNAL_DEFAULT_TAG_PROP] === 'string'
+          ? (motionProps[INTERNAL_DEFAULT_TAG_PROP] as string)
+          : 'div'
+    const config = useContext(MotionConfigContext)
+    const getLiveProps = () =>
+      ((motionProps[INTERNAL_LIVE_PROPS_PROP] as MotionProps | undefined) ??
+        motionProps) as MotionProps
+    const getLiveAnimate = () => getLiveProps().animate as MotionProps['animate']
+    const getLiveInitial = () => getLiveProps().initial as MotionProps['initial']
+    const getLiveStyle = () => getLiveProps().style as MotionProps['style']
+    const getLiveTransition = () => getLiveProps().transition as MotionProps['transition']
+    const getResolvedMotionProps = () =>
+      ({
+        ...motionProps,
+        animate: getLiveAnimate(),
+        initial: getLiveInitial(),
+        style: getLiveStyle(),
+        transition: getLiveTransition(),
+      }) as MotionProps
+    const resolveAnimateTarget = () => {
+      const liveAnimate = getLiveAnimate()
+      return createStyleTarget(resolveVariant(liveAnimate, getResolvedMotionProps()))
     }
-    Object.defineProperty(forwardedProps, key, descriptor)
-  }
-  Object.defineProperty(forwardedProps, 'style', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      const animateTarget = resolveAnimateTarget()
-      const renderInitialStyle = getLiveInitial() === false ? animateTarget : resolveInitialTarget()
-      const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
-      const mergedStyle = serializeStyle({
-        ...parseStyle(getLiveStyle()),
-        ...resolvedStyle,
-        ...createTransitionCss(animateTarget, resolveTransition(getResolvedMotionProps(), config)),
-      })
-      return mergedStyle === '' ? undefined : mergedStyle
-    },
-  })
+    const resolveInitialTarget = () =>
+      getLiveInitial() === false
+        ? resolveAnimateTarget()
+        : createStyleTarget(
+            resolveVariant(getLiveInitial() ?? getLiveAnimate(), getResolvedMotionProps()),
+          )
 
-  return {
-    isStatic: false,
-    props: {
-      ...forwardedProps,
-      children: motionProps.children,
-    },
-    type: baseTag,
-  } as JSX.Element
-}, '@eclipsa/motion:motion', () => [])
+    const forwardedProps: Record<string, unknown> = {}
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(motionProps))) {
+      if (
+        MOTION_PROP_NAMES.has(key) ||
+        key === 'as' ||
+        key === 'style' ||
+        key === INTERNAL_DEFAULT_TAG_PROP ||
+        key === INTERNAL_LIVE_PROPS_PROP
+      ) {
+        continue
+      }
+      Object.defineProperty(forwardedProps, key, descriptor)
+    }
+    Object.defineProperty(forwardedProps, 'style', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const animateTarget = resolveAnimateTarget()
+        const renderInitialStyle =
+          getLiveInitial() === false ? animateTarget : resolveInitialTarget()
+        const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
+        const mergedStyle = serializeStyle({
+          ...parseStyle(getLiveStyle()),
+          ...resolvedStyle,
+          ...createTransitionCss(
+            animateTarget,
+            resolveTransition(getResolvedMotionProps(), config),
+          ),
+        })
+        return mergedStyle === '' ? undefined : mergedStyle
+      },
+    })
+
+    return {
+      isStatic: false,
+      props: {
+        ...forwardedProps,
+        children: motionProps.children,
+      },
+      type: baseTag,
+    } as JSX.Element
+  },
+  '@eclipsa/motion:motion',
+  () => [],
+)
 
 const motionRendererCache = new Map<string, MotionComponent<MotionRenderProps>>()
 
@@ -616,7 +624,8 @@ const ReorderGroup = __eclipsaComponent(
   () => [],
 )
 
-const ReorderItem = __eclipsaComponent((rawProps: MotionProps & { value: unknown }) => {
+const ReorderItem = __eclipsaComponent(
+  (rawProps: MotionProps & { value: unknown }) => {
     const itemProps = rawProps ?? {}
     const { as: asValue, onDragStart, value } = itemProps
     const group = useContext(ReorderGroupContext)
@@ -656,7 +665,10 @@ const ReorderItem = __eclipsaComponent((rawProps: MotionProps & { value: unknown
       onDragStart: handleDragStart,
       onDrop: handleDrop,
     })
-  }, '@eclipsa/motion:Reorder.Item', () => [])
+  },
+  '@eclipsa/motion:Reorder.Item',
+  () => [],
+)
 
 export const Reorder = {
   Group: ReorderGroup,

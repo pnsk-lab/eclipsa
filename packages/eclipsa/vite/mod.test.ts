@@ -42,7 +42,9 @@ const getTransform = (plugin: Plugin) => {
   return hook?.handler
 }
 
-const getTransformedCode = (result: Awaited<ReturnType<NonNullable<ReturnType<typeof getTransform>>>>) => {
+const getTransformedCode = (
+  result: Awaited<ReturnType<NonNullable<ReturnType<typeof getTransform>>>>,
+) => {
   if (!result || typeof result === 'string') {
     return null
   }
@@ -887,8 +889,10 @@ describe('vite plugin hotUpdate', () => {
       rerenderComponentSymbols: expect.any(Array),
     })
     expect(
-      Object.keys((send.mock.calls[0]?.[1] as { symbolUrlReplacements: Record<string, string> })
-        .symbolUrlReplacements),
+      Object.keys(
+        (send.mock.calls[0]?.[1] as { symbolUrlReplacements: Record<string, string> })
+          .symbolUrlReplacements,
+      ),
     ).not.toHaveLength(0)
   })
 

@@ -43,8 +43,7 @@ export interface AnalyzedModule {
 
 const isPascalCase = (name: string) =>
   name.includes('.') ||
-  (name.length > 0 &&
-    (!/[a-z]/.test(name[0]!) || name[0] !== name[0]!.toLowerCase()))
+  (name.length > 0 && (!/[a-z]/.test(name[0]!) || name[0] !== name[0]!.toLowerCase()))
 
 const unwrapExpression = (expression: ts.Expression): ts.Expression => {
   let current = expression
@@ -122,7 +121,13 @@ const validateSingleReturnComponent = (
 }
 
 const validateSingleReturnComponents = (source: string, id: string) => {
-  const sourceFile = ts.createSourceFile(id, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const sourceFile = ts.createSourceFile(
+    id,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
 
   const validateComponentNode = (node: ts.Node, label: string) => {
     const component = getFunctionLikeComponent(node)
@@ -132,17 +137,17 @@ const validateSingleReturnComponents = (source: string, id: string) => {
   }
 
   const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isPascalCase(node.name.text)) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      isPascalCase(node.name.text)
+    ) {
       if (node.initializer) {
         validateComponentNode(node.initializer, node.name.text)
       }
     }
 
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name &&
-      isPascalCase(node.name.text)
-    ) {
+    if (ts.isFunctionDeclaration(node) && node.name && isPascalCase(node.name.text)) {
       validateSingleReturnComponent(node, node.name.text)
     }
 
@@ -164,7 +169,13 @@ const validateSingleReturnComponents = (source: string, id: string) => {
 }
 
 const annotateOptimizedRootComponents = (source: string, id: string) => {
-  const sourceFile = ts.createSourceFile(id, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const sourceFile = ts.createSourceFile(
+    id,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
   const insertions: number[] = []
 
   const visit = (node: ts.Node) => {
@@ -187,8 +198,7 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
 
   let nextSource = source
   for (const index of [...insertions].sort((left, right) => right - left)) {
-    nextSource =
-      nextSource.slice(0, index) + ', { optimizedRoot: true }' + nextSource.slice(index)
+    nextSource = nextSource.slice(0, index) + ', { optimizedRoot: true }' + nextSource.slice(index)
   }
 
   return nextSource

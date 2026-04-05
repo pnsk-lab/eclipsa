@@ -64,11 +64,11 @@ const allocateContextId = () => {
 }
 
 const getContextStateMaybe = <T>(context: unknown): RuntimeContextState<T> | null =>
-  (context &&
+  context &&
   (typeof context === 'object' || typeof context === 'function') &&
   CONTEXT_TOKEN_KEY in (context as Record<PropertyKey, unknown>)
     ? ((context as RuntimeContext<T>)[CONTEXT_TOKEN_KEY] ?? null)
-    : null)
+    : null
 
 const getContextState = <T>(context: Context<T>): RuntimeContextState<T> => {
   const state = getContextStateMaybe<T>(context)

@@ -823,9 +823,12 @@ test.describe('example app in dev mode', () => {
       expect(updatedSource).not.toBe(originalSource)
       await writeSourceAtomically(contentMarkdownPath, updatedSource)
 
-      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionAfterLabel, {
-        timeout: hmrTimeout,
-      })
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionAfterLabel,
+        {
+          timeout: hmrTimeout,
+        },
+      )
       await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel, {
         timeout: hmrTimeout,
       })
