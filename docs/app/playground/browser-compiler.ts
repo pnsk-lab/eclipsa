@@ -83,7 +83,9 @@ const PLAYGROUND_ECLIPSA_ENTRY_POINTS = PLAYGROUND_ECLIPSA_HAS_DIST_TYPES
       prodClient: './core/prod-client/mod.ts',
       vite: './vite.d.ts',
     }
-export const PLAYGROUND_ECLIPSA_DIST_TYPE_FILE_COUNT = Object.keys(PLAYGROUND_ECLIPSA_TYPE_FILES).length
+export const PLAYGROUND_ECLIPSA_DIST_TYPE_FILE_COUNT = Object.keys(
+  PLAYGROUND_ECLIPSA_TYPE_FILES,
+).length
 export const PLAYGROUND_ECLIPSA_MODULE_SHIMS = {
   '/node_modules/eclipsa/package.json': `{
   "name": "eclipsa",
@@ -179,7 +181,10 @@ const registerPlaygroundExtraLibs = (
     }
 
     const relativePath = getPlaygroundEclipsaSourceRelativePath(sourcePath)
-    defaults.addExtraLib(content, toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${relativePath}`))
+    defaults.addExtraLib(
+      content,
+      toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${relativePath}`),
+    )
   }
 }
 
