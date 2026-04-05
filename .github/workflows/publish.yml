@@ -186,31 +186,31 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-apple-darwin
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-apple-darwin
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-apple-darwin
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-apple-darwin
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-pc-windows-msvc
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-pc-windows-msvc
           - host: windows-latest
             target: aarch64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-pc-windows-msvc
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-gnu --use-napi-cross
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-gnu --use-napi-cross
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-musl -x
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-musl -x
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target wasm32-wasip1-threads
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target wasm32-wasip1-threads
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
 

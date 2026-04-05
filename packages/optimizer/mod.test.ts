@@ -20,6 +20,7 @@ import {
 const execFileAsync = promisify(execFile)
 const packageRoot = path.dirname(fileURLToPath(import.meta.url))
 const packageJsonPath = path.join(packageRoot, 'package.json')
+const publishWorkflowPath = path.resolve(packageRoot, '../../.github/workflows/publish.yml')
 
 const writePlaceholder = async (root: string, relativePath: string, contents = 'export {}\n') => {
   const filePath = path.join(root, relativePath)
@@ -84,6 +85,28 @@ describe('optimizer packaging', () => {
       '@emnapi/runtime': '^1.9.0',
       '@emnapi/wasi-threads': '^1.2.0',
     })
+  })
+
+  it('uses the workspace-pinned napi cli for packaging and publish builds', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+    const publishWorkflow = await readFile(publishWorkflowPath, 'utf8')
+
+    for (const scriptName of [
+      'artifacts',
+      'build:native:dev',
+      'build:native',
+      'create:npm-dirs',
+      'prepublishOnly',
+      'version:napi',
+    ]) {
+      expect(packageJson.scripts?.[scriptName]).toContain('bun ./scripts/run-napi.ts')
+      expect(packageJson.scripts?.[scriptName]).not.toContain('bunx @napi-rs/cli')
+    }
+
+    expect(publishWorkflow).toContain('bun ./scripts/run-napi.ts build')
+    expect(publishWorkflow).not.toContain('bunx @napi-rs/cli build')
   })
 
   it('packs only publish artifacts and excludes native binaries', async () => {
