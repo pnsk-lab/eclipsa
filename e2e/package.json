@@ -6,7 +6,6 @@
     "e2e": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts",
     "e2e:headed": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts --headed",
     "e2e:ui": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts --ui",
-    "playwright:install": "playwright install",
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",
