@@ -29,6 +29,7 @@ export const PLAYGROUND_MONACO_LANGUAGE_CONTRIBUTIONS = [
   'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js',
 ] as const
 const PLAYGROUND_ECLIPSA_DIST_GLOB_PREFIX = '../../../packages/eclipsa/dist/'
+const PLAYGROUND_ECLIPSA_SOURCE_GLOB_PREFIX = '../../../packages/eclipsa/'
 const PLAYGROUND_ECLIPSA_DIST_TYPE_FILES = import.meta.glob(
   '../../../packages/eclipsa/dist/**/*.d.mts',
   {
@@ -37,9 +38,52 @@ const PLAYGROUND_ECLIPSA_DIST_TYPE_FILES = import.meta.glob(
     query: '?raw',
   },
 ) as Record<string, string>
-export const PLAYGROUND_ECLIPSA_DIST_TYPE_FILE_COUNT = Object.keys(
-  PLAYGROUND_ECLIPSA_DIST_TYPE_FILES,
-).length
+const PLAYGROUND_ECLIPSA_SOURCE_TYPE_FILES = import.meta.glob(
+  [
+    '../../../packages/eclipsa/mod.ts',
+    '../../../packages/eclipsa/atom/**/*.ts',
+    '../../../packages/eclipsa/core/**/*.ts',
+    '../../../packages/eclipsa/jsx/**/*.ts',
+    '../../../packages/eclipsa/utils/**/*.ts',
+    '../../../packages/eclipsa/web-utils/**/*.ts',
+    '!../../../packages/eclipsa/**/*.test.ts',
+    '!../../../packages/eclipsa/**/*.typecheck.ts',
+    '!../../../packages/eclipsa/core/router-shared.ts',
+  ],
+  {
+    eager: true,
+    import: 'default',
+    query: '?raw',
+  },
+) as Record<string, string>
+const PLAYGROUND_ECLIPSA_HAS_DIST_TYPES = Object.keys(PLAYGROUND_ECLIPSA_DIST_TYPE_FILES).length > 0
+const PLAYGROUND_ECLIPSA_TYPE_FILES = PLAYGROUND_ECLIPSA_HAS_DIST_TYPES
+  ? PLAYGROUND_ECLIPSA_DIST_TYPE_FILES
+  : PLAYGROUND_ECLIPSA_SOURCE_TYPE_FILES
+const PLAYGROUND_ECLIPSA_ENTRY_POINTS = PLAYGROUND_ECLIPSA_HAS_DIST_TYPES
+  ? {
+      client: './core/client/mod.d.mts',
+      devClient: './core/dev-client/mod.d.mts',
+      index: './mod.d.mts',
+      internal: './core/internal.d.mts',
+      jsx: './jsx/mod.d.mts',
+      jsxDevRuntime: './jsx/jsx-dev-runtime.d.mts',
+      jsxRuntime: './jsx/jsx-runtime.d.mts',
+      prodClient: './core/prod-client/mod.d.mts',
+      vite: './vite/mod.d.mts',
+    }
+  : {
+      client: './core/client/mod.ts',
+      devClient: './core/dev-client/mod.ts',
+      index: './mod.ts',
+      internal: './core/internal.ts',
+      jsx: './jsx/mod.ts',
+      jsxDevRuntime: './jsx/jsx-dev-runtime.ts',
+      jsxRuntime: './jsx/jsx-runtime.ts',
+      prodClient: './core/prod-client/mod.ts',
+      vite: './vite.d.ts',
+    }
+export const PLAYGROUND_ECLIPSA_DIST_TYPE_FILE_COUNT = Object.keys(PLAYGROUND_ECLIPSA_TYPE_FILES).length
 export const PLAYGROUND_ECLIPSA_MODULE_SHIMS = {
   '/node_modules/eclipsa/package.json': `{
   "name": "eclipsa",
@@ -47,23 +91,23 @@ export const PLAYGROUND_ECLIPSA_MODULE_SHIMS = {
   "types": "./index.d.ts"
 }
 `,
-  '/node_modules/eclipsa/index.d.ts': `export * from './mod.d.mts'
+  '/node_modules/eclipsa/index.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.index}'
 `,
-  '/node_modules/eclipsa/client.d.ts': `export * from './core/client/mod.d.mts'
+  '/node_modules/eclipsa/client.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.client}'
 `,
-  '/node_modules/eclipsa/dev-client.d.ts': `export * from './core/dev-client/mod.d.mts'
+  '/node_modules/eclipsa/dev-client.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.devClient}'
 `,
-  '/node_modules/eclipsa/prod-client.d.ts': `export * from './core/prod-client/mod.d.mts'
+  '/node_modules/eclipsa/prod-client.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.prodClient}'
 `,
-  '/node_modules/eclipsa/internal.d.ts': `export * from './core/internal.d.mts'
+  '/node_modules/eclipsa/internal.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.internal}'
 `,
-  '/node_modules/eclipsa/jsx-runtime.d.ts': `export * from './jsx/jsx-runtime.d.mts'
+  '/node_modules/eclipsa/jsx-runtime.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.jsxRuntime}'
 `,
-  '/node_modules/eclipsa/jsx-dev-runtime.d.ts': `export * from './jsx/jsx-dev-runtime.d.mts'
+  '/node_modules/eclipsa/jsx-dev-runtime.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.jsxDevRuntime}'
 `,
-  '/node_modules/eclipsa/jsx.d.ts': `export * from './jsx/mod.d.mts'
+  '/node_modules/eclipsa/jsx.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.jsx}'
 `,
-  '/node_modules/eclipsa/vite.d.ts': `export * from './vite/mod.d.mts'
+  '/node_modules/eclipsa/vite.d.ts': `export * from '${PLAYGROUND_ECLIPSA_ENTRY_POINTS.vite}'
 `,
   '/node_modules/hono/index.d.ts': `export interface Env {
   [key: string]: unknown
@@ -103,6 +147,14 @@ const getPlaygroundEclipsaDistRelativePath = (path: string) => {
   return path.slice(PLAYGROUND_ECLIPSA_DIST_GLOB_PREFIX.length)
 }
 
+const getPlaygroundEclipsaSourceRelativePath = (path: string) => {
+  if (!path.startsWith(PLAYGROUND_ECLIPSA_SOURCE_GLOB_PREFIX)) {
+    throw new Error(`Unexpected Eclipsa source type path: ${path}`)
+  }
+
+  return path.slice(PLAYGROUND_ECLIPSA_SOURCE_GLOB_PREFIX.length)
+}
+
 const registerPlaygroundExtraLibs = (
   defaults: TypeScriptContributionModule['typescriptDefaults'],
 ) => {
@@ -110,18 +162,24 @@ const registerPlaygroundExtraLibs = (
     defaults.addExtraLib(content, toPlaygroundNodeModulesUri(path))
   }
 
-  for (const [sourcePath, content] of Object.entries(PLAYGROUND_ECLIPSA_DIST_TYPE_FILES)) {
-    const relativePath = getPlaygroundEclipsaDistRelativePath(sourcePath)
-    const declarationUri = toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${relativePath}`)
-    defaults.addExtraLib(content, declarationUri)
+  for (const [sourcePath, content] of Object.entries(PLAYGROUND_ECLIPSA_TYPE_FILES)) {
+    if (PLAYGROUND_ECLIPSA_HAS_DIST_TYPES) {
+      const relativePath = getPlaygroundEclipsaDistRelativePath(sourcePath)
+      const declarationUri = toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${relativePath}`)
+      defaults.addExtraLib(content, declarationUri)
 
-    const runtimePath = relativePath.replace(/\.d\.mts$/, '.mjs')
-    const declarationFileName = relativePath.slice(relativePath.lastIndexOf('/') + 1)
-    defaults.addExtraLib(
-      `export * from './${declarationFileName}'
+      const runtimePath = relativePath.replace(/\.d\.mts$/, '.mjs')
+      const declarationFileName = relativePath.slice(relativePath.lastIndexOf('/') + 1)
+      defaults.addExtraLib(
+        `export * from './${declarationFileName}'
 `,
-      toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${runtimePath}`),
-    )
+        toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${runtimePath}`),
+      )
+      continue
+    }
+
+    const relativePath = getPlaygroundEclipsaSourceRelativePath(sourcePath)
+    defaults.addExtraLib(content, toPlaygroundNodeModulesUri(`/node_modules/eclipsa/${relativePath}`))
   }
 }
 
@@ -251,6 +309,7 @@ export const loadPlaygroundMonaco = async () => {
     })
 
     typeScriptContribution.typescriptDefaults.setCompilerOptions({
+      allowImportingTsExtensions: true,
       allowNonTsExtensions: true,
       jsx: typeScriptContribution.JsxEmit.Preserve,
       module: typeScriptContribution.ModuleKind.ESNext,
