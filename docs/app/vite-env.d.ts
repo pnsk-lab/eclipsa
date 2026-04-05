@@ -16,9 +16,26 @@ declare module 'monaco-editor/esm/vs/language/typescript/monaco.contribution' {
   export const typescriptDefaults: typeof import('monaco-editor').typescript.typescriptDefaults
 }
 
-declare module '*eclipsa.wasi-browser.js' {
+declare module '@eclipsa/optimizer/browser' {
   const binding: {
+    analyzeModule(
+      source: string,
+      id: string,
+    ): {
+      code: string
+      symbols: Array<
+        [
+          string,
+          {
+            code: string
+            id: string
+            kind: 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
+          },
+        ]
+      >
+    }
     compileClient(source: string, id: string, hmr?: boolean | null): string
+    compileSsr(source: string, id: string): string
   }
 
   export default binding

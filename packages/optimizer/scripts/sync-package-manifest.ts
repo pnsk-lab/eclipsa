@@ -9,12 +9,20 @@ export const DEV_EXPORTS = {
     types: './mod.ts',
     import: './mod.ts',
   },
+  './browser': {
+    types: './generated/index.d.ts',
+    import: './generated/optimizer.wasi-browser.js',
+  },
 }
 
 export const PUBLISH_EXPORTS = {
   '.': {
     types: './dist/mod.d.mts',
     import: './dist/mod.mjs',
+  },
+  './browser': {
+    types: './generated/index.d.ts',
+    import: './generated/optimizer.wasi-browser.js',
   },
 }
 

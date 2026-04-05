@@ -28,6 +28,17 @@ const writePlaceholder = async (root: string, relativePath: string, contents = '
 }
 
 describe('optimizer packaging', () => {
+  it('exposes the browser compiler binding through a public subpath export', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      exports?: Record<string, { import?: string; types?: string }>
+    }
+
+    expect(packageJson.exports?.['./browser']).toEqual({
+      import: './generated/optimizer.wasi-browser.js',
+      types: './generated/index.d.ts',
+    })
+  })
+
   it('resolves the generated napi binding entry from the optimizer package root', () => {
     const wasmBindingPath = resolveGeneratedArtifactPath('optimizer.wasi.cjs')
 
@@ -44,9 +55,35 @@ describe('optimizer packaging', () => {
     const publishManifest = buildPackageManifest(packageJson, 'publish')
 
     expect(publishManifest.exports).toEqual(PUBLISH_EXPORTS)
+    expect(publishManifest.exports).toMatchObject({
+      './browser': {
+        import: './generated/optimizer.wasi-browser.js',
+        types: './generated/index.d.ts',
+      },
+    })
     expect(publishManifest.files).toEqual(PUBLISH_FILES)
     expect(publishManifest.main).toBe('./dist/mod.mjs')
     expect(publishManifest.types).toBe('./dist/mod.d.mts')
+  })
+
+  it('keeps direct emnapi dependencies required for wasi napi builds', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const dependencies = packageJson.dependencies as Record<string, string>
+    const devManifest = buildPackageManifest(packageJson, 'dev')
+
+    expect(dependencies).toMatchObject({
+      '@emnapi/core': '^1.9.0',
+      '@emnapi/runtime': '^1.9.0',
+      '@emnapi/wasi-threads': '^1.2.0',
+    })
+    expect(devManifest.dependencies).toMatchObject({
+      '@emnapi/core': '^1.9.0',
+      '@emnapi/runtime': '^1.9.0',
+      '@emnapi/wasi-threads': '^1.2.0',
+    })
   })
 
   it('packs only publish artifacts and excludes native binaries', async () => {

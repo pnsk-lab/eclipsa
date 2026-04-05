@@ -16,6 +16,10 @@
     ".": {
       "types": "./mod.ts",
       "import": "./mod.ts"
+    },
+    "./browser": {
+      "types": "./generated/index.d.ts",
+      "import": "./generated/optimizer.wasi-browser.js"
     }
   },
   "publishConfig": {
@@ -23,6 +27,10 @@
       ".": {
         "types": "./dist/mod.d.mts",
         "import": "./dist/mod.mjs"
+      },
+      "./browser": {
+        "types": "./generated/index.d.ts",
+        "import": "./generated/optimizer.wasi-browser.js"
       }
     }
   },
@@ -41,6 +49,9 @@
     "test": "bun run build:native:dev && vp test --run"
   },
   "dependencies": {
+    "@emnapi/core": "^1.9.0",
+    "@emnapi/runtime": "^1.9.0",
+    "@emnapi/wasi-threads": "^1.2.0",
     "@napi-rs/wasm-runtime": "^1.1.1"
   },
   "devDependencies": {

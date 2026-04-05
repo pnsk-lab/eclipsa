@@ -228,10 +228,9 @@ export const getPlaygroundIsolationError = () => {
 
 const loadBrowserCompiler = async () => {
   if (!compilerPromise) {
-    compilerPromise =
-      import('../../../packages/eclipsa/compiler/native/generated/eclipsa.wasi-browser.js').then(
-        (module) => module.default as BrowserCompilerBinding,
-      )
+    compilerPromise = import('@eclipsa/optimizer/browser').then(
+      (module) => module.default as BrowserCompilerBinding,
+    )
   }
 
   return compilerPromise

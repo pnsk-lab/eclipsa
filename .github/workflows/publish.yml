@@ -406,8 +406,6 @@ jobs:
 
             npm publish "$package_dir" "${publish_args[@]}"
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish optimizer package
         shell: bash
@@ -420,8 +418,6 @@ jobs:
           fi
 
           "${publish_args[@]}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Pack eclipsa tarball
         id: pack_eclipsa
@@ -454,8 +450,6 @@ jobs:
           fi
 
           "${publish_args[@]}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Restore development manifest
         shell: bash

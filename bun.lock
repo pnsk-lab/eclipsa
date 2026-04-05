@@ -21,6 +21,7 @@
         "@eclipsa/content": "workspace:*",
         "@eclipsa/image": "workspace:*",
         "@eclipsa/motion": "workspace:*",
+        "@eclipsa/optimizer": "workspace:*",
         "@iconify-json/simple-icons": "^1.2.75",
         "@iconify-json/tabler": "^1.2.31",
         "clsx": "^2.1.1",
@@ -70,7 +71,7 @@
     },
     "packages/create-eclipsa": {
       "name": "create-eclipsa",
-      "version": "0.1.0-alpha.0",
+      "version": "0.0.1",
       "bin": {
         "create-eclipsa": "./mod.ts",
       },
@@ -112,6 +113,9 @@
       "name": "@eclipsa/optimizer",
       "version": "0.2.0-alpha.0",
       "dependencies": {
+        "@emnapi/core": "^1.9.0",
+        "@emnapi/runtime": "^1.9.0",
+        "@emnapi/wasi-threads": "^1.2.0",
         "@napi-rs/wasm-runtime": "^1.1.1",
       },
       "devDependencies": {
