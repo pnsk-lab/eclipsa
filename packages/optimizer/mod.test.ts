@@ -16,6 +16,10 @@ import {
   resolveBrowserWasmSourcePath,
   syncGeneratedBrowserWasm,
 } from './browser-artifacts.ts'
+import {
+  prepareDownloadedArtifacts,
+  shouldFlattenArtifact,
+} from './scripts/prepare-downloaded-artifacts.ts'
 
 const execFileAsync = promisify(execFile)
 const packageRoot = path.dirname(fileURLToPath(import.meta.url))
@@ -107,6 +111,52 @@ describe('optimizer packaging', () => {
 
     expect(publishWorkflow).toContain('bun ./scripts/run-napi.ts build')
     expect(publishWorkflow).not.toContain('bunx @napi-rs/cli build')
+  })
+
+  it('flattens downloaded binding artifacts before npm artifact hydration', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-artifacts-'))
+    const artifactsDir = path.join(tempRoot, 'artifacts')
+    const nestedDir = path.join(artifactsDir, 'bindings-wasm32-wasip1-threads')
+
+    await writePlaceholder(nestedDir, 'optimizer.wasi.cjs', 'module.exports = {}\n')
+    await writePlaceholder(nestedDir, 'optimizer.wasi-browser.js')
+    await writePlaceholder(nestedDir, 'wasi-worker.mjs')
+    await writePlaceholder(nestedDir, 'wasi-worker-browser.mjs')
+    await writeFile(
+      path.join(nestedDir, 'optimizer.wasm32-wasi.wasm'),
+      new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
+    )
+    await writePlaceholder(path.join(nestedDir, 'ignored.txt'))
+
+    await prepareDownloadedArtifacts(artifactsDir)
+
+    expect(shouldFlattenArtifact('optimizer.wasi.cjs')).toBe(true)
+    expect(shouldFlattenArtifact('ignored.txt')).toBe(false)
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasi.cjs'), 'utf8')).toContain(
+      'module.exports',
+    )
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasi-browser.js'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'wasi-worker.mjs'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'wasi-worker-browser.mjs'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasm32-wasi.wasm'))).toEqual(
+      Buffer.from([0x00, 0x61, 0x73, 0x6d]),
+    )
+    await expect(readFile(path.join(artifactsDir, 'ignored.txt'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('runs artifact flattening in publish workflow before npm hydration', async () => {
+    const publishWorkflow = await readFile(publishWorkflowPath, 'utf8')
+
+    expect(publishWorkflow).toContain('name: Flatten downloaded binding artifacts')
+    expect(publishWorkflow).toContain('run: bun ./scripts/prepare-downloaded-artifacts.ts')
   })
 
   it('packs only publish artifacts and excludes native binaries', async () => {

@@ -382,6 +382,11 @@ jobs:
           pattern: bindings-*
           merge-multiple: false
 
+      - name: Flatten downloaded binding artifacts
+        shell: bash
+        working-directory: packages/optimizer
+        run: bun ./scripts/prepare-downloaded-artifacts.ts
+
       - name: Sync npm package versions
         shell: bash
         run: bun run --filter @eclipsa/optimizer version:napi
