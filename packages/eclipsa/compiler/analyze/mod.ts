@@ -173,7 +173,8 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
       ts.isIdentifier(node.expression) &&
       node.expression.text === '__eclipsaComponent'
     ) {
-      insertions.push(node.end - 1)
+      const lastArgument = node.arguments.at(-1)
+      insertions.push(lastArgument ? lastArgument.end : node.expression.end + 1)
     }
     ts.forEachChild(node, visit)
   }

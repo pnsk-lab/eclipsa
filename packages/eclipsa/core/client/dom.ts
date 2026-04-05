@@ -8,6 +8,7 @@ import {
   createDetachedClientInsertOwner,
   getRuntimeSignalId,
   getRuntimeContainer,
+  preserveReusableContentInRoots,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberInsertMarkerRange,
@@ -272,26 +273,35 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
       return
     }
 
-    if (currentNodes.length !== 0 && lastFirstNode && newNodes.length !== 0) {
-      for (let i = 1; i < lastNodeLength; i++) {
-        lastFirstNode.nextSibling?.remove()
+    let replacementNodes = newNodes
+    if (currentNodes.length !== 0 && newNodes.length !== 0) {
+      const doc = runtimeContainer.doc
+      if (!doc) {
+        throw new Error('Client insertions require an active runtime document.')
       }
-      targetParent.replaceChild(newNodes[0], lastFirstNode)
-      for (let i = 1; i < newNodes.length; i++) {
-        targetParent.insertBefore(newNodes[i], newNodes[i - 1].nextSibling)
-      }
-    } else {
-      const insertReference = liveMarker?.parentNode === targetParent ? liveMarker : null
+      const stagingParent = doc.createElement('div')
       for (const node of newNodes) {
-        targetParent.insertBefore(node, insertReference)
+        stagingParent.appendChild(node)
       }
+      preserveReusableContentInRoots(currentNodes, Array.from(stagingParent.childNodes))
+      replacementNodes = Array.from(stagingParent.childNodes)
     }
 
-    rememberManagedAttributesForNodes(newNodes)
-    rememberInsertMarkerRange(liveMarker, newNodes)
+    const insertReference = liveMarker?.parentNode === targetParent ? liveMarker : null
+    for (const node of currentNodes) {
+      if (node.parentNode === targetParent) {
+        node.remove()
+      }
+    }
+    for (const node of replacementNodes) {
+      targetParent.insertBefore(node, insertReference)
+    }
 
-    lastFirstNode = newNodes[0]
-    lastNodeLength = newNodes.length
+    rememberManagedAttributesForNodes(replacementNodes)
+    rememberInsertMarkerRange(liveMarker, replacementNodes)
+
+    lastFirstNode = replacementNodes[0] ?? liveMarker
+    lastNodeLength = replacementNodes.length
   })
 }
 

@@ -515,8 +515,8 @@ const StatementSection = ({
   progress: Signal<number>
   sectionRef: Signal<HTMLElement | undefined>
 }) => (
-  <section class="z-1" ref={sectionRef}>
-    <div class="text-center leading-[0.75] tracking-[-0.03em] font-extrabold text-9xl line flex flex-col gap-7 font-archivo-black">
+  <section class="z-1 px-4 sm:px-6" ref={sectionRef}>
+    <div class="line flex flex-col gap-[clamp(1rem,4vw,1.75rem)] text-center font-archivo-black text-[clamp(2.75rem,12vw,8rem)] leading-[0.75] tracking-[-0.03em] font-extrabold">
       <div>
         <motion.span
           animate={progress.value >= -1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
@@ -546,7 +546,7 @@ const StatementSection = ({
     </div>
     <motion.div
       animate={progress.value >= -0.1 ? { opacity: 1, x: 0 } : { opacity: 0, x: 16 }}
-      class="pt-10 text-center text-7xl leading-[0.75] tracking-[-0.03em] font-black text-white"
+      class="pt-10 text-center text-[clamp(2rem,9vw,4.5rem)] leading-[0.75] tracking-[-0.03em] font-black text-white"
     >
       with
     </motion.div>
@@ -565,7 +565,9 @@ const SiteFooter = ({ sectionRef }: { sectionRef: Signal<HTMLElement | undefined
 
 const CompileOutputFlow = ({ visible }: { visible: Signal<boolean> }) => (
   <div class="landing-compile-flow" data-visible={visible.value ? 'true' : 'false'}>
-    <div class="text-center my-5 text-lg">eclipsa compiles your code and make it faster.</div>
+    <div class="my-5 text-center text-base sm:text-lg">
+      eclipsa compiles your code and make it faster.
+    </div>
     <motion.div
       animate={visible.value ? { opacity: 1, x: 0 } : { opacity: 0, x: -16 }}
       class="flex w-full gap-4"
@@ -576,9 +578,9 @@ const CompileOutputFlow = ({ visible }: { visible: Signal<boolean> }) => (
         <div class="landing-compile-segment landing-compile-segment-vertical grow w-px" />
         <span class="landing-compile-dot landing-compile-dot-source"></span>
       </div>
-      <div class="flex flex-col gap-2">
+      <div class="min-w-0 flex-1 flex flex-col gap-2">
         <div class="text-gray-400">YOUR CODE</div>
-        <pre class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-xl">{`<div>{count.value}</div>`}</pre>
+        <pre class="rounded-lg border border-purple-950/50 bg-black/30 p-2 text-[clamp(1rem,4vw,1.25rem)]">{`<div>{count.value}</div>`}</pre>
       </div>
     </motion.div>
 
@@ -593,7 +595,7 @@ const CompileOutputFlow = ({ visible }: { visible: Signal<boolean> }) => (
         <div class="landing-compile-segment landing-compile-segment-vertical grow w-px" />
         <span class="landing-compile-dot landing-compile-dot-client"></span>
       </div>
-      <div class="mt-5 gap-2">
+      <div class="mt-5 min-w-0 flex-1 flex flex-col gap-2">
         <div class="text-gray-400">Client</div>
         <pre class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-sm">{`var _cloned = __eclipsaTemplate0();
 var __eclipsaNode0 = _cloned.childNodes[0];
@@ -612,7 +614,7 @@ return _cloned;`}</pre>
         <div class="landing-compile-segment landing-compile-segment-horizontal h-px w-full" />
         <span class="landing-compile-dot landing-compile-dot-ssr"></span>
       </div>
-      <div class="mt-5 flex flex-col gap-2">
+      <div class="mt-5 min-w-0 flex-1 flex flex-col gap-2">
         <div class="text-gray-400">SSR</div>
         <pre class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-sm">{`return _ssrTemplate(["<div>", "</div>"], count.value);`}</pre>
       </div>
@@ -701,12 +703,8 @@ export default () => {
       <SectionDivider />
       <StatementSection sectionRef={sectionRefs.statement} progress={statementProgressSignal} />
 
-      <section
-        class="relative z-20 mx-auto w-full max-w-7xl px-6 grid grid-cols-4"
-        id="features"
-        ref={sectionRefs.features}
-      >
-        <motion.div class="sticky top-0 self-start pt-1 pl-10 flex h-dvh items-center justify-center">
+      <section class="landing-features-section" id="features" ref={sectionRefs.features}>
+        <motion.div class="landing-features-stage">
           <div class="landing-features-orbit-anchor" ref={orbitAnchorRef}>
             <div
               class="landing-features-orbit"
@@ -736,7 +734,7 @@ export default () => {
                         featuresVisibleSignal.value ? { opacity: 1, x: 0 } : { opacity: 0, x: -16 }
                       }
                     >
-                      <h2 class="text-2xl uppercase tracking-wide text-white font-archivo-black">
+                      <h2 class="font-archivo-black text-[clamp(0.9rem,2vw,1.5rem)] uppercase tracking-wide text-white">
                         {feature.title}
                       </h2>
                     </motion.div>
@@ -746,33 +744,32 @@ export default () => {
             </div>
           </div>
         </motion.div>
-        <div class="col-span-1" />
-        <div class="col-span-2 grid grid-rows-5">
-          <div class="row-span-1" />
-          <div class="row-span-4 text-white grid grid-rows-3">
+        <div class="landing-features-content text-white">
+          <div class="landing-features-content-spacer" />
+          <div class="landing-features-stack">
             <motion.div
-              class="min-h-[150vh] top-0"
+              class="landing-features-compiler"
               animate={compilerVisible.value ? { opacity: 1 } : { opacity: 0 }}
             >
               <div class="flex min-h-dvh flex-col justify-center">
-                <div class="h-screen" />
-                <div class="font-extrabold text-[clamp(2rem,5vw,4.5rem)] text-center leading-none tracking-[-0.02em]">
+                <div class="landing-features-compiler-spacer" />
+                <div class="landing-features-compiler-headline font-extrabold text-[clamp(2rem,5vw,4.5rem)] text-center leading-none tracking-[-0.02em]">
                   <div>SSR Fast,</div>
                   <div>Client Fast.</div>
                 </div>
                 <div class="relative mt-8 min-h-[200vh]">
-                  <div class="sticky top-[30%] h-screen w-full flex flex-col items-center">
+                  <div class="landing-features-compiler-viewport">
                     <CompileOutputFlow visible={yourCodeVisible} />
                   </div>
                 </div>
               </div>
             </motion.div>
-            <div class="">
-              <div class="text-lg">
+            <div class="landing-features-copy">
+              <div class="text-base sm:text-lg">
                 eclipsa is inspired by a lot of modern frameworks, and has a features required for
                 modern development:
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                 {[
                   {
                     icon: 'i-tabler-file-code',
@@ -802,7 +799,9 @@ export default () => {
                 ))}
               </div>
             </div>
-            <div class="bg-amber-200">{'lorem ipsum dolor sit amet'.repeat(1)}</div>
+            <div class="landing-features-placeholder bg-amber-200">
+              {'lorem ipsum dolor sit amet'.repeat(1)}
+            </div>
           </div>
         </div>
       </section>

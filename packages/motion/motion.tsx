@@ -44,9 +44,6 @@ interface ReorderGroupContextValue<T> {
   draggedValue: Signal<T | null>
 }
 
-const asManagedComponent = <T extends object>(name: string, component: (props: T) => JSX.Element) =>
-  __eclipsaComponent(component, `@eclipsa/motion:${name}`, () => [])
-
 type MotionBaseProps = Partial<MotionNodeOptions> & {
   as?: string
   children?: JSX.Element | JSX.Element[]
@@ -385,9 +382,8 @@ const resolveTransition = (props: MotionProps, config: MotionConfigState): Motio
   }
 }
 
-export const MotionConfig = asManagedComponent<MotionConfigProps>(
-  'MotionConfig',
-  ({ children, reducedMotion, transition }) => (
+export const MotionConfig = __eclipsaComponent(
+  ({ children, reducedMotion, transition }: MotionConfigProps) => (
     <MotionConfigContext.Provider
       value={{
         reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
@@ -400,20 +396,23 @@ export const MotionConfig = asManagedComponent<MotionConfigProps>(
       {children}
     </MotionConfigContext.Provider>
   ),
+  '@eclipsa/motion:MotionConfig',
+  () => [],
 )
 
-export const LayoutGroup = asManagedComponent<{
-  children?: JSX.Element | JSX.Element[]
-  id?: string
-}>('LayoutGroup', ({ children, id }) => (
-  <LayoutGroupContext.Provider
-    value={{
-      id: id ?? 'default',
-    }}
-  >
-    {children}
-  </LayoutGroupContext.Provider>
-))
+export const LayoutGroup = __eclipsaComponent(
+  ({ children, id }: { children?: JSX.Element | JSX.Element[]; id?: string }) => (
+    <LayoutGroupContext.Provider
+      value={{
+        id: id ?? 'default',
+      }}
+    >
+      {children}
+    </LayoutGroupContext.Provider>
+  ),
+  '@eclipsa/motion:LayoutGroup',
+  () => [],
+)
 
 export const usePresence = () => {
   const presence = useContext(PresenceContext)
@@ -422,11 +421,13 @@ export const usePresence = () => {
 
 export const useIsPresent = () => useContext(PresenceContext).isPresent.value
 
-export const AnimatePresence = asManagedComponent<{
-  children?: JSX.Element | JSX.Element[]
-}>('AnimatePresence', ({ children }) => children as JSX.Element)
+export const AnimatePresence = __eclipsaComponent(
+  ({ children }: { children?: JSX.Element | JSX.Element[] }) => children as JSX.Element,
+  '@eclipsa/motion:AnimatePresence',
+  () => [],
+)
 
-const MotionRenderer = asManagedComponent<MotionRenderProps>('motion', (rawProps) => {
+const MotionRenderer = __eclipsaComponent((rawProps: MotionRenderProps) => {
   const motionProps = rawProps ?? {}
   const baseTag =
     typeof motionProps.as === 'string'
@@ -498,7 +499,7 @@ const MotionRenderer = asManagedComponent<MotionRenderProps>('motion', (rawProps
     },
     type: baseTag,
   } as JSX.Element
-})
+}, '@eclipsa/motion:motion', () => [])
 
 const motionRendererCache = new Map<string, MotionComponent<MotionRenderProps>>()
 
@@ -580,13 +581,18 @@ export const motion = new Proxy(motionFactory, {
 
 export const m = motion
 
-export const Reorder = {
-  Group: asManagedComponent<{
+const ReorderGroup = __eclipsaComponent(
+  ({
+    axis,
+    children,
+    onReorder,
+    values,
+  }: {
     axis?: 'x' | 'y'
     children?: JSX.Element | JSX.Element[]
     onReorder: (values: unknown[]) => void
     values: unknown[]
-  }>('Reorder.Group', ({ axis, children, onReorder, values }) => {
+  }) => {
     const draggedValue = useSignal<unknown | null>(null)
     return (
       <ReorderGroupContext.Provider
@@ -605,8 +611,12 @@ export const Reorder = {
         {children}
       </ReorderGroupContext.Provider>
     )
-  }),
-  Item: asManagedComponent<MotionProps & { value: unknown }>('Reorder.Item', (rawProps) => {
+  },
+  '@eclipsa/motion:Reorder.Group',
+  () => [],
+)
+
+const ReorderItem = __eclipsaComponent((rawProps: MotionProps & { value: unknown }) => {
     const itemProps = rawProps ?? {}
     const { as: asValue, onDragStart, value } = itemProps
     const group = useContext(ReorderGroupContext)
@@ -646,7 +656,11 @@ export const Reorder = {
       onDragStart: handleDragStart,
       onDrop: handleDrop,
     })
-  }),
+  }, '@eclipsa/motion:Reorder.Item', () => [])
+
+export const Reorder = {
+  Group: ReorderGroup,
+  Item: ReorderItem,
 }
 
 export { LayoutGroupContext, MotionConfigContext, PresenceContext }

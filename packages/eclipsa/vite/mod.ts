@@ -1,4 +1,10 @@
-import { createServerModuleRunner, type Plugin, type PluginOption, type ResolvedConfig } from 'vite'
+import {
+  createServerModuleRunner,
+  transformWithOxc,
+  type Plugin,
+  type PluginOption,
+  type ResolvedConfig,
+} from 'vite'
 import { createDevFetch, shouldInvalidateDevApp } from './dev-app/mod.ts'
 import { incomingMessageToRequest, responseForServerResponse } from '../utils/node-connect.ts'
 import { createConfig } from './config.ts'
@@ -27,6 +33,9 @@ const ECLIPSA_SOURCE_EXTENSIONS = new Set([
 
 const stripRequestQuery = (value: string) => value.replace(/[?#].*$/, '')
 
+const isTestLikeSourceRequest = (value: string) =>
+  /\.(?:test|spec)\.[^./]+$/.test(stripRequestQuery(value).replaceAll('\\', '/'))
+
 const isAppSourceRequest = (value: string) =>
   /(^|\/)app\//.test(stripRequestQuery(value).replaceAll('\\', '/'))
 
@@ -49,6 +58,21 @@ const isCssRequest = (value: string | undefined) => {
   }
   const normalized = stripRequestQuery(value)
   return normalized.endsWith('.css')
+}
+
+const createHotTargetUrl = (root: string, filePath: string) => {
+  const normalizedRoot = root.replaceAll('\\', '/').replace(/\/$/, '')
+  const normalizedFilePath = stripRequestQuery(filePath).replaceAll('\\', '/')
+  if (normalizedFilePath.startsWith('/app/')) {
+    return normalizedFilePath
+  }
+  if (
+    normalizedFilePath === normalizedRoot ||
+    normalizedFilePath.startsWith(`${normalizedRoot}/`)
+  ) {
+    return `/${normalizedFilePath.slice(normalizedRoot.length + 1)}`
+  }
+  return `/@fs/${normalizedFilePath}`
 }
 
 const preserveCssHotModules = <
@@ -127,13 +151,18 @@ const hasClientHotModuleForFile = (options: HotUpdateContext) => {
   return false
 }
 
+const shouldForceFullReloadForWatcherEvent = (
+  filePath: string,
+  event: 'add' | 'change' | 'unlink',
+) => event !== 'change' && isEclipsaSourceRequest(filePath) && !isTestLikeSourceRequest(filePath)
+
 const handleHotUpdate = async (
   state: EclipsaPluginState,
   pluginContext: PluginContextWithEnvironment,
   options: HotUpdateContext,
 ) => {
   const config = state.config
-  if (!config || !isEclipsaSourceRequest(options.file)) {
+  if (!config || !isEclipsaSourceRequest(options.file) || isTestLikeSourceRequest(options.file)) {
     return
   }
   const source = await options.read()
@@ -183,11 +212,8 @@ const handleHotUpdate = async (
   const module =
     options.modules[0] ??
     [...(pluginContext.environment.moduleGraph?.getModulesByFile(options.file) ?? [])][0]
-  if (!module) {
-    return
-  }
   pluginContext.environment.hot.send('update-client', {
-    url: module.url,
+    url: module?.url ?? createHotTargetUrl(config.root, options.file),
   })
   return collectCssHotModules(pluginContext, options)
 }
@@ -250,6 +276,12 @@ const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = 
         if (shouldInvalidateDevApp(config.root, filePath, event)) {
           devApp.invalidate()
         }
+        if (shouldForceFullReloadForWatcherEvent(filePath, event)) {
+          server.ws.send({
+            path: '*',
+            type: 'full-reload',
+          } as any)
+        }
       }
 
       server.watcher.on('add', (filePath) => {
@@ -287,6 +319,15 @@ const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = 
       const config = state.config
       if (!config) {
         throw new Error('Resolved Vite config is unavailable during transform().')
+      }
+      if (isTestLikeSourceRequest(id)) {
+        return transformWithOxc(code, id, {
+          jsx: {
+            development: !config.isProduction,
+            importSource: 'eclipsa',
+            runtime: 'automatic',
+          },
+        })
       }
       const isClient = this.environment.name === 'client'
       return {

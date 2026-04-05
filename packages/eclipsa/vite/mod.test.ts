@@ -110,6 +110,44 @@ describe('vite plugin hotUpdate', () => {
     expect(transformed).toBeUndefined()
   })
 
+  it('routes app-local tsx test modules through plain JSX lowering', async () => {
+    const [plugin] = getPlugins()
+    const transform = getTransform(plugin)
+    const transformed = await transform?.call(
+      {
+        environment: {
+          name: 'ssr',
+        },
+      } as any,
+      'export default () => <div>probe</div>;',
+      '/tmp/app/+page.test.tsx',
+    )
+
+    expect(transformed).toMatchObject({
+      code: expect.stringContaining('from "eclipsa/jsx-dev-runtime"'),
+    })
+    expect(transformed?.code).not.toContain('from "eclipsa/client"')
+  })
+
+  it('routes spec files through plain JSX lowering even when they live under app', async () => {
+    const [plugin] = getPlugins()
+    const transform = getTransform(plugin)
+    const transformed = await transform?.call(
+      {
+        environment: {
+          name: 'client',
+        },
+      } as any,
+      'export default () => <div>probe</div>;',
+      '/tmp/app/example.spec.tsx',
+    )
+
+    expect(transformed).toMatchObject({
+      code: expect.stringContaining('from "eclipsa/jsx-dev-runtime"'),
+    })
+    expect(transformed?.code).not.toContain('from "eclipsa/client"')
+  })
+
   it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {
     const [plugin] = getPlugins()
 
@@ -207,6 +245,39 @@ describe('vite plugin hotUpdate', () => {
     expect(result).toEqual([cssModule])
     expect(send).toHaveBeenCalledWith('update-client', {
       url: '/src/non-resumable.tsx',
+    })
+  })
+
+  it('falls back to the app source url when a non-resumable file is rewritten atomically', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+          moduleGraph: {
+            getModulesByFile() {
+              return new Set()
+            },
+          },
+        },
+      } as any,
+      {
+        file: '/tmp/app/non-resumable.tsx',
+        modules: [],
+        read: () => 'export const value = <div>after</div>;',
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledWith('update-client', {
+      url: '/app/non-resumable.tsx',
     })
   })
 
@@ -753,6 +824,65 @@ describe('vite plugin hotUpdate', () => {
       fileUrl: '/ssr-full-reload.tsx',
       fullReload: true,
     })
+  })
+
+  it('uses the first transformed source as the resumable HMR baseline for later client updates', async () => {
+    const [transformPlugin, hmrPlugin] = getPlugins()
+    const transform = getTransform(transformPlugin)
+    const hotUpdate = getHotUpdate(hmrPlugin)
+    const send = vi.fn()
+    const filePath = '/tmp/first-hmr-diff.tsx'
+    const previousSource = `
+      export default () => <div>before</div>;
+    `
+    const nextSource = `
+      export default () => <div>after</div>;
+    `
+
+    await transform?.call(
+      {
+        environment: {
+          name: 'client',
+        },
+      } as any,
+      previousSource,
+      filePath,
+    )
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+        },
+      } as any,
+      {
+        file: filePath,
+        modules: [
+          {
+            type: 'js',
+            url: '/src/first-hmr-diff.tsx',
+          },
+        ],
+        read: () => nextSource,
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toBe(RESUME_HMR_EVENT)
+    expect(send.mock.calls[0]?.[1]).toMatchObject({
+      fileUrl: '/first-hmr-diff.tsx',
+      fullReload: false,
+      rerenderComponentSymbols: expect.any(Array),
+    })
+    expect(
+      Object.keys((send.mock.calls[0]?.[1] as { symbolUrlReplacements: Record<string, string> })
+        .symbolUrlReplacements),
+    ).not.toHaveLength(0)
   })
 
   it('retains resumable full-reload payloads after transform caches the next source', async () => {

@@ -422,7 +422,9 @@ export const compileModuleForClient = async (
   },
 ) => {
   const filePath = stripQuery(id)
+  const normalizedId = normalizeCompilerModuleId(filePath)
   const analyzed = await loadAnalyzedModule(filePath, source)
+  servedSources.set(normalizedId, servedSources.get(normalizedId) ?? source)
   return compileClientModule(analyzed.code, filePath, {
     hmr: options?.hmr ?? false,
   })
@@ -430,7 +432,9 @@ export const compileModuleForClient = async (
 
 export const compileModuleForSSR = async (source: string, id: string) => {
   const filePath = stripQuery(id)
+  const normalizedId = normalizeCompilerModuleId(filePath)
   const analyzed = await loadAnalyzedModule(filePath, source)
+  servedSources.set(normalizedId, servedSources.get(normalizedId) ?? source)
   return compileSSRModule(analyzed.code, filePath)
 }
 

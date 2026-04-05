@@ -651,6 +651,14 @@ fn collect_projection_slots_from_export_default(
     }
 }
 
+fn collect_projection_slots_from_argument(argument: &Argument<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
+    match argument {
+        Argument::ArrowFunctionExpression(function) => ProjectionSlotCollector::collect_arrow(function),
+        Argument::FunctionExpression(function) => ProjectionSlotCollector::collect_function(function),
+        _ => Ok(None),
+    }
+}
+
 struct CaptureCollector<'a, 's> {
     capture_indices: HashMap<String, usize>,
     current_scope_stack: Vec<ScopeId>,
@@ -1688,14 +1696,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
 
     fn emit_component_symbol(
         &mut self,
+        symbol_id: String,
         function_span: Span,
         captures: Vec<String>,
         import_spans: Vec<Span>,
         local_definitions: Vec<LocalDefinition>,
         projection_slots: Option<Vec<(String, usize)>>,
     ) {
-        let raw_code = source_text(self.source, function_span);
-        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Component, raw_code);
         let build = self
             .build_symbol(
                 function_span,
@@ -1765,7 +1772,116 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         );
     }
 
+    fn emit_prewrapped_component_symbol(
+        &mut self,
+        symbol_id: String,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        local_definitions: Vec<LocalDefinition>,
+        projection_slots: Option<Vec<(String, usize)>>,
+    ) {
+        let build = self
+            .build_symbol(
+                function_span,
+                captures.clone(),
+                import_spans,
+                local_definitions,
+                true,
+            )
+            .unwrap();
+        let span_key = SpanKey::from_span(function_span);
+        let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
+        self.hmr_key_by_symbol_id
+            .insert(symbol_id.clone(), component_info.hmr_key.clone());
+        self.symbols.push((
+            symbol_id.clone(),
+            ResumeSymbol {
+                captures: build.captures.clone(),
+                code: build.code.clone(),
+                file_path: self.file_id.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+            },
+        ));
+        let signature = create_symbol_signature(&SymbolKind::Component, &build.signature_code);
+        self.hmr_symbols.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrSymbolEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+                owner_component_key: None,
+                signature: signature.clone(),
+            },
+        ));
+        self.hmr_components.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrComponentEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id,
+                local_symbol_keys: component_info.local_symbol_keys.clone(),
+                signature,
+            },
+        ));
+        let _ = projection_slots;
+    }
+
     fn emit_component_symbol_for_expression(&mut self, expression: &Expression<'a>) {
+        if let Expression::CallExpression(call) = expression {
+            if let Expression::Identifier(identifier) = &call.callee {
+                if identifier.name.as_str() == HELPER_COMPONENT {
+                    let Some(function_argument) = call.arguments.first() else {
+                        return;
+                    };
+                    let Some(function_span) = function_argument_span(function_argument) else {
+                        return;
+                    };
+                    let Some(symbol_argument) = call.arguments.get(1) else {
+                        return;
+                    };
+                    let Argument::StringLiteral(symbol_literal) = symbol_argument else {
+                        return;
+                    };
+                    if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+                        return;
+                    }
+                    let Some(captures_argument) = call.arguments.get(2) else {
+                        return;
+                    };
+                    let dependencies = match self.collect_symbol_dependencies(function_argument) {
+                        Ok(dependencies) => dependencies,
+                        Err(error) => {
+                            self.fail(error);
+                            return;
+                        }
+                    };
+                    let projection_slots = match collect_projection_slots_from_argument(function_argument) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.fail(error);
+                            return;
+                        }
+                    };
+                    self.push_replacement(
+                        captures_argument.span().start as usize,
+                        captures_argument.span().end as usize,
+                        Self::build_capture_getter(&dependencies.captures),
+                    );
+                    self.emit_prewrapped_component_symbol(
+                        symbol_literal.value.as_str().to_string(),
+                        function_span,
+                        dependencies.captures,
+                        dependencies.import_spans,
+                        dependencies.local_definitions,
+                        projection_slots,
+                    );
+                    return;
+                }
+            }
+        }
         let Some(function_span) = function_expression_span(expression) else {
             return;
         };
@@ -1787,6 +1903,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             }
         };
         self.emit_component_symbol(
+            create_symbol_id(&self.file_id, &SymbolKind::Component, source_text(self.source, function_span)),
             function_span,
             dependencies.captures,
             dependencies.import_spans,
@@ -1829,6 +1946,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             }
         };
         self.emit_component_symbol(
+            create_symbol_id(&self.file_id, &SymbolKind::Component, source_text(self.source, function_span)),
             function_span,
             dependencies.captures,
             dependencies.import_spans,

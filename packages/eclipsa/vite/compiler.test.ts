@@ -498,6 +498,14 @@ describe('createResumeHmrUpdate', () => {
     }
   })
 
+  it('collects symbols from workspace packages that export managed components through package exports', async () => {
+    const symbols = await collectAppSymbols(path.resolve(__dirname, '../../../docs'))
+
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:motion')).toBe(true)
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:AnimatePresence')).toBe(true)
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:LayoutGroup')).toBe(true)
+  })
+
   it('falls back to full reload when top-level component membership changes', async () => {
     const previous = await analyze(
       `

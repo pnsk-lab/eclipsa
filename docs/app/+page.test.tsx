@@ -185,6 +185,7 @@ describe('landing page', () => {
 
     expect(stylesheet).toContain('.landing-features-orbit {')
     expect(stylesheet).toContain('--feature-rotation: 0deg;')
+    expect(stylesheet).toContain('transform: translate3d(var(--orbit-follow-x), 0, 0);')
     expect(orbitItemRule).not.toContain('--feature-rotation:')
   })
 
@@ -195,12 +196,9 @@ describe('landing page', () => {
 
     expect(result.html).toContain('overflow-x-clip')
     expect(result.html).not.toContain('overflow-x-hidden')
-    expect(result.html).toContain(
-      'class="sticky top-0 self-start pt-1 pl-10 flex h-dvh items-center justify-center"',
-    )
-    expect(result.html).toContain(
-      'class="relative z-20 mx-auto w-full max-w-7xl px-6 grid grid-cols-4"',
-    )
+    expect(result.html).toContain('class="landing-features-section"')
+    expect(result.html).toContain('class="landing-features-stage"')
+    expect(result.html).toContain('class="landing-features-content text-white"')
   })
 
   it('anchors the code sample with a dedicated sticky wrapper inside a tall parent', () => {
@@ -209,9 +207,8 @@ describe('landing page', () => {
     })
 
     expect(result.html).toContain('class="relative mt-8 min-h-[200vh]"')
-    expect(result.html).toContain(
-      'class="sticky top-[30%] h-screen w-full flex flex-col items-center"',
-    )
+    expect(result.html).toContain('class="landing-features-compiler-viewport"')
+    expect(result.html).toContain('class="landing-features-compiler-spacer"')
   })
 
   it('renders compile outputs as vertically stacked sections without changing the code block markup', () => {
@@ -223,7 +220,7 @@ describe('landing page', () => {
     expect(result.html).not.toContain('class="landing-compile-connector"')
     expect(result.html).toContain('class="flex w-full gap-4"')
     expect(result.html).toContain(
-      'class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-xl"',
+      'class="rounded-lg border border-purple-950/50 bg-black/30 p-2 text-[clamp(1rem,4vw,1.25rem)]"',
     )
     expect(result.html).toContain(
       'class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-sm"',
@@ -251,6 +248,19 @@ describe('landing page', () => {
     expect(result.html).toContain('SSR')
   })
 
+  it('renders fluid statement typography and responsive feature layout hooks', () => {
+    const result = renderSSR(() => <TestLandingPage />, {
+      symbols: {},
+    })
+
+    expect(result.html).toContain('text-[clamp(2.75rem,12vw,8rem)]')
+    expect(result.html).toContain('text-[clamp(2rem,9vw,4.5rem)]')
+    expect(result.html).toContain('class="landing-features-copy"')
+    expect(result.html).toContain('class="landing-features-placeholder bg-amber-200"')
+    expect(result.html).toContain('class="landing-features-content-spacer"')
+    expect(result.html).toContain('class="landing-features-compiler-headline')
+  })
+
   it('defines vertical rail dot animations in the landing stylesheet', () => {
     const stylesheet = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
 
@@ -267,6 +277,36 @@ describe('landing page', () => {
     expect(stylesheet).toContain('.landing-compile-dot-source {')
     expect(stylesheet).toContain('.landing-compile-dot-client {')
     expect(stylesheet).toContain('.landing-compile-dot-ssr {')
+  })
+
+  it('pushes the feature orbit behind the explanation on small screens', () => {
+    const stylesheet = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+
+    expect(stylesheet).toContain('.landing-features-section {')
+    expect(stylesheet).toContain('.landing-features-stage {')
+    expect(stylesheet).toContain('grid-template-rows: repeat(5, minmax(0, 1fr));')
+    expect(stylesheet).toContain('grid-template-rows: repeat(3, minmax(0, 1fr));')
+    expect(stylesheet).toContain('@media (max-width: 768px) {')
+    expect(stylesheet).toContain('grid-template-columns: minmax(0, 1fr);')
+    expect(stylesheet).toContain('pointer-events: none;')
+    expect(stylesheet).toContain('justify-self: stretch;')
+    expect(stylesheet).toContain('position: sticky;')
+    expect(stylesheet).toContain('top: 0;')
+    expect(stylesheet).toContain('min-height: 100svh;')
+    expect(stylesheet).toContain('justify-content: center;')
+    expect(stylesheet).toContain('align-items: center;')
+    expect(stylesheet).toContain('.landing-features-content {')
+    expect(stylesheet).toContain('.landing-features-content-spacer {')
+    expect(stylesheet).toContain('display: block;')
+    expect(stylesheet).not.toContain('grid-template-rows: none;')
+  })
+
+  it('keeps the full-stack copy aligned to the top of its row', () => {
+    const stylesheet = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+    const copyRule = stylesheet.match(/\.landing-features-copy\s*\{[^}]+\}/)?.[0] ?? ''
+
+    expect(copyRule).not.toContain('justify-content: center;')
+    expect(copyRule).not.toContain('display: flex;')
   })
 
   it('keeps the fixed canvas layer ahead of the hero section markup', () => {

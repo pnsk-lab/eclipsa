@@ -69,15 +69,86 @@ describe('compileSSRModule', () => {
     expect(resultCode).toMatch(/_ssrTemplate\(|_jsxDEV\("li"/)
   })
 
-  it('compiles nested JSX fragments inside logical expressions', async () => {
+  it('lowers ternaries with JSX branches to Show components', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <div>{flag ? <span>on</span> : <span>off</span>}</div>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_jsxDEV(__eclipsaShow')
+    expect(resultCode).toContain('"when": flag')
+    expect(resultCode).not.toContain('flag ? <span>')
+  })
+
+  it('lowers && expressions with JSX branches to Show components', async () => {
     const resultCode = await compileSSRModule(
       `const view = <head>{flag && <><script src="/eruda.js"></script><script>eruda.init()</script></>}</head>`,
       'mod.test.tsx',
     )
 
     expect(resultCode).not.toContain('<>')
-    expect(resultCode).toContain('flag &&')
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_jsxDEV(__eclipsaShow')
+    expect(resultCode).toContain('"fallback": (__e_showValue) => __e_showValue')
     expect(resultCode).toContain('/eruda.js')
     expect(resultCode).toContain('eruda.init()')
+  })
+
+  it('lowers || expressions with JSX branches to Show components', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <div>{label || <span>empty</span>}</div>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_jsxDEV(__eclipsaShow')
+    expect(resultCode).toContain('"children": (__e_showValue) => __e_showValue')
+    expect(resultCode).toContain('"fallback": (__e_showValue) => _ssrTemplate(["<span>empty</span>"])')
+  })
+
+  it('lowers direct JSX map expressions to For components', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('_jsxDEV(__eclipsaFor')
+    expect(resultCode).toContain('"arr": items')
+    expect(resultCode).not.toContain('=> <li')
+  })
+
+  it('does not lower non-JSX map expressions to For components', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <div>{items.map((item) => item.toString())}</div>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_jsxDEV(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item) => item.toString())')
+  })
+
+  it('does not lower map expressions inside component children', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <Layout>{items.map((item, i) => <li key={i}>{item}</li>)}</Layout>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_jsxDEV(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item, i) => _ssrTemplate([')
+  })
+
+  it('does not lower logical JSX expressions inside component children', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <Layout>{flag && <span>ready</span>}</Layout>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).not.toContain('_jsxDEV(__eclipsaShow')
+    expect(resultCode).toContain('flag && _ssrTemplate(["<span>ready</span>"])')
   })
 })

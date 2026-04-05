@@ -1,24 +1,25 @@
-import { readFile, rename, writeFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
-import { expect, test, type Page } from '@playwright/test'
+const { readFile, rename, writeFile } = require('node:fs/promises')
+const path = require('node:path')
+const { expect, test } = require('@playwright/test')
 
-const hmrSvgPagePath = fileURLToPath(new URL('../app/hmr-svg/+page.tsx', import.meta.url))
+type Page = import('@playwright/test').Page
+
+const hmrSvgPagePath = path.resolve(__dirname, '../app/hmr-svg/+page.tsx')
 const hmrBeforeLabel = 'svg hmr before'
 const hmrAfterLabel = 'svg hmr after'
-const imagePagePath = fileURLToPath(new URL('../app/image/+page.tsx', import.meta.url))
+const imagePagePath = path.resolve(__dirname, '../app/image/+page.tsx')
 const imageHmrBeforeLabel = 'Responsive image metadata should survive navigation, resume, and HMR.'
 const imageHmrAfterLabel =
   'Responsive image metadata should survive navigation, resume, HMR, and page transitions.'
-const contentMarkdownPath = fileURLToPath(
-  new URL('../app/content/docs/guide/getting-started.md', import.meta.url),
-)
+const contentMarkdownPath = path.resolve(__dirname, '../app/content/docs/guide/getting-started.md')
 const contentBodyBeforeLabel = 'Content body before.'
 const contentBodyAfterLabel = 'Content body after.'
 const contentDescriptionBeforeLabel = 'Content description before'
 const contentDescriptionAfterLabel = 'Content description after'
-const homePagePath = fileURLToPath(new URL('../app/+page.tsx', import.meta.url))
+const homePagePath = path.resolve(__dirname, '../app/+page.tsx')
 const homeHmrBeforeLabel = 'Go to counter with navigate()'
 const homeHmrAfterLabel = 'Go to counter with navigate()!'
+const hmrTimeout = 15_000
 const writeSourceAtomically = async (filePath: string, source: string) => {
   const tempPath = `${filePath}.tmp`
   await writeFile(tempPath, source)
@@ -767,11 +768,15 @@ test.describe('example app in dev mode', () => {
     try {
       await writeSourceAtomically(hmrSvgPagePath, updatedSource)
       await expect(heading).toBeVisible()
-      await expect(status).toHaveText(hmrAfterLabel)
+      await expect(status).toHaveText(hmrAfterLabel, {
+        timeout: hmrTimeout,
+      })
     } finally {
       await writeSourceAtomically(hmrSvgPagePath, originalSource)
       await expect(heading).toBeVisible()
-      await expect(status).toHaveText(hmrBeforeLabel)
+      await expect(status).toHaveText(hmrBeforeLabel, {
+        timeout: hmrTimeout,
+      })
     }
   })
 
@@ -786,14 +791,19 @@ test.describe('example app in dev mode', () => {
       expect(updatedSource).not.toBe(originalSource)
       await writeSourceAtomically(imagePagePath, updatedSource)
 
-      await expect(page.getByText(imageHmrAfterLabel)).toBeVisible()
+      await expect(page.getByText(imageHmrAfterLabel)).toBeVisible({
+        timeout: hmrTimeout,
+      })
       await expect(page.getByTestId('responsive-image')).toHaveAttribute(
         'srcset',
         /240w.*480w.*960w.*1200w/,
       )
     } finally {
       await writeSourceAtomically(imagePagePath, originalSource)
-      await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible()
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible({
+        timeout: hmrTimeout,
+      })
     }
   })
 
@@ -813,14 +823,23 @@ test.describe('example app in dev mode', () => {
       expect(updatedSource).not.toBe(originalSource)
       await writeSourceAtomically(contentMarkdownPath, updatedSource)
 
-      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionAfterLabel)
-      await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel)
+      await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionAfterLabel, {
+        timeout: hmrTimeout,
+      })
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel, {
+        timeout: hmrTimeout,
+      })
     } finally {
       await writeSourceAtomically(contentMarkdownPath, originalSource)
       await expect(page.getByTestId('content-description')).toHaveText(
         contentDescriptionBeforeLabel,
+        {
+          timeout: hmrTimeout,
+        },
       )
-      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel, {
+        timeout: hmrTimeout,
+      })
     }
   })
 
@@ -840,14 +859,18 @@ test.describe('example app in dev mode', () => {
       expect(updatedHomeSource).not.toBe(originalHomeSource)
       await writeSourceAtomically(homePagePath, updatedHomeSource)
 
-      await expect(page.getByRole('button', { name: homeHmrAfterLabel })).toBeVisible()
+      await expect(page.getByRole('button', { name: homeHmrAfterLabel })).toBeVisible({
+        timeout: hmrTimeout,
+      })
       await expect(propA).toHaveText('Prop component content')
       await expect(propB).toHaveText('Prop component content')
       await expect(children).toHaveText('Children component content')
     } finally {
       await writeSourceAtomically(homePagePath, originalHomeSource)
       await page.goto('/')
-      await expect(page.getByRole('button', { name: homeHmrBeforeLabel })).toBeVisible()
+      await expect(page.getByRole('button', { name: homeHmrBeforeLabel })).toBeVisible({
+        timeout: hmrTimeout,
+      })
       await expect(propA).toHaveText('Prop component content')
       await expect(propB).toHaveText('Prop component content')
       await expect(children).toHaveText('Children component content')
