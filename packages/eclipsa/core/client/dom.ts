@@ -75,6 +75,23 @@ const isUsableInsertParent = (
   stableParents: Array<Node | null | undefined>,
 ) => !!candidate && (isConnectedNode(candidate) || stableParents.includes(candidate))
 
+const removeNodeFromParent = (node: Node, parent: Node) => {
+  const removable = node as Node & {
+    remove?: () => void
+  }
+  if (typeof removable.remove === 'function') {
+    removable.remove()
+    return
+  }
+
+  const parentWithRemoveChild = parent as Node & {
+    removeChild?: (child: Node) => Node
+  }
+  if (typeof parentWithRemoveChild.removeChild === 'function') {
+    parentWithRemoveChild.removeChild(node)
+  }
+}
+
 const hasUsableInsertParent = (
   node: Node | null | undefined,
   stableParents: Array<Node | null | undefined>,
@@ -290,7 +307,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
     const insertReference = liveMarker?.parentNode === targetParent ? liveMarker : null
     for (const node of currentNodes) {
       if (node.parentNode === targetParent) {
-        node.remove()
+        removeNodeFromParent(node, targetParent)
       }
     }
     for (const node of replacementNodes) {

@@ -42,6 +42,13 @@ const getTransform = (plugin: Plugin) => {
   return hook?.handler
 }
 
+const getTransformedCode = (result: Awaited<ReturnType<NonNullable<ReturnType<typeof getTransform>>>>) => {
+  if (!result || typeof result === 'string') {
+    return null
+  }
+  return result.code ?? null
+}
+
 describe('vite plugin hotUpdate', () => {
   beforeEach(() => {
     resetCompilerCache()
@@ -126,7 +133,7 @@ describe('vite plugin hotUpdate', () => {
     expect(transformed).toMatchObject({
       code: expect.stringContaining('from "eclipsa/jsx-dev-runtime"'),
     })
-    expect(transformed?.code).not.toContain('from "eclipsa/client"')
+    expect(getTransformedCode(transformed)).not.toContain('from "eclipsa/client"')
   })
 
   it('routes spec files through plain JSX lowering even when they live under app', async () => {
@@ -145,7 +152,7 @@ describe('vite plugin hotUpdate', () => {
     expect(transformed).toMatchObject({
       code: expect.stringContaining('from "eclipsa/jsx-dev-runtime"'),
     })
-    expect(transformed?.code).not.toContain('from "eclipsa/client"')
+    expect(getTransformedCode(transformed)).not.toContain('from "eclipsa/client"')
   })
 
   it('runs as a pre-transform plugin so symbol ids are derived from raw TSX', () => {

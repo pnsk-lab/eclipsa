@@ -7572,7 +7572,7 @@ describe('renderClientInsertable', () => {
   it('switches Show branches through live insert updates', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
-      const open = createDetachedRuntimeSignal(container, 's0', true)
+      const open = createDetachedRuntimeSignal<boolean | number>(container, 's0', true)
       const host = new FakeElement('div')
       const marker = new FakeComment('marker')
       host.appendChild(marker)

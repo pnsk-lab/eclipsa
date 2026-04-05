@@ -1,6 +1,6 @@
 const { readFile, rename, writeFile } = require('node:fs/promises')
 const path = require('node:path')
-const { expect, test } = require('@playwright/test')
+const { expect, test } = require('@playwright/test') as typeof import('@playwright/test')
 
 type Page = import('@playwright/test').Page
 
