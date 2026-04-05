@@ -14,6 +14,7 @@ import {
 import type { ResumeHmrUpdatePayload } from '../core/resume-hmr.ts'
 
 const SYMBOL_QUERY = 'eclipsa-symbol'
+const SYMBOL_LANG_QUERY = 'lang.js'
 
 interface AnalyzedEntry {
   analyzed: AnalyzedModule
@@ -86,6 +87,9 @@ export const parseSymbolRequest = (id: string): { filePath: string; symbolId: st
     symbolId,
   }
 }
+
+export const createSymbolRequestId = (filePath: string, symbolId: string) =>
+  `${filePath}?${SYMBOL_QUERY}=${symbolId}&${SYMBOL_LANG_QUERY}`
 
 const loadAnalyzedModule = async (filePath: string, source?: string) => {
   const normalizedPath = stripQuery(filePath)
@@ -497,7 +501,7 @@ export const loadSymbolModuleForSSR = async (id: string) => {
 }
 
 export const createDevSymbolUrl = (root: string, filePath: string, symbolId: string) =>
-  `${createDevSourceUrl(root, filePath)}?${SYMBOL_QUERY}=${symbolId}`
+  createSymbolRequestId(createDevSourceUrl(root, filePath), symbolId)
 
 export const createBuildSymbolUrl = (symbolId: string) => `/entries/symbol__${symbolId}.js`
 

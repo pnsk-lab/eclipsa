@@ -383,33 +383,43 @@ const resolveTransition = (props: MotionProps, config: MotionConfigState): Motio
 }
 
 export const MotionConfig = __eclipsaComponent(
-  ({ children, reducedMotion, transition }: MotionConfigProps) => (
-    <MotionConfigContext.Provider
-      value={{
-        reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
-        transition: {
-          ...DEFAULT_CONFIG.transition,
-          ...transition,
-        },
-      }}
-    >
-      {children}
-    </MotionConfigContext.Provider>
-  ),
+  (rawProps: MotionConfigProps) => {
+    const { children, reducedMotion, transition } = rawProps
+    const Provider = MotionConfigContext.Provider
+
+    return (
+      <Provider
+        value={{
+          reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
+          transition: {
+            ...DEFAULT_CONFIG.transition,
+            ...transition,
+          },
+        }}
+      >
+        {children}
+      </Provider>
+    )
+  },
   '@eclipsa/motion:MotionConfig',
   () => [],
 )
 
 export const LayoutGroup = __eclipsaComponent(
-  ({ children, id }: { children?: JSX.Element | JSX.Element[]; id?: string }) => (
-    <LayoutGroupContext.Provider
-      value={{
-        id: id ?? 'default',
-      }}
-    >
-      {children}
-    </LayoutGroupContext.Provider>
-  ),
+  (rawProps: { children?: JSX.Element | JSX.Element[]; id?: string }) => {
+    const { children, id } = rawProps
+    const Provider = LayoutGroupContext.Provider
+
+    return (
+      <Provider
+        value={{
+          id: id ?? 'default',
+        }}
+      >
+        {children}
+      </Provider>
+    )
+  },
   '@eclipsa/motion:LayoutGroup',
   () => [],
 )
@@ -590,20 +600,17 @@ export const motion = new Proxy(motionFactory, {
 export const m = motion
 
 const ReorderGroup = __eclipsaComponent(
-  ({
-    axis,
-    children,
-    onReorder,
-    values,
-  }: {
+  (rawProps: {
     axis?: 'x' | 'y'
     children?: JSX.Element | JSX.Element[]
     onReorder: (values: unknown[]) => void
     values: unknown[]
   }) => {
+    const { axis, children, onReorder, values } = rawProps
     const draggedValue = useSignal<unknown | null>(null)
+    const Provider = ReorderGroupContext.Provider
     return (
-      <ReorderGroupContext.Provider
+      <Provider
         value={
           {
             axis: axis ?? 'y',
@@ -617,7 +624,7 @@ const ReorderGroup = __eclipsaComponent(
         }
       >
         {children}
-      </ReorderGroupContext.Provider>
+      </Provider>
     )
   },
   '@eclipsa/motion:Reorder.Group',
