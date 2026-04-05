@@ -79,6 +79,9 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
     componentMeta.symbol,
     componentMeta.captures,
     componentMeta.projectionSlots,
+    {
+      optimizedRoot: componentMeta.optimizedRoot,
+    },
   )
 }
 

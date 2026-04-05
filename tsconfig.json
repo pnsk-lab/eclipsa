@@ -22,5 +22,10 @@
     "example/**/*.d.ts",
     "e2e/playwright.config.ts"
   ],
-  "exclude": ["**/dist/**", "**/node_modules/**", ".contexts/**"]
+  "exclude": [
+    "**/dist/**",
+    "**/node_modules/**",
+    ".contexts/**",
+    "packages/create-eclipsa/template/**"
+  ]
 }

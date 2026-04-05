@@ -1,15 +1,15 @@
 import { defineConfig } from 'vite-plus'
-import { eclipsaContent } from '@eclipsa/content/vite'
-import { eclipsa } from 'eclipsa/vite'
+import { eclipsaContent } from '../packages/content/vite.ts'
+import { eclipsa } from '../packages/eclipsa/vite/mod.ts'
 import tailwind from '@tailwindcss/vite'
-import { eclipsaImage } from '@eclipsa/image/vite'
+import { eclipsaImage } from '../packages/image/vite.ts'
 
 export default defineConfig({
   appType: 'custom',
   plugins: [eclipsa({ output: 'ssg' }), eclipsaContent(), tailwind(), eclipsaImage()],
   test: {
     environment: 'node',
-    include: ['app/**/*.test.ts', 'app/**/*.test.tsx'],
+    include: ['app/**/*.test.ts', 'app/**/*.test.tsx', '*.test.ts'],
   },
   server: {
     fs: {

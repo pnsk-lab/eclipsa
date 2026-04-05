@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
 import { attr, insert } from './client/dom.ts'
+import {
+  createContext,
+  getRuntimeContextReference,
+  materializeRuntimeContext,
+  materializeRuntimeContextProvider,
+} from './context.ts'
 import { __eclipsaComponent, __eclipsaEvent, __eclipsaWatch } from './internal.ts'
+import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
 import { Link, useLocation, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
@@ -371,7 +378,20 @@ class FakeDocument {
   activeElement: Element | null = null
   body: HTMLElement
   #eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
-  defaultView = {
+  defaultView: {
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+    history?: {
+      pushState: (data: unknown, unused: string, url?: string | URL | null) => void
+      replaceState: (data: unknown, unused: string, url?: string | URL | null) => void
+    }
+    location?: {
+      assign: (url: string | URL) => void
+      replace: (url: string | URL) => void
+    }
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+    requestAnimationFrame: (callback: FrameRequestCallback) => number
+    setTimeout: (callback: () => void) => number
+  } = {
     addEventListener() {},
     removeEventListener() {},
     requestAnimationFrame(callback: FrameRequestCallback) {
@@ -605,6 +625,50 @@ describe('createDelegatedEvent', () => {
     expect(delegated.target).toBe(target)
     expect(delegated.currentTarget).toBe(currentTarget)
     expect(() => delegated.preventDefault()).not.toThrow()
+  })
+})
+
+describe('resume context captures', () => {
+  it('serializes local context captures as resumable references', () => {
+    const ThemeContext = createContext('fallback')
+
+    expect(getRuntimeContextReference(ThemeContext)).toEqual({
+      defaultValue: 'fallback',
+      hasDefault: true,
+      id: expect.any(String),
+      kind: 'context',
+    })
+
+    expect(getRuntimeContextReference(ThemeContext.Provider)).toEqual({
+      defaultValue: 'fallback',
+      hasDefault: true,
+      id: expect.any(String),
+      kind: 'context-provider',
+    })
+
+    const contextReference = getRuntimeContextReference(ThemeContext)
+    if (!contextReference || contextReference.kind !== 'context') {
+      throw new Error('expected a runtime context reference')
+    }
+    const providerReference = getRuntimeContextReference(ThemeContext.Provider)
+    if (!providerReference || providerReference.kind !== 'context-provider') {
+      throw new Error('expected a runtime context provider reference')
+    }
+
+    expect(
+      materializeRuntimeContext({
+        defaultValue: contextReference.defaultValue,
+        hasDefault: contextReference.hasDefault,
+        id: contextReference.id,
+      }),
+    ).toBe(ThemeContext)
+    expect(
+      materializeRuntimeContextProvider({
+        defaultValue: providerReference.defaultValue,
+        hasDefault: providerReference.hasDefault,
+        id: providerReference.id,
+      }),
+    ).toBe(ThemeContext.Provider)
   })
 })
 
@@ -2225,8 +2289,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -2460,10 +2527,7 @@ describe('renderClientInsertable', () => {
         const container = createContainer()
         const doc = container.doc as unknown as FakeDocument & {
           defaultView: {
-            addEventListener: (
-              type: string,
-              listener: EventListenerOrEventListenerObject,
-            ) => void
+            addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
             history: {
               pushState: (_data: unknown, _unused: string, url: string) => void
               replaceState: (_data: unknown, _unused: string, url: string) => void
@@ -2482,8 +2546,11 @@ describe('renderClientInsertable', () => {
           location: Location
         }
 
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -2493,7 +2560,7 @@ describe('renderClientInsertable', () => {
           } as Location
         }
 
-        let popstateListener: EventListenerOrEventListenerObject | null = null
+        let popstateListener: unknown = null
         applyLocation('http://local/counter')
         doc.defaultView = {
           ...doc.defaultView,
@@ -2579,7 +2646,7 @@ describe('renderClientInsertable', () => {
         }
 
         container.rootElement = doc.body as unknown as HTMLElement
-        container.router = {
+        const router = {
           currentPath: { value: '/counter' },
           currentRoute: counterRoute,
           currentUrl: { value: 'http://local/counter' },
@@ -2607,7 +2674,8 @@ describe('renderClientInsertable', () => {
             ],
           ]),
           sequence: 0,
-        } as unknown as RuntimeContainer['router']
+        } as NonNullable<RuntimeContainer['router']>
+        container.router = router
 
         const originalDocument = globalThis.document
         ;(globalThis as typeof globalThis & { document: Document }).document =
@@ -2628,21 +2696,21 @@ describe('renderClientInsertable', () => {
 
           applyLocation('http://local/')
           expect(doc.location.pathname).toBe('/')
-          expect(container.router.currentPath.value).toBe('/counter')
+          expect(router.currentPath.value).toBe('/counter')
 
           const popstateEvent = new Event('popstate')
           if (typeof popstateListener === 'function') {
-            popstateListener.call(doc.defaultView, popstateEvent)
-          } else {
-            popstateListener?.handleEvent(popstateEvent)
+            ;(popstateListener as (event: Event) => void)(popstateEvent)
+          } else if (popstateListener && typeof popstateListener === 'object') {
+            ;(popstateListener as { handleEvent(event: Event): void }).handleEvent(popstateEvent)
           }
 
           await flushAsync()
           await flushAsync()
           await flushAsync()
 
-          expect(container.router.currentPath.value).toBe('/')
-          expect(container.router.currentUrl.value).toBe('http://local/')
+          expect(router.currentPath.value).toBe('/')
+          expect(router.currentUrl.value).toBe('http://local/')
           expect((doc.body as unknown as FakeElement).textContent).toContain('home')
           expect((doc.body as unknown as FakeElement).textContent).not.toContain('counter')
 
@@ -2703,8 +2771,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -3082,8 +3153,11 @@ describe('renderClientInsertable', () => {
           }
           location: Location
         }
-        const applyLocation = (href: string) => {
-          const url = new URL(href)
+        const applyLocation = (href: string | URL | null | undefined) => {
+          if (!href) {
+            return
+          }
+          const url = href instanceof URL ? href : new URL(href)
           doc.location = {
             hash: url.hash,
             href: url.href,
@@ -5001,7 +5075,10 @@ describe('renderClientInsertable', () => {
       current.appendChild(panel)
       current.appendChild(end)
       current.appendChild(marker)
-      rememberInsertMarkerRange(marker as unknown as Comment, [start, panel, end] as Node[])
+      rememberInsertMarkerRange(
+        marker as unknown as Comment,
+        [start, panel, end] as unknown as Node[],
+      )
 
       next.appendChild(doc.createComment('ec:i:42') as unknown as FakeNode)
 
@@ -7489,6 +7566,223 @@ describe('renderClientInsertable', () => {
           next as unknown as Node,
         ]),
       ).toBe(true)
+    })
+  })
+
+  it('switches Show branches through live insert updates', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const open = createDetachedRuntimeSignal<boolean | number>(container, 's0', true)
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              Show as any,
+              {
+                children: (value: unknown) =>
+                  jsxDEV(
+                    'strong',
+                    { children: value === true ? 'open' : String(value) },
+                    null,
+                    false,
+                    {},
+                  ),
+                fallback: (value: unknown) =>
+                  jsxDEV(
+                    'span',
+                    { children: value === false ? 'closed' : String(value) },
+                    null,
+                    false,
+                    {},
+                  ),
+                when: open.value,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect((host.childNodes[0] as FakeElement | undefined)?.tagName).toBe('strong')
+      expect(host.textContent).toContain('open')
+
+      open.value = false
+      await flushAsync()
+
+      expect((host.childNodes[0] as FakeElement | undefined)?.tagName).toBe('span')
+      expect(host.textContent).toContain('closed')
+
+      open.value = 0
+      await flushAsync()
+      expect((host.childNodes[0] as FakeElement | undefined)?.tagName).toBe('span')
+      expect(host.textContent).toContain('0')
+    })
+  })
+
+  it('preserves keyed For row identity when order changes', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const items = createDetachedRuntimeSignal(container, 's0', [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const initialRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(initialRows).toHaveLength(2)
+
+      const [firstRow, secondRow] = initialRows
+      items.value = [
+        { id: 'b', label: 'B' },
+        { id: 'a', label: 'A' },
+      ]
+      await flushAsync()
+
+      const reorderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(reorderedRows).toHaveLength(2)
+      expect(reorderedRows[0]).toBe(secondRow)
+      expect(reorderedRows[1]).toBe(firstRow)
+      expect(reorderedRows.map((row) => row.textContent)).toEqual(['B', 'A'])
+    })
+  })
+
+  it('renders keyed row elements inside For after live updates', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const todos = createDetachedRuntimeSignal(container, 's0', ['ToDo1'])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'ul',
+              {
+                children: jsxDEV(
+                  For as any,
+                  {
+                    arr: todos.value,
+                    fn: (todo: string, i: number) => jsxDEV('li', { children: todo }, i, false, {}),
+                  },
+                  null,
+                  false,
+                  {},
+                ),
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getRows = () =>
+        host.childNodes.flatMap((node) =>
+          node instanceof FakeComment || !(node instanceof FakeElement)
+            ? []
+            : node.tagName === 'ul'
+              ? node.childNodes.filter(
+                  (child): child is FakeElement =>
+                    child instanceof FakeElement && child.tagName === 'li',
+                )
+              : [],
+        )
+
+      expect(getRows()).toHaveLength(1)
+      todos.value = ['ToDo1', 'Ship e2e']
+      await flushAsync()
+
+      const rows = getRows()
+      expect(rows).toHaveLength(2)
+      expect(rows.map((row) => row.textContent)).toEqual(['ToDo1', 'Ship e2e'])
+    })
+  })
+
+  it('repopulates keyed For ranges after clearing them', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const items = createDetachedRuntimeSignal(container, 's0', [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getRows = () =>
+        host.childNodes.filter(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+        )
+
+      expect(getRows().map((row) => row.textContent)).toEqual(['A', 'B'])
+
+      items.value = []
+      await flushAsync()
+      expect(getRows()).toHaveLength(0)
+
+      items.value = [
+        { id: 'a', label: 'A' },
+        { id: 'c', label: 'C' },
+      ]
+      await flushAsync()
+      expect(getRows().map((row) => row.textContent)).toEqual(['A', 'C'])
     })
   })
 })

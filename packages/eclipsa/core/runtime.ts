@@ -12,7 +12,12 @@ import {
 import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
 import type { Insertable } from './client/types.ts'
-import { getContextProviderMeta } from './context.ts'
+import {
+  getContextProviderMeta,
+  getRuntimeContextReference,
+  materializeRuntimeContext,
+  materializeRuntimeContextProvider,
+} from './context.ts'
 import {
   ROUTE_METADATA_HEAD_ATTR,
   composeRouteMetadata,
@@ -106,6 +111,7 @@ type DomConstructorName =
   | 'HTMLFormElement'
 
 export interface ResumeComponentPayload {
+  optimizedRoot?: boolean
   props: SerializedValue
   projectionSlots?: Record<string, number>
   scope: string
@@ -265,6 +271,7 @@ interface ComponentState {
   end?: Comment
   id: string
   mountCleanupSlots: CleanupSlot[]
+  optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
   props: unknown
@@ -600,6 +607,21 @@ type RenderObject = Extract<
 interface RenderComponentTypeRef {
   scopeId: string
   symbol: string
+}
+
+interface ForValue<T = unknown> {
+  __e_for: true
+  arr: readonly T[]
+  fallback?: JSX.Element
+  fn: (e: T, i: number) => JSX.Element
+  key?: (e: T, i: number) => string | number | symbol
+}
+
+interface ShowValue<T = unknown> {
+  __e_show: true
+  children: JSX.Element | ((value: T) => JSX.Element)
+  fallback?: JSX.Element | ((value: T) => JSX.Element)
+  when: T
 }
 
 const resolvedRuntimeSymbols = new WeakMap<RuntimeContainer, Map<string, RuntimeSymbolModule>>()
@@ -1187,6 +1209,10 @@ const resetComponentRenderEffects = (component: ComponentState) => {
   component.renderEffectCleanupSlot = createCleanupSlot()
 }
 
+const syncEffectOnlyLocalSignalPreference = (component: ComponentState) => {
+  component.prefersEffectOnlyLocalSignalWrites = component.optimizedRoot === true
+}
+
 const clearEffectSignals = (effect: ReactiveEffect) => {
   for (const signal of effect.signals) {
     signal.effects.delete(effect)
@@ -1284,6 +1310,14 @@ const createProjectionSlot = (
 
 const encodeProjectionSlotName = (value: string) => encodeURIComponent(value)
 const decodeProjectionSlotName = (value: string) => decodeURIComponent(value)
+const encodeKeyedRangeToken = (value: string | number | symbol) => encodeURIComponent(String(value))
+const decodeKeyedRangeToken = (value: string) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
 
 const createProjectionSlotMarker = (
   componentId: string,
@@ -1291,9 +1325,12 @@ const createProjectionSlotMarker = (
   occurrence: number,
   kind: 'start' | 'end',
 ) => `ec:s:${componentId}:${encodeProjectionSlotName(name)}:${occurrence}:${kind}`
+const createKeyedRangeMarker = (value: string | number | symbol, kind: 'start' | 'end') =>
+  `ec:k:${encodeKeyedRangeToken(value)}:${kind}`
 
 const COMPONENT_BOUNDARY_MARKER_REGEX = /^ec:c:(.+):(start|end)$/
 const INSERT_MARKER_REGEX = /^ec:i:(.+)$/
+const KEYED_RANGE_MARKER_REGEX = /^ec:k:([^:]+):(start|end)$/
 const PROJECTION_SLOT_MARKER_REGEX = /^ec:s:([^:]+):([^:]+):(\d+):(start|end)$/
 
 const parseComponentBoundaryMarker = (value: string) => {
@@ -1318,6 +1355,17 @@ const parseProjectionSlotMarker = (value: string) => {
     key: `${matched[1]}:${matched[2]}:${matched[3]}`,
     name: decodeProjectionSlotName(matched[2]),
     occurrence: Number(matched[3]),
+  }
+}
+
+const parseKeyedRangeMarker = (value: string) => {
+  const matched = value.match(KEYED_RANGE_MARKER_REGEX)
+  if (!matched) {
+    return null
+  }
+  return {
+    key: decodeKeyedRangeToken(matched[1]!),
+    kind: matched[2] as 'start' | 'end',
   }
 }
 
@@ -1576,6 +1624,18 @@ const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): Ser
           token: loaderHookMeta.id,
         }
       }
+      const contextReference = getRuntimeContextReference(candidate)
+      if (contextReference) {
+        return {
+          __eclipsa_type: 'ref',
+          data: serializeRuntimeValue(container, {
+            defaultValue: contextReference.defaultValue,
+            hasDefault: contextReference.hasDefault,
+          }),
+          kind: contextReference.kind,
+          token: contextReference.id,
+        }
+      }
       if (isRouteSlot(candidate)) {
         return {
           __eclipsa_type: 'ref',
@@ -1648,6 +1708,25 @@ const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedV
           throw new Error(`Missing loader hook ${reference.token}.`)
         }
         return loaderHook
+      }
+      if (reference.kind === 'context' || reference.kind === 'context-provider') {
+        const decoded =
+          reference.data === undefined
+            ? null
+            : (deserializeRuntimeValue(container, reference.data as SerializedValue) as {
+                defaultValue?: unknown
+                hasDefault?: unknown
+              } | null)
+        const hasDefault = decoded?.hasDefault === true
+        const defaultValue = hasDefault ? decoded?.defaultValue : undefined
+        const descriptor = {
+          defaultValue,
+          hasDefault,
+          id: reference.token,
+        }
+        return reference.kind === 'context'
+          ? materializeRuntimeContext(descriptor)
+          : materializeRuntimeContextProvider(descriptor)
       }
       if (reference.kind === 'route-slot') {
         const startLayoutIndex =
@@ -2430,6 +2509,7 @@ const getOrCreateComponentState = (
     didMount: false,
     id,
     mountCleanupSlots: [],
+    optimizedRoot: false,
     parentId,
     prefersEffectOnlyLocalSignalWrites: false,
     props: {},
@@ -2458,6 +2538,7 @@ const resetComponentForSymbolChange = (
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   component.renderEffectCleanupSlot = createCleanupSlot()
   component.didMount = false
+  component.optimizedRoot = meta.optimizedRoot === true
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.rawProps = null
@@ -2955,6 +3036,37 @@ const collectComponentBoundaryRanges = (roots: Node[]) => {
   return ranges
 }
 
+const collectKeyedRangeRanges = (roots: Node[]) => {
+  const starts = new Map<string, Comment>()
+  const ranges = new Map<string, { end: Comment; start: Comment }>()
+
+  const visit = (node: Node) => {
+    if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
+      const commentNode = node as Comment
+      const marker = parseKeyedRangeMarker(commentNode.data)
+      if (marker) {
+        if (marker.kind === 'start') {
+          starts.set(marker.key, commentNode)
+        } else {
+          const startNode = starts.get(marker.key)
+          if (startNode) {
+            ranges.set(marker.key, { end: commentNode, start: startNode })
+          }
+        }
+      }
+    }
+    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
+      visit(child)
+    }
+  }
+
+  for (const root of roots) {
+    visit(root)
+  }
+
+  return ranges
+}
+
 const collectBoundaryRangeNodes = (start: Comment, end: Comment) => {
   const nodes: Node[] = [start]
   let cursor: Node | null = start.nextSibling
@@ -3115,6 +3227,53 @@ const preserveProjectionSlotContentsInRoots = (currentRoots: Node[], nextRoots: 
   return preservedComponentIds
 }
 
+const preserveKeyedRangeContentsInRoots = (currentRoots: Node[], nextRoots: Node[]) => {
+  const preservedComponentIds = new Set<string>()
+  const currentRanges = collectKeyedRangeRanges(currentRoots)
+  const nextRanges = collectKeyedRangeRanges(nextRoots)
+
+  for (const [key, nextRange] of nextRanges) {
+    const currentRange = currentRanges.get(key)
+    if (!currentRange) {
+      continue
+    }
+
+    const movedRoots = collectBoundaryRangeNodes(currentRange.start, currentRange.end)
+    if (movedRoots.length === 0) {
+      continue
+    }
+
+    const replacementParent = nextRange.start.parentNode
+    if (!replacementParent) {
+      continue
+    }
+
+    for (const node of movedRoots) {
+      replacementParent.insertBefore(node, nextRange.start)
+    }
+
+    let cursor: Node | null = nextRange.start
+    while (cursor) {
+      const nextSibling: Node | null = cursor.nextSibling
+      if (typeof (cursor as Node & { remove?: () => void }).remove === 'function') {
+        ;(cursor as Node & { remove: () => void }).remove()
+      } else {
+        cursor.parentNode?.removeChild(cursor)
+      }
+      if (cursor === nextRange.end) {
+        break
+      }
+      cursor = nextSibling
+    }
+
+    for (const componentId of collectComponentBoundaryIds(movedRoots)) {
+      preservedComponentIds.add(componentId)
+    }
+  }
+
+  return preservedComponentIds
+}
+
 const canMatchReusableRoot = (current: Node, next: Node) => {
   if (current.nodeType !== next.nodeType) {
     return false
@@ -3220,7 +3379,7 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
   return preservedComponentIds
 }
 
-const preserveReusableContentInRoots = (
+export const preserveReusableContentInRoots = (
   currentRoots: Node[],
   nextRoots: Node[],
   options?: {
@@ -3233,6 +3392,10 @@ const preserveReusableContentInRoots = (
     for (const componentId of preserveProjectionSlotContentsInRoots(currentRoots, nextRoots)) {
       preservedComponentIds.add(componentId)
     }
+  }
+
+  for (const componentId of preserveKeyedRangeContentsInRoots(currentRoots, nextRoots)) {
+    preservedComponentIds.add(componentId)
   }
 
   for (const componentId of preserveInsertMarkerContentsInRoots(currentRoots, nextRoots)) {
@@ -3382,7 +3545,7 @@ type PatchSequenceUnit =
       end: Comment
       kind: 'opaque-range'
       nodeCount: number
-      rangeKind: 'component-boundary' | 'projection-slot'
+      rangeKind: 'component-boundary' | 'keyed' | 'projection-slot'
       start: Comment
       token: string
     }
@@ -3412,6 +3575,14 @@ const getPatchOpaqueRangeToken = (node: Node, kind: 'start' | 'end') => {
     return {
       rangeKind: 'projection-slot' as const,
       token: `projection-slot:${projectionSlot.key}`,
+    }
+  }
+
+  const keyedRange = parseKeyedRangeMarker(comment.data)
+  if (keyedRange?.kind === kind) {
+    return {
+      rangeKind: 'keyed' as const,
+      token: `keyed:${keyedRange.key}`,
     }
   }
 
@@ -3560,6 +3731,11 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
           ) {
             replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
           }
+        }
+      } else if (currentUnit.rangeKind === 'keyed') {
+        const nextRangeNodes = nextUnit.bodyNodes
+        if (!tryPatchNodeSequenceInPlace(currentUnit.bodyNodes, nextRangeNodes)) {
+          replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
         }
       }
       continue
@@ -4126,6 +4302,12 @@ const registerEventBinding = (
 const getRuntimeEventDescriptor = (value: unknown): EventDescriptor | LazyMeta | null =>
   getEventMeta(value) ?? getLazyMeta(value)
 
+const isForValue = (value: unknown): value is ForValue =>
+  !!value && typeof value === 'object' && (value as ForValue).__e_for === true
+
+const isShowValue = (value: unknown): value is ShowValue =>
+  !!value && typeof value === 'object' && (value as ShowValue).__e_show === true
+
 export const bindRuntimeEvent = (element: Element, eventName: string, value: unknown): boolean => {
   const descriptor = getRuntimeEventDescriptor(value)
   if (!descriptor) {
@@ -4152,6 +4334,57 @@ const renderProjectionSlotToString = (slot: ProjectionSlotValue) => {
     return `<!--${start}--><!--${end}-->`
   }
   return `<!--${start}-->${renderStringNode(slot.source as JSX.Element)}<!--${end}-->`
+}
+
+const wrapStringWithKeyedRange = (value: string, key: string | number | symbol) => {
+  const start = createKeyedRangeMarker(key, 'start')
+  const end = createKeyedRangeMarker(key, 'end')
+  return `<!--${start}-->${value}<!--${end}-->`
+}
+
+const resolveForItemKey = <T>(
+  value: ForValue<T>,
+  item: T,
+  index: number,
+): string | number | symbol =>
+  value.key
+    ? value.key(item, index)
+    : typeof item === 'string' || typeof item === 'number' || typeof item === 'symbol'
+      ? item
+      : index
+
+const stripForChildRootKey = (value: JSX.Element): JSX.Element => {
+  const resolved = resolveRenderable(value)
+  if (!isRenderObject(resolved) || resolved.key === null || resolved.key === undefined) {
+    return resolved
+  }
+  return {
+    ...resolved,
+    key: undefined,
+  }
+}
+
+const resolveShowBranch = <T>(value: ShowValue<T>): JSX.Element => {
+  const branch = !value.when ? (value.fallback ?? null) : value.children
+  return typeof branch === 'function'
+    ? (branch as (nextValue: T) => JSX.Element)(value.when)
+    : branch
+}
+
+const renderForValueToString = <T>(value: ForValue<T>): string => {
+  if (value.arr.length === 0) {
+    return renderStringNode((value.fallback ?? null) as JSX.Element)
+  }
+
+  let output = ''
+  for (let index = 0; index < value.arr.length; index += 1) {
+    const item = value.arr[index]!
+    output += wrapStringWithKeyedRange(
+      renderStringNode(stripForChildRootKey(value.fn(item, index))),
+      resolveForItemKey(value, item, index),
+    )
+  }
+  return output
 }
 
 const renderProjectionSlotToNodes = (slot: ProjectionSlotValue, container: RuntimeContainer) => {
@@ -4208,6 +4441,12 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   ) {
     return escapeText(String(resolved))
   }
+  if (isShowValue(resolved)) {
+    return renderStringNode(resolveShowBranch(resolved))
+  }
+  if (isForValue(resolved)) {
+    return renderForValueToString(resolved)
+  }
   if (isSSRTemplate(resolved)) {
     return renderSSRTemplateNode(resolved)
   }
@@ -4223,7 +4462,10 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   }
 
   if (isSuspenseType(resolved.type)) {
-    return renderSuspenseComponentToString(resolved.props as SuspenseProps)
+    const rendered = renderSuspenseComponentToString(resolved.props as SuspenseProps)
+    return resolved.key === null || resolved.key === undefined
+      ? rendered
+      : wrapStringWithKeyedRange(rendered, resolved.key)
   }
 
   if (typeof resolved.type === 'function') {
@@ -4236,7 +4478,10 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const componentFn = resolved.type as Component
     const meta = getComponentMeta(componentFn)
     if (!meta || !container) {
-      return renderStringNode(componentFn(resolved.props))
+      const rendered = renderStringNode(componentFn(resolved.props))
+      return resolved.key === null || resolved.key === undefined
+        ? rendered
+        : wrapStringWithKeyedRange(rendered, resolved.key)
     }
 
     const evaluatedProps = evaluateProps(resolved.props)
@@ -4249,6 +4494,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       position.parentId,
     )
     component.scopeId = registerScope(container, meta.captures())
+    component.optimizedRoot = meta.optimizedRoot === true
     component.props = evaluatedProps
     component.projectionSlots = meta.projectionSlots ?? null
     const frame = createFrame(container, component, 'ssr')
@@ -4258,7 +4504,10 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    return `<!--ec:c:${componentId}:start-->${renderFrameScopedStylesToString(frame)}${body}<!--ec:c:${componentId}:end-->`
+    const rendered = `<!--ec:c:${componentId}:start-->${renderFrameScopedStylesToString(frame)}${body}<!--ec:c:${componentId}:end-->`
+    return resolved.key === null || resolved.key === undefined
+      ? rendered
+      : wrapStringWithKeyedRange(rendered, resolved.key)
   }
 
   const attrParts: string[] = []
@@ -4365,13 +4614,15 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     }
   }
 
-  if (resolved.type === FRAGMENT) {
-    return childrenText
-  }
-
-  return `<${resolved.type}${attrParts.length > 0 ? ` ${attrParts.join(' ')}` : ''}>${childrenText}</${
-    resolved.type
-  }>`
+  const rendered =
+    resolved.type === FRAGMENT
+      ? childrenText
+      : `<${resolved.type}${attrParts.length > 0 ? ` ${attrParts.join(' ')}` : ''}>${childrenText}</${
+          resolved.type
+        }>`
+  return resolved.key === null || resolved.key === undefined
+    ? rendered
+    : wrapStringWithKeyedRange(rendered, resolved.key)
 }
 
 const createElementNode = (doc: Document, tagName: string) => doc.createElement(tagName)
@@ -4408,6 +4659,7 @@ const renderComponentToNodes = (
   if (!existing || symbolChanged) {
     resetComponentForSymbolChange(container, component, meta)
   }
+  component.optimizedRoot = meta.optimizedRoot === true
   component.props = props
   component.rawProps = rawProps ?? null
   component.projectionSlots = meta.projectionSlots ?? null
@@ -4520,8 +4772,38 @@ const renderComponentToNodes = (
 
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
+  syncEffectOnlyLocalSignalPreference(component)
 
   return [start, ...renderFrameScopedStylesToNodes(frame, container), ...rendered, end]
+}
+
+const wrapNodesWithKeyedRange = (
+  doc: Document,
+  nodes: Node[],
+  key: string | number | symbol,
+): Node[] => [
+  doc.createComment(createKeyedRangeMarker(key, 'start')),
+  ...nodes,
+  doc.createComment(createKeyedRangeMarker(key, 'end')),
+]
+
+const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContainer): Node[] => {
+  if (value.arr.length === 0) {
+    return renderClientNodes((value.fallback ?? null) as JSX.Element, container)
+  }
+
+  const nodes: Node[] = []
+  for (let index = 0; index < value.arr.length; index += 1) {
+    const item = value.arr[index]!
+    nodes.push(
+      ...wrapNodesWithKeyedRange(
+        container.doc!,
+        renderClientNodes(stripForChildRootKey(value.fn(item, index)), container),
+        resolveForItemKey(value, item, index),
+      ),
+    )
+  }
+  return nodes
 }
 
 const applyElementProp = (
@@ -4638,6 +4920,12 @@ export const renderClientNodes = (
   ) {
     return [container.doc.createTextNode(String(resolved))]
   }
+  if (isShowValue(resolved)) {
+    return renderClientNodes(resolveShowBranch(resolved), container)
+  }
+  if (isForValue(resolved)) {
+    return renderForValueToNodes(resolved, container)
+  }
   if (typeof Node !== 'undefined' && resolved instanceof Node) {
     rememberManagedAttributesForNode(resolved)
     return [resolved]
@@ -4653,85 +4941,88 @@ export const renderClientNodes = (
     return []
   }
 
-  if (isSuspenseType(resolved.type)) {
-    return renderSuspenseComponentToNodes(resolved.props as SuspenseProps, container, 'client')
-  }
+  let nodes: Node[]
 
-  if (typeof resolved.type === 'function') {
+  if (isSuspenseType(resolved.type)) {
+    nodes = renderSuspenseComponentToNodes(resolved.props as SuspenseProps, container, 'client')
+  } else if (typeof resolved.type === 'function') {
     const providerMeta = getContextProviderMeta(resolved.type)
     if (providerMeta) {
-      return renderContextProviderToNodes(
+      nodes = renderContextProviderToNodes(
         providerMeta.token,
         evaluateProps(resolved.props),
         container,
       )
-    }
-
-    const componentFn = resolved.type as Component
-    if (getComponentMeta(resolved.type)) {
-      return withoutTrackedEffect(() =>
-        renderComponentToNodes(
+    } else {
+      const componentFn = resolved.type as Component
+      if (getComponentMeta(resolved.type)) {
+        nodes = withoutTrackedEffect(() =>
+          renderComponentToNodes(
+            componentFn,
+            evaluateProps(resolved.props),
+            container,
+            'client',
+            resolved.props,
+          ),
+        )
+      } else {
+        nodes = renderComponentToNodes(
           componentFn,
-          evaluateProps(resolved.props),
+          resolved.props as Record<string, unknown>,
           container,
           'client',
           resolved.props,
-        ),
-      )
+        )
+      }
     }
-    return renderComponentToNodes(
-      componentFn,
-      resolved.props as Record<string, unknown>,
-      container,
-      'client',
-      resolved.props,
-    )
-  }
-
-  if (resolved.type === FRAGMENT) {
+  } else if (resolved.type === FRAGMENT) {
     const children = resolved.props.children
-    return Array.isArray(children)
+    nodes = Array.isArray(children)
       ? children.flatMap((child: JSX.Element) => renderClientNodes(child, container))
       : renderClientNodes(children as JSX.Element, container)
-  }
-
-  const element = createElementNode(container.doc, resolved.type)
-  const frame = getCurrentFrame()
-  if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
-    element.setAttribute(SCOPED_STYLE_ATTR, frame.component.scopeId)
-  }
-  let hasInnerHTML = false
-  for (const [name, descriptor] of Object.entries(
-    Object.getOwnPropertyDescriptors(resolved.props),
-  ) as [string, PropertyDescriptor][]) {
-    if (name === 'children') {
-      continue
+  } else {
+    const element = createElementNode(container.doc, resolved.type)
+    const frame = getCurrentFrame()
+    if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
+      element.setAttribute(SCOPED_STYLE_ATTR, frame.component.scopeId)
     }
-    const value = descriptor.get ? descriptor.get.call(resolved.props) : descriptor.value
-    if (resolved.type === 'body' && name === 'data-e-resume') {
-      continue
+    let hasInnerHTML = false
+    for (const [name, descriptor] of Object.entries(
+      Object.getOwnPropertyDescriptors(resolved.props),
+    ) as [string, PropertyDescriptor][]) {
+      if (name === 'children') {
+        continue
+      }
+      const value = descriptor.get ? descriptor.get.call(resolved.props) : descriptor.value
+      if (resolved.type === 'body' && name === 'data-e-resume') {
+        continue
+      }
+      if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+        hasInnerHTML = true
+      }
+      applyElementProp(element, name, value, container)
     }
-    if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
-      hasInnerHTML = true
+
+    if (hasInnerHTML) {
+      rememberManagedAttributesForNode(element)
+      nodes = [element]
+    } else {
+      const children = resolved.props.children
+      const childNodes = Array.isArray(children)
+        ? children.flatMap((child: JSX.Element) => renderClientNodes(child, container))
+        : renderClientNodes(children as JSX.Element, container)
+      for (const child of childNodes) {
+        element.appendChild(child)
+      }
+
+      rememberManagedAttributesForNode(element)
+      nodes = [element]
     }
-    applyElementProp(element, name, value, container)
   }
 
-  if (hasInnerHTML) {
-    rememberManagedAttributesForNode(element)
-    return [element]
-  }
-
-  const children = resolved.props.children
-  const childNodes = Array.isArray(children)
-    ? children.flatMap((child: JSX.Element) => renderClientNodes(child, container))
-    : renderClientNodes(children as JSX.Element, container)
-  for (const child of childNodes) {
-    element.appendChild(child)
-  }
-
-  rememberManagedAttributesForNode(element)
-  return [element]
+  return resolved.key === null || resolved.key === undefined
+    ? nodes
+    : wrapNodesWithKeyedRange(container.doc, nodes, resolved.key)
 }
 
 const scanComponentBoundaries = (
@@ -4965,6 +5256,16 @@ export const renderClientInsertable = (
     typeof resolved === 'boolean'
   ) {
     return [doc.createTextNode(String(resolved))]
+  }
+  if (isShowValue(resolved)) {
+    return renderClientInsertable(resolveShowBranch(resolved), container)
+  }
+  if (isForValue(resolved)) {
+    return container
+      ? renderForValueToNodes(resolved, container)
+      : resolved.arr.flatMap((item, index) =>
+          renderClientInsertable(resolved.fn(item, index), container),
+        )
   }
   if (isProjectionSlot(resolved)) {
     return container
@@ -6509,6 +6810,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       }
       clearComponentSubscriptions(container, descendantId)
     }
+    syncEffectOnlyLocalSignalPreference(component)
     return patched
   }
 
@@ -6625,6 +6927,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   }
   scheduleMountCallbacks(container, component, frame.mountCallbacks)
   scheduleVisibleCallbacksCheck(container)
+  syncEffectOnlyLocalSignalPreference(component)
   return patched
 }
 
@@ -7009,6 +7312,7 @@ const createResumePayload = (
       componentEntries.map(([id, component]) => [
         id,
         {
+          ...(component.optimizedRoot ? { optimizedRoot: true } : {}),
           props: serializeRuntimeValue(container, component.props),
           ...(component.projectionSlots
             ? { projectionSlots: { ...component.projectionSlots } }
@@ -7133,6 +7437,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       didMount: false,
       id,
       mountCleanupSlots: [],
+      optimizedRoot: componentPayload.optimizedRoot === true,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
       prefersEffectOnlyLocalSignalWrites: false,
       props: deserializeRuntimeValue(container, componentPayload.props),
@@ -7376,7 +7681,7 @@ export const restoreResumedLocalSignalEffects = async (container: RuntimeContain
     if (!component?.active) {
       continue
     }
-    component.prefersEffectOnlyLocalSignalWrites = true
+    syncEffectOnlyLocalSignalPreference(component)
   }
 }
 

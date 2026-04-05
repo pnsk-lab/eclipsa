@@ -52,7 +52,7 @@ class FakeNode {
     return this.childNodes.length > 0 ? this.childNodes[this.childNodes.length - 1]! : null
   }
 
-  get textContent() {
+  get textContent(): string {
     return this.childNodes.map((child) => child.textContent ?? '').join('')
   }
 }
@@ -63,7 +63,7 @@ class FakeText extends FakeNode {
     this.nodeType = 3
   }
 
-  override get textContent() {
+  override get textContent(): string {
     return this.data
   }
 }
@@ -74,7 +74,7 @@ class FakeComment extends FakeNode {
     this.nodeType = 8
   }
 
-  override get textContent() {
+  override get textContent(): string {
     return this.data
   }
 }
@@ -186,15 +186,16 @@ class FakeDocument {
     visit(root)
 
     let index = -1
-    return {
-      currentNode: null as FakeNode | null,
+    const walker: { currentNode: Node | null; nextNode(): Node | null } = {
+      currentNode: null,
       nextNode() {
         index += 1
         const node = nodes[index] ?? null
-        this.currentNode = node
-        return node
+        walker.currentNode = node as unknown as Node | null
+        return node as unknown as Node | null
       },
-    } as TreeWalker
+    }
+    return walker as unknown as TreeWalker
   }
 }
 

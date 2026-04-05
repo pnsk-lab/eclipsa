@@ -44,9 +44,6 @@ interface ReorderGroupContextValue<T> {
   draggedValue: Signal<T | null>
 }
 
-const asManagedComponent = <T extends object>(name: string, component: (props: T) => JSX.Element) =>
-  __eclipsaComponent(component, `@eclipsa/motion:${name}`, () => [])
-
 type MotionBaseProps = Partial<MotionNodeOptions> & {
   as?: string
   children?: JSX.Element | JSX.Element[]
@@ -385,35 +382,47 @@ const resolveTransition = (props: MotionProps, config: MotionConfigState): Motio
   }
 }
 
-export const MotionConfig = asManagedComponent<MotionConfigProps>(
-  'MotionConfig',
-  ({ children, reducedMotion, transition }) => (
-    <MotionConfigContext.Provider
-      value={{
-        reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
-        transition: {
-          ...DEFAULT_CONFIG.transition,
-          ...transition,
-        },
-      }}
-    >
-      {children}
-    </MotionConfigContext.Provider>
-  ),
+export const MotionConfig = __eclipsaComponent(
+  (rawProps: MotionConfigProps) => {
+    const { children, reducedMotion, transition } = rawProps
+    const Provider = MotionConfigContext.Provider
+
+    return (
+      <Provider
+        value={{
+          reducedMotion: reducedMotion ?? DEFAULT_CONFIG.reducedMotion,
+          transition: {
+            ...DEFAULT_CONFIG.transition,
+            ...transition,
+          },
+        }}
+      >
+        {children}
+      </Provider>
+    )
+  },
+  '@eclipsa/motion:MotionConfig',
+  () => [],
 )
 
-export const LayoutGroup = asManagedComponent<{
-  children?: JSX.Element | JSX.Element[]
-  id?: string
-}>('LayoutGroup', ({ children, id }) => (
-  <LayoutGroupContext.Provider
-    value={{
-      id: id ?? 'default',
-    }}
-  >
-    {children}
-  </LayoutGroupContext.Provider>
-))
+export const LayoutGroup = __eclipsaComponent(
+  (rawProps: { children?: JSX.Element | JSX.Element[]; id?: string }) => {
+    const { children, id } = rawProps
+    const Provider = LayoutGroupContext.Provider
+
+    return (
+      <Provider
+        value={{
+          id: id ?? 'default',
+        }}
+      >
+        {children}
+      </Provider>
+    )
+  },
+  '@eclipsa/motion:LayoutGroup',
+  () => [],
+)
 
 export const usePresence = () => {
   const presence = useContext(PresenceContext)
@@ -422,83 +431,93 @@ export const usePresence = () => {
 
 export const useIsPresent = () => useContext(PresenceContext).isPresent.value
 
-export const AnimatePresence = asManagedComponent<{
-  children?: JSX.Element | JSX.Element[]
-}>('AnimatePresence', ({ children }) => children as JSX.Element)
+export const AnimatePresence = __eclipsaComponent(
+  ({ children }: { children?: JSX.Element | JSX.Element[] }) => children as JSX.Element,
+  '@eclipsa/motion:AnimatePresence',
+  () => [],
+)
 
-const MotionRenderer = asManagedComponent<MotionRenderProps>('motion', (rawProps) => {
-  const motionProps = rawProps ?? {}
-  const baseTag =
-    typeof motionProps.as === 'string'
-      ? motionProps.as
-      : typeof motionProps[INTERNAL_DEFAULT_TAG_PROP] === 'string'
-        ? (motionProps[INTERNAL_DEFAULT_TAG_PROP] as string)
-        : 'div'
-  const config = useContext(MotionConfigContext)
-  const getLiveProps = () =>
-    ((motionProps[INTERNAL_LIVE_PROPS_PROP] as MotionProps | undefined) ??
-      motionProps) as MotionProps
-  const getLiveAnimate = () => getLiveProps().animate as MotionProps['animate']
-  const getLiveInitial = () => getLiveProps().initial as MotionProps['initial']
-  const getLiveStyle = () => getLiveProps().style as MotionProps['style']
-  const getLiveTransition = () => getLiveProps().transition as MotionProps['transition']
-  const getResolvedMotionProps = () =>
-    ({
-      ...motionProps,
-      animate: getLiveAnimate(),
-      initial: getLiveInitial(),
-      style: getLiveStyle(),
-      transition: getLiveTransition(),
-    }) as MotionProps
-  const resolveAnimateTarget = () => {
-    const liveAnimate = getLiveAnimate()
-    return createStyleTarget(resolveVariant(liveAnimate, getResolvedMotionProps()))
-  }
-  const resolveInitialTarget = () =>
-    getLiveInitial() === false
-      ? resolveAnimateTarget()
-      : createStyleTarget(
-          resolveVariant(getLiveInitial() ?? getLiveAnimate(), getResolvedMotionProps()),
-        )
-
-  const forwardedProps: Record<string, unknown> = {}
-  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(motionProps))) {
-    if (
-      MOTION_PROP_NAMES.has(key) ||
-      key === 'as' ||
-      key === 'style' ||
-      key === INTERNAL_DEFAULT_TAG_PROP ||
-      key === INTERNAL_LIVE_PROPS_PROP
-    ) {
-      continue
+const MotionRenderer = __eclipsaComponent(
+  (rawProps: MotionRenderProps) => {
+    const motionProps = rawProps ?? {}
+    const baseTag =
+      typeof motionProps.as === 'string'
+        ? motionProps.as
+        : typeof motionProps[INTERNAL_DEFAULT_TAG_PROP] === 'string'
+          ? (motionProps[INTERNAL_DEFAULT_TAG_PROP] as string)
+          : 'div'
+    const config = useContext(MotionConfigContext)
+    const getLiveProps = () =>
+      ((motionProps[INTERNAL_LIVE_PROPS_PROP] as MotionProps | undefined) ??
+        motionProps) as MotionProps
+    const getLiveAnimate = () => getLiveProps().animate as MotionProps['animate']
+    const getLiveInitial = () => getLiveProps().initial as MotionProps['initial']
+    const getLiveStyle = () => getLiveProps().style as MotionProps['style']
+    const getLiveTransition = () => getLiveProps().transition as MotionProps['transition']
+    const getResolvedMotionProps = () =>
+      ({
+        ...motionProps,
+        animate: getLiveAnimate(),
+        initial: getLiveInitial(),
+        style: getLiveStyle(),
+        transition: getLiveTransition(),
+      }) as MotionProps
+    const resolveAnimateTarget = () => {
+      const liveAnimate = getLiveAnimate()
+      return createStyleTarget(resolveVariant(liveAnimate, getResolvedMotionProps()))
     }
-    Object.defineProperty(forwardedProps, key, descriptor)
-  }
-  Object.defineProperty(forwardedProps, 'style', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      const animateTarget = resolveAnimateTarget()
-      const renderInitialStyle = getLiveInitial() === false ? animateTarget : resolveInitialTarget()
-      const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
-      const mergedStyle = serializeStyle({
-        ...parseStyle(getLiveStyle()),
-        ...resolvedStyle,
-        ...createTransitionCss(animateTarget, resolveTransition(getResolvedMotionProps(), config)),
-      })
-      return mergedStyle === '' ? undefined : mergedStyle
-    },
-  })
+    const resolveInitialTarget = () =>
+      getLiveInitial() === false
+        ? resolveAnimateTarget()
+        : createStyleTarget(
+            resolveVariant(getLiveInitial() ?? getLiveAnimate(), getResolvedMotionProps()),
+          )
 
-  return {
-    isStatic: false,
-    props: {
-      ...forwardedProps,
-      children: motionProps.children,
-    },
-    type: baseTag,
-  } as JSX.Element
-})
+    const forwardedProps: Record<string, unknown> = {}
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(motionProps))) {
+      if (
+        MOTION_PROP_NAMES.has(key) ||
+        key === 'as' ||
+        key === 'style' ||
+        key === INTERNAL_DEFAULT_TAG_PROP ||
+        key === INTERNAL_LIVE_PROPS_PROP
+      ) {
+        continue
+      }
+      Object.defineProperty(forwardedProps, key, descriptor)
+    }
+    Object.defineProperty(forwardedProps, 'style', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const animateTarget = resolveAnimateTarget()
+        const renderInitialStyle =
+          getLiveInitial() === false ? animateTarget : resolveInitialTarget()
+        const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
+        const mergedStyle = serializeStyle({
+          ...parseStyle(getLiveStyle()),
+          ...resolvedStyle,
+          ...createTransitionCss(
+            animateTarget,
+            resolveTransition(getResolvedMotionProps(), config),
+          ),
+        })
+        return mergedStyle === '' ? undefined : mergedStyle
+      },
+    })
+
+    return {
+      isStatic: false,
+      props: {
+        ...forwardedProps,
+        children: motionProps.children,
+      },
+      type: baseTag,
+    } as JSX.Element
+  },
+  '@eclipsa/motion:motion',
+  () => [],
+)
 
 const motionRendererCache = new Map<string, MotionComponent<MotionRenderProps>>()
 
@@ -580,16 +599,18 @@ export const motion = new Proxy(motionFactory, {
 
 export const m = motion
 
-export const Reorder = {
-  Group: asManagedComponent<{
+const ReorderGroup = __eclipsaComponent(
+  (rawProps: {
     axis?: 'x' | 'y'
     children?: JSX.Element | JSX.Element[]
     onReorder: (values: unknown[]) => void
     values: unknown[]
-  }>('Reorder.Group', ({ axis, children, onReorder, values }) => {
+  }) => {
+    const { axis, children, onReorder, values } = rawProps
     const draggedValue = useSignal<unknown | null>(null)
+    const Provider = ReorderGroupContext.Provider
     return (
-      <ReorderGroupContext.Provider
+      <Provider
         value={
           {
             axis: axis ?? 'y',
@@ -603,10 +624,15 @@ export const Reorder = {
         }
       >
         {children}
-      </ReorderGroupContext.Provider>
+      </Provider>
     )
-  }),
-  Item: asManagedComponent<MotionProps & { value: unknown }>('Reorder.Item', (rawProps) => {
+  },
+  '@eclipsa/motion:Reorder.Group',
+  () => [],
+)
+
+const ReorderItem = __eclipsaComponent(
+  (rawProps: MotionProps & { value: unknown }) => {
     const itemProps = rawProps ?? {}
     const { as: asValue, onDragStart, value } = itemProps
     const group = useContext(ReorderGroupContext)
@@ -646,7 +672,14 @@ export const Reorder = {
       onDragStart: handleDragStart,
       onDrop: handleDrop,
     })
-  }),
+  },
+  '@eclipsa/motion:Reorder.Item',
+  () => [],
+)
+
+export const Reorder = {
+  Group: ReorderGroup,
+  Item: ReorderItem,
 }
 
 export { LayoutGroupContext, MotionConfigContext, PresenceContext }

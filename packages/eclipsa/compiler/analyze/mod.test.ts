@@ -114,6 +114,29 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('marks compiled components as optimized roots', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => <button>ready</button>;
+    `)
+
+    expect(analyzed.code).toContain('optimizedRoot: true')
+  })
+
+  it('marks compiled components as optimized roots without breaking trailing commas', async () => {
+    const analyzed = await analyzeModule(`
+      import { __eclipsaComponent } from "eclipsa/internal";
+
+      export const Probe = __eclipsaComponent(
+        () => <button>ready</button>,
+        "@@probe",
+        () => [],
+      );
+    `)
+
+    expect(analyzed.code).toContain('()=>[], { optimizedRoot: true }')
+    expect(analyzed.code).not.toContain('() => [],\n, { optimizedRoot: true }')
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (
@@ -431,6 +454,19 @@ describe('analyzeModule()', () => {
     )
   })
 
+  it('rejects useWatch() when the first argument is not a function expression', async () => {
+    await expect(
+      analyzeModule(`
+        import { useWatch } from "eclipsa";
+
+        export default () => {
+          useWatch(1);
+          return <div>ok</div>;
+        };
+      `),
+    ).rejects.toThrowError('useWatch() expects a function expression as the first argument.')
+  })
+
   it('keeps same-file helper functions that capture top-level constants inside the resumable scope', async () => {
     const analyzed = await analyzeModule(`
       import { useWatch } from "eclipsa";
@@ -475,5 +511,23 @@ describe('analyzeModule()', () => {
     expect(component?.code).toContain(`__eclipsaLazy("${lazy?.id}"`)
     expect(component?.code).not.toContain(hmrLazy?.hmrKey ?? 'component:default:lazy:slot')
     expect(hmrLazy?.hmrKey).toBe('component:default:lazy:slot')
+  })
+
+  it('collects prewrapped component helpers with explicit symbol ids', async () => {
+    const analyzed = await analyzeModule(`
+      import { __eclipsaComponent } from "eclipsa/internal";
+      const theme = "ready";
+
+      export const MotionRenderer = __eclipsaComponent(
+        (props: { label: string }) => <div>{theme}{props.label}</div>,
+        "@pkg:motion",
+        () => [],
+      );
+    `)
+
+    expect(analyzed.symbols.has('@pkg:motion')).toBe(true)
+    expect(analyzed.symbols.get('@pkg:motion')?.kind).toBe('component')
+    expect(analyzed.symbols.get('@pkg:motion')?.captures).toEqual(['theme'])
+    expect(analyzed.code).toContain('()=>[theme]')
   })
 })

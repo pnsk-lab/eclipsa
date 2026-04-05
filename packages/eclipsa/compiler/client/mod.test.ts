@@ -223,6 +223,108 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('<li><!-- 0 --></li>')
   })
 
+  it('lowers ternaries with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{flag ? <span>on</span> : <span>off</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('when: flag')
+    expect(resultCode).not.toContain('flag ? <span>')
+  })
+
+  it('lowers && expressions with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{count && <span>{count}</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
+    expect(resultCode).toContain('<span><!-- 0 --></span>')
+  })
+
+  it('lowers || expressions with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{label || <span>empty</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('children: (__e_showValue) => __e_showValue')
+    expect(resultCode).toContain('fallback: (__e_showValue) => (() => {')
+  })
+
+  it('lowers direct JSX map expressions to For components', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('arr: items')
+    expect(resultCode).not.toContain('=> <li')
+  })
+
+  it('does not lower non-JSX map expressions to For components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{items.map((item) => item.toString())}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item) => item.toString())')
+  })
+
+  it('does not lower map expressions inside component children', async () => {
+    const resultCode = await compileClientModule(
+      `<Layout>{items.map((item, i) => <li key={i}>{item}</li>)}</Layout>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item, i) => (() => {')
+  })
+
+  it('does not lower logical JSX expressions inside component children', async () => {
+    const resultCode = await compileClientModule(
+      `<Layout>{flag && <span>ready</span>}</Layout>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('flag && (() => {')
+  })
+
   it('does not emit free __scope references before the docs layout default symbol', async () => {
     const clientDir = path.dirname(fileURLToPath(import.meta.url))
     const layoutPath = path.resolve(clientDir, '../../../../docs/app/docs/[...slug]/+layout.tsx')

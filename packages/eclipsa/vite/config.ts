@@ -4,7 +4,12 @@ import { cwd } from 'node:process'
 import path from 'node:path'
 import { collectRouteModules, collectRouteServerModules, createRoutes } from './utils/routing.ts'
 import { build } from './build/mod.ts'
-import { collectAppActions, collectAppLoaders, collectAppSymbols } from './compiler.ts'
+import {
+  collectAppActions,
+  collectAppLoaders,
+  collectAppSymbols,
+  createSymbolRequestId,
+} from './compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
 import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
 
@@ -38,7 +43,7 @@ export const createConfig =
       ...(hasAppHooks ? [['app_hooks', appHooksPath] as const] : []),
       ...symbols.map((symbol) => [
         `symbol__${symbol.id}`,
-        `${symbol.filePath}?eclipsa-symbol=${symbol.id}`,
+        createSymbolRequestId(symbol.filePath, symbol.id),
       ]),
       ...routeModules.map((entry) => [entry.entryName, entry.filePath]),
     ])

@@ -651,9 +651,18 @@ fn collect_projection_slots_from_export_default(
     }
 }
 
+fn collect_projection_slots_from_argument(argument: &Argument<'_>) -> Result<Option<Vec<(String, usize)>>, String> {
+    match argument {
+        Argument::ArrowFunctionExpression(function) => ProjectionSlotCollector::collect_arrow(function),
+        Argument::FunctionExpression(function) => ProjectionSlotCollector::collect_function(function),
+        _ => Ok(None),
+    }
+}
+
 struct CaptureCollector<'a, 's> {
     capture_indices: HashMap<String, usize>,
     current_scope_stack: Vec<ScopeId>,
+    error: Option<String>,
     function_scope: ScopeId,
     import_spans: HashSet<SpanKey>,
     local_definitions: HashMap<SpanKey, LocalDefinition>,
@@ -672,6 +681,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
             current_scope_stack: Vec::new(),
+            error: None,
             function_scope: root_scope,
             import_spans: HashSet::new(),
             local_definitions: HashMap::new(),
@@ -679,7 +689,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_argument(argument);
-        Ok(collector.finish())
+        collector.finish()
     }
 
     fn collect_jsx_expression(
@@ -692,6 +702,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
             current_scope_stack: Vec::new(),
+            error: None,
             function_scope: root_scope,
             import_spans: HashSet::new(),
             local_definitions: HashMap::new(),
@@ -699,7 +710,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_jsx_expression(expression);
-        Ok(collector.finish())
+        collector.finish()
     }
 
     fn collect_expression(
@@ -711,6 +722,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
             current_scope_stack: Vec::new(),
+            error: None,
             function_scope: root_scope,
             import_spans: HashSet::new(),
             local_definitions: HashMap::new(),
@@ -718,7 +730,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_expression(expression);
-        Ok(collector.finish())
+        collector.finish()
     }
 
     fn collect_arrow(
@@ -729,6 +741,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
             current_scope_stack: Vec::new(),
+            error: None,
             function_scope: function.scope_id(),
             import_spans: HashSet::new(),
             local_definitions: HashMap::new(),
@@ -736,7 +749,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_arrow_function_expression(function);
-        Ok(collector.finish())
+        collector.finish()
     }
 
     fn collect_function(
@@ -747,6 +760,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
             current_scope_stack: Vec::new(),
+            error: None,
             function_scope: function.scope_id(),
             import_spans: HashSet::new(),
             local_definitions: HashMap::new(),
@@ -754,14 +768,18 @@ impl<'a, 's> CaptureCollector<'a, 's> {
             semantic,
         };
         collector.visit_function(function, ScopeFlags::empty());
-        Ok(collector.finish())
+        collector.finish()
     }
 
     fn current_scope(&self) -> ScopeId {
         *self.current_scope_stack.last().unwrap_or(&self.program.scope_id())
     }
 
-    fn finish(self) -> CollectedDependencies {
+    fn finish(self) -> Result<CollectedDependencies, String> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+
         let mut captures = self.capture_indices.into_iter().collect::<Vec<_>>();
         captures.sort_by_key(|(_, index)| *index);
         let mut import_spans = self
@@ -773,13 +791,19 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         let mut local_definitions = self.local_definitions.into_iter().collect::<Vec<_>>();
         local_definitions.sort_by_key(|(span, _)| (span.start, span.end));
 
-        CollectedDependencies {
+        Ok(CollectedDependencies {
             captures: captures.into_iter().map(|(name, _)| name).collect(),
             import_spans,
             local_definitions: local_definitions
                 .into_iter()
                 .map(|(_, definition)| definition)
                 .collect(),
+        })
+    }
+
+    fn fail(&mut self, message: impl Into<String>) {
+        if self.error.is_none() {
+            self.error = Some(message.into());
         }
     }
 
@@ -970,7 +994,8 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
             return;
         }
         if let Err(error) = self.validate_capture(identifier.name.as_str(), flags, symbol_id) {
-            panic!("{error}");
+            self.fail(error);
+            return;
         }
         self.add_capture(identifier.name.as_str());
     }
@@ -1003,10 +1028,11 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
                 self.add_local_definition_from_symbol(symbol_id);
                 return;
             }
-            panic!(
+            self.fail(format!(
                 "Unsupported resumable component reference \"{}\". Import the component from a module.",
                 reference.name.as_str()
-            );
+            ));
+            return;
         }
         walk::walk_jsx_element_name(self, name);
     }
@@ -1333,7 +1359,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             self.maybe_emit_local_lazy_symbol(&expression.expression);
             return;
         }
-        let dependencies = self.collect_symbol_dependencies_from_expression(expression).unwrap();
+        let dependencies = match self.collect_symbol_dependencies_from_expression(expression) {
+            Ok(dependencies) => dependencies,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
         let replacement_code = self.emit_lazy_symbol_from_function(
             function_span,
             dependencies.captures,
@@ -1382,7 +1414,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 self.maybe_emit_lazy_symbol_for_return_property_value(property, &expression.expression);
             }
             Expression::ArrowFunctionExpression(function) => {
-                let dependencies = self.collect_symbol_dependencies_from_expression(value).unwrap();
+                let dependencies = match self.collect_symbol_dependencies_from_expression(value) {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let replacement_code = self.emit_lazy_symbol_from_function(
                     function.span,
                     dependencies.captures,
@@ -1396,7 +1434,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 );
             }
             Expression::FunctionExpression(function) => {
-                let dependencies = self.collect_symbol_dependencies_from_expression(value).unwrap();
+                let dependencies = match self.collect_symbol_dependencies_from_expression(value) {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let replacement_code = self.emit_lazy_symbol_from_function(
                     function.span,
                     dependencies.captures,
@@ -1434,7 +1478,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                         if self.lazy_symbol_ids_by_span.contains_key(&SpanKey::from_span(function_span)) {
                             return;
                         }
-                        let dependencies = self.collect_symbol_dependencies_from_expression(init).unwrap();
+                        let dependencies = match self.collect_symbol_dependencies_from_expression(init) {
+                            Ok(dependencies) => dependencies,
+                            Err(error) => {
+                                self.fail(error);
+                                return;
+                            }
+                        };
                         self.emit_lazy_symbol_from_function(
                             function_span,
                             dependencies.captures,
@@ -1446,8 +1496,17 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                         if self.lazy_symbol_ids_by_span.contains_key(&SpanKey::from_span(function.span)) {
                             return;
                         }
-                        let dependencies =
-                            CaptureCollector::collect_function(self.program, self.semantic, function).unwrap();
+                        let dependencies = match CaptureCollector::collect_function(
+                            self.program,
+                            self.semantic,
+                            function,
+                        ) {
+                            Ok(dependencies) => dependencies,
+                            Err(error) => {
+                                self.fail(error);
+                                return;
+                            }
+                        };
                         self.emit_lazy_symbol_from_function(
                             function.span,
                             dependencies.captures,
@@ -1516,7 +1575,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
-                let dependencies = self.collect_symbol_dependencies_from_expression(init).unwrap();
+                let dependencies = match self.collect_symbol_dependencies_from_expression(init) {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let replacement_code = self.emit_lazy_symbol_from_function(
                     function_span,
                     dependencies.captures,
@@ -1534,8 +1599,17 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
-                let dependencies =
-                    CaptureCollector::collect_function(self.program, self.semantic, function).unwrap();
+                let dependencies = match CaptureCollector::collect_function(
+                    self.program,
+                    self.semantic,
+                    function,
+                ) {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let replacement_code = self.emit_lazy_symbol_from_function(
                     function.span,
                     dependencies.captures,
@@ -1622,14 +1696,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
 
     fn emit_component_symbol(
         &mut self,
+        symbol_id: String,
         function_span: Span,
         captures: Vec<String>,
         import_spans: Vec<Span>,
         local_definitions: Vec<LocalDefinition>,
         projection_slots: Option<Vec<(String, usize)>>,
     ) {
-        let raw_code = source_text(self.source, function_span);
-        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Component, raw_code);
         let build = self
             .build_symbol(
                 function_span,
@@ -1699,14 +1772,129 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         );
     }
 
+    fn emit_prewrapped_component_symbol(
+        &mut self,
+        symbol_id: String,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        local_definitions: Vec<LocalDefinition>,
+        projection_slots: Option<Vec<(String, usize)>>,
+    ) {
+        let build = self
+            .build_symbol(
+                function_span,
+                captures.clone(),
+                import_spans,
+                local_definitions,
+                true,
+            )
+            .unwrap();
+        let span_key = SpanKey::from_span(function_span);
+        let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
+        self.hmr_key_by_symbol_id
+            .insert(symbol_id.clone(), component_info.hmr_key.clone());
+        self.symbols.push((
+            symbol_id.clone(),
+            ResumeSymbol {
+                captures: build.captures.clone(),
+                code: build.code.clone(),
+                file_path: self.file_id.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+            },
+        ));
+        let signature = create_symbol_signature(&SymbolKind::Component, &build.signature_code);
+        self.hmr_symbols.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrSymbolEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+                owner_component_key: None,
+                signature: signature.clone(),
+            },
+        ));
+        self.hmr_components.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrComponentEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id,
+                local_symbol_keys: component_info.local_symbol_keys.clone(),
+                signature,
+            },
+        ));
+        let _ = projection_slots;
+    }
+
     fn emit_component_symbol_for_expression(&mut self, expression: &Expression<'a>) {
+        if let Expression::CallExpression(call) = expression {
+            if let Expression::Identifier(identifier) = &call.callee {
+                if identifier.name.as_str() == HELPER_COMPONENT {
+                    let Some(function_argument) = call.arguments.first() else {
+                        return;
+                    };
+                    let Some(function_span) = function_argument_span(function_argument) else {
+                        return;
+                    };
+                    let Some(symbol_argument) = call.arguments.get(1) else {
+                        return;
+                    };
+                    let Argument::StringLiteral(symbol_literal) = symbol_argument else {
+                        return;
+                    };
+                    if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+                        return;
+                    }
+                    let Some(captures_argument) = call.arguments.get(2) else {
+                        return;
+                    };
+                    let dependencies = match self.collect_symbol_dependencies(function_argument) {
+                        Ok(dependencies) => dependencies,
+                        Err(error) => {
+                            self.fail(error);
+                            return;
+                        }
+                    };
+                    let projection_slots = match collect_projection_slots_from_argument(function_argument) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.fail(error);
+                            return;
+                        }
+                    };
+                    self.push_replacement(
+                        captures_argument.span().start as usize,
+                        captures_argument.span().end as usize,
+                        Self::build_capture_getter(&dependencies.captures),
+                    );
+                    self.emit_prewrapped_component_symbol(
+                        symbol_literal.value.as_str().to_string(),
+                        function_span,
+                        dependencies.captures,
+                        dependencies.import_spans,
+                        dependencies.local_definitions,
+                        projection_slots,
+                    );
+                    return;
+                }
+            }
+        }
         let Some(function_span) = function_expression_span(expression) else {
             return;
         };
         if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
             return;
         }
-        let dependencies = self.collect_symbol_dependencies_from_expression(expression).unwrap();
+        let dependencies = match self.collect_symbol_dependencies_from_expression(expression) {
+            Ok(dependencies) => dependencies,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
         let projection_slots = match collect_projection_slots_from_expression(expression) {
             Ok(value) => value,
             Err(error) => {
@@ -1715,6 +1903,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             }
         };
         self.emit_component_symbol(
+            create_symbol_id(&self.file_id, &SymbolKind::Component, source_text(self.source, function_span)),
             function_span,
             dependencies.captures,
             dependencies.import_spans,
@@ -1742,7 +1931,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
             return;
         }
-        let dependencies = self.collect_symbol_dependencies_from_export_default(declaration).unwrap();
+        let dependencies = match self.collect_symbol_dependencies_from_export_default(declaration) {
+            Ok(dependencies) => dependencies,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
         let projection_slots = match collect_projection_slots_from_export_default(declaration) {
             Ok(value) => value,
             Err(error) => {
@@ -1751,6 +1946,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             }
         };
         self.emit_component_symbol(
+            create_symbol_id(&self.file_id, &SymbolKind::Component, source_text(self.source, function_span)),
             function_span,
             dependencies.captures,
             dependencies.import_spans,
@@ -2003,13 +2199,24 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .is_some_and(|identifier| identifier == callee_name)
         {
             let Some(argument) = expression.arguments.first() else {
-                panic!("onVisible() expects a function expression as the first argument.");
+                self.fail("onVisible() expects a function expression as the first argument.");
+                return;
             };
             if !is_function_argument(argument) {
-                panic!("onVisible() expects a function expression as the first argument.");
+                self.fail("onVisible() expects a function expression as the first argument.");
+                return;
             }
-            let function_span = function_argument_span(argument).unwrap();
-            let dependencies = self.collect_symbol_dependencies(argument).unwrap();
+            let Some(function_span) = function_argument_span(argument) else {
+                self.fail("onVisible() expects a function expression as the first argument.");
+                return;
+            };
+            let dependencies = match self.collect_symbol_dependencies(argument) {
+                Ok(dependencies) => dependencies,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
             let replacement_code = self.emit_lazy_symbol_from_function(
                 function_span,
                 dependencies.captures,
@@ -2027,24 +2234,39 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .is_some_and(|identifier| identifier == callee_name)
         {
             let Some(argument) = expression.arguments.first() else {
-                panic!("useWatch() expects a function expression as the first argument.");
+                self.fail("useWatch() expects a function expression as the first argument.");
+                return;
             };
             if !is_function_argument(argument) {
-                panic!("useWatch() expects a function expression as the first argument.");
+                self.fail("useWatch() expects a function expression as the first argument.");
+                return;
             }
-            let function_span = function_argument_span(argument).unwrap();
+            let Some(function_span) = function_argument_span(argument) else {
+                self.fail("useWatch() expects a function expression as the first argument.");
+                return;
+            };
             let raw_code = source_text(self.source, function_span);
             let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Watch, raw_code);
-            let dependencies = self.collect_symbol_dependencies(argument).unwrap();
-            let build = self
-                .build_symbol(
-                    function_span,
-                    dependencies.captures.clone(),
-                    dependencies.import_spans,
-                    dependencies.local_definitions,
-                    false,
-                )
-                .unwrap();
+            let dependencies = match self.collect_symbol_dependencies(argument) {
+                Ok(dependencies) => dependencies,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
+            let build = match self.build_symbol(
+                function_span,
+                dependencies.captures.clone(),
+                dependencies.import_spans,
+                dependencies.local_definitions,
+                false,
+            ) {
+                Ok(build) => build,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
             let owner = self.current_owner_component_key();
             let base = format!("{}:watch:slot", owner.clone().unwrap_or_else(|| "file".to_string()));
             let hmr_key = self.next_owned_symbol_key(base);
@@ -2080,26 +2302,42 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .is_some_and(|identifier| identifier == callee_name)
         {
             if !self.current_functions.is_empty() {
-                panic!("action() must be declared at module scope so the server can register it exactly once.");
+                self.fail("action() must be declared at module scope so the server can register it exactly once.");
+                return;
             }
             let Some(argument) = expression.arguments.last() else {
-                panic!("action() expects the last argument to be a function.");
+                self.fail("action() expects the last argument to be a function.");
+                return;
             };
             if !is_function_argument(argument) {
-                panic!("action() expects the last argument to be a function.");
+                self.fail("action() expects the last argument to be a function.");
+                return;
             }
-            let function_span = function_argument_span(argument).unwrap();
+            let Some(function_span) = function_argument_span(argument) else {
+                self.fail("action() expects the last argument to be a function.");
+                return;
+            };
             let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Action, source_text(self.source, function_span));
-            let dependencies = self.collect_symbol_dependencies(argument).unwrap();
-            let build = self
-                .build_symbol(
-                    function_span,
-                    dependencies.captures,
-                    dependencies.import_spans,
-                    dependencies.local_definitions,
-                    false,
-                )
-                .unwrap();
+            let dependencies = match self.collect_symbol_dependencies(argument) {
+                Ok(dependencies) => dependencies,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
+            let build = match self.build_symbol(
+                function_span,
+                dependencies.captures,
+                dependencies.import_spans,
+                dependencies.local_definitions,
+                false,
+            ) {
+                Ok(build) => build,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
             self.symbols.push((
                 symbol_id.clone(),
                 ResumeSymbol {
@@ -2152,26 +2390,42 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             .is_some_and(|identifier| identifier == callee_name)
         {
             if !self.current_functions.is_empty() {
-                panic!("loader() must be declared at module scope so the server can register it exactly once.");
+                self.fail("loader() must be declared at module scope so the server can register it exactly once.");
+                return;
             }
             let Some(argument) = expression.arguments.last() else {
-                panic!("loader() expects the last argument to be a function.");
+                self.fail("loader() expects the last argument to be a function.");
+                return;
             };
             if !is_function_argument(argument) {
-                panic!("loader() expects the last argument to be a function.");
+                self.fail("loader() expects the last argument to be a function.");
+                return;
             }
-            let function_span = function_argument_span(argument).unwrap();
+            let Some(function_span) = function_argument_span(argument) else {
+                self.fail("loader() expects the last argument to be a function.");
+                return;
+            };
             let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Loader, source_text(self.source, function_span));
-            let dependencies = self.collect_symbol_dependencies(argument).unwrap();
-            let build = self
-                .build_symbol(
-                    function_span,
-                    dependencies.captures,
-                    dependencies.import_spans,
-                    dependencies.local_definitions,
-                    false,
-                )
-                .unwrap();
+            let dependencies = match self.collect_symbol_dependencies(argument) {
+                Ok(dependencies) => dependencies,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
+            let build = match self.build_symbol(
+                function_span,
+                dependencies.captures,
+                dependencies.import_spans,
+                dependencies.local_definitions,
+                false,
+            ) {
+                Ok(build) => build,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
             self.symbols.push((
                 symbol_id.clone(),
                 ResumeSymbol {
@@ -2299,18 +2553,28 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                     &SymbolKind::Event,
                     source_text(self.source, function_span),
                 );
-                let dependencies = self
+                let dependencies = match self
                     .collect_jsx_symbol_dependencies(&container.expression, function.scope_id())
-                    .unwrap();
-                let build = self
-                    .build_symbol(
-                        function_span,
-                        dependencies.captures.clone(),
-                        dependencies.import_spans,
-                        dependencies.local_definitions,
-                        false,
-                    )
-                    .unwrap();
+                {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
+                let build = match self.build_symbol(
+                    function_span,
+                    dependencies.captures.clone(),
+                    dependencies.import_spans,
+                    dependencies.local_definitions,
+                    false,
+                ) {
+                    Ok(build) => build,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let owner = self.current_owner_component_key();
                 let base = format!(
                     "{}:event:{}",
@@ -2341,18 +2605,28 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                     &SymbolKind::Event,
                     source_text(self.source, function_span),
                 );
-                let dependencies = self
+                let dependencies = match self
                     .collect_jsx_symbol_dependencies(&container.expression, function.scope_id())
-                    .unwrap();
-                let build = self
-                    .build_symbol(
-                        function_span,
-                        dependencies.captures.clone(),
-                        dependencies.import_spans,
-                        dependencies.local_definitions,
-                        false,
-                    )
-                    .unwrap();
+                {
+                    Ok(dependencies) => dependencies,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
+                let build = match self.build_symbol(
+                    function_span,
+                    dependencies.captures.clone(),
+                    dependencies.import_spans,
+                    dependencies.local_definitions,
+                    false,
+                ) {
+                    Ok(build) => build,
+                    Err(error) => {
+                        self.fail(error);
+                        return;
+                    }
+                };
                 let owner = self.current_owner_component_key();
                 let base = format!(
                     "{}:event:{}",

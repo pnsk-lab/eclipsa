@@ -6,7 +6,10 @@ import { analyzeModule } from '../compiler/mod.ts'
 import {
   collectAppSymbols,
   compileModuleForSSR,
+  createSymbolRequestId,
   createDevSymbolUrl,
+  parseSymbolRequest,
+  primeCompilerCache,
   createResumeHmrUpdate,
   loadSymbolModuleForSSR,
   resetCompilerCache,
@@ -496,6 +499,38 @@ describe('createResumeHmrUpdate', () => {
     } finally {
       await fs.rm(root, { force: true, recursive: true })
     }
+  })
+
+  it('collects symbols from workspace packages that export managed components through package exports', async () => {
+    const symbols = await collectAppSymbols(path.resolve(__dirname, '../../../docs'))
+
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:motion')).toBe(true)
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:AnimatePresence')).toBe(true)
+    expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:LayoutGroup')).toBe(true)
+  })
+
+  it('adds a lang query to symbol request ids while keeping symbol parsing stable', () => {
+    const requestId = createSymbolRequestId('/app/+page.tsx', 'symbol-123')
+
+    expect(requestId).toBe('/app/+page.tsx?eclipsa-symbol=symbol-123&lang.js')
+    expect(parseSymbolRequest(requestId)).toEqual({
+      filePath: '/app/+page.tsx',
+      symbolId: 'symbol-123',
+    })
+  })
+
+  it('loads workspace motion symbol modules through the virtual symbol pipeline', async () => {
+    const filePath = path.resolve(__dirname, '../../motion/motion.tsx')
+    const source = await fs.readFile(filePath, 'utf8')
+
+    await primeCompilerCache(filePath, source)
+
+    const compiled = await loadSymbolModuleForSSR(
+      createSymbolRequestId(filePath, '@eclipsa/motion:MotionConfig'),
+    )
+
+    expect(compiled).toContain('export default')
+    expect(compiled).toContain('jsxDEV')
   })
 
   it('falls back to full reload when top-level component membership changes', async () => {

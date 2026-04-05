@@ -1,9 +1,41 @@
 import type { JSX } from '../../jsx/jsx-runtime.ts'
 
-export const For = <T>(props: { arr: T[]; fn: (e: T, i: number) => JSX.Element }) => {
-  const result: JSX.Element[] = []
-  for (let i = 0; i < props.arr.length; i++) {
-    result.push(props.fn(props.arr[i], i))
-  }
-  return result as unknown as JSX.Element
+type Key = string | number | symbol
+type ShowBranch<T> = JSX.Element | ((value: T) => JSX.Element)
+
+interface ForValue<T> {
+  __e_for: true
+  arr: readonly T[]
+  fallback?: JSX.Element
+  fn: (e: T, i: number) => JSX.Element
+  key?: (e: T, i: number) => Key
 }
+
+interface ShowValue<T> {
+  __e_show: true
+  children: ShowBranch<T>
+  fallback?: ShowBranch<T>
+  when: T
+}
+
+export const For = <T>(props: {
+  arr: readonly T[]
+  fallback?: JSX.Element
+  fn: (e: T, i: number) => JSX.Element
+  key?: (e: T, i: number) => Key
+}) =>
+  ({
+    __e_for: true,
+    arr: props.arr,
+    fallback: props.fallback,
+    fn: props.fn,
+    key: props.key,
+  }) as ForValue<T> as unknown as JSX.Element
+
+export const Show = <T>(props: { children: ShowBranch<T>; fallback?: ShowBranch<T>; when: T }) =>
+  ({
+    __e_show: true,
+    children: props.children,
+    fallback: props.fallback,
+    when: props.when,
+  }) as ShowValue<T> as unknown as JSX.Element
