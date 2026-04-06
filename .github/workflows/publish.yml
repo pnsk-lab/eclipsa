@@ -456,6 +456,20 @@ jobs:
       - name: Publish optimizer package
         shell: bash
         run: |
+          optimizer_package_json='packages/optimizer/package.json'
+          package_name="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.name ?? '');" "$optimizer_package_json")"
+          package_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version ?? '');" "$optimizer_package_json")"
+
+          if [[ -z "$package_name" || -z "$package_version" ]]; then
+            echo "Optimizer package.json is missing a valid name/version"
+            exit 1
+          fi
+
+          if npm view "${package_name}@${package_version}" version --json >/dev/null 2>&1; then
+            echo "Skipping already published package: ${package_name}@${package_version}"
+            exit 0
+          fi
+
           publish_args=(npm publish '${{ steps.pack_optimizer.outputs.path }}' --provenance --access public)
 
           if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then

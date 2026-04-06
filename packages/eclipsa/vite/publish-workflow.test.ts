@@ -55,6 +55,14 @@ describe('publish workflow', () => {
     )
   })
 
+  it('skips the optimizer root package when the target version is already published', async () => {
+    const workflow = await fs.readFile(workflowPath, 'utf8')
+    const step = extractStep(workflow, 'Publish optimizer package')
+
+    expect(step).toContain('npm view "${package_name}@${package_version}" version --json')
+    expect(step).toContain('Skipping already published package: ${package_name}@${package_version}')
+  })
+
   it('skips optimizer native packages that are already published at the target version', async () => {
     const workflow = await fs.readFile(workflowPath, 'utf8')
     const step = extractStep(workflow, 'Publish optimizer native packages')
