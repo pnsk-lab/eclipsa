@@ -49,7 +49,7 @@ describe('publish package metadata', () => {
     const packageJson = await readPackageJson('../../create-eclipsa/package.json')
     const publishPackageJson = createPublishPackageJson(packageJson)
 
-    expect(publishPackageJson.version).toBe('0.1.0-alpha.0')
+    expect(publishPackageJson.version).toBe('0.0.0')
     expect(publishPackageJson.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/pnsk-lab/eclipsa.git',

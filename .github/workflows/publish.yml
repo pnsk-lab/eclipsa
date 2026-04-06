@@ -167,15 +167,6 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure workflow runs on branch
-        shell: bash
-        run: |
-          if [[ '${{ github.ref_type }}' != 'branch' ]]; then
-            echo "This workflow must run on a branch ref to push version updates."
-            echo "Current ref_type: ${{ github.ref_type }}"
-            exit 1
-          fi
-
   build_optimizer_bindings:
     if: ${{ inputs.package == 'eclipsa' }}
     needs: prepare
@@ -514,32 +505,12 @@ jobs:
         shell: bash
         run: bun run --filter @eclipsa/optimizer restore:manifest
 
-      - name: Commit and push version update
-        id: version_commit
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git add 'packages/eclipsa/package.json' 'packages/optimizer/package.json'
-
-          if git diff --cached --quiet; then
-            echo "No version updates to commit."
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git commit -m 'chore(release): bump eclipsa and optimizer to v${{ needs.prepare.outputs.version }}'
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Create release with generated notes
         shell: bash
         run: |
           gh release create '${{ needs.prepare.outputs.tag }}' \
             --generate-notes \
-            --target '${{ steps.version_commit.outputs.sha }}'
+            --target '${{ github.sha }}'
 
   publish_other:
     if: ${{ inputs.package != 'eclipsa' }}
@@ -650,31 +621,9 @@ jobs:
 
           "${publish_args[@]}"
 
-      - name: Commit and push version update
-        id: version_commit
-        shell: bash
-        run: |
-          file_path='${{ needs.prepare.outputs.package_json_path }}'
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git add "$file_path"
-
-          if git diff --cached --quiet; then
-            echo "No version updates to commit."
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git commit -m 'chore(release): bump ${{ inputs.package }} to v${{ needs.prepare.outputs.version }}'
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Create release with generated notes
         shell: bash
         run: |
           gh release create '${{ needs.prepare.outputs.tag }}' \
             --generate-notes \
-            --target '${{ steps.version_commit.outputs.sha }}'
+            --target '${{ github.sha }}'

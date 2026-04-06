@@ -43,6 +43,14 @@ describe('publish workflow', () => {
     }
   })
 
+  it('creates releases from the workflow commit without pushing version bumps back to git', async () => {
+    const workflow = await fs.readFile(workflowPath, 'utf8')
+
+    expect(workflow).not.toContain('Commit and push version update')
+    expect(workflow).not.toContain('git push origin "HEAD:${{ github.ref_name }}"')
+    expect(workflow).toContain("--target '${{ github.sha }}'")
+  })
+
   it('publishes the optimizer root package from a packed tarball', async () => {
     const workflow = await fs.readFile(workflowPath, 'utf8')
 

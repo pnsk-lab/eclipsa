@@ -31,7 +31,6 @@ type VersionCore = {
 
 type ResolveVersionPlanInput = {
   publishedVersions?: string[]
-  packageJsonVersion?: string
   releaseType: string
 }
 
@@ -145,7 +144,6 @@ function maxPrereleaseNumber(versions: ParsedVersion[]): number {
 
 export function resolveVersionPlan({
   publishedVersions,
-  packageJsonVersion,
   releaseType,
 }: ResolveVersionPlanInput): ResolveVersionPlanResult {
   const release = parseReleaseType(releaseType)
@@ -153,13 +151,11 @@ export function resolveVersionPlan({
     .map((version) => parseVersion(version))
     .filter((version): version is ParsedVersion => version != null)
   const stablePublished = parsedPublished.filter((version) => version.isStable)
-  const parsedPackageJsonVersion = parseVersion(packageJsonVersion)
-  const stableBase = maxCore(stablePublished) ??
-    (parsedPackageJsonVersion?.isStable ? parsedPackageJsonVersion : null) ?? {
-      major: 0,
-      minor: 0,
-      patch: 0,
-    }
+  const stableBase = maxCore(stablePublished) ?? {
+    major: 0,
+    minor: 0,
+    patch: 0,
+  }
   const targetCore = incrementCore(toCore(stableBase), release.bump)
 
   if (release.channel == null) {
@@ -197,16 +193,6 @@ export function resolveVersionPlan({
       }
     }
 
-    if (
-      parsedPackageJsonVersion?.channel === release.channel &&
-      Number.isInteger(parsedPackageJsonVersion.prereleaseNumber)
-    ) {
-      const packageCore = toCore(parsedPackageJsonVersion)
-      return {
-        version: `${formatCore(packageCore)}-${release.channel}.${parsedPackageJsonVersion.prereleaseNumber + 1}`,
-        npmTag: release.channel,
-      }
-    }
   }
 
   return {
@@ -287,10 +273,8 @@ export function resolveReleaseMetadata({
     throw new Error(`package.json does not contain a valid name field: ${packageJsonPath}`)
   }
 
-  const packageJsonVersion = typeof pkg.version === 'string' ? pkg.version : undefined
   const versionPlan = resolveVersionPlan({
     publishedVersions: fetchPublishedVersions(packageName),
-    packageJsonVersion,
     releaseType,
   })
 
