@@ -103,6 +103,7 @@
     },
     "packages/motion": {
       "name": "@eclipsa/motion",
+      "version": "0.0.0",
       "dependencies": {
         "eclipsa": "workspace:*",
         "motion-dom": "12.38.0",
@@ -111,7 +112,7 @@
     },
     "packages/optimizer": {
       "name": "@eclipsa/optimizer",
-      "version": "0.2.0-alpha.0",
+      "version": "0.0.0",
       "dependencies": {
         "@emnapi/core": "^1.9.0",
         "@emnapi/runtime": "^1.9.0",
@@ -120,6 +121,17 @@
       },
       "devDependencies": {
         "@napi-rs/cli": "^3.5.1",
+      },
+      "optionalDependencies": {
+        "@eclipsa/optimizer-darwin-arm64": "0.0.0",
+        "@eclipsa/optimizer-darwin-x64": "0.0.0",
+        "@eclipsa/optimizer-linux-arm64-gnu": "0.0.0",
+        "@eclipsa/optimizer-linux-arm64-musl": "0.0.0",
+        "@eclipsa/optimizer-linux-x64-gnu": "0.0.0",
+        "@eclipsa/optimizer-linux-x64-musl": "0.0.0",
+        "@eclipsa/optimizer-wasm32-wasi": "0.0.0",
+        "@eclipsa/optimizer-win32-arm64-msvc": "0.0.0",
+        "@eclipsa/optimizer-win32-x64-msvc": "0.0.0",
       },
     },
   },
