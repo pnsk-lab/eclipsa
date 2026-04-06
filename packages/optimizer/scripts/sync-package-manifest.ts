@@ -1,8 +1,39 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { parseTargetTriple } from './create-npm-dirs.ts'
 
 type PackageJson = Record<string, unknown>
 type ManifestMode = 'dev' | 'publish'
+
+interface NapiConfig {
+  targets?: string[]
+}
+
+const buildOptionalDependencies = (packageJson: PackageJson) => {
+  const packageName = packageJson.name
+  const version = packageJson.version
+  const napi = packageJson.napi as NapiConfig | undefined
+
+  if (typeof packageName !== 'string' || packageName.length === 0) {
+    throw new Error('Expected package.json name to be a non-empty string.')
+  }
+
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new Error('Expected package.json version to be a non-empty string.')
+  }
+
+  const targets = napi?.targets ?? []
+  if (!Array.isArray(targets) || targets.length === 0) {
+    return undefined
+  }
+
+  return Object.fromEntries(
+    targets.map((target) => {
+      const { platformArchABI } = parseTargetTriple(target)
+      return [`${packageName}-${platformArchABI}`, version]
+    }),
+  )
+}
 
 export const DEV_EXPORTS = {
   '.': {
@@ -47,6 +78,7 @@ export const buildPackageManifest = (packageJson: PackageJson, mode: ManifestMod
     nextManifest.files = PUBLISH_FILES
     nextManifest.main = './dist/mod.mjs'
     nextManifest.types = './dist/mod.d.mts'
+    nextManifest.optionalDependencies = buildOptionalDependencies(packageJson)
     return nextManifest
   }
 

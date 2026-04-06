@@ -70,6 +70,17 @@ describe('optimizer packaging', () => {
     expect(publishManifest.files).toEqual(PUBLISH_FILES)
     expect(publishManifest.main).toBe('./dist/mod.mjs')
     expect(publishManifest.types).toBe('./dist/mod.d.mts')
+    expect(publishManifest.optionalDependencies).toMatchObject({
+      '@eclipsa/optimizer-darwin-arm64': packageJson.version,
+      '@eclipsa/optimizer-darwin-x64': packageJson.version,
+      '@eclipsa/optimizer-linux-arm64-gnu': packageJson.version,
+      '@eclipsa/optimizer-linux-arm64-musl': packageJson.version,
+      '@eclipsa/optimizer-linux-x64-gnu': packageJson.version,
+      '@eclipsa/optimizer-linux-x64-musl': packageJson.version,
+      '@eclipsa/optimizer-wasm32-wasi': packageJson.version,
+      '@eclipsa/optimizer-win32-arm64-msvc': packageJson.version,
+      '@eclipsa/optimizer-win32-x64-msvc': packageJson.version,
+    })
   })
 
   it('keeps direct emnapi dependencies required for wasi napi builds', async () => {
@@ -90,6 +101,7 @@ describe('optimizer packaging', () => {
       '@emnapi/runtime': '^1.9.0',
       '@emnapi/wasi-threads': '^1.2.0',
     })
+    expect(devManifest.optionalDependencies).toBeUndefined()
   })
 
   it('uses the workspace-pinned napi cli for packaging and publish builds', async () => {
