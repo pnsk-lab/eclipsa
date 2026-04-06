@@ -409,6 +409,25 @@ jobs:
               continue
             fi
 
+            package_json_path="$package_dir/package.json"
+            if [[ ! -f "$package_json_path" ]]; then
+              echo "Skipping package without package.json: $package_dir"
+              continue
+            fi
+
+            package_name="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.name ?? '');" "$package_json_path")"
+            package_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version ?? '');" "$package_json_path")"
+
+            if [[ -z "$package_name" || -z "$package_version" ]]; then
+              echo "Skipping package with invalid name/version: $package_dir"
+              continue
+            fi
+
+            if npm view "${package_name}@${package_version}" version --json >/dev/null 2>&1; then
+              echo "Skipping already published package: ${package_name}@${package_version}"
+              continue
+            fi
+
             npm publish "$package_dir" "${publish_args[@]}"
           done
 

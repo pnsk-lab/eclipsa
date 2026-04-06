@@ -141,11 +141,7 @@ describe('optimizer packaging', () => {
           },
           napi: {
             binaryName: 'example',
-            targets: [
-              'x86_64-unknown-linux-gnu',
-              'aarch64-apple-darwin',
-              'wasm32-wasip1-threads',
-            ],
+            targets: ['x86_64-unknown-linux-gnu', 'aarch64-apple-darwin', 'wasm32-wasip1-threads'],
           },
         },
         null,
@@ -246,7 +242,7 @@ describe('optimizer packaging', () => {
       path.join(nestedDir, 'optimizer.wasm32-wasi.wasm'),
       new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
     )
-    await writePlaceholder(path.join(nestedDir, 'ignored.txt'))
+    await writePlaceholder(nestedDir, 'ignored.txt')
 
     await prepareDownloadedArtifacts(artifactsDir)
 

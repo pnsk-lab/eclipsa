@@ -1,7 +1,7 @@
 {
   "name": "@eclipsa/motion",
-  "private": false,
   "version": "0.0.0",
+  "private": false,
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"

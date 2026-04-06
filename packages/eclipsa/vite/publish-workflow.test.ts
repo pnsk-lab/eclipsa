@@ -12,7 +12,9 @@ const extractStep = (source: string, stepName: string) => {
 
   const rest = source.slice(start + marker.length)
   const nextStepOffset = rest.search(/\n\s+- name: /)
-  return nextStepOffset === -1 ? source.slice(start) : source.slice(start, start + marker.length + nextStepOffset)
+  return nextStepOffset === -1
+    ? source.slice(start)
+    : source.slice(start, start + marker.length + nextStepOffset)
 }
 
 describe('publish workflow', () => {
@@ -51,5 +53,13 @@ describe('publish workflow', () => {
     expect(extractStep(workflow, 'Publish optimizer package')).toContain(
       "npm publish '${{ steps.pack_optimizer.outputs.path }}' --provenance --access public",
     )
+  })
+
+  it('skips optimizer native packages that are already published at the target version', async () => {
+    const workflow = await fs.readFile(workflowPath, 'utf8')
+    const step = extractStep(workflow, 'Publish optimizer native packages')
+
+    expect(step).toContain('npm view "${package_name}@${package_version}" version --json')
+    expect(step).toContain('Skipping already published package: ${package_name}@${package_version}')
   })
 })

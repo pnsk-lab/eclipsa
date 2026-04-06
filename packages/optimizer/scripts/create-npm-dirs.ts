@@ -257,7 +257,10 @@ const createScopedPackageJson = (packageJson: RootPackageJson, target: ParsedTar
   return scopedPackageJson
 }
 
-const createScopedReadme = (packageName: string, target: ParsedTarget) => `# \`${packageName}-${target.platformArchABI}\`
+const createScopedReadme = (
+  packageName: string,
+  target: ParsedTarget,
+) => `# \`${packageName}-${target.platformArchABI}\`
 
 This is the **${target.triple}** binary for \`${packageName}\`
 `
