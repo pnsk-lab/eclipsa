@@ -192,7 +192,6 @@ export function resolveVersionPlan({
         npmTag: release.channel,
       }
     }
-
   }
 
   return {

@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite-plus dev",
-    "build": "vite-plus build",
+    "dev": "__DEV_COMMAND__",
+    "build": "__BUILD_COMMAND__",
     "start": "node dist/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },
@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
-    "typescript": "^5.9.2",
-    "vite-plus": "^0.1.4"
+    "__VITE_DEPENDENCY_NAME__": "__VITE_DEPENDENCY_VERSION__",
+    "typescript": "^5.9.2"
   }
 }

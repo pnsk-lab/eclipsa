@@ -890,7 +890,7 @@ describe('vite plugin hotUpdate', () => {
     })
     expect(
       Object.keys(
-        (send.mock.calls[0]?.[1] as { symbolUrlReplacements: Record<string, string> })
+        (send.mock.calls[0][1] as { symbolUrlReplacements: Record<string, string> })
           .symbolUrlReplacements,
       ),
     ).not.toHaveLength(0)

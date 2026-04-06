@@ -30,6 +30,9 @@ export default defineConfig({
     ],
     dts: true,
     format: ['esm'],
+    deps: {
+      neverBundle: ['typescript', 'vite'],
+    },
     clean: true,
     sourcemap: true,
   },
