@@ -1,6 +1,6 @@
 {
   "name": "@eclipsa/content",
-  "private": true,
+  "private": false,
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"

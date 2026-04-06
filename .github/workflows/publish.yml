@@ -412,11 +412,32 @@ jobs:
             npm publish "$package_dir" "${publish_args[@]}"
           done
 
-      - name: Publish optimizer package
+      - name: Pack optimizer tarball
+        id: pack_optimizer
         shell: bash
         working-directory: packages/optimizer
         run: |
-          publish_args=(npm publish --provenance --access public)
+          bun ./scripts/sync-package-manifest.ts publish
+          tarball_output="$(bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish optimizer package
+        shell: bash
+        run: |
+          publish_args=(npm publish '${{ steps.pack_optimizer.outputs.path }}' --provenance --access public)
 
           if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
             publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')

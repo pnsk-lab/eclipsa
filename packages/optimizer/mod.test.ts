@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +20,7 @@ import {
   prepareDownloadedArtifacts,
   shouldFlattenArtifact,
 } from './scripts/prepare-downloaded-artifacts.ts'
+import { createNpmDirs, parseTargetTriple } from './scripts/create-npm-dirs.ts'
 
 const execFileAsync = promisify(execFile)
 const packageRoot = path.dirname(fileURLToPath(import.meta.url))
@@ -101,7 +102,6 @@ describe('optimizer packaging', () => {
       'artifacts',
       'build:native:dev',
       'build:native',
-      'create:npm-dirs',
       'prepublishOnly',
       'version:napi',
     ]) {
@@ -109,8 +109,128 @@ describe('optimizer packaging', () => {
       expect(packageJson.scripts?.[scriptName]).not.toContain('bunx @napi-rs/cli')
     }
 
+    expect(packageJson.scripts?.['create:npm-dirs']).toContain('bun ./scripts/create-npm-dirs.ts')
+    expect(packageJson.scripts?.['create:npm-dirs']).not.toContain('bun ./scripts/run-napi.ts')
+
     expect(publishWorkflow).toContain('bun ./scripts/run-napi.ts build')
     expect(publishWorkflow).not.toContain('bunx @napi-rs/cli build')
+  })
+
+  it('creates npm package directories for every configured napi target', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-create-npm-dirs-'))
+    const tempPackageJsonPath = path.join(tempRoot, 'package.json')
+
+    await writeFile(
+      tempPackageJsonPath,
+      `${JSON.stringify(
+        {
+          name: '@scope/example',
+          version: '1.2.3',
+          description: 'example package',
+          homepage: 'https://example.test/pkg',
+          license: 'MIT',
+          repository: {
+            type: 'git',
+            url: 'https://example.test/repo.git',
+          },
+          bugs: {
+            url: 'https://example.test/issues',
+          },
+          dependencies: {
+            '@napi-rs/wasm-runtime': '^1.2.3',
+          },
+          napi: {
+            binaryName: 'example',
+            targets: [
+              'x86_64-unknown-linux-gnu',
+              'aarch64-apple-darwin',
+              'wasm32-wasip1-threads',
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    await createNpmDirs({
+      cwd: tempRoot,
+      packageJsonPath: './package.json',
+      npmDir: './npm',
+    })
+
+    expect(await readFile(path.join(tempRoot, 'npm/linux-x64-gnu/README.md'), 'utf8')).toContain(
+      'x86_64-unknown-linux-gnu',
+    )
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/linux-x64-gnu/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-linux-x64-gnu',
+      main: 'example.linux-x64-gnu.node',
+      files: ['example.linux-x64-gnu.node'],
+      os: ['linux'],
+      cpu: ['x64'],
+      libc: ['glibc'],
+    })
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/darwin-arm64/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-darwin-arm64',
+      main: 'example.darwin-arm64.node',
+      files: ['example.darwin-arm64.node'],
+      os: ['darwin'],
+      cpu: ['arm64'],
+    })
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/wasm32-wasi/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-wasm32-wasi',
+      main: 'example.wasi.cjs',
+      browser: 'example.wasi-browser.js',
+      files: [
+        'example.wasm32-wasi.wasm',
+        'example.wasi.cjs',
+        'example.wasi-browser.js',
+        'wasi-worker.mjs',
+        'wasi-worker-browser.mjs',
+      ],
+      cpu: ['wasm32'],
+      dependencies: {
+        '@napi-rs/wasm-runtime': '^1.2.3',
+      },
+      engines: {
+        node: '>=14.0.0',
+      },
+    })
+  })
+
+  it('materializes every target configured in the optimizer package', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-all-npm-dirs-'))
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      napi?: {
+        targets?: string[]
+      }
+    }
+
+    await writeFile(path.join(tempRoot, 'package.json'), await readFile(packageJsonPath, 'utf8'))
+    await createNpmDirs({
+      cwd: tempRoot,
+      packageJsonPath: './package.json',
+      npmDir: './npm',
+    })
+
+    const actualDirs = (await readdir(path.join(tempRoot, 'npm'))).sort()
+    const expectedDirs = (packageJson.napi?.targets ?? []).map(
+      (target) => parseTargetTriple(target).platformArchABI,
+    )
+
+    expect(actualDirs).toEqual(expectedDirs.sort())
   })
 
   it('flattens downloaded binding artifacts before npm artifact hydration', async () => {

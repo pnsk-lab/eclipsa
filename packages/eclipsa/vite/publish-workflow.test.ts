@@ -40,4 +40,16 @@ describe('publish workflow', () => {
       expect(extractStep(workflow, step)).not.toContain('NODE_AUTH_TOKEN')
     }
   })
+
+  it('publishes the optimizer root package from a packed tarball', async () => {
+    const workflow = await fs.readFile(workflowPath, 'utf8')
+
+    expect(extractStep(workflow, 'Pack optimizer tarball')).toContain(
+      'bun ./scripts/sync-package-manifest.ts publish',
+    )
+    expect(extractStep(workflow, 'Pack optimizer tarball')).toContain('bun pm pack --quiet')
+    expect(extractStep(workflow, 'Publish optimizer package')).toContain(
+      "npm publish '${{ steps.pack_optimizer.outputs.path }}' --provenance --access public",
+    )
+  })
 })

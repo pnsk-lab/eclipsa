@@ -40,7 +40,7 @@
     "build:js": "vp pack",
     "build:native:dev": "node -e \"require('node:fs').rmSync('./generated', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts build --platform --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer && bun ./scripts/sync-browser-wasm.ts",
     "build:native": "node -e \"require('node:fs').rmSync('./generated', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer && bun ./scripts/sync-browser-wasm.ts",
-    "create:npm-dirs": "node -e \"require('node:fs').rmSync('./npm', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts create-npm-dirs --package-json-path ./package.json --npm-dir ./npm",
+    "create:npm-dirs": "bun ./scripts/create-npm-dirs.ts --package-json-path ./package.json --npm-dir ./npm",
     "pack": "bun run build",
     "prepublishOnly": "bun ./scripts/sync-package-manifest.ts publish && bun ./scripts/run-napi.ts pre-publish -t npm --package-json-path ./package.json --npm-dir ./npm",
     "restore:manifest": "bun ./scripts/sync-package-manifest.ts dev",
