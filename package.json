@@ -15,7 +15,8 @@
     "test": "turbo run test",
     "test:e2e": "turbo run e2e --filter=./e2e",
     "lint": "vp check",
-    "fmt": "vp check --fix"
+    "fmt": "vp check --fix",
+    "repro:reported-issues": "bun run repro/reproduce-reported-issues.ts"
   },
   "devDependencies": {
     "@eclipsa/optimizer": "workspace:^",
