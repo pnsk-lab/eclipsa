@@ -5,10 +5,7 @@ type ReproCase = {
   severity: Severity
   title: string
   targetFile: string
-  run: (context: {
-    baseUrl: string
-    execute: boolean
-  }) => Promise<void> | void
+  run: (context: { baseUrl: string; execute: boolean }) => Promise<void> | void
 }
 
 const printHeader = (value: string) => {
@@ -47,9 +44,7 @@ const cases: ReproCase[] = [
       const body = {
         input: {
           __eclipsa_type: 'object',
-          entries: [
-            ['amount', 1],
-          ],
+          entries: [['amount', 1]],
         },
       }
       const url = `${baseUrl}/__eclipsa/action/sum`
@@ -108,9 +103,7 @@ const cases: ReproCase[] = [
       const body = JSON.stringify({
         input: {
           __eclipsa_type: 'object',
-          entries: [
-            ['blob', huge],
-          ],
+          entries: [['blob', huge]],
         },
       })
       const url = `${baseUrl}/__eclipsa/action/sum`
@@ -155,7 +148,9 @@ const cases: ReproCase[] = [
     run() {
       printHeader('PoC component')
       console.log(`import { Content } from '@eclipsa/content'`)
-      console.log(`export default () => Content({ html: '<img src=x onerror=alert("xss-content") />' })`)
+      console.log(
+        `export default () => Content({ html: '<img src=x onerror=alert("xss-content") />' })`,
+      )
     },
   },
   {
