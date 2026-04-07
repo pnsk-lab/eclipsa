@@ -133,7 +133,7 @@ interface RouteDataResponse {
 }
 
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
-  html.replace(placeholder, value)
+  html.replaceAll(placeholder, value)
 
 const splitHtmlForStreaming = (html: string) => {
   const bodyCloseIndex = html.lastIndexOf('</body>')
@@ -578,72 +578,78 @@ const createDevApp = async (init: DevAppInit) => {
       },
     )
 
-    const document = SSRRoot({
-      children: createRouteElement(
-        pathname,
-        params,
-        Page,
-        Layouts,
-        options?.routeError,
-      ) as SSRRootProps['children'],
-      head: {
-        type: Fragment,
-        isStatic: true,
-        props: {
-          children: [
-            ...renderRouteMetadataHead(metadata),
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: RESUME_PAYLOAD_PLACEHOLDER,
-                id: 'eclipsa-resume',
-                type: 'application/eclipsa-resume+json',
+    const document = jsxDEV(
+      SSRRoot as any,
+      {
+        children: createRouteElement(
+          pathname,
+          params,
+          Page,
+          Layouts,
+          options?.routeError,
+        ) as SSRRootProps['children'],
+        head: {
+          type: Fragment,
+          isStatic: true,
+          props: {
+            children: [
+              ...renderRouteMetadataHead(metadata),
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  children: RESUME_PAYLOAD_PLACEHOLDER,
+                  id: 'eclipsa-resume',
+                  type: 'application/eclipsa-resume+json',
+                },
               },
-            },
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: ROUTE_MANIFEST_PLACEHOLDER,
-                id: ROUTE_MANIFEST_ELEMENT_ID,
-                type: 'application/eclipsa-route-manifest+json',
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  children: ROUTE_MANIFEST_PLACEHOLDER,
+                  id: ROUTE_MANIFEST_ELEMENT_ID,
+                  type: 'application/eclipsa-route-manifest+json',
+                },
               },
-            },
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: APP_HOOKS_PLACEHOLDER,
-                id: APP_HOOKS_ELEMENT_ID,
-                type: 'application/eclipsa-app-hooks+json',
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  children: APP_HOOKS_PLACEHOLDER,
+                  id: APP_HOOKS_ELEMENT_ID,
+                  type: 'application/eclipsa-app-hooks+json',
+                },
               },
-            },
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
+                },
               },
-            },
-            {
-              type: 'script',
-              isStatic: true,
-              props: {
-                children: 'import("/@vite/client")',
+              {
+                type: 'script',
+                isStatic: true,
+                props: {
+                  children: 'import("/@vite/client")',
+                },
               },
-            },
-            {
-              type: 'script',
-              props: {
-                src: '/app/+client.dev.tsx',
-                type: 'module',
+              {
+                type: 'script',
+                props: {
+                  src: '/app/+client.dev.tsx',
+                  type: 'module',
+                },
               },
-            },
-          ],
+            ],
+          },
         },
-      },
-    } satisfies SSRRootProps)
+      } satisfies SSRRootProps,
+      null,
+      false,
+      {},
+    )
 
     applyRequestParams(c, params)
     const { html, payload, chunks } = await renderSSRStream(() => document, {

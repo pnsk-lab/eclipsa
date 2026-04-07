@@ -119,7 +119,7 @@ describe('analyzeModule()', () => {
       export default () => <button>ready</button>;
     `)
 
-    expect(analyzed.code).toContain('optimizedRoot: true')
+    expect(analyzed.code).toContain('undefined, { optimizedRoot: true }')
   })
 
   it('marks compiled components as optimized roots without breaking trailing commas', async () => {
@@ -133,8 +133,16 @@ describe('analyzeModule()', () => {
       );
     `)
 
-    expect(analyzed.code).toContain('()=>[], { optimizedRoot: true }')
+    expect(analyzed.code).toContain('()=>[], undefined, { optimizedRoot: true }')
     expect(analyzed.code).not.toContain('() => [],\n, { optimizedRoot: true }')
+  })
+
+  it('appends optimized root options after projection slot metadata', async () => {
+    const analyzed = await analyzeModule(`
+      export const Probe = (props) => <div>{props.children}</div>;
+    `)
+
+    expect(analyzed.code).toContain('{ children: 1 }, { optimizedRoot: true }')
   })
 
   it('annotates direct projection slot props on component metadata', async () => {

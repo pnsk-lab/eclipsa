@@ -24,7 +24,7 @@ export default __eclipsaComponent(() => {
   })
 
   return <button>{value}</button>
-}, "12cvs17", ()=>[], { optimizedRoot: true })
+}, "12cvs17", ()=>[], undefined, { optimizedRoot: true })
 
 
 // ================= 12cvs17 (component) ==

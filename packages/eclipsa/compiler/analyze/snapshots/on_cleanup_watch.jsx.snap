@@ -30,7 +30,7 @@ export default __eclipsaComponent(() => {
   }, ()=>[tracked]), [tracked])
 
   return <button>{tracked.value}</button>
-}, "124yknm", ()=>[], { optimizedRoot: true })
+}, "124yknm", ()=>[], undefined, { optimizedRoot: true })
 
 
 // ================= n9bfqq (watch) ==

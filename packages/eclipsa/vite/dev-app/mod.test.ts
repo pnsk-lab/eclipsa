@@ -249,6 +249,92 @@ describe('createDevFetch', () => {
     expect(html).toContain('"pathname":"/"')
   })
 
+  it('defers SSRRoot execution to the render pipeline', async () => {
+    const callOrder: string[] = []
+    const resolveNode = (value: any): any => {
+      if (!value || typeof value !== 'object') {
+        return value
+      }
+      if (typeof value.type === 'function') {
+        return resolveNode(value.type(value.props ?? {}))
+      }
+      return {
+        ...value,
+        ...(value.props ? { props: resolveNode(value.props) } : {}),
+      }
+    }
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                callOrder.push('ssr-root')
+                return {
+                  props,
+                  type: 'html',
+                }
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              Fragment: Symbol.for('fragment'),
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream(renderDocument: () => any) {
+                callOrder.push('render-stream:start')
+                const rendered = resolveNode(renderDocument())
+                callOrder.push('render-stream:end')
+                return {
+                  chunks: (async function* () {})(),
+                  html: JSON.stringify(rendered),
+                  payload: {},
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+
+    expect(response?.status).toBe(200)
+    expect(callOrder).toEqual(['render-stream:start', 'ssr-root', 'render-stream:end'])
+  })
+
   it('renders resume metadata through SSRRoot head props', async () => {
     const devFetch = createDevFetch({
       resolvedConfig: {
@@ -330,8 +416,113 @@ describe('createDevFetch', () => {
 
     expect(html).toContain('"id":"eclipsa-resume"')
     expect(html).toContain(`"id":"${'eclipsa-route-manifest'}"`)
+    expect(html).toContain(`"id":"${'eclipsa-app-hooks'}"`)
     expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
     expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+    expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
+  })
+
+  it('replaces repeated resume placeholders across serialized head output', async () => {
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default(props: any) {
+                return {
+                  props: {
+                    children: [
+                      {
+                        props: {
+                          children: props.head,
+                        },
+                        type: 'head',
+                      },
+                      {
+                        props: {
+                          children: props.body,
+                        },
+                        type: 'body',
+                      },
+                    ],
+                  },
+                  type: 'html',
+                }
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              Fragment: Symbol.for('fragment'),
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream(renderDocument: () => any) {
+                const resolveNode = (value: any): any => {
+                  if (!value || typeof value !== 'object') {
+                    return value
+                  }
+                  if (typeof value.type === 'function') {
+                    return resolveNode(value.type(value.props ?? {}))
+                  }
+                  return {
+                    ...value,
+                    ...(value.props ? { props: resolveNode(value.props) } : {}),
+                  }
+                }
+
+                return {
+                  chunks: (async function* () {})(),
+                  html: JSON.stringify(resolveNode(renderDocument())),
+                  payload: {},
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload() {
+                return '{}'
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+    const html = await response?.text()
+
+    expect(html).toContain('"children":"{}"')
+    expect(html).toContain('"id":"eclipsa-route-manifest"')
+    expect(html).toContain('"routePath":"/"')
+    expect(html).toContain('"id":"eclipsa-app-hooks"')
+    expect(html).toContain('"client":null')
+    expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
+    expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+    expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
   })
 
   it('injects the suspense streaming bootstrap script without escaping it', async () => {

@@ -763,6 +763,9 @@ export const rememberInsertMarkerRange = (
   insertMarkerNodeCounts.set(marker as Comment, count)
 }
 
+export const getRememberedInsertMarkerNodeCount = (marker: Comment | null | undefined) =>
+  marker ? (insertMarkerNodeCounts.get(marker) ?? 0) : 0
+
 const withResumeHmrTimestamp = (url: string, timestamp: number) => {
   const parsed = new URL(url, 'http://localhost')
   parsed.searchParams.set('t', timestamp.toString())
@@ -1432,6 +1435,7 @@ const serializeRenderObjectReference = (
 
   const evaluatedProps = evaluateProps(value.props)
   const key = value.key ?? null
+  const isStatic = value.isStatic === true
   const metadata = value.metadata ?? null
 
   if (typeof value.type === 'string') {
@@ -1443,7 +1447,7 @@ const serializeRenderObjectReference = (
         null,
         serializeRuntimeValue(container, evaluatedProps),
         serializeRuntimeValue(container, key),
-        value.isStatic,
+        isStatic,
         serializeRuntimeValue(container, metadata),
       ],
       kind: RENDER_REFERENCE_KIND,
@@ -1464,7 +1468,7 @@ const serializeRenderObjectReference = (
       registerScope(container, meta.captures()),
       serializeRuntimeValue(container, evaluatedProps),
       serializeRuntimeValue(container, key),
-      value.isStatic,
+      isStatic,
       serializeRuntimeValue(container, metadata),
     ],
     kind: RENDER_REFERENCE_KIND,
@@ -1484,9 +1488,10 @@ const deserializeRenderObjectReference = (
   if (variant !== 'element' && variant !== 'component') {
     throw new TypeError(`Unsupported render reference variant "${String(variant)}".`)
   }
-  if (typeof isStaticValue !== 'boolean') {
+  if (typeof isStaticValue !== 'boolean' && isStaticValue !== null && isStaticValue !== undefined) {
     throw new TypeError('Render references require a boolean static flag.')
   }
+  const isStatic = isStaticValue === true
 
   const props = deserializeRuntimeValue(container, propsValue as SerializedValue)
   const key = deserializeRuntimeValue(container, keyValue as SerializedValue)
@@ -1501,7 +1506,7 @@ const deserializeRenderObjectReference = (
       throw new TypeError('Element render references require a string tag name.')
     }
     return {
-      isStatic: isStaticValue,
+      isStatic,
       key: (key ?? undefined) as RenderObject['key'],
       metadata: (metadata ?? undefined) as RenderObject['metadata'],
       props: props as Record<string, unknown>,
@@ -1514,7 +1519,7 @@ const deserializeRenderObjectReference = (
   }
 
   return {
-    isStatic: isStaticValue,
+    isStatic,
     key: (key ?? undefined) as RenderObject['key'],
     metadata: (metadata ?? undefined) as RenderObject['metadata'],
     props: props as Record<string, unknown>,

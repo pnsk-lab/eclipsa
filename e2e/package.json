@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts",
-    "e2e:headed": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts --headed",
-    "e2e:ui": "bun run --cwd ../packages/eclipsa build:native:dev && bun ./scripts/run-playwright.ts --ui",
+    "e2e": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts",
+    "e2e:headed": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts --headed",
+    "e2e:ui": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts --ui",
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",
-    "test": "bun -e \"console.log('Use bun run test:e2e for @eclipsa/e2e.')\"",
+    "test": "bun test ./scripts/*.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {

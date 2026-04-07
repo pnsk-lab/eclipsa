@@ -148,6 +148,38 @@ describe('core/client dom attr', () => {
     expect(setAttribute).toHaveBeenCalledWith('data-testid', 'probe-aa-0')
   })
 
+  it('skips redundant class writes when a reactive class result is unchanged', () => {
+    const flag = createDetachedRuntimeSignal(createContainer(), 's0', true)
+    let className = ''
+    let setCount = 0
+    const elem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute: vi.fn(),
+    }
+
+    Object.defineProperty(elem, 'className', {
+      configurable: true,
+      get() {
+        return className
+      },
+      set(value: string) {
+        className = value
+        setCount += 1
+      },
+    })
+
+    attr(elem as unknown as Element, 'class', () => (flag.value ? 'card' : 'card'))
+
+    expect(className).toBe('card')
+    expect(setCount).toBe(1)
+
+    flag.value = false
+
+    expect(className).toBe('card')
+    expect(setCount).toBe(1)
+  })
+
   it('preserves suspense components as render objects for runtime fallback handling', () => {
     const rendered = createComponent(Suspense as any, {
       children: ['done'],

@@ -12,6 +12,7 @@ import {
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberInsertMarkerRange,
+  getRememberedInsertMarkerNodeCount,
   renderClientInsertable,
   renderClientInsertableForOwner,
   restoreSignalRefs,
@@ -27,6 +28,8 @@ import { withSignalSnapshot } from '../snapshot.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
 
 const INSERT_MARKER_PREFIX = 'ec:i:'
+const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
+const ATTR_UNSET = Symbol('eclipsa.attr-unset')
 
 const ensureInsertMarkerKey = (
   marker: Node | undefined,
@@ -185,6 +188,63 @@ const canReconnectOwnerRange = (currentNodes: Node[], newNodes: Node[]) => {
   return sawBoundary
 }
 
+const resolveFastInsertValue = (value: unknown) => {
+  let resolved = value
+  while (typeof resolved === 'function') {
+    resolved = resolved()
+  }
+
+  if (resolved === null || resolved === undefined || resolved === false) {
+    return {
+      kind: 'empty' as const,
+    }
+  }
+
+  if (
+    typeof resolved === 'string' ||
+    typeof resolved === 'number' ||
+    typeof resolved === 'boolean'
+  ) {
+    return {
+      kind: 'text' as const,
+      value: String(resolved),
+    }
+  }
+
+  return null
+}
+
+const isManagedEmptyInsertComment = (node: Node | null | undefined) =>
+  node instanceof Comment && node.data === EMPTY_INSERT_COMMENT
+
+const getElementStyleDeclaration = (elem: Element) => {
+  const style = (
+    elem as Element & {
+      style?: {
+        removeProperty?: (name: string) => string
+        setProperty?: (name: string, value: string) => void
+      }
+    }
+  ).style
+
+  return style &&
+    typeof style === 'object' &&
+    typeof style.setProperty === 'function' &&
+    typeof style.removeProperty === 'function'
+    ? (style as {
+        removeProperty: (name: string) => string
+        setProperty: (name: string, value: string) => void
+      })
+    : null
+}
+
+const serializeStyleValue = (resolved: unknown) =>
+  resolved && typeof resolved === 'object'
+    ? Object.entries(resolved as Record<string, string>)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('; ')
+    : String(resolved ?? '')
+
 export const createTemplate = (html: string): (() => Node) => {
   let template: HTMLTemplateElement | null = null
 
@@ -257,13 +317,83 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
       : null
     const resolvedParent = (liveLastParent ?? liveMarkerParent ?? parent) as ParentNode | null
     const targetParent = resolvedParent ?? (parent as ParentNode)
+    const primitiveValue = resolveFastInsertValue(value)
+    const seedCurrentNodes = (count: number) =>
+      lastNodeLength === 0 &&
+      liveMarker instanceof Comment &&
+      getRememberedInsertMarkerNodeCount(liveMarker) === count
+        ? collectNodesBeforeMarker(liveMarker, count)
+        : []
+    const replaceCurrentNodes = (currentNodes: Node[], replacementNode: Node) => {
+      const insertReference =
+        liveMarker?.parentNode === targetParent
+          ? liveMarker
+          : (currentNodes[currentNodes.length - 1]?.nextSibling ?? null)
+      for (const node of currentNodes) {
+        if (node.parentNode === targetParent) {
+          removeNodeFromParent(node, targetParent)
+        }
+      }
+      targetParent.insertBefore(replacementNode, insertReference)
+      rememberInsertMarkerRange(liveMarker, [replacementNode])
+      lastFirstNode = replacementNode
+      lastNodeLength = 1
+    }
+
+    if (primitiveValue) {
+      const seededCurrentNodes = seedCurrentNodes(1)
+      const currentNodes =
+        seededCurrentNodes.length !== 0 &&
+        seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents))
+          ? seededCurrentNodes
+          : collectCurrentNodes(liveMarker, stableParents)
+
+      if (currentNodes.length !== 0 && lastNodeLength === 0) {
+        lastFirstNode = currentNodes[0]
+        lastNodeLength = currentNodes.length
+      }
+
+      if (primitiveValue.kind === 'text') {
+        if (currentNodes.length === 1 && currentNodes[0] instanceof Text) {
+          if (currentNodes[0].data !== primitiveValue.value) {
+            currentNodes[0].data = primitiveValue.value
+          }
+          rememberInsertMarkerRange(liveMarker, currentNodes)
+          lastFirstNode = currentNodes[0]
+          lastNodeLength = 1
+          return
+        }
+
+        const doc = runtimeContainer.doc ?? targetParent.ownerDocument
+        if (!doc) {
+          throw new Error('Client insertions require an active runtime document.')
+        }
+
+        replaceCurrentNodes(currentNodes, doc.createTextNode(primitiveValue.value))
+        return
+      }
+
+      if (currentNodes.length === 1 && isManagedEmptyInsertComment(currentNodes[0])) {
+        rememberInsertMarkerRange(liveMarker, currentNodes)
+        lastFirstNode = currentNodes[0]
+        lastNodeLength = 1
+        return
+      }
+
+      const doc = runtimeContainer.doc ?? targetParent.ownerDocument
+      if (!doc) {
+        throw new Error('Client insertions require an active runtime document.')
+      }
+
+      replaceCurrentNodes(currentNodes, doc.createComment(EMPTY_INSERT_COMMENT))
+      return
+    }
+
     const newNodes = owner
       ? renderClientInsertableForOwner(value, runtimeContainer, owner)
       : renderClientInsertable(value, runtimeContainer)
     const seededCurrentNodes =
-      lastNodeLength === 0 && liveMarker instanceof Comment
-        ? collectNodesBeforeMarker(liveMarker, newNodes.length)
-        : []
+      seedCurrentNodes(newNodes.length)
     const currentNodes =
       seededCurrentNodes.length !== 0 &&
       seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents)) &&
@@ -372,15 +502,19 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
 
   if (name === BIND_VALUE_PROP) {
+    let lastSignalId = ATTR_UNSET as string | symbol | null
     const readBinding = () => {
       const binding = value()
       const signalId = getRuntimeSignalId(binding)
-      if (signalId) {
-        elem.setAttribute(BIND_VALUE_ATTR, signalId)
-      } else {
-        elem.removeAttribute(BIND_VALUE_ATTR)
+      if (signalId !== lastSignalId) {
+        if (signalId) {
+          elem.setAttribute(BIND_VALUE_ATTR, signalId)
+        } else {
+          elem.removeAttribute(BIND_VALUE_ATTR)
+        }
+        syncManagedAttributeSnapshot(elem, BIND_VALUE_ATTR)
+        lastSignalId = signalId
       }
-      syncManagedAttributeSnapshot(elem, BIND_VALUE_ATTR)
       return binding
     }
 
@@ -400,9 +534,11 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
       if (!isBindableSignal(binding)) {
         return
       }
-      ;(elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value = String(
-        binding.value ?? '',
-      )
+      const input = elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      const nextValue = String(binding.value ?? '')
+      if (input.value !== nextValue) {
+        input.value = nextValue
+      }
     })
     return
   }
@@ -412,15 +548,19 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
       return
     }
 
+    let lastSignalId = ATTR_UNSET as string | symbol | null
     const readBinding = () => {
       const binding = value()
       const signalId = getRuntimeSignalId(binding)
-      if (signalId) {
-        elem.setAttribute(BIND_CHECKED_ATTR, signalId)
-      } else {
-        elem.removeAttribute(BIND_CHECKED_ATTR)
+      if (signalId !== lastSignalId) {
+        if (signalId) {
+          elem.setAttribute(BIND_CHECKED_ATTR, signalId)
+        } else {
+          elem.removeAttribute(BIND_CHECKED_ATTR)
+        }
+        syncManagedAttributeSnapshot(elem, BIND_CHECKED_ATTR)
+        lastSignalId = signalId
       }
-      syncManagedAttributeSnapshot(elem, BIND_CHECKED_ATTR)
       return binding
     }
 
@@ -440,7 +580,10 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
       if (!isBindableSignal(binding)) {
         return
       }
-      elem.checked = Boolean(binding.value)
+      const nextChecked = Boolean(binding.value)
+      if (elem.checked !== nextChecked) {
+        elem.checked = nextChecked
+      }
     })
     return
   }
@@ -459,29 +602,67 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   }
 
   if (name === 'style') {
+    let lastStyleString = ATTR_UNSET as string | symbol
+    let lastStyleMap: Map<string, string> | null = null
+    const style = getElementStyleDeclaration(elem)
+
     effect(() => {
       const resolved = value()
-      const styleValue =
-        resolved && typeof resolved === 'object'
-          ? Object.entries(resolved as Record<string, string>)
-              .map(([k, v]) => `${k}: ${v}`)
-              .join('; ')
-          : String(resolved ?? '')
+      if (style && resolved && typeof resolved === 'object') {
+        const nextStyleMap = new Map(
+          Object.entries(resolved as Record<string, string>).map(([styleName, styleValue]) => [
+            styleName,
+            String(styleValue),
+          ]),
+        )
+
+        for (const [styleName, styleValue] of nextStyleMap) {
+          if (lastStyleMap?.get(styleName) !== styleValue) {
+            style.setProperty(styleName, styleValue)
+          }
+        }
+
+        if (lastStyleMap) {
+          for (const styleName of lastStyleMap.keys()) {
+            if (!nextStyleMap.has(styleName)) {
+              style.removeProperty(styleName)
+            }
+          }
+        }
+
+        lastStyleMap = nextStyleMap
+        lastStyleString = ATTR_UNSET
+        syncManagedAttributeSnapshot(elem, 'style')
+        return
+      }
+
+      lastStyleMap = null
+      const styleValue = serializeStyleValue(resolved)
+      if (lastStyleString === styleValue) {
+        return
+      }
       elem.setAttribute('style', styleValue)
+      lastStyleString = styleValue
       syncManagedAttributeSnapshot(elem, 'style')
     })
     return
   }
 
   if (name === 'class') {
+    let lastClassValue = ATTR_UNSET as string | symbol
     effect(() => {
-      if (isSVG) {
-        elem.setAttribute('class', String(value()))
-        syncManagedAttributeSnapshot(elem, 'class')
+      const nextClassValue = String(value())
+      if (lastClassValue === nextClassValue) {
         return
       }
-      ;(elem as Element & { className: string }).className = String(value())
-      syncManagedAttributeSnapshot(elem, 'class')
+      if (isSVG) {
+        elem.setAttribute('class', nextClassValue)
+        syncManagedAttributeSnapshot(elem, 'class')
+      } else {
+        ;(elem as Element & { className: string }).className = nextClassValue
+        syncManagedAttributeSnapshot(elem, 'class')
+      }
+      lastClassValue = nextClassValue
     })
     return
   }
@@ -494,23 +675,35 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
   }
 
   if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+    let lastHTML = ATTR_UNSET as string | symbol
     effect(() => {
       const html = value()
-      ;(elem as Element & { innerHTML: string }).innerHTML =
+      const nextHTML =
         html === false || html === undefined || html === null ? '' : String(html)
+      if (lastHTML === nextHTML) {
+        return
+      }
+      ;(elem as Element & { innerHTML: string }).innerHTML = nextHTML
+      lastHTML = nextHTML
     })
     return
   }
 
+  let lastAssignedValue = ATTR_UNSET as string | symbol
   effect(() => {
-    if (shouldUseAttributeAssignment(elem, name, isSVG)) {
-      elem.setAttribute(name, String(value()))
-      syncManagedAttributeSnapshot(elem, name)
+    const nextValue = String(value())
+    if (lastAssignedValue === nextValue) {
       return
     }
-    // @ts-expect-error DOM property assignment uses dynamic keys.
-    elem[name] = String(value())
-    syncManagedAttributeSnapshot(elem, name)
+    if (shouldUseAttributeAssignment(elem, name, isSVG)) {
+      elem.setAttribute(name, nextValue)
+      syncManagedAttributeSnapshot(elem, name)
+    } else {
+      // @ts-expect-error DOM property assignment uses dynamic keys.
+      elem[name] = nextValue
+      syncManagedAttributeSnapshot(elem, name)
+    }
+    lastAssignedValue = nextValue
   })
 }
 

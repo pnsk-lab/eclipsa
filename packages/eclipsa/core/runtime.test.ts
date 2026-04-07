@@ -16,12 +16,14 @@ import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.t
 import {
   createDelegatedEvent,
   createDetachedRuntimeSignal,
+  deserializeContainerValue,
   dispatchDocumentEvent,
   flushDirtyComponents,
   installResumeListeners,
   rememberInsertMarkerRange,
   renderClientInsertable,
   restoreResumedLocalSignalEffects,
+  serializeContainerValue,
   syncBoundElementSignal,
   tryPatchBoundaryContentsInPlace,
   tryPatchElementShellInPlace,
@@ -1235,6 +1237,36 @@ describe('renderClientInsertable', () => {
 
       value.value = 'gamma'
       expect((input as unknown as FakeElement).value).toBe('gamma')
+    })
+  })
+
+  it('updates primitive insert text in place without replacing the text node', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const value = createDetachedRuntimeSignal(container, 's0', 'alpha')
+      const doc = container.doc as unknown as FakeDocument
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.ownerDocument = doc
+      marker.ownerDocument = doc
+      host.appendChild(marker)
+      ;(doc.body as unknown as FakeElement).appendChild(host)
+
+      withRuntimeContainer(container, () => {
+        insert(() => value.value, host as unknown as Node, marker as unknown as Node)
+      })
+
+      const initialText = host.childNodes[0] as FakeText | undefined
+      expect(initialText?.data).toBe('alpha')
+      expect(host.childNodes[1]).toBe(marker)
+
+      value.value = 'beta'
+      await flushAsync()
+
+      const liveText = host.childNodes[0] as FakeText | undefined
+      expect(liveText?.data).toBe('beta')
+      expect(liveText).toBe(initialText)
+      expect(host.childNodes[1]).toBe(marker)
     })
   })
 
@@ -7732,6 +7764,76 @@ describe('renderClientInsertable', () => {
       const rows = getRows()
       expect(rows).toHaveLength(2)
       expect(rows.map((row) => row.textContent)).toEqual(['ToDo1', 'Ship e2e'])
+    })
+  })
+
+  it('preserves static text when inserting a primitive before a template marker', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const count = createDetachedRuntimeSignal(container, 's0', 0)
+      const button = new FakeElement('button')
+      const staticText = new FakeText('Layout count: ')
+      const marker = new FakeComment('marker')
+      button.appendChild(staticText)
+      button.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert((() => count.value) as Parameters<typeof insert>[0], button as unknown as Node, marker)
+      })
+
+      expect(button.childNodes).toHaveLength(3)
+      expect(button.childNodes[0]).toBe(staticText)
+      expect((button.childNodes[1] as FakeText).data).toBe('0')
+
+      count.value = 1
+      await flushAsync()
+
+      expect(button.childNodes).toHaveLength(3)
+      expect(button.childNodes[0]).toBe(staticText)
+      expect((button.childNodes[1] as FakeText).data).toBe('1')
+    })
+  })
+
+  it('normalizes render references without an explicit static flag during serialization', () => {
+    const container = createContainer()
+    const serialized = serializeContainerValue(container, {
+      props: {
+        src: '/app/+client.dev.tsx',
+        type: 'module',
+      },
+      type: 'script',
+    })
+
+    expect(serialized).toEqual({
+      __eclipsa_type: 'ref',
+      data: [
+        'element',
+        'script',
+        null,
+        {
+          __eclipsa_type: 'object',
+          entries: [
+            ['src', '/app/+client.dev.tsx'],
+            ['type', 'module'],
+          ],
+        },
+        null,
+        false,
+        null,
+      ],
+      kind: 'render',
+      token: 'jsx',
+    })
+
+    expect(deserializeContainerValue(container, serialized as any)).toEqual({
+      isStatic: false,
+      key: undefined,
+      metadata: undefined,
+      props: {
+        src: '/app/+client.dev.tsx',
+        type: 'module',
+      },
+      type: 'script',
     })
   })
 

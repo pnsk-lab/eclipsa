@@ -176,7 +176,10 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
     true,
     ts.ScriptKind.TSX,
   )
-  const insertions: number[] = []
+  const insertions: Array<{
+    code: string
+    index: number
+  }> = []
 
   const visit = (node: ts.Node) => {
     if (
@@ -184,8 +187,17 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
       ts.isIdentifier(node.expression) &&
       node.expression.text === '__eclipsaComponent'
     ) {
+      if (node.arguments.length >= 5) {
+        return
+      }
       const lastArgument = node.arguments.at(-1)
-      insertions.push(lastArgument ? lastArgument.end : node.expression.end + 1)
+      insertions.push({
+        code:
+          node.arguments.length >= 4
+            ? ', { optimizedRoot: true }'
+            : ', undefined, { optimizedRoot: true }',
+        index: lastArgument ? lastArgument.end : node.expression.end + 1,
+      })
     }
     ts.forEachChild(node, visit)
   }
@@ -197,8 +209,9 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
   }
 
   let nextSource = source
-  for (const index of [...insertions].sort((left, right) => right - left)) {
-    nextSource = nextSource.slice(0, index) + ', { optimizedRoot: true }' + nextSource.slice(index)
+  for (const insertion of [...insertions].sort((left, right) => right.index - left.index)) {
+    nextSource =
+      nextSource.slice(0, insertion.index) + insertion.code + nextSource.slice(insertion.index)
   }
 
   return nextSource
