@@ -4,11 +4,15 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
+import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
 
 const mocks = vi.hoisted(() => ({
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppLoaders: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppSymbols: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
+  collectReachableAnalyzableFiles: vi.fn<
+    (entryFiles: readonly string[]) => Promise<string[]>
+  >(),
   createRouteManifest: vi.fn(),
   createRoutes: vi.fn<() => Promise<RouteEntry[]>>(),
   toSSG: vi.fn(),
@@ -38,6 +42,7 @@ vi.mock('../compiler.ts', () => ({
   collectAppActions: mocks.collectAppActions,
   collectAppLoaders: mocks.collectAppLoaders,
   collectAppSymbols: mocks.collectAppSymbols,
+  collectReachableAnalyzableFiles: mocks.collectReachableAnalyzableFiles,
   createBuildServerActionUrl: vi.fn((id: string) => `/__eclipsa/action/${id}`),
   createBuildServerLoaderUrl: vi.fn((id: string) => `/__eclipsa/loader/${id}`),
   createBuildSymbolUrl: vi.fn((id: string) => `/entries/symbol__${id}.js`),
@@ -57,8 +62,14 @@ const createBuilder = () =>
 const writeMinimalRuntimeEntry = async (
   root: string,
   options?: {
+    executeActionSource?: string
+    executeLoaderSource?: string
     escapeInlineScriptTextSource?: string
     escapeJSONScriptTextSource?: string
+    getActionFormSubmissionIdSource?: string
+    getNormalizedActionInputSource?: string
+    hasActionSource?: string
+    hasLoaderSource?: string
     renderSSRAsyncSource?: string
   },
 ) => {
@@ -68,14 +79,16 @@ const writeMinimalRuntimeEntry = async (
     path.join(entriesDir, 'eclipsa_runtime.mjs'),
     [
       'export const Fragment = Symbol.for("fragment");',
-      'export const executeAction = async () => new Response(null, { status: 204 });',
-      'export const executeLoader = async () => new Response(null, { status: 204 });',
+      options?.executeActionSource ??
+        'export const executeAction = async () => new Response(null, { status: 204 });',
+      options?.executeLoaderSource ??
+        'export const executeLoader = async () => new Response(null, { status: 204 });',
       options?.escapeInlineScriptTextSource ??
         'export const escapeInlineScriptText = (value) => value;',
       options?.escapeJSONScriptTextSource ??
         'export const escapeJSONScriptText = (value) => value;',
-      'export const hasAction = () => false;',
-      'export const hasLoader = () => false;',
+      options?.hasActionSource ?? 'export const hasAction = () => false;',
+      options?.hasLoaderSource ?? 'export const hasLoader = () => false;',
       'export const jsxDEV = () => ({});',
       options?.renderSSRAsyncSource ??
         'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
@@ -87,8 +100,10 @@ const writeMinimalRuntimeEntry = async (
       'export const attachRequestFetch = () => undefined;',
       'export const createRequestFetch = () => undefined;',
       'export const deserializePublicValue = (value) => value;',
-      'export const getActionFormSubmissionId = async () => null;',
-      'export const getNormalizedActionInput = async () => null;',
+      options?.getActionFormSubmissionIdSource ??
+        'export const getActionFormSubmissionId = async () => null;',
+      options?.getNormalizedActionInputSource ??
+        'export const getNormalizedActionInput = async () => null;',
       'export const getStreamingResumeBootstrapScriptContent = () => "";',
       'export const markPublicError = (_, value) => value;',
       'export const primeActionState = () => undefined;',
@@ -145,6 +160,17 @@ const createRootRoute = (): RouteEntry => ({
   server: null,
 })
 
+const writeAppSource = async (
+  root: string,
+  relativePath: string,
+  source = 'export default () => null;\n',
+) => {
+  const filePath = path.join(root, 'app', relativePath)
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, source)
+  return filePath
+}
+
 describe('toHonoRoutePaths', () => {
   it('expands optional segments into concrete Hono paths', () => {
     expect(
@@ -183,6 +209,9 @@ describe('build', () => {
     mocks.collectAppActions.mockResolvedValue([])
     mocks.collectAppLoaders.mockResolvedValue([])
     mocks.collectAppSymbols.mockResolvedValue([])
+    mocks.collectReachableAnalyzableFiles.mockImplementation(async (entryFiles: readonly string[]) => [
+      ...entryFiles,
+    ])
     mocks.createRouteManifest.mockReturnValue([])
     mocks.createRoutes.mockResolvedValue([createRootRoute()])
     mocks.toSSG.mockReset()
@@ -289,6 +318,189 @@ describe('build', () => {
       location: 'http://localhost/counter',
       ok: false,
     })
+  })
+
+  it('runs server hooks and route middleware for built action and loader rpc requests', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-rpc-route-'))
+    const builder = createBuilder()
+    const securePagePath = await writeAppSource(root, 'secure/[id]/+page.tsx')
+    const publicPagePath = await writeAppSource(root, 'public/+page.tsx')
+    await writeAppSource(
+      root,
+      '+hooks.server.ts',
+      'export const handle = async (_c, resolve) => resolve(_c);\n',
+    )
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      executeActionSource: [
+        'export const executeAction = async (_id, c) =>',
+        '  c.json({',
+        '    guard: c.get("guard") ?? null,',
+        '    handled: c.get("fromHandle") ?? null,',
+        '    id: c.req.param("id") ?? null,',
+        '  });',
+      ].join('\n'),
+      executeLoaderSource: [
+        'export const executeLoader = async (_id, c) =>',
+        '  c.json({',
+        '    guard: c.get("guard") ?? null,',
+        '    handled: c.get("fromHandle") ?? null,',
+        '    id: c.req.param("id") ?? null,',
+        '  });',
+      ].join('\n'),
+      hasActionSource: 'export const hasAction = () => true;',
+      hasLoaderSource: 'export const hasLoader = () => true;',
+    })
+    await writeBuiltPageModule(root, 'route__secure___id___page', 'export default () => null;\n')
+    await writeBuiltPageModule(root, 'route__public__page', 'export default () => null;\n')
+    await writeBuiltPageModule(
+      root,
+      'special__secure__middleware',
+      'export default async (c, next) => { c.set("guard", "secure"); await next(); };\n',
+    )
+    await writeBuiltPageModule(
+      root,
+      'server_hooks',
+      'export const handle = async (c, resolve) => { c.set("fromHandle", "yes"); return resolve(c); };\n',
+    )
+    mocks.collectAppActions.mockResolvedValue([{ filePath: securePagePath, id: 'secure-action' }])
+    mocks.collectAppLoaders.mockResolvedValue([{ filePath: securePagePath, id: 'secure-loader' }])
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        middlewares: [
+          {
+            entryName: 'special__secure__middleware',
+            filePath: path.join(root, 'app/secure/+middleware.ts'),
+          },
+        ],
+        page: {
+          entryName: 'route__secure___id___page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure/[id]',
+        segments: [
+          { kind: 'static', value: 'secure' },
+          { kind: 'required', value: 'id' },
+        ],
+      },
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__public__page',
+          filePath: publicPagePath,
+        },
+        routePath: '/public',
+        segments: [{ kind: 'static', value: 'public' }],
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const actionResponse = await app.fetch(
+      new Request('http://localhost/__eclipsa/action/secure-action', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+        method: 'POST',
+      }),
+    )
+    expect(actionResponse.status).toBe(200)
+    await expect(actionResponse.json()).resolves.toEqual({
+      guard: 'secure',
+      handled: 'yes',
+      id: '123',
+    })
+
+    const loaderResponse = await app.fetch(
+      new Request('http://localhost/__eclipsa/loader/secure-loader', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+      }),
+    )
+    expect(loaderResponse.status).toBe(200)
+    await expect(loaderResponse.json()).resolves.toEqual({
+      guard: 'secure',
+      handled: 'yes',
+      id: '123',
+    })
+
+    const blockedResponse = await app.fetch(
+      new Request('http://localhost/__eclipsa/action/secure-action', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/public',
+        },
+        method: 'POST',
+      }),
+    )
+    expect(blockedResponse.status).toBe(404)
+  })
+
+  it('rejects built form posts that target actions outside the current route graph', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-form-action-'))
+    const builder = createBuilder()
+    const securePagePath = await writeAppSource(root, 'secure/+page.tsx')
+    const publicPagePath = await writeAppSource(root, 'public/+page.tsx')
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      executeActionSource: 'export const executeAction = async () => new Response(null, { status: 204 });',
+      getActionFormSubmissionIdSource: [
+        'export const getActionFormSubmissionId = async (c) => {',
+        '  const formData = await c.req.formData();',
+        '  return formData.get("__e_action");',
+        '};',
+      ].join('\n'),
+      hasActionSource: 'export const hasAction = () => true;',
+    })
+    await writeBuiltPageModule(root, 'route__secure__page', 'export default () => null;\n')
+    await writeBuiltPageModule(root, 'route__public__page', 'export default () => null;\n')
+    mocks.collectAppActions.mockResolvedValue([{ filePath: securePagePath, id: 'secure-action' }])
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__secure__page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure',
+        segments: [{ kind: 'static', value: 'secure' }],
+      },
+      {
+        ...createRootRoute(),
+        page: {
+          entryName: 'route__public__page',
+          filePath: publicPagePath,
+        },
+        routePath: '/public',
+        segments: [{ kind: 'static', value: 'public' }],
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const formData = new FormData()
+    formData.set('__e_action', 'secure-action')
+    const response = await app.fetch(
+      new Request('http://localhost/public', {
+        body: formData,
+        method: 'POST',
+      }),
+    )
+
+    expect(response.status).toBe(404)
   })
 
   it('serves not-found loader snapshots from the built route-data endpoint', async () => {

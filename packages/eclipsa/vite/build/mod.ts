@@ -16,6 +16,7 @@ import {
   ROUTE_DATA_REQUEST_HEADER,
   ROUTE_MANIFEST_ELEMENT_ID,
   ROUTE_PREFLIGHT_ENDPOINT,
+  ROUTE_RPC_URL_HEADER,
 } from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
@@ -28,6 +29,7 @@ import {
   collectAppActions,
   collectAppLoaders,
   collectAppSymbols,
+  collectReachableAnalyzableFiles,
   createBuildServerActionUrl,
   createBuildServerLoaderUrl,
   createBuildSymbolUrl,
@@ -504,6 +506,47 @@ const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>
     })),
   )
 
+const toIdsByFilePath = (entries: ReadonlyArray<{ filePath: string; id: string }>) => {
+  const idsByFilePath = new Map<string, string[]>()
+  for (const entry of entries) {
+    const existing = idsByFilePath.get(entry.filePath)
+    if (existing) {
+      existing.push(entry.id)
+      continue
+    }
+    idsByFilePath.set(entry.filePath, [entry.id])
+  }
+  return idsByFilePath
+}
+
+const getRouteReachableEntryFiles = (route: Awaited<ReturnType<typeof createRoutes>>[number]) =>
+  [
+    route.error?.filePath,
+    ...route.layouts.map((layout) => layout.filePath),
+    route.loading?.filePath,
+    route.notFound?.filePath,
+    route.page?.filePath,
+  ].filter((filePath): filePath is string => typeof filePath === 'string')
+
+const createRouteServerAccessEntries = async (
+  routes: Awaited<ReturnType<typeof createRoutes>>,
+  actions: ReadonlyArray<{ filePath: string; id: string }>,
+  loaders: ReadonlyArray<{ filePath: string; id: string }>,
+) => {
+  const actionIdsByFilePath = toIdsByFilePath(actions)
+  const loaderIdsByFilePath = toIdsByFilePath(loaders)
+
+  return await Promise.all(
+    routes.map(async (route) => {
+      const reachableFiles = await collectReachableAnalyzableFiles(getRouteReachableEntryFiles(route))
+      return {
+        actionIds: reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? []),
+        loaderIds: reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),
+      }
+    }),
+  )
+}
+
 const createActionTable = (actions: Array<{ filePath: string; id: string }>) =>
   actions
     .map(
@@ -536,6 +579,7 @@ const renderAppModule = (
   appHooksServerUrl: string | null,
   loaders: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
+  routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
   routeManifest: RouteManifest,
   serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
@@ -549,6 +593,7 @@ const renderAppModule = (
   const serializedAppHooksManifest = JSON.stringify({
     client: appHooksClientUrl,
   })
+  const serializedRouteServerAccessEntries = JSON.stringify(routeServerAccessEntries)
   const serializedAppHooksServerUrl = JSON.stringify(appHooksServerUrl)
   const serializedSymbolUrls = JSON.stringify(symbolUrls)
   const serializedRouteManifest = JSON.stringify(routeManifest)
@@ -568,6 +613,7 @@ const loaders = {
 ${loaderTable}
 };
 const routes = ${serializedRoutes};
+const routeServerAccessEntries = ${serializedRouteServerAccessEntries};
 const pageRouteEntries = ${serializedPageRouteEntries};
 const appHooksManifest = ${serializedAppHooksManifest};
 const appHooksServerUrl = ${serializedAppHooksServerUrl};
@@ -821,6 +867,40 @@ const prepareRequestContext = (c, hooks) => {
 
 const reroutePathname = (hooks, request, pathname, baseUrl) =>
   normalizeRoutePath(resolveReroute(hooks.reroute, request, pathname, baseUrl));
+
+const getRouteServerAccess = (route) => {
+  const routeIndex = routes.indexOf(route);
+  const entry = routeIndex >= 0 ? routeServerAccessEntries[routeIndex] : null;
+  return entry ?? { actionIds: [], loaderIds: [] };
+};
+
+const resolveRouteForCurrentUrl = (hooks, request, currentUrl) => {
+  const resolvedPathname = reroutePathname(hooks, request, normalizeRoutePath(currentUrl.pathname), currentUrl.href);
+  const match = matchRoute(resolvedPathname);
+  if (match?.route?.page) {
+    return match;
+  }
+  const fallback = findSpecialRoute(resolvedPathname, "notFound");
+  return fallback?.route?.notFound ? fallback : null;
+};
+
+const getRpcCurrentRoute = (hooks, c) => {
+  const requestUrl = getRequestUrl(c.req.raw);
+  const routeUrlHeader = c.req.header(${JSON.stringify(ROUTE_RPC_URL_HEADER)});
+  if (!routeUrlHeader) {
+    return null;
+  }
+  let currentUrl;
+  try {
+    currentUrl = new URL(routeUrlHeader, requestUrl);
+  } catch {
+    return null;
+  }
+  if (currentUrl.origin !== requestUrl.origin) {
+    return null;
+  }
+  return resolveRouteForCurrentUrl(hooks, c.req.raw, currentUrl);
+};
 
 const resolveRequest = async (c, handler) => {
   const { appHooks, serverHooks } = await hooksPromise;
@@ -1322,29 +1402,65 @@ for (const pageRouteEntry of pageRouteEntries) {
   });
 }
 
-app.post("/__eclipsa/action/:id", async (c) => {
-  const id = c.req.param("id");
-  const moduleUrl = actions[id];
-  if (!moduleUrl) {
-    return c.text("Not Found", 404);
-  }
-  if (!hasAction(id)) {
-    await import(moduleUrl);
-  }
-  return executeAction(id, c);
-});
+app.post("/__eclipsa/action/:id", async (c) =>
+  resolveRequest(c, async (requestContext, appHooks) => {
+    const id = requestContext.req.param("id");
+    if (!id) {
+      return requestContext.text("Not Found", 404);
+    }
+    const routeMatch = getRpcCurrentRoute(appHooks, requestContext);
+    if (!routeMatch) {
+      return requestContext.text("Bad Request", 400);
+    }
+    const routeAccess = getRouteServerAccess(routeMatch.route);
+    if (!routeAccess.actionIds.includes(id)) {
+      return requestContext.text("Not Found", 404);
+    }
+    const moduleUrl = actions[id];
+    if (!moduleUrl) {
+      return requestContext.text("Not Found", 404);
+    }
+    if (!hasAction(id)) {
+      await import(moduleUrl);
+    }
+    return composeRouteMiddlewares(
+      routeMatch.route,
+      requestContext,
+      routeMatch.params,
+      async () => executeAction(id, requestContext),
+    );
+  }),
+);
 
-app.get("/__eclipsa/loader/:id", async (c) => {
-  const id = c.req.param("id");
-  const moduleUrl = loaders[id];
-  if (!moduleUrl) {
-    return c.text("Not Found", 404);
-  }
-  if (!hasLoader(id)) {
-    await import(moduleUrl);
-  }
-  return executeLoader(id, c);
-});
+app.get("/__eclipsa/loader/:id", async (c) =>
+  resolveRequest(c, async (requestContext, appHooks) => {
+    const id = requestContext.req.param("id");
+    if (!id) {
+      return requestContext.text("Not Found", 404);
+    }
+    const routeMatch = getRpcCurrentRoute(appHooks, requestContext);
+    if (!routeMatch) {
+      return requestContext.text("Bad Request", 400);
+    }
+    const routeAccess = getRouteServerAccess(routeMatch.route);
+    if (!routeAccess.loaderIds.includes(id)) {
+      return requestContext.text("Not Found", 404);
+    }
+    const moduleUrl = loaders[id];
+    if (!moduleUrl) {
+      return requestContext.text("Not Found", 404);
+    }
+    if (!hasLoader(id)) {
+      await import(moduleUrl);
+    }
+    return composeRouteMiddlewares(
+      routeMatch.route,
+      requestContext,
+      routeMatch.params,
+      async () => executeLoader(id, requestContext),
+    );
+  }),
+);
 
 app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) => {
   const href = c.req.query("href");
@@ -1408,6 +1524,10 @@ app.all("*", async (c) => {
           return match.route.server
             ? invokeRouteServer(match.route.server, c, match.params)
             : renderMatchedPage(match, c);
+        }
+        const routeAccess = getRouteServerAccess(match.route);
+        if (!routeAccess.actionIds.includes(actionId)) {
+          return c.text("Not Found", 404);
         }
         const moduleUrl = actions[actionId];
         if (!moduleUrl) {
@@ -1565,6 +1685,7 @@ export const build = async (
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
   const routes = await createRoutes(root)
+  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
   const staticPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'static',
   )
@@ -1618,6 +1739,7 @@ export const build = async (
       appHooksServerUrl,
       loaders,
       routes,
+      routeServerAccessEntries,
       routeManifest,
       serverHooksUrl,
       symbolUrls,

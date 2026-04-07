@@ -19,6 +19,7 @@ import {
   type RuntimeContainer,
 } from './runtime.ts'
 import { registerActionHook, setActionHandleMeta, setActionHookMeta } from './internal.ts'
+import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 
 const ACTION_REGISTRY_KEY = Symbol.for('eclipsa.action-registry')
 export const ACTION_CONTENT_TYPE = 'application/eclipsa-action+json'
@@ -690,6 +691,7 @@ const toClientAsyncGenerator = async function* (
 
 const invokeAction = async (id: string, input: unknown, container: RuntimeContainer | null) => {
   const isFormSubmission = isFormDataValue(input)
+  const currentRouteUrl = typeof window !== 'undefined' ? window.location.href : null
   const response = await fetch(`/__eclipsa/action/${encodeURIComponent(id)}`, {
     body: isFormSubmission
       ? input
@@ -698,6 +700,7 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
         }),
     headers: {
       accept: `${ACTION_STREAM_CONTENT_TYPE}, ${ACTION_CONTENT_TYPE}`,
+      ...(currentRouteUrl ? { [ROUTE_RPC_URL_HEADER]: currentRouteUrl } : {}),
       ...(isFormSubmission ? {} : { 'content-type': ACTION_CONTENT_TYPE }),
     },
     method: 'POST',

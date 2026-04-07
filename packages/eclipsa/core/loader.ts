@@ -13,6 +13,7 @@ import {
   getRuntimeContainer,
   type RuntimeContainer,
 } from './runtime.ts'
+import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 
 const LOADER_REGISTRY_KEY = Symbol.for('eclipsa.loader-registry')
 const LOADER_CONTENT_TYPE = 'application/eclipsa-loader+json'
@@ -255,9 +256,11 @@ const parseJsonLoaderResponse = async (response: Response) => {
 }
 
 const invokeLoader = async (id: string) => {
+  const currentRouteUrl = typeof window !== 'undefined' ? window.location.href : null
   const response = await fetch(`/__eclipsa/loader/${encodeURIComponent(id)}`, {
     headers: {
       accept: LOADER_CONTENT_TYPE,
+      ...(currentRouteUrl ? { [ROUTE_RPC_URL_HEADER]: currentRouteUrl } : {}),
     },
     method: 'GET',
   })

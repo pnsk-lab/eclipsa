@@ -601,6 +601,61 @@ export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> =
   return [...symbols.values()]
 }
 
+export const collectReachableAnalyzableFiles = async (
+  entryFiles: readonly string[],
+): Promise<string[]> => {
+  const pending = [...entryFiles]
+  const visited = new Set<string>()
+  const reachable = new Set<string>()
+  const entryFileSet = new Set(entryFiles.map((filePath) => stripQuery(filePath)))
+
+  while (pending.length > 0) {
+    const next = pending.pop()
+    if (!next) {
+      continue
+    }
+
+    const filePath = stripQuery(next)
+    if (visited.has(filePath) || !isAnalyzableSourceFile(filePath)) {
+      continue
+    }
+    visited.add(filePath)
+
+    let source: string
+    try {
+      source = await fs.readFile(filePath, 'utf8')
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      if (entryFileSet.has(filePath) && code !== 'ENOENT' && code !== 'ENOTDIR') {
+        throw error
+      }
+      continue
+    }
+
+    try {
+      await loadAnalyzedModule(filePath, source)
+    } catch (error) {
+      if (entryFileSet.has(filePath)) {
+        throw error
+      }
+      continue
+    }
+
+    reachable.add(filePath)
+
+    const imports = ts.preProcessFile(source, true, true).importedFiles
+    for (const imported of imports) {
+      const resolvedFilePath = resolveImportedModule(imported.fileName, filePath)
+      if (!resolvedFilePath || !isAnalyzableSourceFile(resolvedFilePath)) {
+        continue
+      }
+      pending.push(resolvedFilePath)
+    }
+  }
+
+  return [...reachable]
+}
+
 export const collectAppActions = async (
   root: string,
 ): Promise<Array<{ filePath: string; id: string }>> => {

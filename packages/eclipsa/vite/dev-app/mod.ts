@@ -9,6 +9,7 @@ import {
   ROUTE_MANIFEST_ELEMENT_ID,
   ROUTE_PREFLIGHT_ENDPOINT,
   ROUTE_PREFLIGHT_REQUEST_HEADER,
+  ROUTE_RPC_URL_HEADER,
   type RouteParams,
 } from '../../core/router-shared.ts'
 import type { SSRRootProps } from '../../core/types.ts'
@@ -44,6 +45,7 @@ import {
   collectAppActions,
   collectAppLoaders,
   collectAppSymbols,
+  collectReachableAnalyzableFiles,
   createDevSymbolUrl,
   primeCompilerCache,
 } from '../compiler.ts'
@@ -132,6 +134,12 @@ interface RouteDataResponse {
   ok: true
 }
 
+interface RouteServerAccessEntry {
+  actionIds: Set<string>
+  loaderIds: Set<string>
+  route: RouteEntry
+}
+
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
   html.replaceAll(placeholder, value)
 
@@ -154,6 +162,48 @@ const splitHtmlForStreaming = (html: string) => {
     prefix: html,
     suffix: '',
   }
+}
+
+const toIdsByFilePath = (entries: ReadonlyArray<{ filePath: string; id: string }>) => {
+  const idsByFilePath = new Map<string, string[]>()
+  for (const entry of entries) {
+    const existing = idsByFilePath.get(entry.filePath)
+    if (existing) {
+      existing.push(entry.id)
+      continue
+    }
+    idsByFilePath.set(entry.filePath, [entry.id])
+  }
+  return idsByFilePath
+}
+
+const getRouteReachableEntryFiles = (route: RouteEntry) =>
+  [
+    route.error?.filePath,
+    ...route.layouts.map((layout) => layout.filePath),
+    route.loading?.filePath,
+    route.notFound?.filePath,
+    route.page?.filePath,
+  ].filter((filePath): filePath is string => typeof filePath === 'string')
+
+const createRouteServerAccessEntries = async (
+  routes: readonly RouteEntry[],
+  actions: ReadonlyArray<{ filePath: string; id: string }>,
+  loaders: ReadonlyArray<{ filePath: string; id: string }>,
+) => {
+  const actionIdsByFilePath = toIdsByFilePath(actions)
+  const loaderIdsByFilePath = toIdsByFilePath(loaders)
+
+  return await Promise.all(
+    routes.map(async (route) => {
+      const reachableFiles = await collectReachableAnalyzableFiles(getRouteReachableEntryFiles(route))
+      return {
+        actionIds: new Set(reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? [])),
+        loaderIds: new Set(reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? [])),
+        route,
+      } satisfies RouteServerAccessEntry
+    }),
+  )
 }
 
 const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
@@ -379,6 +429,10 @@ const createDevApp = async (init: DevAppInit) => {
   const allSymbols = await deps.collectAppSymbols(init.resolvedConfig.root)
   const actionModules = new Map(actions.map((action) => [action.id, action.filePath]))
   const loaderModules = new Map(loaders.map((loader) => [loader.id, loader.filePath]))
+  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
+  const routeServerAccessByRoute = new Map(
+    routeServerAccessEntries.map((entry) => [entry.route, entry] as const),
+  )
   const symbolUrls = Object.fromEntries(
     allSymbols.map((symbol) => [
       symbol.id,
@@ -414,6 +468,44 @@ const createDevApp = async (init: DevAppInit) => {
 
   const reroutePathname = (request: Request | null, pathname: string, baseUrl: string) =>
     normalizeRoutePath(resolveReroute(appHooks.reroute, request, pathname, baseUrl))
+
+  const getRouteServerAccess = (route: RouteEntry) =>
+    routeServerAccessByRoute.get(route) ?? {
+      actionIds: new Set<string>(),
+      loaderIds: new Set<string>(),
+      route,
+    }
+
+  const resolveRouteForCurrentUrl = (request: Request | null, currentUrl: URL) => {
+    const resolvedPathname = reroutePathname(request, normalizeRoutePath(currentUrl.pathname), currentUrl.href)
+    const match = matchRoute(routes, resolvedPathname)
+    if (match?.route.page) {
+      return match
+    }
+    const fallback = findSpecialRoute(routes, resolvedPathname, 'notFound')
+    if (fallback?.route.notFound) {
+      return fallback
+    }
+    return null
+  }
+
+  const getRpcCurrentRoute = (requestContext: AppContext) => {
+    const requestUrl = getRequestUrl(requestContext.req.raw)
+    const routeUrlHeader = requestContext.req.header(ROUTE_RPC_URL_HEADER)
+    if (!routeUrlHeader) {
+      return null
+    }
+    let currentUrl: URL
+    try {
+      currentUrl = new URL(routeUrlHeader, requestUrl)
+    } catch {
+      return null
+    }
+    if (currentUrl.origin !== requestUrl.origin) {
+      return null
+    }
+    return resolveRouteForCurrentUrl(requestContext.req.raw, currentUrl)
+  }
 
   const resolveRequest = async <E extends Context>(
     c: E,
@@ -937,6 +1029,14 @@ const createDevApp = async (init: DevAppInit) => {
       if (!id) {
         return requestContext.text('Not Found', 404)
       }
+      const routeMatch = getRpcCurrentRoute(requestContext)
+      if (!routeMatch) {
+        return requestContext.text('Bad Request', 400)
+      }
+      const routeAccess = getRouteServerAccess(routeMatch.route)
+      if (!routeAccess.actionIds.has(id)) {
+        return requestContext.text('Not Found', 404)
+      }
       const modulePath = actionModules.get(id)
       if (!modulePath) {
         return requestContext.text('Not Found', 404)
@@ -944,7 +1044,9 @@ const createDevApp = async (init: DevAppInit) => {
       if (!hasAction(id)) {
         await init.runner.import(modulePath)
       }
-      return executeAction(id, requestContext)
+      return composeRouteMiddlewares(routeMatch.route, requestContext, routeMatch.params, async () =>
+        executeAction(id, requestContext),
+      ) as Promise<Response>
     }),
   )
 
@@ -955,6 +1057,14 @@ const createDevApp = async (init: DevAppInit) => {
       if (!id) {
         return requestContext.text('Not Found', 404)
       }
+      const routeMatch = getRpcCurrentRoute(requestContext)
+      if (!routeMatch) {
+        return requestContext.text('Bad Request', 400)
+      }
+      const routeAccess = getRouteServerAccess(routeMatch.route)
+      if (!routeAccess.loaderIds.has(id)) {
+        return requestContext.text('Not Found', 404)
+      }
       const modulePath = loaderModules.get(id)
       if (!modulePath) {
         return requestContext.text('Not Found', 404)
@@ -962,7 +1072,9 @@ const createDevApp = async (init: DevAppInit) => {
       if (!hasLoader(id)) {
         await init.runner.import(modulePath)
       }
-      return executeLoader(id, requestContext)
+      return composeRouteMiddlewares(routeMatch.route, requestContext, routeMatch.params, async () =>
+        executeLoader(id, requestContext),
+      ) as Promise<Response>
     }),
   )
 
@@ -1062,6 +1174,10 @@ const createDevApp = async (init: DevAppInit) => {
             return match.route.server
               ? invokeRouteServer(match.route.server.filePath, requestContext, match.params)
               : renderMatchedPage(match, requestContext)
+          }
+          const routeAccess = getRouteServerAccess(match.route)
+          if (!routeAccess.actionIds.has(actionId)) {
+            return requestContext.text('Not Found', 404)
           }
           const modulePath = actionModules.get(actionId)
           if (!modulePath) {

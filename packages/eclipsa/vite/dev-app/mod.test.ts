@@ -1,6 +1,10 @@
 import { Hono } from 'hono'
+import * as fs from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import * as path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
+import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
 
 var createRoutes = vi.fn<() => Promise<RouteEntry[]>>()
 var collectAppActions = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
@@ -12,6 +16,13 @@ import { createDevFetch, shouldInvalidateDevApp } from './mod.ts'
 
 const createDevModuleUrl = (root: string, entry: { filePath: string }) =>
   entry.filePath.replace(root, '')
+
+const writeRouteModule = async (root: string, relativePath: string, source = 'export default () => null\n') => {
+  const filePath = path.join(root, 'app', relativePath)
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, source)
+  return filePath
+}
 
 describe('createDevFetch', () => {
   let routes: RouteEntry[]
@@ -841,6 +852,249 @@ describe('createDevFetch', () => {
       location: 'http://localhost/counter',
       ok: false,
     })
+  })
+
+  it('runs route middleware and params for direct action and loader rpc requests', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-dev-rpc-route-'))
+    const securePagePath = await writeRouteModule(root, 'secure/[id]/+page.tsx')
+    const publicPagePath = await writeRouteModule(root, 'public/+page.tsx')
+    const secureMiddlewarePath = await writeRouteModule(
+      root,
+      'secure/+middleware.ts',
+      'export default async (_c, next) => { await next(); }\n',
+    )
+    const executeAction = vi.fn(async (_id: string, c: any) =>
+      c.json({
+        guard: c.var.guard ?? null,
+        id: c.req.param('id') ?? null,
+      }),
+    )
+    const executeLoader = vi.fn(async (_id: string, c: any) =>
+      c.json({
+        guard: c.var.guard ?? null,
+        id: c.req.param('id') ?? null,
+      }),
+    )
+
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__secure__middleware',
+            filePath: secureMiddlewarePath,
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__secure___id___page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure/[id]',
+        segments: [
+          { kind: 'static', value: 'secure' },
+          { kind: 'required', value: 'id' },
+        ],
+        server: null,
+      },
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__public__page',
+          filePath: publicPagePath,
+        },
+        routePath: '/public',
+        segments: [{ kind: 'static', value: 'public' }],
+        server: null,
+      },
+    ]
+    collectAppActions.mockResolvedValue([{ filePath: securePagePath, id: 'secure-action' }])
+    collectAppLoaders.mockResolvedValue([{ filePath: securePagePath, id: 'secure-loader' }])
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root,
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === secureMiddlewarePath) {
+            return {
+              default: async (c: any, next: () => Promise<void>) => {
+                c.set('guard', 'secure')
+                await next()
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              executeAction,
+              executeLoader,
+              hasAction: () => true,
+              hasLoader: () => true,
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const actionResponse = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/action/secure-action', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(actionResponse?.status).toBe(200)
+    await expect(actionResponse?.json()).resolves.toEqual({
+      guard: 'secure',
+      id: '123',
+    })
+
+    const loaderResponse = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/loader/secure-loader', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+      }),
+    )
+
+    expect(loaderResponse?.status).toBe(200)
+    await expect(loaderResponse?.json()).resolves.toEqual({
+      guard: 'secure',
+      id: '123',
+    })
+
+    const blockedResponse = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/action/secure-action', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/public',
+        },
+        method: 'POST',
+      }),
+    )
+
+    expect(blockedResponse).toBeUndefined()
+    expect(executeAction).toHaveBeenCalledTimes(1)
+    expect(executeLoader).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects form posts that target actions outside the current route graph', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-dev-form-action-'))
+    const securePagePath = await writeRouteModule(root, 'secure/+page.tsx')
+    const publicPagePath = await writeRouteModule(root, 'public/+page.tsx')
+    const executeAction = vi.fn(async () => new Response(null, { status: 204 }))
+
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__secure__page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure',
+        segments: [{ kind: 'static', value: 'secure' }],
+        server: null,
+      },
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__public__page',
+          filePath: publicPagePath,
+        },
+        routePath: '/public',
+        segments: [{ kind: 'static', value: 'public' }],
+        server: null,
+      },
+    ]
+    collectAppActions.mockResolvedValue([{ filePath: securePagePath, id: 'secure-action' }])
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root,
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === 'eclipsa') {
+            return {
+              ACTION_CONTENT_TYPE: 'application/eclipsa-action+json',
+              deserializePublicValue: (value: unknown) => value,
+              executeAction,
+              getActionFormSubmissionId: async (c: any) => {
+                const formData = await c.req.formData()
+                return formData.get('__e_action')
+              },
+              getNormalizedActionInput: async () => null,
+              hasAction: () => true,
+              primeActionState: () => undefined,
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const formData = new FormData()
+    formData.set('__e_action', 'secure-action')
+    const response = await devFetch.fetch(
+      new Request('http://localhost/public', {
+        body: formData,
+        method: 'POST',
+      }),
+    )
+
+    expect(response).toBeUndefined()
+    expect(executeAction).not.toHaveBeenCalled()
   })
 
   it('evaluates middleware against the target preflight URL', async () => {
