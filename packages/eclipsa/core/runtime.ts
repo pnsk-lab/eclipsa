@@ -1,6 +1,6 @@
 import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
-import { isSSRAttrValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { isSSRAttrValue, isSSRRawValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import {
@@ -4211,7 +4211,10 @@ const escapeText = (value: string) => escapeString(value, 'text')
 
 const escapeAttr = (value: string) => escapeString(value, 'attr')
 
-const renderSSRAttr = (name: string, value: unknown) => {
+export const renderSSRAttr = (name: string, value: unknown) => {
+  if (name === 'key') {
+    return ''
+  }
   if (value === false || value === undefined || value === null) {
     return ''
   }
@@ -4224,12 +4227,47 @@ const renderSSRAttr = (name: string, value: unknown) => {
 const renderStringArray = (values: readonly (JSX.Element | JSX.Element[])[]) => {
   let output = ''
   for (let index = 0; index < values.length; index += 1) {
-    output += renderStringNode(values[index] as JSX.Element | JSX.Element[])
+    const value = values[index]
+    if (Array.isArray(value)) {
+      output += renderStringArray(value)
+      continue
+    }
+    if (value === false || value === null || value === undefined) {
+      continue
+    }
+    if (typeof value === 'string') {
+      output += escapeText(value)
+      continue
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      output += escapeText(String(value))
+      continue
+    }
+    if (isSSRRawValue(value)) {
+      output += value.value
+      continue
+    }
+    if (isSSRTemplate(value)) {
+      output += renderSSRTemplateNode(value)
+      continue
+    }
+    if (isProjectionSlot(value)) {
+      output += renderProjectionSlotToString(value)
+      continue
+    }
+    if (isRouteSlot(value)) {
+      const routeElement = resolveRouteSlot(getCurrentContainer(), value)
+      if (routeElement) {
+        output += renderStringNode(routeElement as JSX.Element)
+      }
+      continue
+    }
+    output += renderStringNode(value as JSX.Element)
   }
   return output
 }
 
-const renderSSRTemplateValue = (value: unknown): string => {
+export const renderSSRValue = (value: unknown): string => {
   if (value === false || value === null || value === undefined) {
     return ''
   }
@@ -4238,6 +4276,9 @@ const renderSSRTemplateValue = (value: unknown): string => {
   }
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return escapeText(String(value))
+  }
+  if (isSSRRawValue(value)) {
+    return value.value
   }
   if (isSSRTemplate(value)) {
     return renderSSRTemplateNode(value)
@@ -4252,13 +4293,30 @@ const renderSSRTemplateValue = (value: unknown): string => {
   return renderStringNode(value as JSX.Element)
 }
 
+export const renderSSRMap = <T>(
+  value: readonly T[] | { map: (callback: (item: T, index: number) => string) => { join: (separator: string) => string } },
+  renderItem: (item: T, index: number) => string,
+): string => {
+  if (Array.isArray(value)) {
+    let output = ''
+    for (let index = 0; index < value.length; index += 1) {
+      if (!(index in value)) {
+        continue
+      }
+      output += renderItem(value[index] as T, index)
+    }
+    return output
+  }
+  return value.map(renderItem).join('')
+}
+
 const renderSSRTemplateNode = (template: JSX.SSRTemplate) => {
   let output = template.strings[0] ?? ''
   for (let index = 0; index < template.values.length; index += 1) {
     const value = template.values[index]
     output += isSSRAttrValue(value)
       ? renderSSRAttr(value.name, value.value)
-      : renderSSRTemplateValue(value)
+      : renderSSRValue(value)
     output += template.strings[index + 1] ?? ''
   }
   return output
@@ -4441,6 +4499,9 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   ) {
     return escapeText(String(resolved))
   }
+  if (isSSRRawValue(resolved)) {
+    return resolved.value
+  }
   if (isShowValue(resolved)) {
     return renderStringNode(resolveShowBranch(resolved))
   }
@@ -4525,6 +4586,9 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       continue
     }
     if (name === 'children') {
+      continue
+    }
+    if (name === 'key') {
       continue
     }
 

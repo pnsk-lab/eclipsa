@@ -402,6 +402,11 @@ type NamespacedIntrinsicElementProps = {
 
 // deno-lint-ignore no-namespace
 export namespace JSX {
+  export interface SSRRaw {
+    __e_ssr_raw: true
+    value: string
+  }
+
   export interface SSRTemplate {
     __e_ssr_template: true
     strings: readonly string[]
@@ -418,6 +423,7 @@ export namespace JSX {
         isStatic: boolean
         metadata?: Metadata
       }
+    | SSRRaw
     | SSRTemplate
     | string
     | number

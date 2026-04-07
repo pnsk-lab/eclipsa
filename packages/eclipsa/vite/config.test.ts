@@ -1,3 +1,5 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from './utils/routing.ts'
 
@@ -96,5 +98,33 @@ describe('createConfig', () => {
         '#eclipsa/nitro-entry': expect.stringContaining('eclipsa_app.mjs'),
       },
     })
+  })
+
+  it('resolves the SSR runtime entry from the package instead of the app root', async () => {
+    const userConfig = {
+      root: '/tmp/app',
+    }
+
+    mocks.createRoutes.mockResolvedValue([])
+    mocks.collectRouteModules.mockReturnValue([])
+    mocks.collectRouteServerModules.mockReturnValue([])
+    mocks.collectAppActions.mockResolvedValue([])
+    mocks.collectAppLoaders.mockResolvedValue([])
+    mocks.collectAppSymbols.mockResolvedValue([])
+
+    const hook = createConfig({ output: 'node' })
+    if (typeof hook !== 'function') {
+      throw new Error('Expected createConfig() to return a config hook function')
+    }
+
+    const config = await hook.call({} as any, userConfig as any, {} as any)
+    const ssrInput = (config as Record<string, any>).environments?.ssr?.build?.rollupOptions?.input
+
+    expect(ssrInput?.eclipsa_runtime).toBe(
+      fileURLToPath(new URL('./build/runtime.ts', import.meta.url)),
+    )
+    expect(ssrInput?.eclipsa_runtime).not.toBe(
+      path.join(userConfig.root, '../packages/eclipsa/vite/build/runtime.ts'),
+    )
   })
 })

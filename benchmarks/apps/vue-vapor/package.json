@@ -1,0 +1,14 @@
+{
+  "name": "benchmarks-vue-vapor",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build --ssr"
+  },
+  "dependencies": {
+    "@vue-vapor/server-renderer": "3.20240714.0-6608bb3",
+    "@vue-vapor/vapor": "3.20240714.0-6608bb3",
+    "@vue-vapor/vite-plugin-vue": "0.0.0-alpha.6",
+    "vite": "^8.0.5"
+  }
+}

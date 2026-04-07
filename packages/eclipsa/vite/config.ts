@@ -2,6 +2,7 @@ import type { Plugin } from 'vite'
 import * as fs from 'node:fs/promises'
 import { cwd } from 'node:process'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { collectRouteModules, collectRouteServerModules, createRoutes } from './utils/routing.ts'
 import { build } from './build/mod.ts'
 import {
@@ -12,6 +13,8 @@ import {
 } from './compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
 import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
+
+const ECLIPSA_RUNTIME_ENTRY_PATH = fileURLToPath(new URL('./build/runtime.ts', import.meta.url))
 
 const fileExists = async (filePath: string) => {
   try {
@@ -51,7 +54,7 @@ export const createConfig =
     const ssrInput = Object.fromEntries([
       ['server_entry', path.join(root, 'app/+server-entry.ts')],
       ['ssr_root', path.join(root, 'app/+ssr-root.tsx')],
-      ['eclipsa_runtime', path.join(root, '../packages/eclipsa/vite/build/runtime.ts')],
+      ['eclipsa_runtime', ECLIPSA_RUNTIME_ENTRY_PATH],
       ...(hasAppHooks ? [['app_hooks', appHooksPath] as const] : []),
       ...(hasServerHooks ? [['server_hooks', serverHooksPath] as const] : []),
       ...actions.map((action) => [`action__${action.id}`, action.filePath]),

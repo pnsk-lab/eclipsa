@@ -5,6 +5,7 @@
     "": {
       "name": "eclipsa-workspace",
       "devDependencies": {
+        "@eclipsa/optimizer": "workspace:^",
         "@types/node": "^24.5.2",
         "@voidzero-dev/vite-plus-core": "^0.1.4",
         "@voidzero-dev/vite-plus-test": "^0.1.4",
@@ -71,14 +72,14 @@
     },
     "packages/create-eclipsa": {
       "name": "create-eclipsa",
-      "version": "0.0.1",
+      "version": "0.0.0",
       "bin": {
         "create-eclipsa": "./mod.ts",
       },
     },
     "packages/eclipsa": {
       "name": "eclipsa",
-      "version": "0.2.0-alpha.0",
+      "version": "0.0.0",
       "dependencies": {
         "@eclipsa/optimizer": "workspace:^",
         "fast-glob": "^3.3.2",
@@ -121,17 +122,6 @@
       },
       "devDependencies": {
         "@napi-rs/cli": "^3.5.1",
-      },
-      "optionalDependencies": {
-        "@eclipsa/optimizer-darwin-arm64": "0.0.0",
-        "@eclipsa/optimizer-darwin-x64": "0.0.0",
-        "@eclipsa/optimizer-linux-arm64-gnu": "0.0.0",
-        "@eclipsa/optimizer-linux-arm64-musl": "0.0.0",
-        "@eclipsa/optimizer-linux-x64-gnu": "0.0.0",
-        "@eclipsa/optimizer-linux-x64-musl": "0.0.0",
-        "@eclipsa/optimizer-wasm32-wasi": "0.0.0",
-        "@eclipsa/optimizer-win32-arm64-msvc": "0.0.0",
-        "@eclipsa/optimizer-win32-x64-msvc": "0.0.0",
       },
     },
   },

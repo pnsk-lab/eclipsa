@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "eclipsa",
+    "paths": {
+      "eclipsa": ["../../../packages/eclipsa/mod.ts"],
+      "eclipsa/client": ["../../../packages/eclipsa/core/client/mod.ts"],
+      "eclipsa/dev-client": ["../../../packages/eclipsa/core/dev-client/mod.ts"],
+      "eclipsa/internal": ["../../../packages/eclipsa/core/internal.ts"],
+      "eclipsa/jsx": ["../../../packages/eclipsa/jsx/mod.ts"],
+      "eclipsa/jsx-dev-runtime": ["../../../packages/eclipsa/jsx/jsx-dev-runtime.ts"],
+      "eclipsa/jsx-runtime": ["../../../packages/eclipsa/jsx/jsx-runtime.ts"],
+      "eclipsa/prod-client": ["../../../packages/eclipsa/core/prod-client/mod.ts"],
+      "eclipsa/vite": ["../../../packages/eclipsa/vite/mod.ts"]
+    },
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts"]
+}

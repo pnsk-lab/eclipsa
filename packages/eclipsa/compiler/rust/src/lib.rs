@@ -28,7 +28,10 @@ const CLIENT_INSERT: &str = "_insert";
 const CLIENT_ATTR: &str = "_attr";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
 const SSR_JSX_DEV: &str = "_jsxDEV";
-const SSR_ATTR: &str = "_ssrAttr";
+const SSR_RAW: &str = "_ssrRaw";
+const SSR_RENDER_ATTR: &str = "_renderSSRAttr";
+const SSR_RENDER_MAP: &str = "_renderSSRMap";
+const SSR_RENDER_VALUE: &str = "_renderSSRValue";
 const SSR_TEMPLATE: &str = "_ssrTemplate";
 const COMPILER_FOR: &str = "__eclipsaFor";
 const COMPILER_SHOW: &str = "__eclipsaShow";
@@ -99,11 +102,21 @@ fn get_arrow_expression_body<'a>(expression: &'a ArrowFunctionExpression<'a>) ->
     }
 }
 
+fn unwrap_parenthesized_expression<'a>(mut expression: &'a Expression<'a>) -> &'a Expression<'a> {
+    while let Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    expression
+}
+
 fn is_direct_jsx_map_callback<'a>(callback: &'a ArrowFunctionExpression<'a>) -> bool {
     let Some(body) = get_arrow_expression_body(callback) else {
         return false;
     };
-    matches!(body, Expression::JSXElement(_) | Expression::JSXFragment(_))
+    matches!(
+        unwrap_parenthesized_expression(body),
+        Expression::JSXElement(_) | Expression::JSXFragment(_)
+    )
 }
 
 fn get_static_map_callee<'a>(call: &'a CallExpression<'a>) -> Option<&'a StaticMemberExpression<'a>> {
@@ -271,7 +284,7 @@ fn transform_ssr(source: &str, id: &str) -> Result<String, String> {
     let mut compiler = SsrCompiler::new(source, source_type);
     let transformed = compiler.apply_root_replacements(&program)?;
     let mut prefix = format!(
-        "import {{ jsxDEV as {SSR_JSX_DEV}, ssrAttr as {SSR_ATTR}, ssrTemplate as {SSR_TEMPLATE} }} from \"eclipsa/jsx-dev-runtime\";\n"
+        "import {{ jsxDEV as {SSR_JSX_DEV}, ssrRaw as {SSR_RAW}, ssrTemplate as {SSR_TEMPLATE} }} from \"eclipsa/jsx-dev-runtime\";\nimport {{ renderSSRAttr as {SSR_RENDER_ATTR}, renderSSRMap as {SSR_RENDER_MAP}, renderSSRValue as {SSR_RENDER_VALUE} }} from \"eclipsa\";\n"
     );
     if compiler.uses_for {
         prefix.push_str(&format!(
@@ -1402,6 +1415,77 @@ impl<'s> SsrCompiler<'s> {
         Ok(Some(self.render_compiler_for(arr, compiled_callback)))
     }
 
+    fn render_expression_to_ssr_string(
+        &mut self,
+        expression: &Expression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        match unwrap_parenthesized_expression(expression) {
+            Expression::JSXElement(element) => {
+                if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
+                    Ok(fast_path)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_root_element(element)?
+                    ))
+                }
+            }
+            Expression::JSXFragment(fragment) => {
+                if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
+                    Ok(fast_path)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_root_fragment(fragment)?
+                    ))
+                }
+            }
+            Expression::CallExpression(call) => {
+                if let Some(map_string) = self.try_render_map_string(call, allow_flow_lowering)? {
+                    Ok(map_string)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_nested_expression_span(expression.span(), allow_flow_lowering)?
+                    ))
+                }
+            }
+            _ => Ok(format!(
+                "{SSR_RENDER_VALUE}({})",
+                self.render_nested_expression_span(expression.span(), allow_flow_lowering)?
+            )),
+        }
+    }
+
+    fn try_render_map_string(
+        &mut self,
+        expression: &CallExpression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<Option<String>, String> {
+        let Some(member) = get_static_map_callee(expression) else {
+            return Ok(None);
+        };
+        if expression.arguments.len() != 1 {
+            return Ok(None);
+        }
+
+        let callback = match &expression.arguments[0] {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(callback) if is_direct_jsx_map_callback(callback) => callback,
+            _ => return Ok(None),
+        };
+
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+
+        let arr = self.render_nested_expression_span(member.object.span(), allow_flow_lowering)?;
+        let params = self.slice(callback.params.span).to_string();
+        let body_string =
+            self.render_expression_to_ssr_string(unwrap_parenthesized_expression(body), allow_flow_lowering)?;
+        Ok(Some(format!("{SSR_RENDER_MAP}({arr}, {params} => {body_string})")))
+    }
+
     fn render_jsx_expression(
         &mut self,
         expression: &JSXExpression<'_>,
@@ -1416,15 +1500,15 @@ impl<'s> SsrCompiler<'s> {
     }
 
     fn render_root_element(&mut self, element: &JSXElement<'_>) -> Result<String, String> {
-        if let Some(fast_path) = self.try_render_fast_path_element(element)? {
-            return Ok(fast_path);
+        if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
+            return Ok(format!("{SSR_RAW}({fast_path})"));
         }
         self.render_generic_element(element)
     }
 
     fn render_root_fragment(&mut self, fragment: &JSXFragment<'_>) -> Result<String, String> {
-        if let Some(fast_path) = self.try_render_fast_path_fragment(fragment)? {
-            return Ok(fast_path);
+        if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
+            return Ok(format!("{SSR_RAW}({fast_path})"));
         }
         let children = self.render_children_array(&fragment.children, true)?;
         Ok(format!(
@@ -1552,7 +1636,10 @@ impl<'s> SsrCompiler<'s> {
         Ok(output)
     }
 
-    fn try_render_fast_path_element(&mut self, element: &JSXElement<'_>) -> Result<Option<String>, String> {
+    fn try_render_fast_path_element_string(
+        &mut self,
+        element: &JSXElement<'_>,
+    ) -> Result<Option<String>, String> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
         if is_component_name(&name) || name == "body" {
             return Ok(None);
@@ -1566,6 +1653,9 @@ impl<'s> SsrCompiler<'s> {
                 return Ok(None);
             };
             let attr_name = get_jsx_attribute_name(&attribute.name)?;
+            if attr_name == "key" {
+                continue;
+            }
             if attr_name == "ref"
                 || attr_name == DANGEROUSLY_SET_INNER_HTML_PROP
                 || event_name_from_prop(&attr_name).is_some()
@@ -1608,7 +1698,10 @@ impl<'s> SsrCompiler<'s> {
                     } {
                         strings.last_mut().unwrap().push_str(&static_value);
                     } else {
-                        values.push(format!("{SSR_ATTR}({}, {expression})", js_string(&attr_name)));
+                        values.push(format!(
+                            "{SSR_RENDER_ATTR}({}, {expression})",
+                            js_string(&attr_name)
+                        ));
                         strings.push(String::new());
                     }
                 }
@@ -1626,10 +1719,13 @@ impl<'s> SsrCompiler<'s> {
         }
         strings.last_mut().unwrap().push_str(&format!("</{name}>"));
 
-        Ok(Some(render_ssr_template_call(&strings, &values)))
+        Ok(Some(render_ssr_string_expression(&strings, &values)))
     }
 
-    fn try_render_fast_path_fragment(&mut self, fragment: &JSXFragment<'_>) -> Result<Option<String>, String> {
+    fn try_render_fast_path_fragment_string(
+        &mut self,
+        fragment: &JSXFragment<'_>,
+    ) -> Result<Option<String>, String> {
         let mut strings = vec![String::new()];
         let mut values = Vec::new();
         for child in &fragment.children {
@@ -1637,7 +1733,7 @@ impl<'s> SsrCompiler<'s> {
                 return Ok(None);
             }
         }
-        Ok(Some(render_ssr_template_call(&strings, &values)))
+        Ok(Some(render_ssr_string_expression(&strings, &values)))
     }
 
     fn append_fast_child(
@@ -1657,6 +1753,13 @@ impl<'s> SsrCompiler<'s> {
                 if let JSXExpression::EmptyExpression(_) = &container.expression {
                     return Ok(true);
                 }
+                if let Expression::CallExpression(call) = container.expression.to_expression() {
+                    if let Some(map_string) = self.try_render_map_string(call, true)? {
+                        values.push(map_string);
+                        strings.push(String::new());
+                        return Ok(true);
+                    }
+                }
                 if let Some(static_text) = match &container.expression {
                     JSXExpression::BooleanLiteral(value) => Some(escape_text(&value.value.to_string())),
                     JSXExpression::NullLiteral(_) => Some(String::new()),
@@ -1667,32 +1770,58 @@ impl<'s> SsrCompiler<'s> {
                 } {
                     strings.last_mut().unwrap().push_str(&static_text);
                 } else {
-                    values.push(self.render_jsx_expression(&container.expression, true)?);
+                    values.push(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_jsx_expression(&container.expression, true)?
+                    ));
                     strings.push(String::new());
                 }
                 Ok(true)
             }
             JSXChild::Element(element) => {
-                if let Some(fast_path) = self.try_render_fast_path_element(element)? {
+                if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
                     values.push(fast_path);
                 } else {
-                    values.push(self.render_generic_element(element)?);
+                    values.push(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_generic_element(element)?
+                    ));
                 }
                 strings.push(String::new());
                 Ok(true)
             }
             JSXChild::Fragment(fragment) => {
-                if let Some(fast_path) = self.try_render_fast_path_fragment(fragment)? {
+                if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
                     values.push(fast_path);
                     strings.push(String::new());
                     return Ok(true);
                 }
-                values.push(self.render_root_fragment(fragment)?);
+                values.push(format!(
+                    "{SSR_RENDER_VALUE}({})",
+                    self.render_root_fragment(fragment)?
+                ));
                 strings.push(String::new());
                 Ok(true)
             }
             JSXChild::Spread(_) => Ok(false),
         }
+    }
+}
+
+fn render_ssr_string_expression(strings: &[String], values: &[String]) -> String {
+    let mut parts = Vec::new();
+    for (index, string_part) in strings.iter().enumerate() {
+        if !string_part.is_empty() {
+            parts.push(js_string(string_part));
+        }
+        if let Some(value_part) = values.get(index) {
+            parts.push(value_part.clone());
+        }
+    }
+    if parts.is_empty() {
+        js_string("")
+    } else {
+        parts.join(" + ")
     }
 }
 
@@ -1842,19 +1971,6 @@ impl<'a, 'c, 's> Visit<'a> for SsrExpressionCollector<'c, 's> {
         self.jsx_depth += 1;
         walk::walk_jsx_fragment(self, fragment);
         self.jsx_depth -= 1;
-    }
-}
-
-fn render_ssr_template_call(strings: &[String], values: &[String]) -> String {
-    let strings_array = strings
-        .iter()
-        .map(|entry| js_string(entry))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if values.is_empty() {
-        format!("{SSR_TEMPLATE}([{strings_array}])")
-    } else {
-        format!("{SSR_TEMPLATE}([{strings_array}], {})", values.join(", "))
     }
 }
 

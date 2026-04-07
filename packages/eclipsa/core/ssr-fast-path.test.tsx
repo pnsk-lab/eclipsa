@@ -27,4 +27,17 @@ describe('SSR fast path helpers', () => {
 
     expect(html).toBe('<div>ready</div>')
   })
+
+  it('never renders key attributes in SSR output', () => {
+    const { html } = renderSSR(() => (
+      <>
+        {ssrTemplate(['<div', '>template</div>'], ssrAttr('key', 'template-key'))}
+        <div key="jsx-key">jsx</div>
+      </>
+    ))
+
+    expect(html).toContain('<div>template</div>')
+    expect(html).toContain('<div>jsx</div>')
+    expect(html).not.toContain(' key=')
+  })
 })

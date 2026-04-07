@@ -18,6 +18,7 @@
     "fmt": "vp check --fix"
   },
   "devDependencies": {
+    "@eclipsa/optimizer": "workspace:^",
     "@types/node": "^24.5.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
