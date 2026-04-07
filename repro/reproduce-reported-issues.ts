@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 type Severity = 'high' | 'medium' | 'low'
 
 type ReproCase = {
@@ -12,9 +14,11 @@ const printHeader = (value: string) => {
   console.log(`\n=== ${value} ===`)
 }
 
+const resolveTargetFilePath = (filePath: string) => path.resolve(process.cwd(), filePath)
+
 const printCase = (repro: ReproCase) => {
   console.log(`[${repro.severity.toUpperCase()}] ${repro.id} ${repro.title}`)
-  console.log(`target: ${repro.targetFile}`)
+  console.log(`target: ${resolveTargetFilePath(repro.targetFile)}`)
 }
 
 const dryRunHint = () => {
@@ -26,7 +30,7 @@ const cases: ReproCase[] = [
     id: 'R-01',
     severity: 'high',
     title: 'serve-static path boundary check bypass',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/docs/scripts/serve-static.ts',
+    targetFile: 'docs/scripts/serve-static.ts',
     run() {
       printHeader('PoC')
       console.log(`const root = '/var/www/dist/client'`)
@@ -38,7 +42,7 @@ const cases: ReproCase[] = [
     id: 'R-02',
     severity: 'high',
     title: 'action endpoint CSRF (no token/origin guard)',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/eclipsa/core/action.ts',
+    targetFile: 'packages/eclipsa/core/action.ts',
     async run({ baseUrl, execute }) {
       printHeader('PoC')
       const body = {
@@ -73,7 +77,7 @@ const cases: ReproCase[] = [
     id: 'R-03',
     severity: 'medium',
     title: 'route scoping via spoofable x-eclipsa-route-url',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/eclipsa/vite/dev-app/mod.ts',
+    targetFile: 'packages/eclipsa/vite/dev-app/mod.ts',
     async run({ baseUrl, execute }) {
       printHeader('PoC')
       const url = `${baseUrl}/__eclipsa/loader/secure-loader`
@@ -96,7 +100,7 @@ const cases: ReproCase[] = [
     id: 'R-04',
     severity: 'medium',
     title: 'unbounded action input size',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/eclipsa/core/action.ts',
+    targetFile: 'packages/eclipsa/core/action.ts',
     async run({ baseUrl, execute }) {
       printHeader('PoC')
       const huge = 'x'.repeat(20 * 1024 * 1024)
@@ -129,7 +133,7 @@ const cases: ReproCase[] = [
     id: 'R-05',
     severity: 'high',
     title: 'markdown html rendered without sanitization',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/content/internal.ts',
+    targetFile: 'packages/content/internal.ts',
     run() {
       printHeader('PoC markdown')
       console.log('---')
@@ -144,7 +148,7 @@ const cases: ReproCase[] = [
     id: 'R-06',
     severity: 'high',
     title: 'Content component raw HTML injection',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/content/mod.ts',
+    targetFile: 'packages/content/mod.ts',
     run() {
       printHeader('PoC component')
       console.log(`import { Content } from '@eclipsa/content'`)
@@ -157,7 +161,7 @@ const cases: ReproCase[] = [
     id: 'R-07',
     severity: 'medium',
     title: 'third-party script without SRI',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/docs/app/+ssr-root.tsx',
+    targetFile: 'docs/app/+ssr-root.tsx',
     run() {
       printHeader('PoC')
       console.log(
@@ -169,7 +173,7 @@ const cases: ReproCase[] = [
     id: 'R-08',
     severity: 'medium',
     title: 'route payload extraction with regex script parsing',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/eclipsa/core/runtime.ts',
+    targetFile: 'packages/eclipsa/core/runtime.ts',
     run() {
       printHeader('PoC html')
       console.log('<script id="eclipsa-resume">{"ok":1}</script>')
@@ -181,7 +185,7 @@ const cases: ReproCase[] = [
     id: 'R-09',
     severity: 'low',
     title: 'search prefix linear scan amplification',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/content/search.ts',
+    targetFile: 'packages/content/search.ts',
     run() {
       printHeader('PoC')
       console.log('create index with many keys and query single prefix repeatedly')
@@ -194,7 +198,7 @@ const cases: ReproCase[] = [
     id: 'R-10',
     severity: 'medium',
     title: 'image plugin load path check mismatch',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/image/vite.ts',
+    targetFile: 'packages/image/vite.ts',
     run() {
       printHeader('PoC import')
       console.log(
@@ -207,7 +211,7 @@ const cases: ReproCase[] = [
     id: 'R-11',
     severity: 'low',
     title: 'asset name hash ignores file content',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/image/vite.ts',
+    targetFile: 'packages/image/vite.ts',
     run() {
       printHeader('PoC')
       console.log('same path, different image bytes -> createAssetName() still identical')
@@ -218,7 +222,7 @@ const cases: ReproCase[] = [
     id: 'R-12',
     severity: 'low',
     title: 'unbounded widths fan-out in image transform',
-    targetFile: '/home/runner/work/eclipsa/eclipsa/packages/image/vite.ts',
+    targetFile: 'packages/image/vite.ts',
     run() {
       printHeader('PoC import')
       console.log(
@@ -236,20 +240,20 @@ const parseArgs = (argv: string[]) => {
     execute: false,
   }
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const current = argv[index]
+  for (let argIndex = 0; argIndex < argv.length; argIndex += 1) {
+    const current = argv[argIndex]
     if (current === '--execute') {
       parsed.execute = true
       continue
     }
     if (current === '--base-url') {
-      parsed.baseUrl = argv[index + 1] ?? parsed.baseUrl
-      index += 1
+      parsed.baseUrl = argv[argIndex + 1] ?? parsed.baseUrl
+      argIndex += 1
       continue
     }
     if (current === '--case') {
-      parsed.caseId = argv[index + 1] ?? null
-      index += 1
+      parsed.caseId = argv[argIndex + 1] ?? null
+      argIndex += 1
     }
   }
 
