@@ -144,10 +144,8 @@ const renderInlineMarkdown = (input: string): string => {
     )
   })
 
-  value = value.replace(
-    /<((?:https?:\/\/|mailto:|tel:)[^>\s]+)>/g,
-    (_, href: string) =>
-      placeholders.put(`<a href="${escapeAttr(href)}">${escapeHtml(href)}</a>`),
+  value = value.replace(/<((?:https?:\/\/|mailto:|tel:)[^>\s]+)>/g, (_, href: string) =>
+    placeholders.put(`<a href="${escapeAttr(href)}">${escapeHtml(href)}</a>`),
   )
 
   let html = escapeHtml(value)
@@ -222,9 +220,7 @@ const renderList = (
   startIndex: number,
   ordered: boolean,
 ): { html: string; nextIndex: number } => {
-  const itemPattern = ordered
-    ? /^ {0,3}\d+\.[ \t]+(.*)$/
-    : /^ {0,3}[-+*][ \t]+(.*)$/
+  const itemPattern = ordered ? /^ {0,3}\d+\.[ \t]+(.*)$/ : /^ {0,3}[-+*][ \t]+(.*)$/
   const items: string[] = []
   let index = startIndex
 
@@ -440,9 +436,10 @@ export const consumeMarkdownSource = async (
 
 const createElementProps = (rawProps: Record<string, unknown>, getHtml: () => string) => {
   const nextProps = Object.create(null) as Record<string, unknown>
-  for (const [name, descriptor] of Object.entries(
-    Object.getOwnPropertyDescriptors(rawProps),
-  ) as [string, PropertyDescriptor][]) {
+  for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(rawProps)) as [
+    string,
+    PropertyDescriptor,
+  ][]) {
     if (INTERNAL_MARKDOWN_STREAM_PROPS.has(name)) {
       continue
     }
@@ -466,40 +463,37 @@ function MarkdownStreamBody<TTag extends MarkdownStreamTag = 'div'>(
     }),
   )
 
-  useWatch(
-    () => {
-      const source = rawProps.source
-      const currentVersion = ++state.value.version
-      markdown.value = collectMarkdownSource(source)
+  useWatch(() => {
+    const source = rawProps.source
+    const currentVersion = ++state.value.version
+    markdown.value = collectMarkdownSource(source)
 
-      if (!isAsyncIterableValue(source) && !isReadableStreamValue(source)) {
+    if (!isAsyncIterableValue(source) && !isReadableStreamValue(source)) {
+      return
+    }
+
+    onCleanup(() => {
+      if (state.value.version === currentVersion) {
+        state.value.version += 1
+      }
+    })
+
+    void consumeMarkdownSource(source, (chunk) => {
+      if (state.value.version !== currentVersion) {
         return
       }
-
-      onCleanup(() => {
-        if (state.value.version === currentVersion) {
-          state.value.version += 1
-        }
-      })
-
-      void consumeMarkdownSource(source, (chunk) => {
-        if (state.value.version !== currentVersion) {
-          return
-        }
-        markdown.value += chunk
-      }).catch((error) => {
-        if (state.value.version !== currentVersion) {
-          return
-        }
-        if (rawProps.onError) {
-          rawProps.onError(error)
-          return
-        }
-        console.error('Failed to consume Markdown stream.', error)
-      })
-    },
-    [() => rawProps.source],
-  )
+      markdown.value += chunk
+    }).catch((error) => {
+      if (state.value.version !== currentVersion) {
+        return
+      }
+      if (rawProps.onError) {
+        rawProps.onError(error)
+        return
+      }
+      console.error('Failed to consume Markdown stream.', error)
+    })
+  }, [() => rawProps.source])
 
   const tagName = typeof rawProps.as === 'string' ? rawProps.as : 'div'
 
