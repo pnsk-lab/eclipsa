@@ -8,7 +8,7 @@ export default defineConfig({
       { find: /^vue\/server-renderer$/, replacement: '@vue-vapor/server-renderer' },
       {
         find: /^vue$/,
-        replacement: '/home/nakasyou/eclipsa/benchmarks/apps/vue-vapor/src/vue-compat.js',
+        replacement: './src/vue-compat.js',
       },
     ],
   },
