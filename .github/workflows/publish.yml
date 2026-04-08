@@ -13,6 +13,7 @@ on:
           - image
           - content
           - motion
+          - markdown
       release_type:
         description: 'Version bump type'
         required: true
@@ -115,6 +116,9 @@ jobs:
               ;;
             motion)
               package_dir="packages/motion"
+              ;;
+            markdown)
+              package_dir="packages/markdown"
               ;;
             *)
               echo "Unsupported package: $PACKAGE_KEY"

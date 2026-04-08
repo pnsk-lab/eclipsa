@@ -112,6 +112,13 @@
         "vite": "*",
       },
     },
+    "packages/markdown": {
+      "name": "@eclipsa/markdown",
+      "version": "0.0.0",
+      "dependencies": {
+        "eclipsa": "workspace:*",
+      },
+    },
     "packages/motion": {
       "name": "@eclipsa/motion",
       "version": "0.0.0",
@@ -192,6 +199,8 @@
     "@eclipsa/e2e": ["@eclipsa/e2e@workspace:e2e"],
 
     "@eclipsa/image": ["@eclipsa/image@workspace:packages/image"],
+
+    "@eclipsa/markdown": ["@eclipsa/markdown@workspace:packages/markdown"],
 
     "@eclipsa/motion": ["@eclipsa/motion@workspace:packages/motion"],
 

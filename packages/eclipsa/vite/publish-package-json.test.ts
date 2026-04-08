@@ -163,6 +163,30 @@ describe('publish package metadata', () => {
     })
   })
 
+  it('rewrites @eclipsa/markdown metadata for dist publishing', async () => {
+    const packageJson = await readPackageJson('../../markdown/package.json')
+    const publishPackageJson = createPublishPackageJson(
+      packageJson,
+      new Map([['eclipsa', '0.2.0-alpha.0']]),
+    )
+
+    expect(publishPackageJson.private).toBe(false)
+    expect(publishPackageJson.repository).toEqual({
+      type: 'git',
+      url: 'git+https://github.com/pnsk-lab/eclipsa.git',
+      directory: 'packages/markdown',
+    })
+    expect(publishPackageJson.dependencies).toEqual({
+      eclipsa: '0.2.0-alpha.0',
+    })
+    expect(publishPackageJson.exports).toEqual({
+      '.': {
+        types: './mod.d.mts',
+        import: './mod.mjs',
+      },
+    })
+  })
+
   it('rewrites workspace protocol dependency ranges for publishing', () => {
     const publishPackageJson = createPublishPackageJson(
       {

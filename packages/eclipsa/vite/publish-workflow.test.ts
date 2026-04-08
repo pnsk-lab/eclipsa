@@ -18,15 +18,18 @@ const extractStep = (source: string, stepName: string) => {
 }
 
 describe('publish workflow', () => {
-  it('offers content and motion as releasable packages', async () => {
+  it('offers content, motion, and markdown as releasable packages', async () => {
     const workflow = await fs.readFile(workflowPath, 'utf8')
 
     expect(workflow).toContain('          - content')
     expect(workflow).toContain('          - motion')
+    expect(workflow).toContain('          - markdown')
     expect(workflow).toContain('            content)')
     expect(workflow).toContain('              package_dir="packages/content"')
     expect(workflow).toContain('            motion)')
     expect(workflow).toContain('              package_dir="packages/motion"')
+    expect(workflow).toContain('            markdown)')
+    expect(workflow).toContain('              package_dir="packages/markdown"')
   })
 
   it('uses trusted publishing instead of npm tokens for every publish step', async () => {
