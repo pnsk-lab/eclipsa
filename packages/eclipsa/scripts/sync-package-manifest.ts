@@ -21,6 +21,10 @@ export const DEV_EXPORTS = {
     types: './vite/mod.ts',
     import: './vite/mod.ts',
   },
+  './vite/build/runtime': {
+    types: './vite/build/runtime.ts',
+    import: './vite/build/runtime.ts',
+  },
   './jsx-runtime': {
     types: './jsx/jsx-runtime.ts',
     import: './jsx/jsx-runtime.ts',
@@ -67,6 +71,10 @@ export const PUBLISH_EXPORTS = {
   './vite': {
     types: './dist/vite/mod.d.mts',
     import: './dist/vite/mod.mjs',
+  },
+  './vite/build/runtime': {
+    types: './dist/vite/build/runtime.d.mts',
+    import: './dist/vite/build/runtime.mjs',
   },
   './jsx-runtime': {
     types: './dist/jsx/jsx-runtime.d.mts',

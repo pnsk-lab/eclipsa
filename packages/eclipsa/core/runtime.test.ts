@@ -8,12 +8,18 @@ import {
   materializeRuntimeContext,
   materializeRuntimeContextProvider,
 } from './context.ts'
-import { __eclipsaComponent, __eclipsaEvent, __eclipsaWatch } from './internal.ts'
+import {
+  __eclipsaComponent,
+  __eclipsaEvent,
+  __eclipsaWatch,
+  setExternalComponentMeta,
+} from './internal.ts'
 import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
 import { Link, useLocation, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
 import {
+  createResumeContainer,
   createDelegatedEvent,
   createDetachedRuntimeSignal,
   deserializeContainerValue,
@@ -495,6 +501,7 @@ const createContainer = () =>
     dirtyFlushQueued: false,
     doc: new FakeDocument() as unknown as Document,
     eventDispatchPromise: null,
+    externalRenderCache: new Map(),
     imports: new Map(),
     interactivePrefetchCheckQueued: false,
     loaderStates: new Map(),
@@ -3678,6 +3685,190 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('keeps external island roots stable across local signal rerenders', async () => {
+    await withFakeNodeGlobal(async () => {
+      const events: string[] = []
+      let label!: { value: string }
+
+      const ExternalBody = setExternalComponentMeta(
+        (() => null) as any,
+        {
+          async hydrate(host, props) {
+            events.push(`hydrate:${String((props as { label: string }).label)}`)
+            ;(host as Element).setAttribute('data-external-label', String((props as { label: string }).label))
+            return { host }
+          },
+          kind: 'react',
+          async renderToString(props) {
+            return `<div data-external-label="${String((props as { label: string }).label)}"><e-slot-host data-e-slot="children"></e-slot-host></div>`
+          },
+          slots: ['children'],
+          async unmount() {
+            events.push('unmount')
+          },
+          async update(instance, host, props) {
+            events.push(`update:${String((props as { label: string }).label)}`)
+            ;(host as Element).setAttribute('data-external-label', String((props as { label: string }).label))
+            return instance
+          },
+        },
+      )
+
+      const External = __eclipsaComponent(
+        ExternalBody as any,
+        'external-stable-child',
+        () => [],
+        { children: 1 },
+        { external: { kind: 'react', slots: ['children'] } },
+      )
+
+      const App = __eclipsaComponent(
+        () => {
+          label = useSignal('first')
+          return jsxDEV(
+            External as any,
+            {
+              label: label.value,
+              children: jsxDEV('span', { children: 'slot content' }, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          )
+        },
+        'external-stable-parent',
+        () => [],
+      )
+
+      const container = createContainer()
+      container.imports.set(
+        'external-stable-parent',
+        Promise.resolve({
+          default: () =>
+            jsxDEV(
+              External as any,
+              {
+                label: label.value,
+                children: jsxDEV('span', { children: 'slot content' }, null, false, {}),
+              },
+              null,
+              false,
+              {},
+            ),
+        }),
+      )
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      await flushAsync()
+
+      const host = queryFakeElements(
+        doc.body as unknown as FakeNode,
+        'e-island-root[data-e-external-root]',
+      )[0] as unknown as FakeElement
+      expect(host.getAttribute('data-external-label')).toBe('first')
+
+      label.value = 'second'
+      await flushDirtyComponents(container)
+      await flushAsync()
+
+      const nextHost = queryFakeElements(
+        doc.body as unknown as FakeNode,
+        'e-island-root[data-e-external-root]',
+      )[0] as unknown as FakeElement
+
+      expect(nextHost).toBe(host)
+      expect(nextHost.getAttribute('data-external-label')).toBe('second')
+      expect(events).toEqual(['hydrate:first', 'update:second'])
+    })
+  })
+
+  it('runs external island cleanup when the boundary is removed', async () => {
+    await withFakeNodeGlobal(async () => {
+      const events: string[] = []
+      let visible!: { value: boolean }
+
+      const ExternalBody = setExternalComponentMeta(
+        (() => null) as any,
+        {
+          async hydrate(host) {
+            ;(host as Element).setAttribute('data-external-mounted', 'true')
+            events.push('hydrate')
+            return { host }
+          },
+          kind: 'vue',
+          async renderToString() {
+            return '<div data-external-mounted="true"></div>'
+          },
+          slots: ['children'],
+          async unmount() {
+            events.push('unmount')
+          },
+          async update(instance) {
+            return instance
+          },
+        },
+      )
+
+      const External = __eclipsaComponent(
+        ExternalBody as any,
+        'external-cleanup-child',
+        () => [],
+        { children: 1 },
+        { external: { kind: 'vue', slots: ['children'] } },
+      )
+
+      const App = __eclipsaComponent(
+        () => {
+          visible = useSignal(true)
+          return visible.value
+            ? jsxDEV(External as any, { children: null }, null, false, {})
+            : jsxDEV('div', { children: 'fallback' }, null, false, {})
+        },
+        'external-cleanup-parent',
+        () => [],
+      )
+
+      const container = createContainer()
+      container.imports.set(
+        'external-cleanup-parent',
+        Promise.resolve({
+          default: () =>
+            visible.value
+              ? jsxDEV(External as any, { children: null }, null, false, {})
+              : jsxDEV('div', { children: 'fallback' }, null, false, {}),
+        }),
+      )
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      await flushAsync()
+      expect(events).toEqual(['hydrate'])
+
+      visible.value = false
+      await flushDirtyComponents(container)
+      await flushAsync()
+
+      expect(events).toEqual(['hydrate', 'unmount'])
+      expect(
+        queryFakeElements(doc.body as unknown as FakeNode, 'e-island-root[data-e-external-root]'),
+      ).toHaveLength(0)
+      expect((doc.body as unknown as FakeElement).textContent).toContain('fallback')
+    })
+  })
+
   it('keeps signal subscriptions after resumable signal rerenders', async () => {
     await withFakeNodeGlobal(async () => {
       let count!: { value: number }
@@ -4031,6 +4222,209 @@ describe('renderClientInsertable', () => {
         expect(nextSpan?.textContent).toBe('ov')
       } finally {
         globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('runs resumed watch callbacks from restored subscriptions without activating the component', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalDocument = globalThis.Document
+      const originalWindow = globalThis.window
+      const doc = new FakeDocument() as unknown as Document
+      ;(doc as unknown as { location: Location }).location = {
+        hash: '',
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+        search: '',
+      } as Location
+      const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
+      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode)
+      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode)
+
+      const events: string[] = []
+      ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
+        FakeDocument as unknown as typeof Document
+      ;(globalThis as { window: Window & typeof globalThis }).window =
+        ((doc as unknown as FakeDocument).defaultView as unknown as Window & typeof globalThis)
+      try {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: ['s0'],
+              symbol: 'component-watch-resume',
+              visibleCount: 0,
+              watchCount: 1,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+            sc1: [{ __eclipsa_type: 'ref', kind: 'signal', token: 's0' }],
+          },
+          signals: {
+            s0: 0,
+            '$router:isNavigating': false,
+            '$router:path': '/',
+          },
+          subscriptions: {
+            s0: [],
+            '$router:isNavigating': [],
+            '$router:path': [],
+          },
+          symbols: {},
+          visibles: {},
+          watches: {
+            'c0:w0': {
+              componentId: 'c0',
+              mode: 'explicit',
+              scope: 'sc1',
+              signals: ['s0'],
+              symbol: 'watch-resume-symbol',
+            },
+          },
+        })
+
+        container.imports.set(
+          'watch-resume-symbol',
+          Promise.resolve({
+            default: (scope: unknown[], propsOrArg?: unknown) => {
+              const [count] = scope as [{ value: number }]
+              const mode = propsOrArg as 'run' | 'track' | undefined
+              if (mode === 'track') {
+                void count.value
+                return
+              }
+              events.push(`run:${count.value}`)
+            },
+          }),
+        )
+
+        container.signals.get('s0')!.handle.value = 1
+        await flushAsync()
+        await flushAsync()
+
+        expect(events).toEqual(['run:1'])
+        expect(container.components.get('c0')?.active).toBe(false)
+      } finally {
+        globalThis.Document = OriginalDocument
+        if (originalWindow === undefined) {
+          delete (globalThis as { window?: Window }).window
+        } else {
+          globalThis.window = originalWindow
+        }
+      }
+    })
+  })
+
+  it('does not rerun resumed watches when restoring local signal effects on the client', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalDocument = globalThis.Document
+      const originalWindow = globalThis.window
+      const doc = new FakeDocument() as unknown as Document
+      ;(doc as unknown as { location: Location }).location = {
+        hash: '',
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+        search: '',
+      } as Location
+      const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
+      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode)
+      body.appendChild(new FakeElement('div'))
+      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode)
+
+      const events: string[] = []
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
+        FakeDocument as unknown as typeof Document
+      ;(globalThis as { window: Window & typeof globalThis }).window =
+        ((doc as unknown as FakeDocument).defaultView as unknown as Window & typeof globalThis)
+      try {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: ['s0'],
+              symbol: 'component-watch-resume',
+              visibleCount: 0,
+              watchCount: 1,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+            sc1: [{ __eclipsa_type: 'ref', kind: 'signal', token: 's0' }],
+          },
+          signals: {
+            s0: 0,
+            '$router:isNavigating': false,
+            '$router:path': '/',
+          },
+          subscriptions: {
+            s0: [],
+            '$router:isNavigating': [],
+            '$router:path': [],
+          },
+          symbols: {},
+          visibles: {},
+          watches: {
+            'c0:w0': {
+              componentId: 'c0',
+              mode: 'explicit',
+              scope: 'sc1',
+              signals: ['s0'],
+              symbol: 'watch-resume-symbol',
+            },
+          },
+        })
+
+        container.imports.set(
+          'component-watch-resume',
+          Promise.resolve({
+            default: () => {
+              const count = useSignal(0)
+              useWatch(
+                __eclipsaWatch(
+                  'watch-resume-symbol',
+                  () => {
+                    events.push(`run:${count.value}`)
+                  },
+                  () => [count],
+                ),
+                [count],
+              )
+              return jsxDEV('div', { children: count.value }, null, false, {})
+            },
+          }),
+        )
+
+        ;(globalThis as typeof globalThis & { document: Document }).document = doc
+        await restoreResumedLocalSignalEffects(container)
+
+        expect(events).toEqual([])
+
+        container.signals.get('s0')!.handle.value = 1
+        expect(events).toEqual(['run:1'])
+      } finally {
+        globalThis.Document = OriginalDocument
+        globalThis.document = originalDocument
+        if (originalWindow === undefined) {
+          delete (globalThis as { window?: Window }).window
+        } else {
+          globalThis.window = originalWindow
+        }
       }
     })
   })
@@ -7745,7 +8139,7 @@ describe('renderClientInsertable', () => {
         )
       })
 
-      const getRows = () =>
+      const getRows = (): FakeElement[] =>
         host.childNodes.flatMap((node) =>
           node instanceof FakeComment || !(node instanceof FakeElement)
             ? []
@@ -7778,7 +8172,11 @@ describe('renderClientInsertable', () => {
       button.appendChild(marker)
 
       withRuntimeContainer(container, () => {
-        insert((() => count.value) as Parameters<typeof insert>[0], button as unknown as Node, marker)
+        insert(
+          (() => count.value) as Parameters<typeof insert>[0],
+          button as unknown as Node,
+          marker as unknown as Node,
+        )
       })
 
       expect(button.childNodes).toHaveLength(3)

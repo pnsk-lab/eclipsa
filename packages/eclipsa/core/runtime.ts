@@ -28,6 +28,7 @@ import {
   getActionHandleMeta,
   getActionHookMeta,
   getComponentMeta,
+  getExternalComponentMeta,
   getEventMeta,
   getRegisteredActionHookIds,
   getRegisteredActionHook,
@@ -42,6 +43,8 @@ import {
   setNavigateMeta,
   setSignalMeta,
   type ComponentMeta,
+  type ExternalComponentDescriptor,
+  type ExternalComponentMeta,
   type EventDescriptor,
   type LazyMeta,
   type SignalMeta,
@@ -98,6 +101,10 @@ const BIND_VALUE_ATTR = 'data-e-bind-value'
 const BIND_CHECKED_ATTR = 'data-e-bind-checked'
 const CLIENT_INSERT_OWNER_SYMBOL = '$client-insert-root'
 const CLIENT_INSERT_OWNER_ID_PREFIX = '$insert:'
+const EXTERNAL_ROOT_ATTR = 'data-e-external-root'
+const EXTERNAL_ROOT_COMPONENT_ATTR = 'data-e-external-component'
+const EXTERNAL_ROOT_KIND_ATTR = 'data-e-external-kind'
+const getExternalSlotTag = (_kind: ExternalComponentDescriptor['kind']) => 'e-slot-host'
 const DOM_TEXT_NODE = 3
 const DOM_COMMENT_NODE = 8
 const DOM_SHOW_COMMENT = 0x80
@@ -111,6 +118,7 @@ type DomConstructorName =
   | 'HTMLFormElement'
 
 export interface ResumeComponentPayload {
+  external?: ExternalComponentDescriptor
   optimizedRoot?: boolean
   props: SerializedValue
   projectionSlots?: Record<string, number>
@@ -269,6 +277,9 @@ interface ComponentState {
   activateModeOnFlush?: 'patch' | 'replace'
   didMount: boolean
   end?: Comment
+  external?: ExternalComponentDescriptor
+  externalInstance?: unknown
+  externalMeta?: ExternalComponentMeta | null
   id: string
   mountCleanupSlots: CleanupSlot[]
   optimizedRoot?: boolean
@@ -357,6 +368,15 @@ export interface RuntimeContainer {
   dirtyFlushQueued: boolean
   doc?: Document
   eventDispatchPromise: Promise<void> | null
+  externalRenderCache: Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >
   id: string
   imports: Map<string, Promise<RuntimeSymbolModule>>
   interactivePrefetchCheckQueued: boolean
@@ -565,6 +585,7 @@ interface WatchState {
   id: string
   mode: WatchMode
   pending: Promise<void> | null
+  resumed: boolean
   run: (() => void) | null
   scopeId: string
   symbol: string
@@ -2031,6 +2052,7 @@ const createContainer = (
   symbols: Record<string, string>,
   doc?: Document,
   asyncSignalSnapshotCache?: Map<string, unknown>,
+  externalRenderCache?: RuntimeContainer['externalRenderCache'],
 ): RuntimeContainer => ({
   actions: new Map(),
   actionStates: new Map(),
@@ -2042,6 +2064,7 @@ const createContainer = (
   dirtyFlushQueued: false,
   doc,
   eventDispatchPromise: null,
+  externalRenderCache: externalRenderCache ?? new Map(),
   id: `rt${((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] =
     (((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] as number | undefined) ?? 0) +
     1)}`,
@@ -2512,6 +2535,9 @@ const getOrCreateComponentState = (
   const component: ComponentState = {
     active: false,
     didMount: false,
+    external: undefined,
+    externalInstance: undefined,
+    externalMeta: null,
     id,
     mountCleanupSlots: [],
     optimizedRoot: false,
@@ -2543,10 +2569,13 @@ const resetComponentForSymbolChange = (
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   component.renderEffectCleanupSlot = createCleanupSlot()
   component.didMount = false
+  component.external = meta.external
   component.optimizedRoot = meta.optimizedRoot === true
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.rawProps = null
+  component.externalInstance = undefined
+  component.externalMeta = null
   component.scopeId = registerScope(container, meta.captures())
   component.signalIds = []
   component.suspensePromise = null
@@ -2579,6 +2608,7 @@ const getOrCreateWatchState = (
     id,
     mode: 'dynamic',
     pending: null,
+    resumed: false,
     run: null,
     scopeId: registerScope(container, []),
     symbol: '',
@@ -2656,7 +2686,20 @@ const clearComponentSubscriptions = (container: RuntimeContainer, componentId: s
   }
 }
 
+const disposeExternalComponentInstance = (component: ComponentState) => {
+  if (!component.externalMeta || component.externalInstance === undefined) {
+    component.externalInstance = undefined
+    component.externalMeta = null
+    return
+  }
+
+  void component.externalMeta.unmount(component.externalInstance)
+  component.externalInstance = undefined
+  component.externalMeta = null
+}
+
 const disposeComponentMountCleanups = (component: ComponentState) => {
+  disposeExternalComponentInstance(component)
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   component.renderEffectCleanupSlot = createCleanupSlot()
   const cleanupSlots = [...component.mountCleanupSlots].reverse()
@@ -2956,6 +2999,57 @@ const scheduleMountCallbacks = (
         scheduleVisibleCallbacksCheck(container)
       })
   })
+}
+
+const scheduleExternalComponentMount = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  external: ExternalComponentMeta,
+  props: Record<string, unknown>,
+) => {
+  if (component.didMount) {
+    return
+  }
+  component.didMount = true
+  scheduleMicrotask(() => {
+    const host = getExternalRoot(component)
+    if (!host) {
+      return
+    }
+    void withClientContainer(container, async () => {
+      await syncExternalComponentInstance(component, external, props, host)
+      rebindExternalHost(container, host)
+      scheduleExternalHostRebind(container, host)
+      await flushDirtyComponents(container)
+      scheduleVisibleCallbacksCheck(container)
+    })
+  })
+}
+
+const rebindExternalHost = (container: RuntimeContainer, host: HTMLElement) => {
+  if (!host.parentNode || !('querySelectorAll' in host.parentNode)) {
+    return
+  }
+  bindComponentBoundaries(container, host.parentNode as ParentNode)
+  restoreSignalRefs(container, host.parentNode as ParentNode)
+  bindRouterLinks(container, host.parentNode as ParentNode)
+}
+
+const scheduleExternalHostRebind = (container: RuntimeContainer, host: HTMLElement) => {
+  const schedule =
+    container.doc?.defaultView?.setTimeout?.bind(container.doc.defaultView) ??
+    (typeof setTimeout === 'function' ? setTimeout : null)
+  if (!schedule) {
+    return
+  }
+  for (const delay of [0, 16, 100]) {
+    schedule(() => {
+      if (!host.isConnected) {
+        return
+      }
+      rebindExternalHost(container, host)
+    }, delay)
+  }
 }
 
 const collectProjectionSlotRanges = (roots: Node[]) => {
@@ -4468,6 +4562,161 @@ const renderProjectionSlotToNodes = (slot: ProjectionSlotValue, container: Runti
   return [start, ...renderClientInsertable(slot.source, container), end]
 }
 
+const createExternalRootHtml = (componentId: string, kind: string, body: string) =>
+  `<e-island-root ${EXTERNAL_ROOT_ATTR}="true" ${EXTERNAL_ROOT_COMPONENT_ATTR}="${escapeAttr(
+    componentId,
+  )}" ${EXTERNAL_ROOT_KIND_ATTR}="${escapeAttr(kind)}">${body}</e-island-root>`
+
+const createExternalRootNode = (
+  container: RuntimeContainer,
+  componentId: string,
+  kind: string,
+  body?: string,
+) => {
+  if (!container.doc) {
+    throw new Error('Client rendering requires a document.')
+  }
+  const host = container.doc.createElement('e-island-root')
+  host.setAttribute(EXTERNAL_ROOT_ATTR, 'true')
+  host.setAttribute(EXTERNAL_ROOT_COMPONENT_ATTR, componentId)
+  host.setAttribute(EXTERNAL_ROOT_KIND_ATTR, kind)
+  if (body) {
+    host.innerHTML = body
+  }
+  return host
+}
+
+const getExternalRoot = (component: ComponentState) => {
+  if (!component.start || !component.end) {
+    return null
+  }
+  let cursor = component.start.nextSibling
+  while (cursor && cursor !== component.end) {
+    if (isElementNode(cursor) && cursor.getAttribute(EXTERNAL_ROOT_ATTR) === 'true') {
+      return cursor as HTMLElement
+    }
+    cursor = cursor.nextSibling
+  }
+  return null
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const renderExternalSlotContentToString = (
+  componentId: string,
+  name: string,
+  occurrence: number,
+  source: unknown,
+) => {
+  if (source === null || source === undefined || source === false) {
+    return ''
+  }
+  return renderProjectionSlotToString(createProjectionSlot(componentId, name, occurrence, source))
+}
+
+const injectExternalSlotHtml = (
+  componentId: string,
+  kind: ExternalComponentDescriptor['kind'],
+  projectionSlots: Record<string, number> | null,
+  props: Record<string, unknown>,
+  html: string,
+) => {
+  if (!projectionSlots) {
+    return html
+  }
+
+  const slotTag = getExternalSlotTag(kind)
+  let nextHtml = html
+  for (const [name, totalOccurrences] of Object.entries(projectionSlots)) {
+    if (!hasProjectionSlotValue(props, name)) {
+      continue
+    }
+    const pattern = new RegExp(
+      `<${slotTag}([^>]*?)data-e-slot=(["'])${escapeRegExp(name)}\\2([^>]*)>([\\s\\S]*?)</${slotTag}>`,
+    )
+    for (let occurrence = 0; occurrence < totalOccurrences; occurrence += 1) {
+      const slotHtml = renderExternalSlotContentToString(componentId, name, occurrence, props[name])
+      nextHtml = nextHtml.replace(
+        pattern,
+        `<${slotTag}$1data-e-slot="${name}"$3>${slotHtml}</${slotTag}>`,
+      )
+    }
+  }
+
+  return nextHtml
+}
+
+const renderExternalComponentHtml = (
+  container: RuntimeContainer,
+  componentId: string,
+  external: ExternalComponentMeta,
+  props: Record<string, unknown>,
+  projectionSlots: Record<string, number> | null,
+) => {
+  const cacheKey = `${componentId}:${external.kind}`
+  const cached = container.externalRenderCache.get(cacheKey)
+  if (cached?.status === 'resolved') {
+    return injectExternalSlotHtml(componentId, external.kind, projectionSlots, props, cached.html ?? '')
+  }
+  if (cached?.status === 'rejected') {
+    throw cached.error
+  }
+  if (cached?.status === 'pending') {
+    if (cached.pending) {
+      container.pendingSuspensePromises.add(cached.pending)
+    }
+    return ''
+  }
+
+  const result = external.renderToString(props)
+  if (typeof result === 'string') {
+    container.externalRenderCache.set(cacheKey, {
+      html: result,
+      status: 'resolved',
+    })
+    return injectExternalSlotHtml(componentId, external.kind, projectionSlots, props, result)
+  }
+
+  const pending = Promise.resolve(result).then(
+    (resolved) => {
+      container.externalRenderCache.set(cacheKey, {
+        html: resolved,
+        status: 'resolved',
+      })
+      return resolved
+    },
+    (error) => {
+      container.externalRenderCache.set(cacheKey, {
+        error,
+        status: 'rejected',
+      })
+      throw error
+    },
+  )
+  container.externalRenderCache.set(cacheKey, {
+    pending,
+    status: 'pending',
+  })
+  container.pendingSuspensePromises.add(pending)
+  return ''
+}
+
+const syncExternalComponentInstance = async (
+  component: ComponentState,
+  external: ExternalComponentMeta,
+  props: Record<string, unknown>,
+  host: HTMLElement,
+) => {
+  if (component.externalInstance === undefined) {
+    component.externalMeta = external
+    component.externalInstance = await external.hydrate(host, props)
+    return
+  }
+
+  component.externalMeta = external
+  component.externalInstance = await external.update(component.externalInstance, host, props)
+}
+
 const renderContextProviderToString = (
   token: RuntimeContextToken,
   props: Record<string, unknown>,
@@ -4560,9 +4809,28 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       position.parentId,
     )
     component.scopeId = registerScope(container, meta.captures())
+    component.external = meta.external
     component.optimizedRoot = meta.optimizedRoot === true
     component.props = evaluatedProps
     component.projectionSlots = meta.projectionSlots ?? null
+    component.rawProps = resolved.props
+
+    const externalMeta = getExternalComponentMeta(componentFn)
+    if (externalMeta) {
+      const externalBody = renderExternalComponentHtml(
+        container,
+        componentId,
+        externalMeta,
+        evaluatedProps,
+        component.projectionSlots,
+      )
+      const host = createExternalRootHtml(componentId, externalMeta.kind, externalBody)
+      const rendered = `<!--ec:c:${componentId}:start-->${host}<!--ec:c:${componentId}:end-->`
+      return resolved.key === null || resolved.key === undefined
+        ? rendered
+        : wrapStringWithKeyedRange(rendered, resolved.key)
+    }
+
     const frame = createFrame(container, component, 'ssr')
     clearComponentSubscriptions(container, component.id)
     const renderProps = createRenderProps(componentId, meta, resolved.props)
@@ -4728,10 +4996,12 @@ const renderComponentToNodes = (
   if (!existing || symbolChanged) {
     resetComponentForSymbolChange(container, component, meta)
   }
+  component.external = meta.external
   component.optimizedRoot = meta.optimizedRoot === true
   component.props = props
   component.rawProps = rawProps ?? null
   component.projectionSlots = meta.projectionSlots ?? null
+  const externalMeta = getExternalComponentMeta(componentFn)
   const parentFrame = getCurrentFrame()
   const shouldReuseProjectionSlotDom = parentFrame?.projectionState.reuseProjectionSlotDom ?? false
   const previousStart = component.start
@@ -4743,6 +5013,46 @@ const renderComponentToNodes = (
       ((rawProps ?? props) as Record<string, unknown> | null) ?? null,
     )
   const boundaryContentsChanged = propsChanged || (!wasActive && !!previousStart && !!previousEnd)
+  if (
+    mode === 'client' &&
+    externalMeta &&
+    wasActive &&
+    previousStart &&
+    previousEnd &&
+    !symbolChanged
+  ) {
+    const start = container.doc.createComment(`ec:c:${componentId}:start`)
+    const end = container.doc.createComment(`ec:c:${componentId}:end`)
+    ;(
+      start as Comment & {
+        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
+        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
+      }
+    )[COMPONENT_BOUNDARY_PROPS_CHANGED] = false
+    ;(
+      start as Comment & {
+        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
+        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
+      }
+    )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = false
+
+    const host = getExternalRoot(component)
+    if (host && propsChanged) {
+      void withClientContainer(container, async () => {
+        await syncExternalComponentInstance(component, externalMeta, props, host)
+        rebindExternalHost(container, host)
+        scheduleExternalHostRebind(container, host)
+      })
+    }
+
+    if (parentFrame) {
+      for (const descendantId of expandComponentIdsToDescendants(container, [componentId])) {
+        parentFrame.visitedDescendants.add(descendantId)
+      }
+    }
+
+    return [start, end]
+  }
   if (mode === 'client' && wasActive && previousStart && previousEnd && !boundaryContentsChanged) {
     const start = container.doc.createComment(`ec:c:${componentId}:start`)
     const end = container.doc.createComment(`ec:c:${componentId}:end`)
@@ -4766,6 +5076,35 @@ const renderComponentToNodes = (
     }
 
     return [start, end]
+  }
+  if (externalMeta) {
+    const start = container.doc.createComment(`ec:c:${componentId}:start`)
+    const end = container.doc.createComment(`ec:c:${componentId}:end`)
+    ;(
+      start as Comment & {
+        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
+        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
+      }
+    )[COMPONENT_BOUNDARY_PROPS_CHANGED] = true
+    ;(
+      start as Comment & {
+        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
+        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
+      }
+    )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = symbolChanged
+    if (!previousStart || !previousEnd) {
+      component.start = start
+      component.end = end
+    }
+
+    const host = createExternalRootNode(container, componentId, externalMeta.kind)
+    if (parentFrame) {
+      parentFrame.visitedDescendants.add(componentId)
+    }
+    if (mode === 'client') {
+      scheduleExternalComponentMount(container, component, externalMeta, props)
+    }
+    return [start, host, end]
   }
   const speculativeEffectCleanupSlot =
     !previousStart || !previousEnd ? null : boundaryContentsChanged ? null : createCleanupSlot()
@@ -6893,6 +7232,38 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   if (rawProps) {
     component.props = evaluateProps(rawProps)
   }
+  const externalMeta = getExternalComponentMeta(module.default)
+  if (externalMeta && component.props && typeof component.props === 'object') {
+    component.external = {
+      kind: externalMeta.kind,
+      slots: [...externalMeta.slots],
+    }
+    const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
+    let host = getExternalRoot(component)
+    if (!host) {
+      replaceBoundaryContents(component.start, component.end, [
+        createExternalRootNode(container, component.id, externalMeta.kind),
+      ])
+      host = getExternalRoot(component)
+    }
+    if (!host) {
+      throw new Error(`Missing external root host for component ${component.id}.`)
+    }
+    await withClientContainer(container, async () => {
+      await syncExternalComponentInstance(
+        component,
+        externalMeta,
+        component.props as Record<string, unknown>,
+        host!,
+      )
+    })
+    rebindExternalHost(container, host)
+    scheduleExternalHostRebind(container, host)
+    restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+    component.active = true
+    scheduleVisibleCallbacksCheck(container)
+    return false
+  }
   await preloadComponentProps(
     container,
     {
@@ -7316,12 +7687,18 @@ export const beginAsyncSSRContainer = async <T>(
   prepare?: (container: RuntimeContainer) => void | Promise<void>,
   options?: {
     asyncSignalSnapshotCache?: Map<string, unknown>
+    externalRenderCache?: RuntimeContainer['externalRenderCache']
   },
 ): Promise<{
   container: RuntimeContainer
   result: T
 }> => {
-  const container = createContainer(symbols, undefined, options?.asyncSignalSnapshotCache)
+  const container = createContainer(
+    symbols,
+    undefined,
+    options?.asyncSignalSnapshotCache,
+    options?.externalRenderCache,
+  )
   const rootComponent: ComponentState = {
     active: false,
     didMount: false,
@@ -7381,6 +7758,14 @@ const createResumePayload = (
       componentEntries.map(([id, component]) => [
         id,
         {
+          ...(component.external
+            ? {
+                external: {
+                  kind: component.external.kind,
+                  slots: [...component.external.slots],
+                },
+              }
+            : {}),
           ...(component.optimizedRoot ? { optimizedRoot: true } : {}),
           props: serializeRuntimeValue(container, component.props),
           ...(component.projectionSlots
@@ -7504,6 +7889,14 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
     container.components.set(id, {
       active: false,
       didMount: false,
+      external: componentPayload.external
+        ? {
+            kind: componentPayload.external.kind,
+            slots: [...componentPayload.external.slots],
+          }
+        : undefined,
+      externalInstance: undefined,
+      externalMeta: null,
       id,
       mountCleanupSlots: [],
       optimizedRoot: componentPayload.optimizedRoot === true,
@@ -7539,6 +7932,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
     watch.mode = watchPayload.mode
     watch.scopeId = watchPayload.scope
     watch.symbol = watchPayload.symbol
+    watch.resumed = true
     watch.track = null
     watch.run = null
     clearEffectSignals(watch.effect)
@@ -7714,6 +8108,7 @@ const canRestoreResumedLocalSignalEffects = (
   !!component.start &&
   !!component.end &&
   !component.active &&
+  !component.external &&
   component.signalIds.length > 0 &&
   (component.symbol === SUSPENSE_COMPONENT_SYMBOL ||
     container.imports.has(component.symbol) ||
@@ -7754,15 +8149,51 @@ export const restoreResumedLocalSignalEffects = async (container: RuntimeContain
   }
 }
 
+export const restoreResumedExternalComponents = async (container: RuntimeContainer) => {
+  const externalComponents = sortDirtyComponents(
+    [...container.components.values()]
+      .filter(
+        (component) =>
+          !!component.external &&
+          !!component.start &&
+          !!component.end &&
+          !component.active &&
+          !component.didMount &&
+          container.symbols.has(component.symbol),
+      )
+      .map((component) => component.id),
+  )
+
+  for (const componentId of externalComponents) {
+    await activateComponent(container, componentId)
+  }
+}
+
 export const restoreRegisteredRpcHandles = (container: RuntimeContainer) => {
-  withRuntimeContainer(container, () => {
-    for (const id of getRegisteredActionHookIds()) {
-      getRegisteredActionHook<() => unknown>(id)?.()
+  const hadWindow = 'window' in globalThis && globalThis.window !== undefined
+  const injectedWindow =
+    !hadWindow && container.doc?.defaultView
+      ? (container.doc.defaultView as Window & typeof globalThis)
+      : null
+
+  if (injectedWindow) {
+    ;(globalThis as { window?: Window & typeof globalThis }).window = injectedWindow
+  }
+
+  try {
+    withRuntimeContainer(container, () => {
+      for (const id of getRegisteredActionHookIds()) {
+        getRegisteredActionHook<() => unknown>(id)?.()
+      }
+      for (const id of getRegisteredLoaderHookIds()) {
+        getRegisteredLoaderHook<() => unknown>(id)?.()
+      }
+    })
+  } finally {
+    if (injectedWindow) {
+      delete (globalThis as { window?: Window & typeof globalThis }).window
     }
-    for (const id of getRegisteredLoaderHookIds()) {
-      getRegisteredLoaderHook<() => unknown>(id)?.()
-    }
-  })
+  }
 }
 
 export const primeRouteModules = async (container: RuntimeContainer) => {
@@ -8527,6 +8958,16 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   watch.symbol = watchMeta.symbol
   watch.track = dependencies ? () => trackWatchDependencies(dependencies) : null
   watch.run = createLocalWatchRunner(watch.effect, watch.cleanupSlot, fn, dependencies)
+  if (frame.mode === 'client' && watch.resumed) {
+    watch.resumed = false
+    if (dependencies) {
+      collectTrackedDependencies(watch.effect, () => {
+        trackWatchDependencies(dependencies)
+      })
+    }
+    return
+  }
+  watch.resumed = false
   watch.effect.fn()
 }
 

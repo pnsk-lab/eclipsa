@@ -33,7 +33,8 @@ describe('analyzeModule()', () => {
       }
 
       const snapshotPath = path.join(analyzeDir, 'snapshots', `${entry.name}.snap`)
-      await expect(`${sections.join('\n\n')}\n`).toMatchFileSnapshot(snapshotPath)
+      const snapshot = await fs.readFile(snapshotPath, 'utf8')
+      expect(`${sections.join('\n\n')}\n`).toBe(snapshot)
     }
   })
 
@@ -537,5 +538,84 @@ describe('analyzeModule()', () => {
     expect(analyzed.symbols.get('@pkg:motion')?.kind).toBe('component')
     expect(analyzed.symbols.get('@pkg:motion')?.captures).toEqual(['theme'])
     expect(analyzed.code).toContain('()=>[theme]')
+  })
+
+  it('treats top-level eclipsifyReact() bindings as resumable components', async () => {
+    const analyzed = await analyzeModule(`
+      import { eclipsifyReact } from "@eclipsa/react";
+      import { createElement } from "react";
+
+      const ReactView = (props: { title: string; children?: unknown }) =>
+        createElement("section", null, [
+          createElement("h1", { key: "title" }, props.title),
+          props.children,
+        ]);
+
+      export const ReactIsland = eclipsifyReact(ReactView, { slots: ["children"] });
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaComponent(eclipsifyReact(')
+    expect(analyzed.code).toContain('{ external: { kind: "react", slots: ["children"] } }')
+    expect([...analyzed.hmrManifest.components.keys()]).toContain('component:ReactIsland')
+
+    const component = [...analyzed.symbols.values()].find(
+      (symbol) => symbol.kind === 'component' && symbol.code.includes('const __e_component ='),
+    )
+    expect(component?.code).toContain('import { eclipsifyReact } from "@eclipsa/react";')
+    expect(component?.code).toContain('const __e_component = eclipsifyReact(ReactView')
+  })
+
+  it('treats top-level eclipsifyVue() bindings as resumable components', async () => {
+    const analyzed = await analyzeModule(`
+      import { eclipsifyVue } from "@eclipsa/vue";
+      import { defineComponent, h } from "vue";
+
+      const VueView = defineComponent({
+        props: {
+          title: String,
+        },
+        setup(props, { slots }) {
+          return () => h("section", null, [
+            h("h1", null, props.title),
+            slots.default?.(),
+          ]);
+        },
+      });
+
+      export const VueIsland = eclipsifyVue(VueView);
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaComponent(eclipsifyVue(')
+    expect(analyzed.code).toContain('{ external: { kind: "vue", slots: ["children"] } }')
+    expect([...analyzed.hmrManifest.components.keys()]).toContain('component:VueIsland')
+  })
+
+  it('rejects unsupported eclipsify*() placements and dynamic targets', async () => {
+    await expect(
+      analyzeModule(`
+        import { eclipsifyReact } from "@eclipsa/react";
+        import { createElement } from "react";
+
+        export default () => {
+          const View = () => createElement("div", null, "ready");
+          const Island = eclipsifyReact(View);
+          return <Island />;
+        };
+      `),
+    ).rejects.toThrowError('eclipsifyReact() must be assigned to a top-level PascalCase binding.')
+
+    await expect(
+      analyzeModule(`
+        import { eclipsifyVue } from "@eclipsa/vue";
+
+        const registry = {
+          Primary: {},
+        };
+        const key = "Primary";
+        export const VueIsland = eclipsifyVue(registry[key]);
+      `),
+    ).rejects.toThrowError(
+      'eclipsify*() requires a static component reference as the first argument. Dynamic targets are not supported.',
+    )
   })
 })

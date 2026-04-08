@@ -8,7 +8,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, ArrowFunctionExpression, AssignmentExpression, AssignmentTarget, CallExpression,
+        Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentExpression, AssignmentTarget, CallExpression,
         ExportDefaultDeclaration, ExportDefaultDeclarationKind, Expression, Function,
         ImportDeclarationSpecifier, JSXAttributeName, JSXElementName, JSXExpression,
         ObjectProperty, ObjectPropertyKind, Program, PropertyKind, ReturnStatement, Statement,
@@ -138,7 +138,9 @@ struct ImportBindings {
     deprecated_lazy_identifier: Option<String>,
     deprecated_loader_identifier: Option<String>,
     loader_identifier: Option<String>,
+    react_island_identifier: Option<String>,
     signal_identifier: Option<String>,
+    vue_island_identifier: Option<String>,
     visible_identifier: Option<String>,
     watch_identifier: Option<String>,
 }
@@ -147,6 +149,21 @@ struct ImportBindings {
 struct ComponentInfo {
     hmr_key: String,
     local_symbol_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalFactoryKind {
+    React,
+    Vue,
+}
+
+impl ExternalFactoryKind {
+    fn as_runtime_kind(self) -> &'static str {
+        match self {
+            ExternalFactoryKind::React => "react",
+            ExternalFactoryKind::Vue => "vue",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -278,7 +295,9 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
         deprecated_lazy_identifier: None,
         deprecated_loader_identifier: None,
         loader_identifier: None,
+        react_island_identifier: None,
         signal_identifier: None,
+        vue_island_identifier: None,
         visible_identifier: None,
         watch_identifier: None,
     };
@@ -315,6 +334,14 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
                 },
                 "eclipsa/atom" => match imported {
                     "useAtom" => bindings.atom_identifier = Some(local),
+                    _ => {}
+                },
+                "@eclipsa/react" => match imported {
+                    "eclipsifyReact" => bindings.react_island_identifier = Some(local),
+                    _ => {}
+                },
+                "@eclipsa/vue" => match imported {
+                    "eclipsifyVue" => bindings.vue_island_identifier = Some(local),
                     _ => {}
                 },
                 _ => {}
@@ -659,8 +686,105 @@ fn collect_projection_slots_from_argument(argument: &Argument<'_>) -> Result<Opt
     }
 }
 
+fn is_supported_external_component_target_expression(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::Identifier(_) | Expression::StaticMemberExpression(_) => true,
+        Expression::ParenthesizedExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Expression::TSAsExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        _ => false,
+    }
+}
+
+fn is_supported_external_component_target(argument: &Argument<'_>) -> bool {
+    match argument {
+        Argument::Identifier(_) | Argument::StaticMemberExpression(_) => true,
+        Argument::ParenthesizedExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Argument::TSAsExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Argument::TSSatisfiesExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        Argument::TSNonNullExpression(expression) => {
+            is_supported_external_component_target_expression(&expression.expression)
+        }
+        _ => false,
+    }
+}
+
+fn collect_external_projection_slots(
+    expression: &CallExpression<'_>,
+) -> Result<Vec<(String, usize)>, String> {
+    let Some(options) = expression.arguments.get(1) else {
+        return Ok(vec![("children".to_string(), 1)]);
+    };
+
+    let Argument::ObjectExpression(object) = options else {
+        return Err("eclipsify*() options must be a static object literal when provided.".to_string());
+    };
+
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return Err("eclipsify*() options must not use spreads.".to_string());
+        };
+        if property.kind != PropertyKind::Init || property.computed || property.method {
+            return Err("eclipsify*() options must use plain object properties.".to_string());
+        }
+        let Some(property_name) = property
+            .key
+            .static_name()
+            .map(|name| name.to_string()) else {
+            return Err("eclipsify*() options keys must be static.".to_string());
+        };
+        if property_name != "slots" {
+            return Err(format!("Unsupported eclipsify*() option \"{property_name}\"."));
+        }
+
+        let Expression::ArrayExpression(array) = &property.value else {
+            return Err("eclipsify*() slots must be a static string array.".to_string());
+        };
+
+        let mut entries = Vec::new();
+        for element in &array.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => {
+                    return Err("eclipsify*() slots arrays cannot be sparse.".to_string());
+                }
+                ArrayExpressionElement::SpreadElement(_) => {
+                    return Err("eclipsify*() slots must be string literals.".to_string());
+                }
+                ArrayExpressionElement::StringLiteral(literal) => {
+                    entries.push((literal.value.as_str().to_string(), 1));
+                }
+                _ => {
+                    return Err("eclipsify*() slots must be string literals.".to_string());
+                }
+            }
+        }
+        if entries.is_empty() {
+            return Ok(vec![]);
+        }
+        return Ok(entries);
+    }
+
+    Ok(vec![("children".to_string(), 1)])
+}
+
 struct CaptureCollector<'a, 's> {
     capture_indices: HashMap<String, usize>,
+    capture_outer_scope_bindings: bool,
     current_scope_stack: Vec<ScopeId>,
     error: Option<String>,
     function_scope: ScopeId,
@@ -680,6 +804,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     ) -> Result<CollectedDependencies, String> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: false,
             current_scope_stack: Vec::new(),
             error: None,
             function_scope: root_scope,
@@ -701,6 +826,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     ) -> Result<CollectedDependencies, String> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: false,
             current_scope_stack: Vec::new(),
             error: None,
             function_scope: root_scope,
@@ -721,6 +847,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     ) -> Result<CollectedDependencies, String> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: false,
             current_scope_stack: Vec::new(),
             error: None,
             function_scope: root_scope,
@@ -733,6 +860,26 @@ impl<'a, 's> CaptureCollector<'a, 's> {
         collector.finish()
     }
 
+    fn collect_module_call_expression(
+        program: &'a Program<'a>,
+        semantic: &'s Semantic<'a>,
+        expression: &CallExpression<'a>,
+    ) -> Result<CollectedDependencies, String> {
+        let mut collector = Self {
+            capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: true,
+            current_scope_stack: Vec::new(),
+            error: None,
+            function_scope: program.scope_id(),
+            import_spans: HashSet::new(),
+            local_definitions: HashMap::new(),
+            program,
+            semantic,
+        };
+        collector.visit_call_expression(expression);
+        collector.finish()
+    }
+
     fn collect_arrow(
         program: &'a Program<'a>,
         semantic: &'s Semantic<'a>,
@@ -740,6 +887,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     ) -> Result<CollectedDependencies, String> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: false,
             current_scope_stack: Vec::new(),
             error: None,
             function_scope: function.scope_id(),
@@ -759,6 +907,7 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     ) -> Result<CollectedDependencies, String> {
         let mut collector = Self {
             capture_indices: HashMap::new(),
+            capture_outer_scope_bindings: false,
             current_scope_stack: Vec::new(),
             error: None,
             function_scope: function.scope_id(),
@@ -808,6 +957,9 @@ impl<'a, 's> CaptureCollector<'a, 's> {
     }
 
     fn is_reachable_from_function_scope(&self, symbol_scope: ScopeId) -> bool {
+        if self.capture_outer_scope_bindings {
+            return false;
+        }
         self.semantic
             .scoping()
             .scope_ancestors(symbol_scope)
@@ -868,6 +1020,14 @@ impl<'a, 's> CaptureCollector<'a, 's> {
                 | Expression::FunctionExpression(_)
                 | Expression::ClassExpression(_)
         )
+    }
+
+    fn can_inline_outer_scope_symbol(&self, flags: SymbolFlags, symbol_id: SymbolId) -> bool {
+        self.capture_outer_scope_bindings
+            && self.semantic.symbol_scope(symbol_id) == self.program.scope_id()
+            && (flags.is_function()
+                || flags.is_class()
+                || (flags.is_variable() && flags.is_const_variable()))
     }
 
     fn add_local_definition_from_symbol(&mut self, symbol_id: SymbolId) {
@@ -989,6 +1149,10 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
         {
             return;
         }
+        if self.can_inline_outer_scope_symbol(flags, symbol_id) {
+            self.add_local_definition_from_symbol(symbol_id);
+            return;
+        }
         if self.can_inline_symbol(flags, symbol_id) {
             self.add_local_definition_from_symbol(symbol_id);
             return;
@@ -1022,6 +1186,17 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
             if self.is_local_to_current_traversal(symbol_scope)
                 || self.is_reachable_from_function_scope(symbol_scope)
             {
+                return;
+            }
+            if flags.is_variable()
+                && flags.is_const_variable()
+                && self.semantic.symbol_scope(symbol_id) == self.program.scope_id()
+            {
+                self.add_local_definition_from_symbol(symbol_id);
+                return;
+            }
+            if self.can_inline_outer_scope_symbol(flags, symbol_id) {
+                self.add_local_definition_from_symbol(symbol_id);
                 return;
             }
             if self.can_inline_symbol(flags, symbol_id) {
@@ -1062,7 +1237,7 @@ pub(crate) fn transform_analyze(source: &str, id: &str) -> Result<AnalyzeRespons
 struct AnalyzeVisitor<'a, 's> {
     actions: Vec<(String, SymbolRef)>,
     component_counts: HashMap<String, usize>,
-    component_info_by_fn: HashMap<SpanKey, ComponentInfo>,
+    component_info_by_span: HashMap<SpanKey, ComponentInfo>,
     current_functions: Vec<FunctionContext>,
     current_scope_stack: Vec<ScopeId>,
     error: Option<String>,
@@ -1095,7 +1270,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         Self {
             actions: Vec::new(),
             component_counts: HashMap::new(),
-            component_info_by_fn: HashMap::new(),
+            component_info_by_span: HashMap::new(),
             current_functions: Vec::new(),
             current_scope_stack: Vec::new(),
             error: None,
@@ -1146,7 +1321,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
 
     fn current_owner_component_key(&self) -> Option<String> {
         for function in self.current_functions.iter().rev() {
-            if let Some(info) = self.component_info_by_fn.get(&function.span_key) {
+            if let Some(info) = self.component_info_by_span.get(&function.span_key) {
                 return Some(info.hmr_key.clone());
             }
         }
@@ -1155,14 +1330,14 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
 
     fn current_function_is_component_or_hook(&self) -> bool {
         self.current_functions.last().is_some_and(|context| {
-            self.component_info_by_fn.contains_key(&context.span_key)
+            self.component_info_by_span.contains_key(&context.span_key)
                 || self.hook_functions.contains(&context.span_key)
         })
     }
 
     fn push_owner_local_symbol_key(&mut self, symbol_key: &str) {
         for function in self.current_functions.iter().rev() {
-            if let Some(info) = self.component_info_by_fn.get_mut(&function.span_key) {
+            if let Some(info) = self.component_info_by_span.get_mut(&function.span_key) {
                 info.local_symbol_keys.push(symbol_key.to_string());
                 return;
             }
@@ -1218,6 +1393,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             return Err("Expected function expression.".to_string());
         };
         CaptureCollector::collect_expression(self.program, self.semantic, root_scope, expression)
+    }
+
+    fn collect_symbol_dependencies_from_module_call_expression(
+        &self,
+        expression: &CallExpression<'a>,
+    ) -> Result<CollectedDependencies, String> {
+        CaptureCollector::collect_module_call_expression(self.program, self.semantic, expression)
     }
 
     fn collect_symbol_dependencies_from_export_default(
@@ -1352,7 +1534,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         let Some(function_span) = function_expression_span(expression) else {
             return;
         };
-        if self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+        if self.component_info_by_span.contains_key(&SpanKey::from_span(function_span)) {
             return;
         }
         if let Expression::ParenthesizedExpression(expression) = expression {
@@ -1571,7 +1753,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 };
-                if self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+                if self.component_info_by_span.contains_key(&SpanKey::from_span(function_span)) {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
@@ -1595,7 +1777,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 );
             }
             AstKind::Function(function) => {
-                if self.component_info_by_fn.contains_key(&SpanKey::from_span(function.span)) {
+                if self.component_info_by_span.contains_key(&SpanKey::from_span(function.span)) {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
@@ -1667,22 +1849,26 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         None
     }
 
-    fn register_component_if_needed(&mut self, span_key: SpanKey) {
-        if self.component_info_by_fn.contains_key(&span_key) {
+    fn register_component_with_base(&mut self, span_key: SpanKey, base: String) {
+        if self.component_info_by_span.contains_key(&span_key) {
             return;
         }
-        let Some(base) = self.component_base_from_stack() else {
-            return;
-        };
         let count = self.component_counts.get(&base).copied().unwrap_or(0);
         self.component_counts.insert(base.clone(), count + 1);
-        self.component_info_by_fn.insert(
+        self.component_info_by_span.insert(
             span_key,
             ComponentInfo {
                 hmr_key: create_indexed_key(&base, count),
                 local_symbol_keys: Vec::new(),
             },
         );
+    }
+
+    fn register_component_if_needed(&mut self, span_key: SpanKey) {
+        let Some(base) = self.component_base_from_stack() else {
+            return;
+        };
+        self.register_component_with_base(span_key, base);
     }
 
     fn register_hook_if_needed(&mut self, span_key: SpanKey) {
@@ -1713,7 +1899,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             )
             .unwrap();
         let span_key = SpanKey::from_span(function_span);
-        let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
+        let component_info = self.component_info_by_span.get(&span_key).cloned().unwrap();
         self.hmr_key_by_symbol_id
             .insert(symbol_id.clone(), component_info.hmr_key.clone());
         self.symbols.push((
@@ -1791,7 +1977,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             )
             .unwrap();
         let span_key = SpanKey::from_span(function_span);
-        let component_info = self.component_info_by_fn.get(&span_key).cloned().unwrap();
+        let component_info = self.component_info_by_span.get(&span_key).cloned().unwrap();
         self.hmr_key_by_symbol_id
             .insert(symbol_id.clone(), component_info.hmr_key.clone());
         self.symbols.push((
@@ -1845,7 +2031,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     let Argument::StringLiteral(symbol_literal) = symbol_argument else {
                         return;
                     };
-                    if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+                    if !self.component_info_by_span.contains_key(&SpanKey::from_span(function_span)) {
                         return;
                     }
                     let Some(captures_argument) = call.arguments.get(2) else {
@@ -1885,7 +2071,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         let Some(function_span) = function_expression_span(expression) else {
             return;
         };
-        if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+        if !self.component_info_by_span.contains_key(&SpanKey::from_span(function_span)) {
             return;
         }
         let dependencies = match self.collect_symbol_dependencies_from_expression(expression) {
@@ -1928,7 +2114,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             }
             _ => return,
         };
-        if !self.component_info_by_fn.contains_key(&SpanKey::from_span(function_span)) {
+        if !self.component_info_by_span.contains_key(&SpanKey::from_span(function_span)) {
             return;
         }
         let dependencies = match self.collect_symbol_dependencies_from_export_default(declaration) {
@@ -1952,6 +2138,261 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             dependencies.import_spans,
             dependencies.local_definitions,
             projection_slots,
+        );
+    }
+
+    fn build_external_component_symbol(
+        &self,
+        expression_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        local_definitions: Vec<LocalDefinition>,
+        normalize_symbol_ids: bool,
+    ) -> Result<SymbolBuild, String> {
+        let expression_source =
+            render_span_with_replacements(self.source, expression_span, &self.replacements)?;
+        let local_prefix = local_definitions
+            .iter()
+            .map(|definition| self.render_local_definition(definition))
+            .collect::<Result<Vec<_>, _>>()?
+            .join("\n");
+        let standalone_module = if local_prefix.is_empty() {
+            format!("const __e_component = {expression_source};\nexport default __e_component;\n")
+        } else {
+            format!(
+                "{local_prefix}\nconst __e_component = {expression_source};\nexport default __e_component;\n"
+            )
+        };
+        let allocator = Allocator::default();
+        let standalone_program = parse_program(
+            &allocator,
+            &standalone_module,
+            source_type_for("symbol.tsx"),
+            "symbol.tsx",
+        )?;
+        let semantic_builder =
+            SemanticBuilder::new().with_check_syntax_error(true).build(&standalone_program);
+        if !semantic_builder.errors.is_empty() {
+            let message = semantic_builder
+                .errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(message);
+        }
+        let standalone_semantic = semantic_builder.semantic;
+
+        let mut replacements = Vec::new();
+        let capture_indices = captures
+            .iter()
+            .enumerate()
+            .map(|(index, capture)| (capture.clone(), index))
+            .collect::<HashMap<_, _>>();
+        let mut helper_imports = BTreeSet::new();
+
+        struct StandaloneCaptureVisitor<'b> {
+            capture_indices: &'b HashMap<String, usize>,
+            helper_imports: &'b mut BTreeSet<String>,
+            replacements: &'b mut Vec<Replacement>,
+            semantic: &'b Semantic<'b>,
+        }
+
+        impl<'a> Visit<'a> for StandaloneCaptureVisitor<'_> {
+            fn visit_identifier_reference(
+                &mut self,
+                identifier: &oxc_ast::ast::IdentifierReference<'a>,
+            ) {
+                let reference = self.semantic.scoping().get_reference(identifier.reference_id());
+                if reference.symbol_id().is_none() {
+                    let name = identifier.name.as_str().to_string();
+                    if let Some(index) = self.capture_indices.get(&name) {
+                        self.replacements.push(Replacement {
+                            start: identifier.span.start as usize,
+                            end: identifier.span.end as usize,
+                            code: format!("__scope[{index}]"),
+                        });
+                    } else if INTERNAL_HELPERS.contains(&name.as_str()) {
+                        self.helper_imports.insert(name);
+                    }
+                }
+            }
+        }
+
+        let mut visitor = StandaloneCaptureVisitor {
+            capture_indices: &capture_indices,
+            helper_imports: &mut helper_imports,
+            replacements: &mut replacements,
+            semantic: &standalone_semantic,
+        };
+        visitor.visit_program(&standalone_program);
+        let mut code = apply_replacements(&standalone_module, &mut replacements)?;
+        code = format!("const __scope = [] as unknown[];\n{code}");
+        let mut signature_code = code.clone();
+
+        if normalize_symbol_ids {
+            let mut pairs = self.hmr_key_by_symbol_id.iter().collect::<Vec<_>>();
+            pairs.sort_by(|left, right| left.0.cmp(right.0));
+            for (symbol_id, hmr_key) in pairs {
+                signature_code = signature_code.replace(&js_string(symbol_id), &js_string(hmr_key));
+            }
+        }
+
+        let import_code = import_spans
+            .iter()
+            .map(|span| source_text(self.source, *span))
+            .collect::<Vec<_>>();
+        let internal_import = if helper_imports.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "import {{ {} }} from \"{}\";\n",
+                helper_imports.iter().cloned().collect::<Vec<_>>().join(", "),
+                INTERNAL_IMPORT
+            )
+        };
+        let import_prefix = if import_code.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", import_code.join("\n"))
+        };
+        let prefixed = format!("{import_prefix}{internal_import}{code}");
+        let prefixed_signature = format!("{import_prefix}{internal_import}{signature_code}");
+
+        Ok(SymbolBuild {
+            captures,
+            code: prefixed,
+            signature_code: prefixed_signature,
+        })
+    }
+
+    fn emit_external_component_symbol(
+        &mut self,
+        expression: &CallExpression<'a>,
+        kind: ExternalFactoryKind,
+        base: String,
+    ) {
+        let span_key = SpanKey::from_span(expression.span);
+        self.register_component_with_base(span_key, base);
+
+        let Some(target) = expression.arguments.first() else {
+            self.fail("eclipsify*() expects the external component as the first argument.");
+            return;
+        };
+        if !is_supported_external_component_target(target) {
+            self.fail(
+                "eclipsify*() requires a static component reference as the first argument. Dynamic targets are not supported.",
+            );
+            return;
+        }
+
+        let projection_slots = match collect_external_projection_slots(expression) {
+            Ok(value) => value,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+
+        let dependencies = match self.collect_symbol_dependencies_from_module_call_expression(expression) {
+            Ok(dependencies) => dependencies,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        if !dependencies.captures.is_empty() {
+            self.fail(
+                "eclipsify*() arguments must only reference imports or top-level inlinable symbols.",
+            );
+            return;
+        }
+        let symbol_id =
+            create_symbol_id(&self.file_id, &SymbolKind::Component, source_text(self.source, expression.span));
+        let build = match self.build_external_component_symbol(
+            expression.span,
+            dependencies.captures.clone(),
+            dependencies.import_spans,
+            dependencies.local_definitions,
+            true,
+        ) {
+            Ok(build) => build,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        let component_info = self.component_info_by_span.get(&span_key).cloned().unwrap();
+        self.hmr_key_by_symbol_id
+            .insert(symbol_id.clone(), component_info.hmr_key.clone());
+        self.symbols.push((
+            symbol_id.clone(),
+            ResumeSymbol {
+                captures: build.captures.clone(),
+                code: build.code.clone(),
+                file_path: self.file_id.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+            },
+        ));
+        let signature = create_symbol_signature(&SymbolKind::Component, &build.signature_code);
+        self.hmr_symbols.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrSymbolEntry {
+                captures: build.captures.clone(),
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                kind: SymbolKind::Component,
+                owner_component_key: None,
+                signature: signature.clone(),
+            },
+        ));
+        self.hmr_components.push((
+            component_info.hmr_key.clone(),
+            ResumeHmrComponentEntry {
+                captures: build.captures,
+                hmr_key: component_info.hmr_key.clone(),
+                id: symbol_id.clone(),
+                local_symbol_keys: component_info.local_symbol_keys,
+                signature,
+            },
+        ));
+        self.used_helpers.insert(HELPER_COMPONENT.to_string());
+
+        let projection_literal = if projection_slots.is_empty() {
+            String::new()
+        } else {
+            let body = projection_slots
+                .iter()
+                .map(|(name, count)| format!("{name}: {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(", {{ {body} }}")
+        };
+        let slots_literal = format!(
+            "[{}]",
+            projection_slots
+                .iter()
+                .map(|(name, _)| js_string(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let options_literal = format!(
+            "{{ external: {{ kind: {}, slots: {} }} }}",
+            js_string(kind.as_runtime_kind()),
+            slots_literal,
+        );
+        self.push_replacement(
+            expression.span.start as usize,
+            expression.span.end as usize,
+            format!(
+                "{HELPER_COMPONENT}({}, {}, {}{}, {})",
+                render_span_with_replacements(self.source, expression.span, &self.replacements).unwrap(),
+                js_string(&symbol_id),
+                Self::build_capture_getter(&dependencies.captures),
+                projection_literal,
+                options_literal,
+            ),
         );
     }
 
@@ -2077,6 +2518,46 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             Some(kind) => format!("{} {rendered};", variable_declaration_kind_source(kind)),
             None => rendered,
         })
+    }
+
+    fn external_factory_kind_for_call_expression(
+        &self,
+        expression: &CallExpression<'a>,
+    ) -> Option<ExternalFactoryKind> {
+        let Expression::Identifier(callee) = &expression.callee else {
+            return None;
+        };
+        let callee_name = callee.name.as_str();
+
+        if self
+            .imports
+            .react_island_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            return Some(ExternalFactoryKind::React);
+        }
+
+        if self
+            .imports
+            .vue_island_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            return Some(ExternalFactoryKind::Vue);
+        }
+
+        None
+    }
+
+    fn invalid_external_factory_binding_error(kind: ExternalFactoryKind) -> String {
+        format!(
+            "eclipsify{}() must be assigned to a top-level PascalCase binding.",
+            match kind {
+                ExternalFactoryKind::React => "React",
+                ExternalFactoryKind::Vue => "Vue",
+            }
+        )
     }
 }
 
@@ -2474,6 +2955,24 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         let Some(init) = declarator.init.as_ref() else {
             return;
         };
+        if let Expression::CallExpression(call) = init {
+            if let Some(kind) = self.external_factory_kind_for_call_expression(call) {
+                let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+                    self.fail(Self::invalid_external_factory_binding_error(kind));
+                    return;
+                };
+                if !self.current_functions.is_empty() || !is_component_name(identifier.name.as_str()) {
+                    self.fail(Self::invalid_external_factory_binding_error(kind));
+                    return;
+                }
+                self.emit_external_component_symbol(
+                    call,
+                    kind,
+                    format!("component:{}", identifier.name.as_str()),
+                );
+                return;
+            }
+        }
         self.emit_component_symbol_for_expression(init);
         self.maybe_emit_local_lazy_symbol(init);
     }
@@ -2485,6 +2984,24 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         walk::walk_assignment_expression(self, expression);
         if self.error.is_some() {
             return;
+        }
+        if let Expression::CallExpression(call) = &expression.right {
+            if let Some(kind) = self.external_factory_kind_for_call_expression(call) {
+                let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &expression.left else {
+                    self.fail(Self::invalid_external_factory_binding_error(kind));
+                    return;
+                };
+                if !self.current_functions.is_empty() || !is_component_name(identifier.name.as_str()) {
+                    self.fail(Self::invalid_external_factory_binding_error(kind));
+                    return;
+                }
+                self.emit_external_component_symbol(
+                    call,
+                    kind,
+                    format!("component:{}", identifier.name.as_str()),
+                );
+                return;
+            }
         }
         self.emit_component_symbol_for_expression(&expression.right);
         self.maybe_emit_local_lazy_symbol(&expression.right);
@@ -2514,6 +3031,14 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
         walk::walk_export_default_declaration(self, declaration);
         if self.error.is_some() {
             return;
+        }
+        if let ExportDefaultDeclarationKind::ParenthesizedExpression(expression) = &declaration.declaration {
+            if let Expression::CallExpression(call) = &expression.expression {
+                if let Some(kind) = self.external_factory_kind_for_call_expression(call) {
+                    self.fail(Self::invalid_external_factory_binding_error(kind));
+                    return;
+                }
+            }
         }
         self.emit_component_symbol_for_export_default(&declaration.declaration);
     }

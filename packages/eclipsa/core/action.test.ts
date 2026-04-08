@@ -8,6 +8,8 @@ import {
   type StandardSchemaV1,
 } from './action.ts'
 import type { AppContext } from './hooks.ts'
+import { withServerRequestContext } from './hooks.ts'
+import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 import type { RuntimeContainer } from './runtime.ts'
 import { withRuntimeContainer } from './runtime.ts'
 import { serializeValue } from './serialize.ts'
@@ -45,6 +47,7 @@ const createRuntimeContainer = (): RuntimeContainer =>
     dirty: new Set(),
     dirtyFlushQueued: false,
     eventDispatchPromise: null,
+    externalRenderCache: new Map(),
     id: 'rt-test',
     imports: new Map(),
     interactivePrefetchCheckQueued: false,
@@ -337,5 +340,46 @@ describe('action runtime', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('uses absolute action RPC URLs inside a server request context', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true, value: 'pong' }), {
+          headers: {
+            'content-type': 'application/json',
+          },
+        }),
+    ) as typeof fetch
+
+    const requestContext = {
+      req: {
+        raw: new Request('http://localhost/current'),
+        header() {
+          return undefined
+        },
+      },
+      var: {
+        fetch: fetchImpl,
+      },
+    } as unknown as AppContext
+
+    const usePing = __eclipsaAction('ping', [], async () => 'pong')
+    const handle = withRuntimeContainer(createRuntimeContainer(), () => usePing())
+
+    await expect(withServerRequestContext(requestContext, {}, () => handle.action())).resolves.toBe(
+      'pong',
+    )
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost/__eclipsa/action/ping',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/current',
+        }),
+        method: 'POST',
+      }),
+    )
   })
 })

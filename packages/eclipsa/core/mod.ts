@@ -1,6 +1,7 @@
 export * from './action.ts'
 export * from './component.ts'
 export * from './context.ts'
+export * from './dynamic.ts'
 export * from './env.ts'
 export * from './hooks.ts'
 export * from './loader.ts'

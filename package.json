@@ -18,15 +18,20 @@
     "fmt": "vp check --fix"
   },
   "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
     "@eclipsa/optimizer": "workspace:^",
     "@types/node": "^24.5.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "turbo": "^2.8.16",
     "typescript": "^5.9.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
     "vite-plus": "^0.1.4",
-    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4"
+    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4",
+    "vue": "^3.5.22"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",

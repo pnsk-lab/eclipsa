@@ -16,7 +16,12 @@
     "@eclipsa/content": "workspace:*",
     "@eclipsa/image": "workspace:*",
     "@eclipsa/motion": "workspace:*",
+    "@eclipsa/react": "workspace:*",
+    "@eclipsa/vue": "workspace:*",
     "eclipsa": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vue": "^3.5.22",
     "zod": "^4.3.6"
   },
   "devDependencies": {

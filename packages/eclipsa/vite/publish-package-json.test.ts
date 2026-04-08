@@ -21,6 +21,7 @@ describe('publish package metadata', () => {
 
     expect(packConfig?.entry).toContain('core/internal.ts')
     expect(packConfig?.entry).toContain('web-utils/mod.ts')
+    expect(packConfig?.entry).toContain('vite/build/runtime.ts')
     expect(publishPackageJson.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/pnsk-lab/eclipsa.git',
@@ -38,6 +39,10 @@ describe('publish package metadata', () => {
     expect(exportsMap['./web-utils']).toEqual({
       types: './web-utils/mod.d.mts',
       import: './web-utils/mod.mjs',
+    })
+    expect(exportsMap['./vite/build/runtime']).toEqual({
+      types: './vite/build/runtime.d.mts',
+      import: './vite/build/runtime.mjs',
     })
     expect(exportsMap['.']).toEqual({
       types: './mod.d.mts',

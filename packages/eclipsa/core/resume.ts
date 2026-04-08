@@ -7,6 +7,7 @@ import {
   primeRouteModules,
   RESUME_STATE_ELEMENT_ID,
   restoreRegisteredRpcHandles,
+  restoreResumedExternalComponents,
   restoreResumedLocalSignalEffects,
   registerResumeContainer,
   type ResumePayload,
@@ -110,6 +111,7 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
 
     await primeRouteModules(container)
     restoreRegisteredRpcHandles(container)
+    await restoreResumedExternalComponents(container)
     await restoreResumedLocalSignalEffects(container)
     registerResumeContainer(container)
     root.setAttribute('data-e-resume', 'resumed')

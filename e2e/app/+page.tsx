@@ -54,6 +54,12 @@ export default () => {
       <p>
         <Link href="/atom">Open atom route</Link>
       </p>
+      <p>
+        <Link href="/react">Open react island route</Link>
+      </p>
+      <p>
+        <Link href="/vue">Open vue island route</Link>
+      </p>
       <input onInput={handleInput} value={inputting.value} />
       <button onClick={addTodo}>Add</button>
       <button type="button" onClick={goToCounter}>

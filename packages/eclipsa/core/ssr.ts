@@ -69,6 +69,15 @@ export const renderSSRAsync = async (
   },
 ): Promise<SSRRenderResult> => {
   const asyncSignalSnapshotCache = new Map<string, unknown>()
+  const externalRenderCache = new Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >()
   const seededLoaderStates = new Map<string, { data: unknown; error: unknown; loaded: boolean }>()
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -87,6 +96,7 @@ export const renderSSRAsync = async (
       },
       {
         asyncSignalSnapshotCache,
+        externalRenderCache,
       },
     )
 
@@ -152,6 +162,15 @@ const renderStreamingAttempt = async (
   },
   seededLoaderStates: Map<string, { data: unknown; error: unknown; loaded: boolean }>,
   asyncSignalSnapshotCache: Map<string, unknown>,
+  externalRenderCache: Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >,
 ): Promise<{
   container: RuntimeContainer
   html: string
@@ -174,11 +193,16 @@ const renderStreamingAttempt = async (
       },
       {
         asyncSignalSnapshotCache,
+        externalRenderCache,
       },
     )
 
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
+      if (container.pendingSuspensePromises.size > 0) {
+        await Promise.allSettled(container.pendingSuspensePromises)
+        continue
+      }
       const renderedComponentIds = collectRenderedComponentIdsFromHtml(html)
       return {
         container,
@@ -223,12 +247,22 @@ export const renderSSRStream = async (
   },
 ): Promise<SSRStreamRenderResult> => {
   const asyncSignalSnapshotCache = new Map<string, unknown>()
+  const externalRenderCache = new Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >()
   const seededLoaderStates = new Map<string, { data: unknown; error: unknown; loaded: boolean }>()
   const initial = await renderStreamingAttempt(
     render,
     options ?? {},
     seededLoaderStates,
     asyncSignalSnapshotCache,
+    externalRenderCache,
   )
 
   if (initial.pendingBoundaryIds.length === 0) {
@@ -260,6 +294,7 @@ export const renderSSRStream = async (
           options ?? {},
           seededLoaderStates,
           asyncSignalSnapshotCache,
+          externalRenderCache,
         )
 
         const nextPending = new Set(next.pendingBoundaryIds)

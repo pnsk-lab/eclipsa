@@ -267,6 +267,42 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('layout-location-nav')).toHaveClass(/inactive/)
   })
 
+  test('hydrates React islands and keeps projected Eclipsa content live', async ({ page }) => {
+    await page.goto('/react')
+
+    await expect(page).toHaveTitle('React Island | E2E')
+    await expect(page.getByRole('heading', { name: 'React island' })).toBeVisible()
+    await expect(page.getByTestId('react-ssr-copy')).toBeVisible()
+    await expect(page.getByTestId('react-projected-value')).toHaveText('0')
+
+    await waitForResumedRoute(page)
+
+    await page.getByRole('button', { name: 'Increment React' }).click()
+    await expect(page.getByTestId('react-island-count')).toHaveText('React count:1')
+
+    await page.getByRole('button', { name: 'Increment projected React child' }).click()
+    await expect(page.getByTestId('react-projected-value')).toHaveText('1')
+    await expect(page.getByTestId('react-island-count')).toHaveText('React count:1')
+  })
+
+  test('hydrates Vue islands and keeps projected Eclipsa content live', async ({ page }) => {
+    await page.goto('/vue')
+
+    await expect(page).toHaveTitle('Vue Island | E2E')
+    await expect(page.getByRole('heading', { name: 'Vue island' })).toBeVisible()
+    await expect(page.getByTestId('vue-ssr-copy')).toBeVisible()
+    await expect(page.getByTestId('vue-projected-value')).toHaveText('0')
+
+    await waitForResumedRoute(page)
+
+    await page.getByRole('button', { name: 'Increment Vue' }).click()
+    await expect(page.getByTestId('vue-island-count')).toHaveText('Vue count:1')
+
+    await page.getByRole('button', { name: 'Increment projected Vue child' }).click()
+    await expect(page.getByTestId('vue-projected-value')).toHaveText('1')
+    await expect(page.getByTestId('vue-island-count')).toHaveText('Vue count:1')
+  })
+
   test('runs motion enter/exit and shared layout flows', async ({ page }) => {
     await page.goto('/motion')
     await waitForResumedRoute(page)

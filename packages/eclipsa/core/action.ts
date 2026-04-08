@@ -3,6 +3,7 @@ import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
   type AppContext,
   deserializePublicValue,
+  getCurrentServerRequestContext,
   serializePublicValue,
   type SerializedReference,
   type SerializedValue,
@@ -691,8 +692,18 @@ const toClientAsyncGenerator = async function* (
 
 const invokeAction = async (id: string, input: unknown, container: RuntimeContainer | null) => {
   const isFormSubmission = isFormDataValue(input)
-  const currentRouteUrl = typeof window !== 'undefined' ? window.location.href : null
-  const response = await fetch(`/__eclipsa/action/${encodeURIComponent(id)}`, {
+  const actionPath = `/__eclipsa/action/${encodeURIComponent(id)}`
+  const requestContext = typeof window === 'undefined' ? getCurrentServerRequestContext() : null
+  const currentRouteUrl =
+    typeof window !== 'undefined'
+      ? window.location.href
+      : requestContext?.req.header(ROUTE_RPC_URL_HEADER) ?? requestContext?.req.raw.url ?? null
+  const requestUrl = requestContext ? new URL(actionPath, requestContext.req.raw.url).href : actionPath
+  const fetchImpl =
+    requestContext && typeof requestContext.var.fetch === 'function'
+      ? requestContext.var.fetch
+      : fetch
+  const response = await fetchImpl(requestUrl, {
     body: isFormSubmission
       ? input
       : JSON.stringify({

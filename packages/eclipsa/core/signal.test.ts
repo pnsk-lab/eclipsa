@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { Dynamic } from './dynamic.ts'
 import { __eclipsaComponent } from './internal.ts'
 import { effect, onCleanup, signal, useComputed, useSignal, useWatch } from './signal.ts'
 import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
@@ -297,6 +298,56 @@ describe('useWatch', () => {
           )
         },
         'component-prop-watch-wrapper-app',
+        () => [],
+      )
+
+      const container = createContainer()
+      withRuntimeContainer(container, () => {
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container)
+      })
+
+      visible.value = false
+      visible.value = true
+
+      expect(values).toEqual([1, 0, 1])
+    })
+  })
+
+  it('preserves getter props through Dynamic on the client', () => {
+    withFakeNodeGlobal(() => {
+      let visible!: { value: boolean }
+      const values: number[] = []
+
+      const Child = __eclipsaComponent(
+        (props: { animate: { opacity: number } }) => {
+          useWatch(() => {
+            values.push(props.animate.opacity)
+          }, [() => props.animate])
+
+          return 'ready'
+        },
+        'component-prop-watch-dynamic-child',
+        () => [],
+      )
+
+      const App = __eclipsaComponent(
+        () => {
+          visible = useSignal(true)
+
+          return jsxDEV(
+            Dynamic as never,
+            {
+              component: Child,
+              get animate() {
+                return visible.value ? { opacity: 1 } : { opacity: 0 }
+              },
+            },
+            null,
+            false,
+            {},
+          )
+        },
+        'component-prop-watch-dynamic-app',
         () => [],
       )
 

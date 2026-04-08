@@ -29,6 +29,10 @@
       "types": "./vite/mod.ts",
       "import": "./vite/mod.ts"
     },
+    "./vite/build/runtime": {
+      "types": "./vite/build/runtime.ts",
+      "import": "./vite/build/runtime.ts"
+    },
     "./jsx-runtime": {
       "types": "./jsx/jsx-runtime.ts",
       "import": "./jsx/jsx-runtime.ts"
@@ -75,6 +79,10 @@
       "./vite": {
         "types": "./vite/mod.d.mts",
         "import": "./vite/mod.mjs"
+      },
+      "./vite/build/runtime": {
+        "types": "./vite/build/runtime.d.mts",
+        "import": "./vite/build/runtime.mjs"
       },
       "./jsx-runtime": {
         "types": "./jsx/jsx-runtime.d.mts",

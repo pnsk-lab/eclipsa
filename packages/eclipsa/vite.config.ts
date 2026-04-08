@@ -19,6 +19,7 @@ export default defineConfig({
       'mod.ts',
       'web-utils/mod.ts',
       'vite/mod.ts',
+      'vite/build/runtime.ts',
       'jsx/mod.ts',
       'jsx/jsx-runtime.ts',
       'jsx/jsx-dev-runtime.ts',

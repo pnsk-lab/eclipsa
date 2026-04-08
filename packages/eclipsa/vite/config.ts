@@ -14,7 +14,7 @@ import {
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
 import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
 
-const ECLIPSA_RUNTIME_ENTRY_PATH = fileURLToPath(new URL('./build/runtime.ts', import.meta.url))
+const ECLIPSA_RUNTIME_ENTRY_PATH = fileURLToPath(import.meta.resolve('eclipsa/vite/build/runtime'))
 
 const fileExists = async (filePath: string) => {
   try {

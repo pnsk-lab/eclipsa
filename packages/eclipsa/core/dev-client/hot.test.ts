@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { applyHotUpdate, createHotRegistry, defineHotComponent } from './hot.ts'
-import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
+import {
+  __eclipsaComponent,
+  getComponentMeta,
+  getExternalComponentMeta,
+  setExternalComponentMeta,
+} from '../internal.ts'
 
 const makeComponent = (value: string) => ((_: unknown) => value) as any
 
@@ -59,6 +64,45 @@ describe('core/dev-client hot', () => {
 
     expect(getComponentMeta(wrapped)?.symbol).toBe('page-symbol')
     expect(getComponentMeta(wrapped)?.projectionSlots).toBeUndefined()
+  })
+
+  it('preserves external island metadata on wrapped hot components', () => {
+    const registry = createHotRegistry()
+    const Component = setExternalComponentMeta(
+      __eclipsaComponent(
+        (() => null) as any,
+        'page-symbol',
+        () => [],
+        { children: 1 },
+        { external: { kind: 'react', slots: ['children'] } },
+      ),
+      {
+        async hydrate() {
+          return null
+        },
+        kind: 'react',
+        renderToString() {
+          return ''
+        },
+        slots: ['children'],
+        async unmount() {},
+        async update(instance) {
+          return instance
+        },
+      },
+    )
+
+    const wrapped = defineHotComponent(Component, {
+      registry,
+      name: 'default',
+    })
+
+    expect(getComponentMeta(wrapped)?.external).toEqual({
+      kind: 'react',
+      slots: ['children'],
+    })
+    expect(getExternalComponentMeta(wrapped)?.kind).toBe('react')
+    expect(getExternalComponentMeta(wrapped)?.slots).toEqual(['children'])
   })
 
   it('unwraps already hot-wrapped components during updates', () => {

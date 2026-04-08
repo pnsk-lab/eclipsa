@@ -121,7 +121,7 @@ describe('createConfig', () => {
     const ssrInput = (config as Record<string, any>).environments?.ssr?.build?.rollupOptions?.input
 
     expect(ssrInput?.eclipsa_runtime).toBe(
-      fileURLToPath(new URL('./build/runtime.ts', import.meta.url)),
+      fileURLToPath(import.meta.resolve('eclipsa/vite/build/runtime')),
     )
     expect(ssrInput?.eclipsa_runtime).not.toBe(
       path.join(userConfig.root, '../packages/eclipsa/vite/build/runtime.ts'),

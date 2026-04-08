@@ -6,6 +6,7 @@ export { __eclipsaLoader } from './loader.ts'
 export { getRuntimeComponentId } from './runtime.ts'
 
 const COMPONENT_META_KEY = Symbol.for('eclipsa.component-meta')
+const EXTERNAL_COMPONENT_META_KEY = Symbol.for('eclipsa.external-component-meta')
 const LAZY_META_KEY = Symbol.for('eclipsa.lazy-meta')
 const NAVIGATE_META_KEY = Symbol.for('eclipsa.navigate-meta')
 const SIGNAL_META_KEY = Symbol.for('eclipsa.signal-meta')
@@ -19,13 +20,31 @@ const LOADER_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.loader-hook-registry')
 
 export interface ComponentMeta {
   captures: () => unknown[]
+  external?: ExternalComponentDescriptor
   optimizedRoot?: boolean
   projectionSlots?: Record<string, number>
   symbol: string
 }
 
 export interface ComponentOptions {
+  external?: ExternalComponentDescriptor
   optimizedRoot?: boolean
+}
+
+export interface ExternalComponentDescriptor {
+  kind: 'react' | 'vue'
+  slots: string[]
+}
+
+export interface ExternalComponentMeta extends ExternalComponentDescriptor {
+  hydrate(host: HTMLElement, props: Record<string, unknown>): unknown | Promise<unknown>
+  renderToString(props: Record<string, unknown>): Promise<string> | string
+  unmount(instance: unknown): void | Promise<void>
+  update(
+    instance: unknown,
+    host: HTMLElement,
+    props: Record<string, unknown>,
+  ): unknown | Promise<unknown>
 }
 
 export interface LazyMeta {
@@ -89,6 +108,11 @@ export interface WatchReference<
   [WATCH_META_KEY]?: WatchMeta
 }
 
+export interface ExternalComponentReference<T = unknown> extends Function {
+  (...args: any[]): T
+  [EXTERNAL_COMPONENT_META_KEY]?: ExternalComponentMeta
+}
+
 export const __eclipsaComponent = <T>(
   component: Component<T>,
   symbol: string,
@@ -102,6 +126,7 @@ export const __eclipsaComponent = <T>(
     value: {
       symbol,
       captures,
+      ...(options?.external ? { external: options.external } : {}),
       ...(options?.optimizedRoot ? { optimizedRoot: true } : {}),
       ...(projectionSlots ? { projectionSlots } : {}),
     } satisfies ComponentMeta,
@@ -174,6 +199,30 @@ export const getLazyMeta = (value: unknown): LazyMeta | null => {
   return (
     ((value as unknown as Record<PropertyKey, unknown>)[LAZY_META_KEY] as LazyMeta | undefined) ??
     null
+  )
+}
+
+export const setExternalComponentMeta = <T extends Component<any>>(
+  target: T,
+  meta: ExternalComponentMeta,
+): T => {
+  Object.defineProperty(target, EXTERNAL_COMPONENT_META_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: meta,
+    writable: true,
+  })
+  return target
+}
+
+export const getExternalComponentMeta = (value: unknown): ExternalComponentMeta | null => {
+  if (typeof value !== 'function') {
+    return null
+  }
+  return (
+    ((value as unknown as Record<PropertyKey, unknown>)[EXTERNAL_COMPONENT_META_KEY] as
+      | ExternalComponentMeta
+      | undefined) ?? null
   )
 }
 
