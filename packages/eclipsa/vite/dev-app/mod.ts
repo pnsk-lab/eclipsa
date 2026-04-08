@@ -196,10 +196,16 @@ const createRouteServerAccessEntries = async (
 
   return await Promise.all(
     routes.map(async (route) => {
-      const reachableFiles = await collectReachableAnalyzableFiles(getRouteReachableEntryFiles(route))
+      const reachableFiles = await collectReachableAnalyzableFiles(
+        getRouteReachableEntryFiles(route),
+      )
       return {
-        actionIds: new Set(reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? [])),
-        loaderIds: new Set(reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? [])),
+        actionIds: new Set(
+          reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? []),
+        ),
+        loaderIds: new Set(
+          reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),
+        ),
         route,
       } satisfies RouteServerAccessEntry
     }),
@@ -477,7 +483,11 @@ const createDevApp = async (init: DevAppInit) => {
     }
 
   const resolveRouteForCurrentUrl = (request: Request | null, currentUrl: URL) => {
-    const resolvedPathname = reroutePathname(request, normalizeRoutePath(currentUrl.pathname), currentUrl.href)
+    const resolvedPathname = reroutePathname(
+      request,
+      normalizeRoutePath(currentUrl.pathname),
+      currentUrl.href,
+    )
     const match = matchRoute(routes, resolvedPathname)
     if (match?.route.page) {
       return match
@@ -1044,8 +1054,11 @@ const createDevApp = async (init: DevAppInit) => {
       if (!hasAction(id)) {
         await init.runner.import(modulePath)
       }
-      return composeRouteMiddlewares(routeMatch.route, requestContext, routeMatch.params, async () =>
-        executeAction(id, requestContext),
+      return composeRouteMiddlewares(
+        routeMatch.route,
+        requestContext,
+        routeMatch.params,
+        async () => executeAction(id, requestContext),
       ) as Promise<Response>
     }),
   )
@@ -1072,8 +1085,11 @@ const createDevApp = async (init: DevAppInit) => {
       if (!hasLoader(id)) {
         await init.runner.import(modulePath)
       }
-      return composeRouteMiddlewares(routeMatch.route, requestContext, routeMatch.params, async () =>
-        executeLoader(id, requestContext),
+      return composeRouteMiddlewares(
+        routeMatch.route,
+        requestContext,
+        routeMatch.params,
+        async () => executeLoader(id, requestContext),
       ) as Promise<Response>
     }),
   )

@@ -4393,7 +4393,13 @@ export const renderSSRValue = (value: unknown): string => {
 }
 
 export const renderSSRMap = <T>(
-  value: readonly T[] | { map: (callback: (item: T, index: number) => string) => { join: (separator: string) => string } },
+  value:
+    | readonly T[]
+    | {
+        map: (callback: (item: T, index: number) => string) => {
+          join: (separator: string) => string
+        }
+      },
   renderItem: (item: T, index: number) => string,
 ): string => {
   if (Array.isArray(value)) {
@@ -4413,9 +4419,7 @@ const renderSSRTemplateNode = (template: JSX.SSRTemplate) => {
   let output = template.strings[0] ?? ''
   for (let index = 0; index < template.values.length; index += 1) {
     const value = template.values[index]
-    output += isSSRAttrValue(value)
-      ? renderSSRAttr(value.name, value.value)
-      : renderSSRValue(value)
+    output += isSSRAttrValue(value) ? renderSSRAttr(value.name, value.value) : renderSSRValue(value)
     output += template.strings[index + 1] ?? ''
   }
   return output
@@ -4656,7 +4660,13 @@ const renderExternalComponentHtml = (
   const cacheKey = `${componentId}:${external.kind}`
   const cached = container.externalRenderCache.get(cacheKey)
   if (cached?.status === 'resolved') {
-    return injectExternalSlotHtml(componentId, external.kind, projectionSlots, props, cached.html ?? '')
+    return injectExternalSlotHtml(
+      componentId,
+      external.kind,
+      projectionSlots,
+      props,
+      cached.html ?? '',
+    )
   }
   if (cached?.status === 'rejected') {
     throw cached.error

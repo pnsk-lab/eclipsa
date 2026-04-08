@@ -18,10 +18,10 @@
     "fmt": "vp check --fix"
   },
   "devDependencies": {
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
     "@eclipsa/optimizer": "workspace:^",
     "@types/node": "^24.5.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
     "react": "^19.2.0",

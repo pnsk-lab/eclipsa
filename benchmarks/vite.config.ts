@@ -15,7 +15,7 @@ export default defineConfig({
           'build:vue',
           'build:vue-vapor',
         ],
-        command: ''
+        command: '',
       },
       'build:astro': {
         command: 'bun run build',
@@ -52,7 +52,7 @@ export default defineConfig({
       'build:vue-vapor': {
         command: 'bun run build',
         cwd: 'apps/vue-vapor',
-      }
-    }
-  }
+      },
+    },
+  },
 })

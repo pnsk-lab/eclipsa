@@ -129,8 +129,12 @@ export const eclipsifyReact = <TProps extends Record<string, unknown>>(
       const resolved = instance as ReactExternalInstance | Root
       const root = 'root' in resolved ? resolved.root : resolved
       const slotDom =
-        'root' in resolved ? mergeSlotDom(resolved.slotDom, captureSlotDom(host, slotNames)) : undefined
-      root.render(createElement(component, toReactProps(props, slotNames) as TProps) as ReactElement)
+        'root' in resolved
+          ? mergeSlotDom(resolved.slotDom, captureSlotDom(host, slotNames))
+          : undefined
+      root.render(
+        createElement(component, toReactProps(props, slotNames) as TProps) as ReactElement,
+      )
       await waitForExternalDomCommit()
       if ('root' in resolved && slotDom) {
         restoreSlotDom(host, slotDom)

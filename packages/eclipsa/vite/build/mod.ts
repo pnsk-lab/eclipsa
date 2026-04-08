@@ -538,7 +538,9 @@ const createRouteServerAccessEntries = async (
 
   return await Promise.all(
     routes.map(async (route) => {
-      const reachableFiles = await collectReachableAnalyzableFiles(getRouteReachableEntryFiles(route))
+      const reachableFiles = await collectReachableAnalyzableFiles(
+        getRouteReachableEntryFiles(route),
+      )
       return {
         actionIds: reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? []),
         loaderIds: reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),

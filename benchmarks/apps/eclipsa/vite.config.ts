@@ -11,12 +11,15 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       input: './app/index.ts',
-    }
+    },
   },
   resolve: {
     alias: [
       { find: /^eclipsa$/, replacement: path.join(eclipsaPackageDir, 'mod.ts') },
-      { find: /^eclipsa\/client$/, replacement: path.join(eclipsaPackageDir, 'core/client/mod.ts') },
+      {
+        find: /^eclipsa\/client$/,
+        replacement: path.join(eclipsaPackageDir, 'core/client/mod.ts'),
+      },
       {
         find: /^eclipsa\/dev-client$/,
         replacement: path.join(eclipsaPackageDir, 'core/dev-client/mod.ts'),

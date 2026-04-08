@@ -3690,29 +3690,32 @@ describe('renderClientInsertable', () => {
       const events: string[] = []
       let label!: { value: string }
 
-      const ExternalBody = setExternalComponentMeta(
-        (() => null) as any,
-        {
-          async hydrate(host, props) {
-            events.push(`hydrate:${String((props as { label: string }).label)}`)
-            ;(host as Element).setAttribute('data-external-label', String((props as { label: string }).label))
-            return { host }
-          },
-          kind: 'react',
-          async renderToString(props) {
-            return `<div data-external-label="${String((props as { label: string }).label)}"><e-slot-host data-e-slot="children"></e-slot-host></div>`
-          },
-          slots: ['children'],
-          async unmount() {
-            events.push('unmount')
-          },
-          async update(instance, host, props) {
-            events.push(`update:${String((props as { label: string }).label)}`)
-            ;(host as Element).setAttribute('data-external-label', String((props as { label: string }).label))
-            return instance
-          },
+      const ExternalBody = setExternalComponentMeta((() => null) as any, {
+        async hydrate(host, props) {
+          events.push(`hydrate:${String((props as { label: string }).label)}`)
+          ;(host as Element).setAttribute(
+            'data-external-label',
+            String((props as { label: string }).label),
+          )
+          return { host }
         },
-      )
+        kind: 'react',
+        async renderToString(props) {
+          return `<div data-external-label="${String((props as { label: string }).label)}"><e-slot-host data-e-slot="children"></e-slot-host></div>`
+        },
+        slots: ['children'],
+        async unmount() {
+          events.push('unmount')
+        },
+        async update(instance, host, props) {
+          events.push(`update:${String((props as { label: string }).label)}`)
+          ;(host as Element).setAttribute(
+            'data-external-label',
+            String((props as { label: string }).label),
+          )
+          return instance
+        },
+      })
 
       const External = __eclipsaComponent(
         ExternalBody as any,
@@ -3794,27 +3797,24 @@ describe('renderClientInsertable', () => {
       const events: string[] = []
       let visible!: { value: boolean }
 
-      const ExternalBody = setExternalComponentMeta(
-        (() => null) as any,
-        {
-          async hydrate(host) {
-            ;(host as Element).setAttribute('data-external-mounted', 'true')
-            events.push('hydrate')
-            return { host }
-          },
-          kind: 'vue',
-          async renderToString() {
-            return '<div data-external-mounted="true"></div>'
-          },
-          slots: ['children'],
-          async unmount() {
-            events.push('unmount')
-          },
-          async update(instance) {
-            return instance
-          },
+      const ExternalBody = setExternalComponentMeta((() => null) as any, {
+        async hydrate(host) {
+          ;(host as Element).setAttribute('data-external-mounted', 'true')
+          events.push('hydrate')
+          return { host }
         },
-      )
+        kind: 'vue',
+        async renderToString() {
+          return '<div data-external-mounted="true"></div>'
+        },
+        slots: ['children'],
+        async unmount() {
+          events.push('unmount')
+        },
+        async update(instance) {
+          return instance
+        },
+      })
 
       const External = __eclipsaComponent(
         ExternalBody as any,
@@ -4239,14 +4239,19 @@ describe('renderClientInsertable', () => {
         search: '',
       } as Location
       const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
-      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode)
-      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode)
+      body.appendChild(
+        (doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode,
+      )
+      body.appendChild(
+        (doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode,
+      )
 
       const events: string[] = []
       ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
         FakeDocument as unknown as typeof Document
-      ;(globalThis as { window: Window & typeof globalThis }).window =
-        ((doc as unknown as FakeDocument).defaultView as unknown as Window & typeof globalThis)
+      ;(globalThis as { window: Window & typeof globalThis }).window = (
+        doc as unknown as FakeDocument
+      ).defaultView as unknown as Window & typeof globalThis
       try {
         const container = createResumeContainer(doc, {
           actions: {},
@@ -4336,16 +4341,21 @@ describe('renderClientInsertable', () => {
         search: '',
       } as Location
       const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
-      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode)
+      body.appendChild(
+        (doc as unknown as FakeDocument).createComment('ec:c:c0:start') as unknown as FakeNode,
+      )
       body.appendChild(new FakeElement('div'))
-      body.appendChild((doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode)
+      body.appendChild(
+        (doc as unknown as FakeDocument).createComment('ec:c:c0:end') as unknown as FakeNode,
+      )
 
       const events: string[] = []
       const originalDocument = globalThis.document
       ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
         FakeDocument as unknown as typeof Document
-      ;(globalThis as { window: Window & typeof globalThis }).window =
-        ((doc as unknown as FakeDocument).defaultView as unknown as Window & typeof globalThis)
+      ;(globalThis as { window: Window & typeof globalThis }).window = (
+        doc as unknown as FakeDocument
+      ).defaultView as unknown as Window & typeof globalThis
       try {
         const container = createResumeContainer(doc, {
           actions: {},

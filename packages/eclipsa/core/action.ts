@@ -697,8 +697,10 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
   const currentRouteUrl =
     typeof window !== 'undefined'
       ? window.location.href
-      : requestContext?.req.header(ROUTE_RPC_URL_HEADER) ?? requestContext?.req.raw.url ?? null
-  const requestUrl = requestContext ? new URL(actionPath, requestContext.req.raw.url).href : actionPath
+      : (requestContext?.req.header(ROUTE_RPC_URL_HEADER) ?? requestContext?.req.raw.url ?? null)
+  const requestUrl = requestContext
+    ? new URL(actionPath, requestContext.req.raw.url).href
+    : actionPath
   const fetchImpl =
     requestContext && typeof requestContext.var.fetch === 'function'
       ? requestContext.var.fetch

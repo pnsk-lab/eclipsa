@@ -8,5 +8,7 @@ test('e2e scripts build the optimizer native artifacts before Playwright', () =>
   expect(packageJson.scripts['e2e:headed']).toBe(
     `${expectedPrefix}bun ./scripts/run-playwright.ts --headed`,
   )
-  expect(packageJson.scripts['e2e:ui']).toBe(`${expectedPrefix}bun ./scripts/run-playwright.ts --ui`)
+  expect(packageJson.scripts['e2e:ui']).toBe(
+    `${expectedPrefix}bun ./scripts/run-playwright.ts --ui`,
+  )
 })

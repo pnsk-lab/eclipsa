@@ -10,9 +10,7 @@ const mocks = vi.hoisted(() => ({
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppLoaders: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppSymbols: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
-  collectReachableAnalyzableFiles: vi.fn<
-    (entryFiles: readonly string[]) => Promise<string[]>
-  >(),
+  collectReachableAnalyzableFiles: vi.fn<(entryFiles: readonly string[]) => Promise<string[]>>(),
   createRouteManifest: vi.fn(),
   createRoutes: vi.fn<() => Promise<RouteEntry[]>>(),
   toSSG: vi.fn(),
@@ -209,9 +207,9 @@ describe('build', () => {
     mocks.collectAppActions.mockResolvedValue([])
     mocks.collectAppLoaders.mockResolvedValue([])
     mocks.collectAppSymbols.mockResolvedValue([])
-    mocks.collectReachableAnalyzableFiles.mockImplementation(async (entryFiles: readonly string[]) => [
-      ...entryFiles,
-    ])
+    mocks.collectReachableAnalyzableFiles.mockImplementation(
+      async (entryFiles: readonly string[]) => [...entryFiles],
+    )
     mocks.createRouteManifest.mockReturnValue([])
     mocks.createRoutes.mockResolvedValue([createRootRoute()])
     mocks.toSSG.mockReset()
@@ -450,7 +448,8 @@ describe('build', () => {
     const publicPagePath = await writeAppSource(root, 'public/+page.tsx')
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
-      executeActionSource: 'export const executeAction = async () => new Response(null, { status: 204 });',
+      executeActionSource:
+        'export const executeAction = async () => new Response(null, { status: 204 });',
       getActionFormSubmissionIdSource: [
         'export const getActionFormSubmissionId = async (c) => {',
         '  const formData = await c.req.formData();',

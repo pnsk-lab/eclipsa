@@ -24,7 +24,12 @@ export * from './snapshot.ts'
 export * from './ssr.ts'
 export * from './style.ts'
 export * from './suspense.ts'
-export { RESUME_FINAL_STATE_ELEMENT_ID, renderSSRAttr, renderSSRMap, renderSSRValue } from './runtime.ts'
+export {
+  RESUME_FINAL_STATE_ELEMENT_ID,
+  renderSSRAttr,
+  renderSSRMap,
+  renderSSRValue,
+} from './runtime.ts'
 export type {
   GetStaticPaths,
   LinkPrefetchMode,

@@ -17,7 +17,11 @@ import { createDevFetch, shouldInvalidateDevApp } from './mod.ts'
 const createDevModuleUrl = (root: string, entry: { filePath: string }) =>
   entry.filePath.replace(root, '')
 
-const writeRouteModule = async (root: string, relativePath: string, source = 'export default () => null\n') => {
+const writeRouteModule = async (
+  root: string,
+  relativePath: string,
+  source = 'export default () => null\n',
+) => {
   const filePath = path.join(root, 'app', relativePath)
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, source)

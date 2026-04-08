@@ -4,11 +4,12 @@ import type { Component } from './component.ts'
 
 export type DynamicRenderable = keyof JSX.IntrinsicElements | Component<any>
 
-type DynamicRenderableProps<TRenderable extends DynamicRenderable> = TRenderable extends keyof JSX.IntrinsicElements
-  ? JSX.IntrinsicElements[TRenderable]
-  : TRenderable extends Component<infer TProps>
-    ? TProps
-    : never
+type DynamicRenderableProps<TRenderable extends DynamicRenderable> =
+  TRenderable extends keyof JSX.IntrinsicElements
+    ? JSX.IntrinsicElements[TRenderable]
+    : TRenderable extends Component<infer TProps>
+      ? TProps
+      : never
 
 export type DynamicProps<TRenderable extends DynamicRenderable> = {
   component: TRenderable | null | undefined
@@ -34,9 +35,11 @@ const omitComponentProp = <TRenderable extends DynamicRenderable>(
   return nextProps as DynamicRenderableProps<TRenderable>
 }
 
-export const Dynamic = ((props: {
-  component: JSX.Type | null | undefined
-} & Record<string, unknown>): JSX.Element => {
+export const Dynamic = ((
+  props: {
+    component: JSX.Type | null | undefined
+  } & Record<string, unknown>,
+): JSX.Element => {
   const component = props.component
   if (component === null || component === undefined) {
     return null

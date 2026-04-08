@@ -1,7 +1,7 @@
 {
   "name": "benchmarks-vue-vapor",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "vite build --ssr"
   },

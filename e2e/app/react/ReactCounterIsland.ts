@@ -5,7 +5,11 @@ const ReactCounterView = (props: { label: string; children?: unknown }) => {
   const [count, setCount] = useState(0)
 
   return createElement('section', { 'data-testid': 'react-island-root' }, [
-    createElement('p', { key: 'count', 'data-testid': 'react-island-count' }, `${props.label}:${count}`),
+    createElement(
+      'p',
+      { key: 'count', 'data-testid': 'react-island-count' },
+      `${props.label}:${count}`,
+    ),
     createElement(
       'button',
       {
@@ -15,7 +19,11 @@ const ReactCounterView = (props: { label: string; children?: unknown }) => {
       },
       'Increment React',
     ),
-    createElement('div', { key: 'slot', 'data-testid': 'react-island-slot' }, props.children as any),
+    createElement(
+      'div',
+      { key: 'slot', 'data-testid': 'react-island-slot' },
+      props.children as any,
+    ),
   ])
 }
 

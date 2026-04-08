@@ -68,7 +68,9 @@ describe('compileSSRModule', () => {
     )
 
     expect(resultCode).not.toContain('=> <li')
-    expect(resultCode).toMatch(/_ssrRaw\("<li>" \+ _renderSSRValue\(todo\) \+ "<\/li>"\)|_jsxDEV\("li"/)
+    expect(resultCode).toMatch(
+      /_ssrRaw\("<li>" \+ _renderSSRValue\(todo\) \+ "<\/li>"\)|_jsxDEV\("li"/,
+    )
   })
 
   it('lowers ternaries with JSX branches to Show components', async () => {
@@ -118,7 +120,9 @@ describe('compileSSRModule', () => {
     expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
     expect(resultCode).not.toContain('_jsxDEV(__eclipsaFor')
     expect(resultCode).toContain('renderSSRMap as _renderSSRMap')
-    expect(resultCode).toContain('_renderSSRMap(items, (item, i) => "<li>" + _renderSSRValue(item) + "</li>")')
+    expect(resultCode).toContain(
+      '_renderSSRMap(items, (item, i) => "<li>" + _renderSSRValue(item) + "</li>")',
+    )
     expect(resultCode).not.toContain('=> <li')
   })
 
@@ -155,7 +159,9 @@ describe('compileSSRModule', () => {
 
     expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
     expect(resultCode).not.toContain('_jsxDEV(__eclipsaFor')
-    expect(resultCode).toContain('items.map((item, i) => _ssrRaw("<li>" + _renderSSRValue(item) + "</li>"))')
+    expect(resultCode).toContain(
+      'items.map((item, i) => _ssrRaw("<li>" + _renderSSRValue(item) + "</li>"))',
+    )
     expect(resultCode).not.toContain(' key=')
   })
 

@@ -4,6 +4,6 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       input: './src/main.js',
-    }
-  }
+    },
+  },
 })

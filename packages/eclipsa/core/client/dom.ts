@@ -392,8 +392,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
     const newNodes = owner
       ? renderClientInsertableForOwner(value, runtimeContainer, owner)
       : renderClientInsertable(value, runtimeContainer)
-    const seededCurrentNodes =
-      seedCurrentNodes(newNodes.length)
+    const seededCurrentNodes = seedCurrentNodes(newNodes.length)
     const currentNodes =
       seededCurrentNodes.length !== 0 &&
       seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents)) &&
@@ -678,8 +677,7 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     let lastHTML = ATTR_UNSET as string | symbol
     effect(() => {
       const html = value()
-      const nextHTML =
-        html === false || html === undefined || html === null ? '' : String(html)
+      const nextHTML = html === false || html === undefined || html === null ? '' : String(html)
       if (lastHTML === nextHTML) {
         return
       }

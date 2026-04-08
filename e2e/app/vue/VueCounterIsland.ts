@@ -24,11 +24,7 @@ const VueCounterView = defineComponent({
           },
           'Increment Vue',
         ),
-        h(
-          'div',
-          { 'data-testid': 'vue-island-slot' },
-          slots.default ? slots.default() : [],
-        ),
+        h('div', { 'data-testid': 'vue-island-slot' }, slots.default ? slots.default() : []),
       ])
   },
 })
