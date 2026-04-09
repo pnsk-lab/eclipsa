@@ -278,6 +278,8 @@ interface ComponentState {
   didMount: boolean
   end?: Comment
   external?: ExternalComponentDescriptor
+  externalSlotHtml?: Map<string, string> | null
+  externalSlotDom?: Map<string, Node[]> | null
   externalInstance?: unknown
   externalMeta?: ExternalComponentMeta | null
   id: string
@@ -2536,6 +2538,8 @@ const getOrCreateComponentState = (
     active: false,
     didMount: false,
     external: undefined,
+    externalSlotHtml: null,
+    externalSlotDom: null,
     externalInstance: undefined,
     externalMeta: null,
     id,
@@ -2570,6 +2574,8 @@ const resetComponentForSymbolChange = (
   component.renderEffectCleanupSlot = createCleanupSlot()
   component.didMount = false
   component.external = meta.external
+  component.externalSlotHtml = null
+  component.externalSlotDom = null
   component.optimizedRoot = meta.optimizedRoot === true
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
@@ -3392,6 +3398,27 @@ const canMatchReusableRoot = (current: Node, next: Node) => {
   return isElementNode(current) && isElementNode(next) && current.tagName === next.tagName
 }
 
+const preserveExternalRootContents = (current: Node, next: Node) => {
+  if (!isElementNode(current) || !isElementNode(next)) {
+    return null
+  }
+  if (
+    current.getAttribute(EXTERNAL_ROOT_ATTR) !== 'true' ||
+    next.getAttribute(EXTERNAL_ROOT_ATTR) !== 'true'
+  ) {
+    return null
+  }
+  if (next.childNodes.length > 0) {
+    return new Set<string>()
+  }
+
+  const movedRoots = [...current.childNodes]
+  for (const node of movedRoots) {
+    next.appendChild(node)
+  }
+  return collectComponentBoundaryIds(movedRoots)
+}
+
 const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: Node[]) => {
   const preservedComponentIds = new Set<string>()
 
@@ -3467,6 +3494,14 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
 
       const currentChild = currentChildren[matchedIndex]!
       if (isElementNode(currentChild) && isElementNode(nextChild)) {
+        const preservedExternalRootIds = preserveExternalRootContents(currentChild, nextChild)
+        if (preservedExternalRootIds) {
+          for (const componentId of preservedExternalRootIds) {
+            preservedComponentIds.add(componentId)
+          }
+          currentIndex = matchedIndex + 1
+          continue
+        }
         preserveLists(Array.from(currentChild.childNodes), Array.from(nextChild.childNodes))
       }
       currentIndex = matchedIndex + 1
@@ -4604,6 +4639,76 @@ const getExternalRoot = (component: ComponentState) => {
   return null
 }
 
+const findExternalSlotHost = (
+  host: HTMLElement,
+  kind: ExternalComponentDescriptor['kind'],
+  name: string,
+) => {
+  if (typeof host.querySelectorAll !== 'function') {
+    return host.querySelector?.(`${getExternalSlotTag(kind)}[data-e-slot="${name}"]`) ?? null
+  }
+  const matches = [
+    ...host.querySelectorAll<HTMLElement>(`${getExternalSlotTag(kind)}[data-e-slot="${name}"]`),
+  ]
+  if (matches.length === 0) {
+    return null
+  }
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const candidate = matches[index]!
+    if (candidate.childNodes.length > 0 || (candidate.innerHTML ?? '') !== '') {
+      return candidate
+    }
+  }
+  return matches[0]!
+}
+
+const captureExternalSlotDom = (component: ComponentState) => {
+  if (!component.external) {
+    return null
+  }
+  const host = getExternalRoot(component)
+  if (!host || typeof host.querySelector !== 'function') {
+    return null
+  }
+  const captured = new Map<string, Node[]>()
+  for (const name of component.external.slots) {
+    const slotHost = findExternalSlotHost(host, component.external.kind, name)
+    captured.set(name, slotHost ? [...slotHost.childNodes] : [])
+  }
+  return captured
+}
+
+const captureExternalSlotHtml = (component: ComponentState) => {
+  if (!component.external) {
+    return null
+  }
+  const host = getExternalRoot(component)
+  if (!host || typeof host.querySelector !== 'function') {
+    return null
+  }
+  const captured = new Map<string, string>()
+  for (const name of component.external.slots) {
+    const slotHost = findExternalSlotHost(host, component.external.kind, name)
+    captured.set(name, slotHost?.innerHTML ?? '')
+  }
+  return captured
+}
+
+const restoreExternalSlotDom = (component: ComponentState, host: HTMLElement) => {
+  if (!component.external || !component.externalSlotDom || typeof host.querySelector !== 'function') {
+    return
+  }
+  for (const [name, nodes] of component.externalSlotDom) {
+    const slotHost = findExternalSlotHost(host, component.external.kind, name)
+    if (!slotHost || slotHost.childNodes.length > 0 || nodes.length === 0) {
+      continue
+    }
+    for (const node of nodes) {
+      slotHost.appendChild(node)
+    }
+  }
+}
+
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const renderExternalSlotContentToString = (
@@ -5023,14 +5128,7 @@ const renderComponentToNodes = (
       ((rawProps ?? props) as Record<string, unknown> | null) ?? null,
     )
   const boundaryContentsChanged = propsChanged || (!wasActive && !!previousStart && !!previousEnd)
-  if (
-    mode === 'client' &&
-    externalMeta &&
-    wasActive &&
-    previousStart &&
-    previousEnd &&
-    !symbolChanged
-  ) {
+  if (mode === 'client' && externalMeta && previousStart && previousEnd && !symbolChanged) {
     const start = container.doc.createComment(`ec:c:${componentId}:start`)
     const end = container.doc.createComment(`ec:c:${componentId}:end`)
     ;(
@@ -5047,7 +5145,7 @@ const renderComponentToNodes = (
     )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = false
 
     const host = getExternalRoot(component)
-    if (host && propsChanged) {
+    if (wasActive && host && propsChanged) {
       void withClientContainer(container, async () => {
         await syncExternalComponentInstance(component, externalMeta, props, host)
         rebindExternalHost(container, host)
@@ -7259,6 +7357,29 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     if (!host) {
       throw new Error(`Missing external root host for component ${component.id}.`)
     }
+    host.setAttribute('data-e-external-snapshot', component.id)
+    ;(globalThis as typeof globalThis & {
+      __eclipsaExternalSlotSnapshotMap?: Map<
+        HTMLElement,
+        {
+          dom: Map<string, Node[]> | null | undefined
+          html: Map<string, string> | null | undefined
+        }
+      >
+    }).__eclipsaExternalSlotSnapshotMap ??= new Map()
+    ;(globalThis as typeof globalThis & {
+      __eclipsaExternalSlotSnapshotMap?: Map<
+        HTMLElement,
+        {
+          dom: Map<string, Node[]> | null | undefined
+          html: Map<string, string> | null | undefined
+        }
+      >
+    }).__eclipsaExternalSlotSnapshotMap!.set(host, {
+      dom: component.externalSlotDom,
+      html: component.externalSlotHtml,
+    })
+    restoreExternalSlotDom(component, host)
     await withClientContainer(container, async () => {
       await syncExternalComponentInstance(
         component,
@@ -8100,6 +8221,29 @@ export const createResumeContainer = (
   mergeResumePayload(container, payload)
   rememberManagedAttributesForNode(root as HTMLElement)
   bindComponentBoundaries(container, root as HTMLElement)
+  for (const component of container.components.values()) {
+    component.externalSlotHtml = captureExternalSlotHtml(component)
+    component.externalSlotDom = captureExternalSlotDom(component)
+  }
+  ;(globalThis as typeof globalThis & {
+    __eclipsaExternalSlotSnapshotStore?: Record<
+      string,
+      {
+        dom: Map<string, Node[]> | null | undefined
+        html: Map<string, string> | null | undefined
+      }
+    >
+  }).__eclipsaExternalSlotSnapshotStore = Object.fromEntries(
+    [...container.components.values()]
+      .filter((component) => !!component.external && (component.externalSlotDom || component.externalSlotHtml))
+      .map((component) => [
+        component.id,
+        {
+          dom: component.externalSlotDom,
+          html: component.externalSlotHtml,
+        },
+      ]),
+  )
   restoreSignalRefs(container, root as HTMLElement)
 
   restoreRegisteredRpcHandles(container)

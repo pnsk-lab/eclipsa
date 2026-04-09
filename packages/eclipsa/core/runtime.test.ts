@@ -26,6 +26,7 @@ import {
   dispatchDocumentEvent,
   flushDirtyComponents,
   installResumeListeners,
+  preserveReusableContentInRoots,
   rememberInsertMarkerRange,
   renderClientInsertable,
   restoreResumedLocalSignalEffects,
@@ -3789,6 +3790,34 @@ describe('renderClientInsertable', () => {
       expect(nextHost).toBe(host)
       expect(nextHost.getAttribute('data-external-label')).toBe('second')
       expect(events).toEqual(['hydrate:first', 'update:second'])
+    })
+  })
+
+  it('preserves external root bodies when a matching client host is still empty', async () => {
+    await withFakeNodeGlobal(async () => {
+      const doc = new FakeDocument()
+      const currentHost = doc.createElement('e-island-root') as unknown as FakeElement
+      currentHost.setAttribute('data-e-external-root', 'true')
+      currentHost.setAttribute('data-e-external-component', 'c-old')
+
+      const slotHost = doc.createElement('e-slot-host') as unknown as FakeElement
+      slotHost.setAttribute('data-e-slot', 'children')
+      slotHost.appendChild(doc.createComment('ec:c:c-old.0:start') as unknown as FakeNode)
+      slotHost.appendChild(doc.createTextNode('live child') as unknown as FakeNode)
+      slotHost.appendChild(doc.createComment('ec:c:c-old.0:end') as unknown as FakeNode)
+      currentHost.appendChild(slotHost as unknown as FakeNode)
+
+      const nextHost = doc.createElement('e-island-root') as unknown as FakeElement
+      nextHost.setAttribute('data-e-external-root', 'true')
+      nextHost.setAttribute('data-e-external-component', 'c-new')
+
+      const preserved = preserveReusableContentInRoots(
+        [currentHost as unknown as Node],
+        [nextHost as unknown as Node],
+      )
+
+      expect(nextHost.childNodes).toEqual([slotHost])
+      expect([...preserved]).toContain('c-old.0')
     })
   })
 

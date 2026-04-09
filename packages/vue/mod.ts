@@ -15,10 +15,11 @@ const SLOT_HOST_TAG = 'e-slot-host'
 
 interface VueExternalInstance {
   app: App
-  slotHtml: Map<string, string>
+  slotDom: Map<string, Node[]>
   state: {
     props: Record<string, unknown>
   }
+  slotNames: string[]
 }
 
 const waitForExternalDomCommit = async () => {
@@ -34,54 +35,90 @@ const waitForExternalDomCommit = async () => {
   })
 }
 
-const captureSlotHtml = (host: HTMLElement, slotNames: string[]) => {
-  const captured = new Map<string, string>()
+const findSlotHost = (host: HTMLElement, name: string) => {
+  if (typeof host.querySelectorAll !== 'function') {
+    return host.querySelector?.(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`) ?? null
+  }
+  const matches = [
+    ...host.querySelectorAll<HTMLElement>(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`),
+  ]
+  if (matches.length === 0) {
+    return null
+  }
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const candidate = matches[index]!
+    if (candidate.childNodes.length > 0 || (candidate.innerHTML ?? '') !== '') {
+      return candidate
+    }
+  }
+  return matches[0]!
+}
+
+const captureSlotDom = (host: HTMLElement, slotNames: string[]) => {
+  const captured = new Map<string, Node[]>()
   if (typeof host.querySelector !== 'function') {
     for (const name of slotNames) {
-      captured.set(name, '')
+      captured.set(name, [])
     }
     return captured
   }
   for (const name of slotNames) {
-    const slotHost = host.querySelector<HTMLElement>(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`)
-    captured.set(name, slotHost?.innerHTML ?? '')
+    const slotHost = findSlotHost(host, name)
+    captured.set(name, slotHost ? [...slotHost.childNodes] : [])
   }
   return captured
 }
 
-const mergeSlotHtml = (previous: Map<string, string> | undefined, next: Map<string, string>) => {
-  const merged = new Map<string, string>()
-  for (const [name, html] of next) {
-    if (html === '' && (previous?.get(name) ?? '') !== '') {
+const mergeSlotDom = (previous: Map<string, Node[]> | undefined, next: Map<string, Node[]>) => {
+  const merged = new Map<string, Node[]>()
+  for (const [name, nodes] of next) {
+    if (nodes.length === 0 && (previous?.get(name)?.length ?? 0) > 0) {
       merged.set(name, previous!.get(name)!)
       continue
     }
-    merged.set(name, html)
+    merged.set(name, nodes)
   }
   return merged
 }
 
-const restoreSlotHtml = (host: HTMLElement, slotHtml?: Map<string, string>) => {
-  if (!slotHtml || typeof host.querySelector !== 'function') {
+const restoreSlotNodes = (slotHost: Element, nodes: Node[]) => {
+  if (
+    slotHost.childNodes.length === nodes.length &&
+    nodes.every((node, index) => slotHost.childNodes[index] === node)
+  ) {
     return
   }
-  for (const [name, html] of slotHtml) {
-    const slotHost = host.querySelector<HTMLElement>(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`)
-    if (!slotHost || slotHost.innerHTML === html) {
-      continue
-    }
-    slotHost.innerHTML = html
+  for (const child of [...slotHost.childNodes]) {
+    child.remove()
+  }
+  for (const node of nodes) {
+    slotHost.appendChild(node)
   }
 }
 
-const scheduleSlotHtmlRestore = (host: HTMLElement, slotHtml: Map<string, string>) => {
-  restoreSlotHtml(host, slotHtml)
+const restoreSlotDom = (host: HTMLElement, slotDom?: Map<string, Node[]>) => {
+  if (!slotDom || typeof host.querySelector !== 'function') {
+    return
+  }
+  for (const [name, nodes] of slotDom) {
+    const slotHost = findSlotHost(host, name)
+    if (!slotHost) {
+      continue
+    }
+    restoreSlotNodes(slotHost, nodes)
+  }
+}
+
+const scheduleSlotDomRestore = (host: HTMLElement, instance: VueExternalInstance) => {
+  instance.slotDom = mergeSlotDom(instance.slotDom, captureSlotDom(host, instance.slotNames))
+  restoreSlotDom(host, instance.slotDom)
   if (typeof setTimeout !== 'function') {
     return
   }
   for (const delay of [0, 16, 100]) {
     setTimeout(() => {
-      restoreSlotHtml(host, slotHtml)
+      instance.slotDom = mergeSlotDom(instance.slotDom, captureSlotDom(host, instance.slotNames))
+      restoreSlotDom(host, instance.slotDom)
     }, delay)
   }
 }
@@ -145,19 +182,53 @@ export const eclipsifyVue = <TProps extends Record<string, unknown>>(
   const slotNames = [...(options?.slots ?? ['children'])]
   const meta: ExternalComponentMeta = {
     async hydrate(host, props) {
-      const slotHtml = captureSlotHtml(host, slotNames)
+      let slotDom = captureSlotDom(host, slotNames)
+      const componentId =
+        host.getAttribute('data-e-external-snapshot') ??
+        host.getAttribute('data-e-external-component')
+      const snapshotStore = (globalThis as typeof globalThis & {
+        __eclipsaExternalSlotSnapshotStore?: Record<
+          string,
+          {
+            dom?: Map<string, Node[]>
+          }
+        >
+      }).__eclipsaExternalSlotSnapshotStore
+      const snapshotMap = (globalThis as typeof globalThis & {
+        __eclipsaExternalSlotSnapshotMap?: Map<
+          HTMLElement,
+          {
+            dom?: Map<string, Node[]>
+          }
+        >
+      }).__eclipsaExternalSlotSnapshotMap
+      const snapshotEntry =
+        (componentId ? snapshotStore?.[componentId] : undefined) ??
+        (() => {
+          if (!snapshotStore) {
+            return undefined
+          }
+          const entries = Object.values(snapshotStore)
+          return entries.length === 1 ? entries[0] : undefined
+        })()
+      const snapshotByHost = snapshotMap?.get(host)
+      if ([...slotDom.values()].every((nodes) => nodes.length === 0)) {
+        slotDom = snapshotByHost?.dom ?? snapshotEntry?.dom ?? slotDom
+      }
       const state = shallowReactive({
         props: { ...props } as Record<string, unknown>,
       })
       const app = createSSRApp(createVueRoot(component, state, slotNames))
       app.mount(host)
       await waitForExternalDomCommit()
-      scheduleSlotHtmlRestore(host, slotHtml)
-      return {
+      const instance = {
         app,
-        slotHtml,
+        slotDom,
         state,
+        slotNames,
       } satisfies VueExternalInstance
+      scheduleSlotDomRestore(host, instance)
+      return instance
     },
     kind: 'vue',
     async renderToString(props) {
@@ -175,11 +246,11 @@ export const eclipsifyVue = <TProps extends Record<string, unknown>>(
     },
     async update(instance, host, props) {
       const resolved = instance as VueExternalInstance
-      const slotHtml = mergeSlotHtml(resolved.slotHtml, captureSlotHtml(host, slotNames))
+      const slotDom = mergeSlotDom(resolved.slotDom, captureSlotDom(host, slotNames))
       syncRecord(resolved.state.props, props)
       await waitForExternalDomCommit()
-      scheduleSlotHtmlRestore(host, slotHtml)
-      resolved.slotHtml = slotHtml
+      resolved.slotDom = slotDom
+      scheduleSlotDomRestore(host, resolved)
       return resolved
     },
   }

@@ -682,6 +682,7 @@ test.describe('example app in dev mode', () => {
 
   test('runs action$ with middleware and validator on the actions page', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await expect(page.getByRole('heading', { name: 'Action Playground' })).toBeVisible()
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
@@ -702,6 +703,7 @@ test.describe('example app in dev mode', () => {
 
   test('progressively enhances native form submissions through action$', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await page.getByRole('textbox', { name: 'Form Left' }).fill('9')
     await page.getByRole('textbox', { name: 'Form Right' }).fill('3')
@@ -716,6 +718,7 @@ test.describe('example app in dev mode', () => {
 
   test('hydrates loader$ from SSR payload and reloads it over RPC', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
     await expect(page.getByText(/loader last:\s*No manual load yet/)).toBeVisible()
@@ -728,6 +731,7 @@ test.describe('example app in dev mode', () => {
 
   test('shows structured validation failures from action$', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await page.getByRole('textbox', { name: 'Left', exact: true }).fill('abc')
     await page.getByRole('textbox', { name: 'Right', exact: true }).fill('22')
