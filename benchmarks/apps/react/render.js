@@ -1,1 +1,1 @@
-export { render } from './dist/main'
+export { render } from './dist/main.js'

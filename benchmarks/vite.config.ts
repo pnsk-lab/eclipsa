@@ -5,6 +5,7 @@ export default defineConfig({
     tasks: {
       'build:all': {
         dependsOn: [
+          'build:framework',
           'build:astro',
           'build:react',
           'build:qwik',
@@ -16,6 +17,10 @@ export default defineConfig({
           'build:vue-vapor',
         ],
         command: '',
+      },
+      'build:framework': {
+        command: 'bun run build',
+        cwd: '../packages/eclipsa',
       },
       'build:astro': {
         command: 'bun run build',

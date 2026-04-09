@@ -1,0 +1,12 @@
+{
+  "imports": {
+    "child_process": "node:child_process",
+    "crypto": "node:crypto",
+    "fs": "node:fs",
+    "path": "node:path",
+    "stream": "node:stream",
+    "tty": "node:tty",
+    "url": "node:url",
+    "util": "node:util"
+  }
+}

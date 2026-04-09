@@ -5,7 +5,14 @@
     "apps/*"
   ],
   "type": "module",
-  "module": "index.ts",
+  "scripts": {
+    "build": "vite-plus run build:all",
+    "bench": "bun run ./benchmark.js",
+    "bench:bun": "bun run ./benchmark.js",
+    "bench:node": "node ./benchmark.js",
+    "bench:deno": "deno run --import-map=./deno.import-map.json --allow-read --allow-env --allow-sys --node-modules-dir=auto ./benchmark.js",
+    "test": "bun test"
+  },
   "dependencies": {
     "mitata": "^1.0.34"
   },

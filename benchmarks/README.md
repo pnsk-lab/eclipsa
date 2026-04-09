@@ -1,15 +1,39 @@
 # benchmarks
 
-To install dependencies:
+Build the benchmark fixtures first:
 
 ```bash
-bun install
+bun run build
+# or from the repo root
+bun run benchmark:build
 ```
 
-To run:
+Run on Bun:
 
 ```bash
-bun run index.ts
+bun run bench:bun
+# or from the repo root
+bun run benchmark:bun
 ```
 
-This project was created using `bun init` in bun v1.3.10. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+Run on Node.js:
+
+```bash
+node ./benchmark.js
+```
+
+Run on Deno:
+
+```bash
+deno run --import-map=./deno.import-map.json --allow-read --allow-env --allow-sys --node-modules-dir=auto ./benchmark.js
+```
+
+You can also use the package scripts:
+
+```bash
+bun run bench:node
+bun run bench:deno
+# or from the repo root
+bun run benchmark:node
+bun run benchmark:deno
+```
