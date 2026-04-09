@@ -665,7 +665,7 @@ export const collectAppActions = async (
 
   for (const filePath of files) {
     const analyzed = await loadAnalyzedModule(filePath)
-    result.push(...analyzed.actions.values())
+    result.push(...[...analyzed.actions.values()].map((action) => ({ filePath, id: action.id })))
   }
 
   return result
@@ -680,7 +680,7 @@ export const collectAppLoaders = async (
 
   for (const filePath of files) {
     const analyzed = await loadAnalyzedModule(filePath)
-    result.push(...analyzed.loaders.values())
+    result.push(...[...analyzed.loaders.values()].map((loader) => ({ filePath, id: loader.id })))
   }
 
   return result
