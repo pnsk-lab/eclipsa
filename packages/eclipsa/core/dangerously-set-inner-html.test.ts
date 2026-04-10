@@ -1,101 +1,91 @@
 import { describe, expect, it } from 'vitest'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
-import { renderClientInsertable, type RuntimeContainer, withRuntimeContainer } from './runtime.ts'
+import { renderClientInsertable, withRuntimeContainer } from './runtime.ts'
 import { renderSSR } from './ssr.ts'
-
 class FakeNode {
-  childNodes: FakeNode[] = []
+  childNodes = []
   nodeType = 0
-  parentNode: FakeNode | null = null
+  parentNode = null
 }
-
 class FakeText extends FakeNode {
-  constructor(readonly data: string) {
+  constructor(data) {
     super()
+    this.data = data
     this.nodeType = 3
   }
 }
-
 class FakeComment extends FakeNode {
-  constructor(readonly data: string) {
+  constructor(data) {
     super()
+    this.data = data
     this.nodeType = 8
   }
 }
-
 class FakeElement extends FakeNode {
-  attributes = new Map<string, string>()
-  childNodes: FakeNode[] = []
-  innerHTML = ''
-
-  constructor(readonly tagName: string) {
+  constructor(tagName) {
     super()
+    this.tagName = tagName
     this.nodeType = 1
   }
-
-  appendChild(node: FakeNode) {
+  attributes = /* @__PURE__ */ new Map()
+  childNodes = []
+  innerHTML = ''
+  appendChild(node) {
     node.parentNode = this
     this.childNodes.push(node)
     return node
   }
-
-  setAttribute(name: string, value: string) {
+  setAttribute(name, value) {
     this.attributes.set(name, value)
   }
 }
-
 class FakeDocument {
-  createComment(data: string) {
-    return new FakeComment(data) as unknown as Comment
+  createComment(data) {
+    return new FakeComment(data)
   }
-
-  createElement(tagName: string) {
-    return new FakeElement(tagName) as unknown as HTMLElement
+  createElement(tagName) {
+    return new FakeElement(tagName)
   }
-
-  createTextNode(data: string) {
-    return new FakeText(data) as unknown as Text
+  createTextNode(data) {
+    return new FakeText(data)
   }
 }
-
-const createContainer = () =>
-  ({
-    actions: new Map(),
-    actionStates: new Map(),
-    atoms: new WeakMap(),
-    components: new Map(),
-    dirty: new Set(),
-    doc: new FakeDocument() as unknown as Document,
-    imports: new Map(),
-    loaderStates: new Map(),
-    loaders: new Map(),
-    id: 'rt-test',
-    nextAtomId: 0,
-    nextComponentId: 0,
-    nextElementId: 0,
-    nextScopeId: 0,
-    nextSignalId: 0,
-    rootChildCursor: 0,
-    rootElement: undefined,
-    router: null,
-    scopes: new Map(),
-    signals: new Map(),
-    symbols: new Map(),
-    visibilityCheckQueued: false,
-    visibilityListenersCleanup: null,
-    visibles: new Map(),
-    watches: new Map(),
-  }) as RuntimeContainer
-
-function withFakeNodeGlobal<T>(fn: () => T): T {
+const createContainer = () => ({
+  actions: /* @__PURE__ */ new Map(),
+  actionStates: /* @__PURE__ */ new Map(),
+  atoms: /* @__PURE__ */ new WeakMap(),
+  components: /* @__PURE__ */ new Map(),
+  dirty: /* @__PURE__ */ new Set(),
+  doc: new FakeDocument(),
+  imports: /* @__PURE__ */ new Map(),
+  loaderStates: /* @__PURE__ */ new Map(),
+  loaders: /* @__PURE__ */ new Map(),
+  id: 'rt-test',
+  nextAtomId: 0,
+  nextComponentId: 0,
+  nextElementId: 0,
+  nextScopeId: 0,
+  nextSignalId: 0,
+  rootChildCursor: 0,
+  rootElement: void 0,
+  router: null,
+  scopes: /* @__PURE__ */ new Map(),
+  signals: /* @__PURE__ */ new Map(),
+  symbols: /* @__PURE__ */ new Map(),
+  visibilityCheckQueued: false,
+  visibilityListenersCleanup: null,
+  visibles: /* @__PURE__ */ new Map(),
+  watches: /* @__PURE__ */ new Map(),
+})
+function withFakeNodeGlobal(fn) {
   const OriginalNode = globalThis.Node
-  globalThis.Node = FakeNode as unknown as typeof Node
+  globalThis.Node = FakeNode
   try {
     const result = fn()
     if (result instanceof Promise) {
       return result.finally(() => {
         globalThis.Node = OriginalNode
-      }) as T
+      })
     }
     globalThis.Node = OriginalNode
     return result
@@ -104,7 +94,6 @@ function withFakeNodeGlobal<T>(fn: () => T): T {
     throw error
   }
 }
-
 describe('dangerouslySetInnerHTML', () => {
   it('renders raw HTML during SSR without outputting the prop name', () => {
     const { html } = renderSSR(() =>
@@ -119,12 +108,10 @@ describe('dangerouslySetInnerHTML', () => {
         {},
       ),
     )
-
     expect(html).toBe('<div><span>raw</span></div>')
     expect(html).not.toContain('dangerouslySetInnerHTML')
     expect(html).not.toContain('fallback')
   })
-
   it('sets innerHTML on client-rendered elements and skips JSX children', () => {
     withFakeNodeGlobal(() => {
       const container = createContainer()
@@ -143,8 +130,7 @@ describe('dangerouslySetInnerHTML', () => {
           container,
         ),
       )
-      const element = nodes[0] as unknown as FakeElement
-
+      const element = nodes[0]
       expect(element.innerHTML).toBe('<span>raw</span>')
       expect(element.attributes.has('dangerouslySetInnerHTML')).toBe(false)
       expect(element.childNodes).toHaveLength(0)

@@ -1,11 +1,11 @@
+import { jsxDEV } from 'eclipsa/jsx-dev-runtime'
 import { describe, expect, it } from 'vitest'
 import { renderSSR } from 'eclipsa'
-import { jsxDEV } from '../eclipsa/jsx/jsx-dev-runtime.ts'
+import { jsxDEV as jsxDEV2 } from '../eclipsa/jsx/jsx-dev-runtime.ts'
 import { __eclipsaComponent } from '../eclipsa/core/internal.ts'
 import {
   flushDirtyComponents,
   renderClientInsertable,
-  type RuntimeContainer,
   withRuntimeContainer,
 } from '../eclipsa/core/runtime.ts'
 import { useSignal, useWatch } from '../eclipsa/core/signal.ts'
@@ -18,13 +18,11 @@ import {
   useMotionValueEvent,
   useMotionValueSignal,
 } from './mod.ts'
-
 class FakeNode {
-  childNodes: FakeNode[] = []
+  childNodes = []
   nodeType = 0
-  ownerDocument: FakeDocument | null = null
-  parentNode: FakeNode | null = null
-
+  ownerDocument = null
+  parentNode = null
   remove() {
     if (!this.parentNode) {
       return
@@ -35,146 +33,122 @@ class FakeNode {
     }
     this.parentNode = null
   }
-
-  get nextSibling(): FakeNode | null {
+  get nextSibling() {
     if (!this.parentNode) {
       return null
     }
     const index = this.parentNode.childNodes.indexOf(this)
     return index >= 0 ? (this.parentNode.childNodes[index + 1] ?? null) : null
   }
-
-  get firstChild(): FakeNode | null {
+  get firstChild() {
     return this.childNodes[0] ?? null
   }
-
-  get lastChild(): FakeNode | null {
-    return this.childNodes.length > 0 ? this.childNodes[this.childNodes.length - 1]! : null
+  get lastChild() {
+    return this.childNodes.length > 0 ? this.childNodes[this.childNodes.length - 1] : null
   }
-
-  get textContent(): string {
+  get textContent() {
     return this.childNodes.map((child) => child.textContent ?? '').join('')
   }
 }
-
 class FakeText extends FakeNode {
-  constructor(readonly data: string) {
+  constructor(data) {
     super()
+    this.data = data
     this.nodeType = 3
   }
-
-  override get textContent(): string {
+  get textContent() {
     return this.data
   }
 }
-
 class FakeComment extends FakeNode {
-  constructor(readonly data: string) {
+  constructor(data) {
     super()
+    this.data = data
     this.nodeType = 8
   }
-
-  override get textContent(): string {
+  get textContent() {
     return this.data
   }
 }
-
 class FakeElement extends FakeNode {
-  attributes = new Map<string, string>()
-
-  constructor(readonly tagName: string) {
+  constructor(tagName) {
     super()
+    this.tagName = tagName
     this.nodeType = 1
   }
-
-  appendChild(node: FakeNode) {
+  attributes = /* @__PURE__ */ new Map()
+  appendChild(node) {
     node.ownerDocument = this.ownerDocument
     node.parentNode = this
     this.childNodes.push(node)
     return node
   }
-
-  insertBefore(node: FakeNode, referenceNode: FakeNode | null) {
+  insertBefore(node, referenceNode) {
     node.ownerDocument = this.ownerDocument
     node.parentNode = this
-
     if (!referenceNode) {
       this.childNodes.push(node)
       return node
     }
-
     const index = this.childNodes.indexOf(referenceNode)
     if (index < 0) {
       this.childNodes.push(node)
       return node
     }
-
     this.childNodes.splice(index, 0, node)
     return node
   }
-
-  replaceChild(newChild: FakeNode, oldChild: FakeNode) {
+  replaceChild(newChild, oldChild) {
     const index = this.childNodes.indexOf(oldChild)
     if (index < 0) {
       return oldChild
     }
-
     newChild.ownerDocument = this.ownerDocument
     newChild.parentNode = this
     oldChild.parentNode = null
     this.childNodes[index] = newChild
     return oldChild
   }
-
-  setAttribute(name: string, value: string) {
+  setAttribute(name, value) {
     this.attributes.set(name, value)
   }
-
-  removeAttribute(name: string) {
+  removeAttribute(name) {
     this.attributes.delete(name)
   }
-
-  getAttribute(name: string) {
+  getAttribute(name) {
     return this.attributes.get(name) ?? null
   }
 }
-
 class FakeWindow {
   addEventListener() {}
   removeEventListener() {}
 }
-
 class FakeDocument {
-  body: HTMLElement
-  defaultView = new FakeWindow() as unknown as Window & typeof globalThis
-
+  body
+  defaultView = new FakeWindow()
   constructor() {
     const body = new FakeElement('body')
     body.ownerDocument = this
-    this.body = body as unknown as HTMLElement
+    this.body = body
   }
-
-  createComment(data: string) {
+  createComment(data) {
     const comment = new FakeComment(data)
     comment.ownerDocument = this
-    return comment as unknown as Comment
+    return comment
   }
-
-  createElement(tagName: string) {
+  createElement(tagName) {
     const element = new FakeElement(tagName)
     element.ownerDocument = this
-    return element as unknown as HTMLElement
+    return element
   }
-
-  createTextNode(data: string) {
+  createTextNode(data) {
     const text = new FakeText(data)
     text.ownerDocument = this
-    return text as unknown as Text
+    return text
   }
-
-  createTreeWalker(root: FakeNode, whatToShow?: number) {
-    const nodes: FakeNode[] = []
-    const visit = (node: FakeNode) => {
+  createTreeWalker(root, whatToShow) {
+    const nodes = []
+    const visit = (node) => {
       const matchesFilter = !whatToShow || whatToShow === 128 ? node instanceof FakeComment : true
       if (matchesFilter) {
         nodes.push(node)
@@ -184,45 +158,37 @@ class FakeDocument {
       }
     }
     visit(root)
-
     let index = -1
-    const walker: { currentNode: Node | null; nextNode(): Node | null } = {
+    const walker = {
       currentNode: null,
       nextNode() {
         index += 1
         const node = nodes[index] ?? null
-        walker.currentNode = node as unknown as Node | null
-        return node as unknown as Node | null
+        walker.currentNode = node
+        return node
       },
     }
-    return walker as unknown as TreeWalker
+    return walker
   }
 }
-
 class FakeIntersectionObserver {
-  static instances: FakeIntersectionObserver[] = []
-  readonly observed = new Set<Element>()
-
-  constructor(
-    private readonly callback: IntersectionObserverCallback,
-    readonly options?: IntersectionObserverInit,
-  ) {
+  constructor(callback, options) {
+    this.callback = callback
+    this.options = options
     FakeIntersectionObserver.instances.push(this)
   }
-
+  static instances = []
+  observed = /* @__PURE__ */ new Set()
   disconnect() {
     this.observed.clear()
   }
-
-  observe(element: Element) {
+  observe(element) {
     this.observed.add(element)
   }
-
-  unobserve(element: Element) {
+  unobserve(element) {
     this.observed.delete(element)
   }
-
-  trigger(isIntersecting: boolean) {
+  trigger(isIntersecting) {
     const target = [...this.observed][0]
     if (!target) {
       return
@@ -230,64 +196,60 @@ class FakeIntersectionObserver {
     this.callback(
       [
         {
-          boundingClientRect: {} as DOMRectReadOnly,
+          boundingClientRect: {},
           intersectionRatio: isIntersecting ? 1 : 0,
-          intersectionRect: {} as DOMRectReadOnly,
+          intersectionRect: {},
           isIntersecting,
           rootBounds: null,
           target,
           time: 0,
-        } as IntersectionObserverEntry,
+        },
       ],
-      this as unknown as IntersectionObserver,
+      this,
     )
   }
 }
-
-const createContainer = () =>
-  ({
-    actions: new Map(),
-    actionStates: new Map(),
-    asyncSignalSnapshotCache: new Map(),
-    asyncSignalStates: new Map(),
-    atoms: new WeakMap(),
-    components: new Map(),
-    dirty: new Set(),
-    dirtyFlushQueued: false,
-    doc: new FakeDocument() as unknown as Document,
-    eventDispatchPromise: null,
-    imports: new Map(),
-    interactivePrefetchCheckQueued: false,
-    loaderStates: new Map(),
-    loaders: new Map(),
-    id: 'motion-test',
-    nextAtomId: 0,
-    nextComponentId: 0,
-    nextElementId: 0,
-    nextScopeId: 0,
-    nextSignalId: 0,
-    pendingSuspensePromises: new Set(),
-    resumeReadyPromise: null,
-    rootChildCursor: 0,
-    rootElement: undefined,
-    router: null,
-    scopes: new Map(),
-    signals: new Map(),
-    symbols: new Map(),
-    visibilityCheckQueued: false,
-    visibilityListenersCleanup: null,
-    visibles: new Map(),
-    watches: new Map(),
-  }) as RuntimeContainer
-
+const createContainer = () => ({
+  actions: /* @__PURE__ */ new Map(),
+  actionStates: /* @__PURE__ */ new Map(),
+  asyncSignalSnapshotCache: /* @__PURE__ */ new Map(),
+  asyncSignalStates: /* @__PURE__ */ new Map(),
+  atoms: /* @__PURE__ */ new WeakMap(),
+  components: /* @__PURE__ */ new Map(),
+  dirty: /* @__PURE__ */ new Set(),
+  dirtyFlushQueued: false,
+  doc: new FakeDocument(),
+  eventDispatchPromise: null,
+  imports: /* @__PURE__ */ new Map(),
+  interactivePrefetchCheckQueued: false,
+  loaderStates: /* @__PURE__ */ new Map(),
+  loaders: /* @__PURE__ */ new Map(),
+  id: 'motion-test',
+  nextAtomId: 0,
+  nextComponentId: 0,
+  nextElementId: 0,
+  nextScopeId: 0,
+  nextSignalId: 0,
+  pendingSuspensePromises: /* @__PURE__ */ new Set(),
+  resumeReadyPromise: null,
+  rootChildCursor: 0,
+  rootElement: void 0,
+  router: null,
+  scopes: /* @__PURE__ */ new Map(),
+  signals: /* @__PURE__ */ new Map(),
+  symbols: /* @__PURE__ */ new Map(),
+  visibilityCheckQueued: false,
+  visibilityListenersCleanup: null,
+  visibles: /* @__PURE__ */ new Map(),
+  watches: /* @__PURE__ */ new Map(),
+})
 const flushAsync = async () => {
   await Promise.resolve()
   await Promise.resolve()
 }
-
-const queryFakeElements = (root: FakeNode, predicate: (element: FakeElement) => boolean) => {
-  const matches: FakeElement[] = []
-  const visit = (node: FakeNode) => {
+const queryFakeElements = (root, predicate) => {
+  const matches = []
+  const visit = (node) => {
     if (node instanceof FakeElement && predicate(node)) {
       matches.push(node)
     }
@@ -298,8 +260,7 @@ const queryFakeElements = (root: FakeNode, predicate: (element: FakeElement) => 
   visit(root)
   return matches
 }
-
-const withFakeNodeGlobal = async (fn: () => Promise<void>) => {
+const withFakeNodeGlobal = async (fn) => {
   const OriginalComment = globalThis.Comment
   const OriginalElement = globalThis.Element
   const OriginalHTMLElement = globalThis.HTMLElement
@@ -308,20 +269,15 @@ const withFakeNodeGlobal = async (fn: () => Promise<void>) => {
   const OriginalCancelAnimationFrame = globalThis.cancelAnimationFrame
   const OriginalRequestAnimationFrame = globalThis.requestAnimationFrame
   const OriginalText = globalThis.Text
-
   FakeIntersectionObserver.instances = []
-  globalThis.Comment = FakeComment as unknown as typeof Comment
-  globalThis.Element = FakeElement as unknown as typeof Element
-  globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
-  globalThis.IntersectionObserver =
-    FakeIntersectionObserver as unknown as typeof IntersectionObserver
-  globalThis.Node = FakeNode as unknown as typeof Node
-  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) =>
-    setTimeout(() => callback(0), 0)) as unknown as typeof requestAnimationFrame
-  globalThis.cancelAnimationFrame = ((handle: number) =>
-    clearTimeout(handle)) as typeof cancelAnimationFrame
-  globalThis.Text = FakeText as unknown as typeof Text
-
+  globalThis.Comment = FakeComment
+  globalThis.Element = FakeElement
+  globalThis.HTMLElement = FakeElement
+  globalThis.IntersectionObserver = FakeIntersectionObserver
+  globalThis.Node = FakeNode
+  globalThis.requestAnimationFrame = (callback) => setTimeout(() => callback(0), 0)
+  globalThis.cancelAnimationFrame = (handle) => clearTimeout(handle)
+  globalThis.Text = FakeText
   try {
     await fn()
   } finally {
@@ -335,43 +291,68 @@ const withFakeNodeGlobal = async (fn: () => Promise<void>) => {
     globalThis.Text = OriginalText
   }
 }
-
 describe('@eclipsa/motion', () => {
   it('strips motion-only props from rendered DOM output', () => {
-    const { html } = renderSSR(() => (
-      <motion.div
-        animate={{ opacity: 1 }}
-        initial={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        whileHover={{ opacity: 0.8 }}
-      />
-    ))
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        motion.div,
+        {
+          animate: { opacity: 1 },
+          initial: { opacity: 0 },
+          transition: { duration: 0.2 },
+          whileHover: { opacity: 0.8 },
+        },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 342,
+          columnNumber: 7,
+        },
+      ),
+    )
     expect(html).toContain('<div')
     expect(html).not.toContain('animate=')
     expect(html).not.toContain('initial=')
     expect(html).not.toContain('transition=')
     expect(html).not.toContain('whileHover=')
   })
-
   it('renders the initial pose inline during SSR', () => {
-    const { html } = renderSSR(() => (
-      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1 }} />
-    ))
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        motion.div,
+        { initial: { opacity: 0, x: 20 }, animate: { opacity: 1 } },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 359,
+          columnNumber: 7,
+        },
+      ),
+    )
     expect(html).toContain('opacity: 0; transform: translate3d(20px, 0px, 0px)')
   })
-
   it('renders the animate pose inline during SSR when initial is false', () => {
-    const { html } = renderSSR(() => <motion.div initial={false} animate={{ opacity: 1, x: 0 }} />)
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        motion.div,
+        { initial: false, animate: { opacity: 1, x: 0 } },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 366,
+          columnNumber: 38,
+        },
+      ),
+    )
     expect(html).toContain('opacity: 1; transform: translate3d(0px, 0px, 0px)')
   })
-
   it('serializes nested accessor animate targets during SSR', () => {
     const { html } = renderSSR(() =>
-      jsxDEV(
-        motion.div as never,
+      jsxDEV2(
+        motion.div,
         {
           get animate() {
             const target = {}
@@ -389,188 +370,192 @@ describe('@eclipsa/motion', () => {
         {},
       ),
     )
-
     expect(html).toContain('transform: translate3d(24px, 0px, 0px)')
   })
-
   it('serializes camelCase motion styles to valid CSS property names', () => {
-    const { html } = renderSSR(() => (
-      <motion.div initial={false} animate={{ maxHeight: 160, opacity: 1 }} />
-    ))
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        motion.div,
+        { initial: false, animate: { maxHeight: 160, opacity: 1 } },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 398,
+          columnNumber: 7,
+        },
+      ),
+    )
     expect(html).toContain('max-height: 160px')
     expect(html).toContain('transition-property: max-height, opacity')
     expect(html).not.toContain('maxHeight:')
   })
-
   it('inherits transition config from MotionConfig', () => {
-    const { html } = renderSSR(() => (
-      <MotionConfig transition={{ duration: 0.6 }}>
-        <motion.div animate={{ opacity: 1 }} />
-      </MotionConfig>
-    ))
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        MotionConfig,
+        {
+          transition: { duration: 0.6 },
+          children: /* @__PURE__ */ jsxDEV(motion.div, { animate: { opacity: 1 } }, void 0, false, {
+            fileName: 'packages/motion/mod.test.ts',
+            lineNumber: 409,
+            columnNumber: 9,
+          }),
+        },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 408,
+          columnNumber: 7,
+        },
+      ),
+    )
     expect(html).toContain('<div')
   })
-
   it('keeps removed keyed children rendered through AnimatePresence until exit support is detected', () => {
-    const { html } = renderSSR(() => (
-      <AnimatePresence>
-        <motion.div key="a" exit={{ opacity: 0 }} />
-      </AnimatePresence>
-    ))
-
+    const { html } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(
+        AnimatePresence,
+        {
+          children: /* @__PURE__ */ jsxDEV(motion.div, { exit: { opacity: 0 } }, 'a', false, {
+            fileName: 'packages/motion/mod.test.ts',
+            lineNumber: 419,
+            columnNumber: 9,
+          }),
+        },
+        void 0,
+        false,
+        {
+          fileName: 'packages/motion/mod.test.ts',
+          lineNumber: 418,
+          columnNumber: 7,
+        },
+      ),
+    )
     expect(html).toContain('<div')
   })
-
   it('tracks ref signals that resolve after the initial render in useInView', async () => {
     await withFakeNodeGlobal(async () => {
-      let ref!: { value: HTMLElement | undefined }
-      const values: boolean[] = []
-
+      let ref
+      const values = []
       const App = __eclipsaComponent(
         () => {
-          ref = useSignal<HTMLElement | undefined>()
+          ref = useSignal()
           const inView = useInView(ref)
-
           useWatch(() => {
             values.push(inView.value)
           }, [inView])
-
-          return jsxDEV('div', { ref }, null, false, {})
+          return jsxDEV2('div', { ref }, null, false, {})
         },
         'motion-use-in-view-ref-signal',
         () => [],
       )
-
       const container = createContainer()
       container.symbols.set('motion-value-signal-bridge', '/tests/motion-value-signal-bridge.tsx')
       withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+        renderClientInsertable(jsxDEV2(App, {}, null, false, {}), container),
       )
       await flushAsync()
-
       expect(ref.value).toBeTruthy()
       expect(FakeIntersectionObserver.instances).toHaveLength(1)
       expect(values).toEqual([false])
-
       FakeIntersectionObserver.instances[0]?.trigger(true)
       await flushAsync()
-
       expect(values).toEqual([false, true])
     })
   })
-
   it('mirrors direct motion value changes through useMotionValueEvent', async () => {
     await withFakeNodeGlobal(async () => {
-      let setValue!: (value: number) => void
-      const observed: number[] = []
-
+      let setValue
+      const observed = []
       const App = __eclipsaComponent(
         () => {
           const source = useMotionValue(0)
-
           useMotionValueEvent(source, 'change', (value) => {
             observed.push(value)
           })
-
-          setValue = (value: number) => {
+          setValue = (value) => {
             source.set(value)
           }
-
-          return jsxDEV('span', { children: 'ready' }, null, false, {})
+          return jsxDEV2('span', { children: 'ready' }, null, false, {})
         },
         'motion-use-motion-value-event-direct',
         () => [],
       )
-
       const container = createContainer()
       withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+        renderClientInsertable(jsxDEV2(App, {}, null, false, {}), container),
       )
       await flushAsync()
-
       setValue(4)
       await flushAsync()
-
       expect(observed).toEqual([4])
     })
   })
-
   it('primes lazy motion values before subscribing in useMotionValueEvent', async () => {
     await withFakeNodeGlobal(async () => {
-      const observed: number[] = []
-      let emit!: (value: number) => void
-
+      const observed = []
+      let emit
       const App = __eclipsaComponent(
         () => {
           let started = false
-          let listener: ((value: number) => void) | undefined
+          let listener
           const lazyValue = {
             get() {
               started = true
               return 0
             },
-            on(_eventName: 'change', next: (value: number) => void) {
+            on(_eventName, next) {
               if (started) {
                 listener = next
               }
               return () => {
                 if (listener === next) {
-                  listener = undefined
+                  listener = void 0
                 }
               }
             },
           }
-
-          emit = (value: number) => {
+          emit = (value) => {
             listener?.(value)
           }
-
-          useMotionValueEvent(lazyValue as never, 'change', (value: unknown) => {
-            observed.push(value as number)
+          useMotionValueEvent(lazyValue, 'change', (value) => {
+            observed.push(value)
           })
-
-          return jsxDEV('span', { children: 'ready' }, null, false, {})
+          return jsxDEV2('span', { children: 'ready' }, null, false, {})
         },
         'motion-use-motion-value-event-lazy',
         () => [],
       )
-
       const container = createContainer()
       withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+        renderClientInsertable(jsxDEV2(App, {}, null, false, {}), container),
       )
       await flushAsync()
-
       emit(8)
       await flushAsync()
-
       expect(observed).toEqual([8])
     })
   })
-
   it('mirrors motion values into signals for ordinary reactive DOM updates', async () => {
     await withFakeNodeGlobal(async () => {
-      let ref!: { value: HTMLElement | undefined }
-      let setRotate!: (value: number) => void
-      let setAngle!: (value: string) => void
-
+      let ref
+      let setRotate
+      let setAngle
       const AppBody = () => {
-        ref = useSignal<HTMLElement | undefined>()
+        ref = useSignal()
         const rotate = useMotionValue(0)
         const angle = useMotionValue('0deg')
         const rotateSignal = useMotionValueSignal(rotate)
         const angleSignal = useMotionValueSignal(angle)
-
-        setRotate = (value: number) => {
+        setRotate = (value) => {
           rotate.set(value)
         }
-        setAngle = (value: string) => {
+        setAngle = (value) => {
           angle.set(value)
         }
-
-        return jsxDEV(
+        return jsxDEV2(
           'div',
           {
             ref,
@@ -581,9 +566,7 @@ describe('@eclipsa/motion', () => {
           {},
         )
       }
-
       const App = __eclipsaComponent(AppBody, 'motion-value-signal-bridge', () => [])
-
       const container = createContainer()
       container.imports.set(
         'motion-value-signal-bridge',
@@ -592,33 +575,27 @@ describe('@eclipsa/motion', () => {
         }),
       )
       withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+        renderClientInsertable(jsxDEV2(App, {}, null, false, {}), container),
       )
       await flushAsync()
-
       expect(ref.value?.getAttribute('style')).toContain('--angle: 0deg')
       expect(ref.value?.getAttribute('style')).toContain('transform: rotate(0deg)')
-
       setRotate(90)
       setAngle('90deg')
       await flushDirtyComponents(container)
-
       expect(ref.value?.getAttribute('style')).toContain('--angle: 90deg')
       expect(ref.value?.getAttribute('style')).toContain('transform: rotate(90deg)')
     })
   })
-
   it('updates animate props on the client after a dirty flush', async () => {
     await withFakeNodeGlobal(async () => {
-      let ref!: { value: HTMLElement | undefined }
-      let visible!: { value: boolean }
-
+      let ref
+      let visible
       const AppBody = () => {
-        ref = useSignal<HTMLElement | undefined>()
+        ref = useSignal()
         visible = useSignal(false)
-
-        return jsxDEV(
-          motion.div as never,
+        return jsxDEV2(
+          motion.div,
           {
             ref,
             get animate() {
@@ -630,9 +607,7 @@ describe('@eclipsa/motion', () => {
           {},
         )
       }
-
       const App = __eclipsaComponent(AppBody, 'motion-animate-prop-watch', () => [])
-
       const container = createContainer()
       container.imports.set(
         'motion-animate-prop-watch',
@@ -641,37 +616,33 @@ describe('@eclipsa/motion', () => {
         }),
       )
       withRuntimeContainer(container, () =>
-        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+        renderClientInsertable(jsxDEV2(App, {}, null, false, {}), container),
       )
       await flushAsync()
-
       expect(ref.value?.getAttribute('style')).toContain('transform: translate3d(150%, 0px, 0px)')
-
       visible.value = true
       await flushDirtyComponents(container)
-
       expect(ref.value?.getAttribute('style')).toContain('transform: translate3d(0px, 0px, 0px)')
     })
   })
-
   it('does not duplicate a resumed motion child when the parent boundary reactivates', async () => {
     await withFakeNodeGlobal(async () => {
       const ParentBody = () =>
-        jsxDEV(
-          motion.div as never,
+        jsxDEV2(
+          motion.div,
           {
             animate: { opacity: 1 },
-            children: jsxDEV(
+            children: jsxDEV2(
               'div',
               {
                 class: 'mx-auto',
-                children: jsxDEV(
-                  motion.div as never,
+                children: jsxDEV2(
+                  motion.div,
                   {
                     animate: { opacity: 1 },
                     children: [
-                      jsxDEV('pre', { children: '<div>{count.value}</div>' }, null, false, {}),
-                      jsxDEV(
+                      jsxDEV2('pre', { children: '<div>{count.value}</div>' }, null, false, {}),
+                      jsxDEV2(
                         'div',
                         { class: 'text-gray-400', children: 'YOUR CODE' },
                         null,
@@ -694,9 +665,7 @@ describe('@eclipsa/motion', () => {
           false,
           {},
         )
-
       const Parent = __eclipsaComponent(ParentBody, 'motion-resume-parent', () => [])
-
       const container = createContainer()
       container.imports.set(
         'motion-resume-parent',
@@ -704,36 +673,29 @@ describe('@eclipsa/motion', () => {
           default: () => ParentBody(),
         }),
       )
-
       const host = new FakeElement('div')
-      host.ownerDocument = container.doc as unknown as FakeDocument
-
+      host.ownerDocument = container.doc
       withRuntimeContainer(container, () => {
-        const nodes = renderClientInsertable(jsxDEV(Parent, {}, null, false, {}), container)
-        for (const node of nodes as unknown as FakeNode[]) {
+        const nodes = renderClientInsertable(jsxDEV2(Parent, {}, null, false, {}), container)
+        for (const node of nodes) {
           host.appendChild(node)
         }
       })
       await flushAsync()
-
       expect(
         queryFakeElements(host, (element) => element.textContent === 'YOUR CODE'),
       ).toHaveLength(1)
-
       for (const component of container.components.values()) {
         component.active = false
         component.reuseExistingDomOnActivate = true
         component.reuseProjectionSlotDomOnActivate = false
       }
-
       const parentBoundary = [...container.components.values()].find(
         (component) => component.symbol === 'motion-resume-parent',
       )
       expect(parentBoundary).toBeTruthy()
-
-      container.dirty.add(parentBoundary!.id)
+      container.dirty.add(parentBoundary.id)
       await flushDirtyComponents(container)
-
       expect(
         queryFakeElements(host, (element) => element.textContent === 'YOUR CODE'),
       ).toHaveLength(1)

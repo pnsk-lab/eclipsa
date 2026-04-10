@@ -93,14 +93,14 @@ const sanitizeUrl = (value: string) => {
     return null
   }
 
-  let normalized = ''
+  const normalizedCharacters: string[] = []
   for (const character of trimmed) {
     if (character.charCodeAt(0) <= 0x20) {
       continue
     }
-    normalized += character
+    normalizedCharacters.push(character)
   }
-  normalized = normalized.toLowerCase()
+  const normalized = normalizedCharacters.join('').toLowerCase()
   if (
     normalized.startsWith('javascript:') ||
     normalized.startsWith('vbscript:') ||
