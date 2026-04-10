@@ -95,6 +95,9 @@ export const createConfig =
           },
         },
         ssr: {
+          resolve: {
+            noExternal: [/^eclipsa(?:\/|$)/],
+          },
           build: {
             emptyOutDir: true,
             outDir: path.join(root, 'dist/ssr'),

@@ -127,4 +127,27 @@ describe('createConfig', () => {
       path.join(userConfig.root, '../packages/eclipsa/vite/build/runtime.ts'),
     )
   })
+
+  it('bundles eclipsa package imports into the SSR environment to avoid split runtimes', async () => {
+    const userConfig = {
+      root: '/tmp/app',
+    }
+
+    mocks.createRoutes.mockResolvedValue([])
+    mocks.collectRouteModules.mockReturnValue([])
+    mocks.collectRouteServerModules.mockReturnValue([])
+    mocks.collectAppActions.mockResolvedValue([])
+    mocks.collectAppLoaders.mockResolvedValue([])
+    mocks.collectAppSymbols.mockResolvedValue([])
+
+    const hook = createConfig({ output: 'node' })
+    if (typeof hook !== 'function') {
+      throw new Error('Expected createConfig() to return a config hook function')
+    }
+
+    const config = await hook.call({} as any, userConfig as any, {} as any)
+    const noExternal = (config as Record<string, any>).environments?.ssr?.resolve?.noExternal
+
+    expect(noExternal).toEqual([/^eclipsa(?:\/|$)/])
+  })
 })
