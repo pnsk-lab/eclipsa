@@ -231,6 +231,18 @@ describe('build', () => {
     expect(mocks.toSSG).not.toHaveBeenCalled()
   })
 
+  it('renders the built SSR root through jsxDEV instead of calling the component directly', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-root-jsx-'))
+    const builder = createBuilder()
+
+    await build(builder, { root }, { output: 'node' })
+
+    const appSource = await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')
+
+    expect(appSource).toContain('const document = jsxDEV(SSRRoot, {')
+    expect(appSource).not.toContain('const document = SSRRoot({')
+  })
+
   it('serves route-data loader snapshots from the built node app', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-'))
     const builder = createBuilder()

@@ -1098,7 +1098,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
       url: getRequestUrl(c.req.raw),
     },
   );
-  const document = SSRRoot({
+  const document = jsxDEV(SSRRoot, {
     children: createRouteElement(pathname, params, Page, Layouts, options?.routeError),
     head: {
       type: Fragment,
@@ -1160,13 +1160,13 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               isStatic: true,
               props: {
                 type: "module",
-              src: "/entries/client_boot.js",
+                src: "/entries/client_boot.js",
+              },
             },
-          },
-        ],
+          ],
+        },
       },
-    },
-  });
+  }, null, false, {});
 
   applyRequestParams(c, params);
   const { html, payload, chunks } = await renderSSRStream(() => document, {
