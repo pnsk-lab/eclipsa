@@ -1839,7 +1839,9 @@ const scheduleExternalComponentMount = (
       return
     }
     void withClientContainer(container, async () => {
+      syncExternalProjectionSlotDom(container, component, props, host)
       await syncExternalComponentInstance(component, external, props, host)
+      syncExternalProjectionSlotDom(container, component, props, host)
       rebindExternalHost(container, host)
       scheduleExternalHostRebind(container, host)
       await flushDirtyComponents(container)
@@ -2004,6 +2006,87 @@ const collectBoundaryRangeNodes = (start: Comment, end: Comment) => {
   return []
 }
 
+const canReuseNodeAsIs = (current: Node, next: Node): boolean => {
+  if (current.nodeType !== next.nodeType) {
+    return false
+  }
+
+  if (current.nodeType === DOM_TEXT_NODE && next.nodeType === DOM_TEXT_NODE) {
+    return current.textContent === next.textContent
+  }
+
+  if (
+    (typeof Comment !== 'undefined'
+      ? current instanceof Comment
+      : current.nodeType === DOM_COMMENT_NODE) &&
+    (typeof Comment !== 'undefined' ? next instanceof Comment : next.nodeType === DOM_COMMENT_NODE)
+  ) {
+    const currentComment = current as Comment
+    const nextComment = next as Comment
+    const currentBoundary = parseComponentBoundaryMarker(currentComment.data)
+    const nextBoundary = parseComponentBoundaryMarker(nextComment.data)
+    if (currentBoundary || nextBoundary) {
+      if (!currentBoundary || !nextBoundary) {
+        return false
+      }
+      if (currentBoundary.id !== nextBoundary.id || currentBoundary.kind !== nextBoundary.kind) {
+        return false
+      }
+      return nextBoundary.kind !== 'start' || !didComponentBoundaryChange(nextComment)
+    }
+    return currentComment.data === nextComment.data
+  }
+
+  if (!isElementNode(current) || !isElementNode(next) || current.tagName !== next.tagName) {
+    return false
+  }
+
+  const currentNames = current.getAttributeNames()
+  const nextNames = next.getAttributeNames()
+  if (currentNames.length !== nextNames.length) {
+    return false
+  }
+  for (const name of currentNames) {
+    if (current.getAttribute(name) !== next.getAttribute(name)) {
+      return false
+    }
+  }
+  if (
+    isHTMLInputElementNode(current) &&
+    isHTMLInputElementNode(next) &&
+    current.checked !== next.checked
+  ) {
+    return false
+  }
+  if ('value' in current && 'value' in next && current.value !== next.value) {
+    return false
+  }
+
+  const currentChildren = Array.from(current.childNodes)
+  const nextChildren = Array.from(next.childNodes)
+  if (currentChildren.length !== nextChildren.length) {
+    return false
+  }
+  for (let index = 0; index < currentChildren.length; index += 1) {
+    if (!canReuseNodeAsIs(currentChildren[index]!, nextChildren[index]!)) {
+      return false
+    }
+  }
+  return true
+}
+
+const canReuseNodeSequenceAsIs = (currentNodes: Node[], nextNodes: Node[]) => {
+  if (currentNodes.length !== nextNodes.length) {
+    return false
+  }
+  for (let index = 0; index < currentNodes.length; index += 1) {
+    if (!canReuseNodeAsIs(currentNodes[index]!, nextNodes[index]!)) {
+      return false
+    }
+  }
+  return true
+}
+
 const preserveComponentBoundaryContentsInRoots = (currentRoots: Node[], nextRoots: Node[]) => {
   const currentRanges = collectComponentBoundaryRanges(currentRoots)
   const nextRanges = collectComponentBoundaryRanges(nextRoots)
@@ -2148,35 +2231,48 @@ const preserveKeyedRangeContentsInRoots = (currentRoots: Node[], nextRoots: Node
       continue
     }
 
-    const movedRoots = collectBoundaryRangeNodes(currentRange.start, currentRange.end)
-    if (movedRoots.length === 0) {
+    const currentBodyRoots = getBoundaryChildren(currentRange.start, currentRange.end)
+    const nextBodyRoots = getBoundaryChildren(nextRange.start, nextRange.end)
+    if (canReuseNodeSequenceAsIs(currentBodyRoots, nextBodyRoots)) {
+      const movedRoots = collectBoundaryRangeNodes(currentRange.start, currentRange.end)
+      if (movedRoots.length === 0) {
+        continue
+      }
+
+      const replacementParent = nextRange.start.parentNode
+      if (!replacementParent) {
+        continue
+      }
+
+      for (const node of movedRoots) {
+        replacementParent.insertBefore(node, nextRange.start)
+      }
+
+      let cursor: Node | null = nextRange.start
+      while (cursor) {
+        const nextSibling: Node | null = cursor.nextSibling
+        if (typeof (cursor as Node & { remove?: () => void }).remove === 'function') {
+          ;(cursor as Node & { remove: () => void }).remove()
+        } else {
+          cursor.parentNode?.removeChild(cursor)
+        }
+        if (cursor === nextRange.end) {
+          break
+        }
+        cursor = nextSibling
+      }
+
+      for (const componentId of collectComponentBoundaryIds(movedRoots)) {
+        preservedComponentIds.add(componentId)
+      }
       continue
     }
 
-    const replacementParent = nextRange.start.parentNode
-    if (!replacementParent) {
+    if (currentBodyRoots.length === 0 && nextBodyRoots.length === 0) {
       continue
     }
 
-    for (const node of movedRoots) {
-      replacementParent.insertBefore(node, nextRange.start)
-    }
-
-    let cursor: Node | null = nextRange.start
-    while (cursor) {
-      const nextSibling: Node | null = cursor.nextSibling
-      if (typeof (cursor as Node & { remove?: () => void }).remove === 'function') {
-        ;(cursor as Node & { remove: () => void }).remove()
-      } else {
-        cursor.parentNode?.removeChild(cursor)
-      }
-      if (cursor === nextRange.end) {
-        break
-      }
-      cursor = nextSibling
-    }
-
-    for (const componentId of collectComponentBoundaryIds(movedRoots)) {
+    for (const componentId of preserveReusableContentInRoots(currentBodyRoots, nextBodyRoots)) {
       preservedComponentIds.add(componentId)
     }
   }
@@ -2327,8 +2423,8 @@ export const preserveReusableContentInRoots = (
 ) => {
   const preservedComponentIds = new Set<string>()
 
-  // Preserve keyed ranges before nested component boundaries so a range move keeps
-  // the component subtree attached instead of moving boundary contents out first.
+  // Preserve keyed range bodies before nested component boundaries so keyed list reuse
+  // happens within the right render scope before standalone boundary preservation runs.
   for (const componentId of preserveKeyedRangeContentsInRoots(currentRoots, nextRoots)) {
     preservedComponentIds.add(componentId)
   }
@@ -3101,6 +3197,134 @@ const captureExternalSlotHtml = (component: ComponentState) => {
   return captured
 }
 
+const createExternalProjectionSlotOwnerId = (
+  componentId: string,
+  name: string,
+  occurrence: number,
+) => `${componentId}.$slot:${encodeURIComponent(name)}:${occurrence}`
+
+const renderExternalProjectionSlotNodes = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  name: string,
+  occurrence: number,
+  source: unknown,
+) => {
+  const ownerId = createExternalProjectionSlotOwnerId(component.id, name, occurrence)
+  const nodes = renderClientInsertableForOwner(source as Insertable, container, {
+    childIndex: 0,
+    componentId: ownerId,
+    keyedRangeCursor: 0,
+    projectionCounters: [],
+  })
+  return { nodes, ownerId }
+}
+
+const syncExternalProjectionSlotDom = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  props: Record<string, unknown>,
+  host: HTMLElement,
+) => {
+  if (!component.external || !component.projectionSlots) {
+    return false
+  }
+
+  const oldDescendants = collectDescendantIds(container, component.id)
+  const slotRanges = collectProjectionSlotRanges([host])
+  const keptSlotOwners = new Set<string>()
+  let changed = false
+
+  for (const [name, totalOccurrences] of Object.entries(component.projectionSlots)) {
+    for (let occurrence = 0; occurrence < totalOccurrences; occurrence += 1) {
+      const rangeKey = createProjectionSlotRangeKey(component.id, name, occurrence)
+      const range = slotRanges.get(rangeKey)
+      const hasValue = hasProjectionSlotValue(props, name)
+
+      if (!hasValue) {
+        if (!range) {
+          continue
+        }
+        if (!tryPatchBoundaryContentsInPlace(range.start, range.end, [])) {
+          replaceProjectionSlotContents(range.start, range.end, [])
+        }
+        changed = true
+        continue
+      }
+
+      const slotHost =
+        range || occurrence > 0 ? null : findExternalSlotHost(host, component.external.kind, name)
+      if (!range && !slotHost) {
+        continue
+      }
+
+      const { nodes, ownerId } = renderExternalProjectionSlotNodes(
+        container,
+        component,
+        name,
+        occurrence,
+        props[name],
+      )
+      keptSlotOwners.add(ownerId)
+
+      if (range) {
+        if (!tryPatchBoundaryContentsInPlace(range.start, range.end, nodes)) {
+          replaceProjectionSlotContents(range.start, range.end, nodes)
+        }
+        changed = true
+        continue
+      }
+      if (!slotHost) {
+        continue
+      }
+
+      while (slotHost.firstChild) {
+        slotHost.firstChild.remove()
+      }
+
+      const start = container.doc!.createComment(
+        createProjectionSlotMarker(component.id, name, occurrence, 'start'),
+      )
+      const end = container.doc!.createComment(
+        createProjectionSlotMarker(component.id, name, occurrence, 'end'),
+      )
+
+      slotHost.appendChild(start)
+      for (const node of nodes) {
+        slotHost.appendChild(node)
+      }
+      slotHost.appendChild(end)
+      rememberManagedAttributesForNodes([start, ...nodes, end])
+      slotRanges.set(rangeKey, { end, start })
+      changed = true
+    }
+  }
+
+  if (!changed) {
+    return false
+  }
+
+  bindComponentBoundaries(container, host)
+  restoreSignalRefs(container, host)
+  bindRouterLinks(container, host)
+
+  const keptDescendants = expandComponentIdsToDescendants(container, [
+    ...collectComponentBoundaryIds([host]),
+    ...keptSlotOwners,
+  ])
+  pruneRemovedComponents(container, component.id, keptDescendants)
+  for (const descendantId of oldDescendants) {
+    if (keptDescendants.has(descendantId)) {
+      continue
+    }
+    clearComponentSubscriptions(container, descendantId)
+  }
+
+  component.externalSlotDom = captureExternalSlotDom(component)
+  component.externalSlotHtml = captureExternalSlotHtml(component)
+  return true
+}
+
 const restoreExternalSlotDom = (component: ComponentState, host: HTMLElement) => {
   if (
     !component.external ||
@@ -3538,7 +3762,9 @@ const renderComponentToNodes = (
     const host = getExternalRoot(component)
     if (wasActive && host && propsChanged) {
       void withClientContainer(container, async () => {
+        syncExternalProjectionSlotDom(container, component, props, host)
         await syncExternalComponentInstance(component, externalMeta, props, host)
+        syncExternalProjectionSlotDom(container, component, props, host)
         rebindExternalHost(container, host)
         scheduleExternalHostRebind(container, host)
       })
