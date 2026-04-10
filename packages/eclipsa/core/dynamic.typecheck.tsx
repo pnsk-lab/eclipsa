@@ -1,6 +1,6 @@
 import type { Component } from './component.ts'
 import type { JSX } from '../jsx/types.ts'
-import { Dynamic, type DynamicProps, type DynamicRenderable } from './dynamic.ts'
+import { Dynamic, type DynamicProps } from './dynamic.ts'
 
 type Equal<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2 ? true : false

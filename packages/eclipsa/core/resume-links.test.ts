@@ -23,6 +23,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     )
     const registerResumeContainer = vi.fn()
     const restoreRegisteredRpcHandles = vi.fn()
+    const restoreResumedExternalComponents = vi.fn(async () => {})
     const restoreResumedLocalSignalEffects = vi.fn()
     const registerClientHooks = vi.fn()
 
@@ -36,6 +37,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       refreshRegisteredRouteContainers: vi.fn(),
       registerResumeContainer,
       restoreRegisteredRpcHandles,
+      restoreResumedExternalComponents,
       restoreResumedLocalSignalEffects,
     }))
     vi.doMock('./hooks.ts', () => ({
@@ -101,6 +103,7 @@ describe('resumeContainer interactivity bootstrap', () => {
 
       expect(registerClientHooks).toHaveBeenCalledWith({})
       expect(restoreRegisteredRpcHandles).toHaveBeenCalledWith(container)
+      expect(restoreResumedExternalComponents).toHaveBeenCalledWith(container)
       expect(restoreResumedLocalSignalEffects).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).toHaveBeenCalledWith(container)
       expect(root.setAttribute).toHaveBeenCalledWith('data-e-resume', 'resumed')
@@ -122,6 +125,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     const primeRouteModules = vi.fn(async () => {})
     const registerResumeContainer = vi.fn()
     const restoreRegisteredRpcHandles = vi.fn()
+    const restoreResumedExternalComponents = vi.fn(async () => {})
     const restoreResumedLocalSignalEffects = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -140,6 +144,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       refreshRegisteredRouteContainers: vi.fn(),
       registerResumeContainer,
       restoreRegisteredRpcHandles,
+      restoreResumedExternalComponents,
       restoreResumedLocalSignalEffects,
     }))
     vi.doMock('./hooks.ts', () => ({
@@ -197,6 +202,12 @@ describe('resumeContainer interactivity bootstrap', () => {
       expect(installResumeListeners).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).not.toHaveBeenCalled()
       expect(root.setAttribute).not.toHaveBeenCalled()
+
+      for (let attempt = 0; attempt < 5 && !resolveRestore; attempt += 1) {
+        await Promise.resolve()
+      }
+      expect(restoreResumedExternalComponents).toHaveBeenCalledWith(container)
+      expect(restoreResumedLocalSignalEffects).toHaveBeenCalledWith(container)
 
       ;(resolveRestore as (() => void) | null)?.()
       await resumePromise

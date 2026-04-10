@@ -33,7 +33,22 @@ describe('render props resume payload', () => {
     expect(html).toContain('children content')
     expect(html).toContain('ec:s:c0:aa:0:start')
     expect(html).toContain('ec:s:c0:children:0:start')
-    expect(JSON.stringify(payload.components['c0']?.props)).toContain(`"kind":"render"`)
-    expect(JSON.stringify(payload.components['c0']?.projectionSlots)).toContain('"aa":1')
+    expect(payload.components['c0']?.projectionSlots).toEqual({
+      aa: 1,
+      children: 1,
+    })
+    const props = payload.components['c0']?.props as
+      | {
+          __eclipsa_type: string
+          entries: Array<[string, { kind?: string; token?: string }]>
+        }
+      | undefined
+    expect(props?.__eclipsa_type).toBe('object')
+    expect(props?.entries).toEqual(
+      expect.arrayContaining([
+        ['aa', expect.objectContaining({ kind: 'render', token: 'jsx' })],
+        ['children', expect.objectContaining({ kind: 'render', token: 'jsx' })],
+      ]),
+    )
   })
 })

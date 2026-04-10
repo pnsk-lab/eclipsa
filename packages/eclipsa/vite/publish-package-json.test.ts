@@ -17,11 +17,7 @@ describe('publish package metadata', () => {
       new Map([['@eclipsa/optimizer', '0.2.0']]),
     )
     const exportsMap = publishPackageJson.exports as Record<string, Record<string, string>>
-    const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
 
-    expect(packConfig?.entry).toContain('core/internal.ts')
-    expect(packConfig?.entry).toContain('web-utils/mod.ts')
-    expect(packConfig?.entry).toContain('vite/build/runtime.ts')
     expect(publishPackageJson.repository).toEqual({
       type: 'git',
       url: 'git+https://github.com/pnsk-lab/eclipsa.git',
@@ -48,6 +44,14 @@ describe('publish package metadata', () => {
       types: './mod.d.mts',
       import: './mod.mjs',
     })
+  })
+
+  it('keeps publish pack entries aligned with generated exports', () => {
+    const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
+
+    expect(packConfig?.entry).toEqual(
+      expect.arrayContaining(['core/internal.ts', 'web-utils/mod.ts', 'vite/build/runtime.ts']),
+    )
   })
 
   it('rewrites create-eclipsa metadata for dist publishing', async () => {

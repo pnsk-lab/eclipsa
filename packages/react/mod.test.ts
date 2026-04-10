@@ -23,9 +23,7 @@ class FakeElement extends FakeNode {
   attributes = new Map<string, string>()
   childNodes: FakeNode[] = []
 
-  constructor(
-    private readonly slotHosts: Map<string, FakeElement> = new Map(),
-  ) {
+  constructor(private readonly slotHosts: Map<string, FakeElement> = new Map()) {
     super()
   }
 
@@ -55,7 +53,7 @@ class FakeElement extends FakeNode {
 
   querySelector(selector: string) {
     const matched = selector.match(/data-e-slot="([^"]+)"/)
-    return matched ? this.slotHosts.get(matched[1]) ?? null : null
+    return matched ? (this.slotHosts.get(matched[1]) ?? null) : null
   }
 }
 

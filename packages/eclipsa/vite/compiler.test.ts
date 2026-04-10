@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import * as fs from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { analyzeModule } from '../compiler/mod.ts'
 import {
@@ -34,6 +35,9 @@ const findComponentId = (source: Awaited<ReturnType<typeof analyze>>, prefix?: s
 
 const findSymbolId = (source: Awaited<ReturnType<typeof analyze>>, prefix: string) =>
   [...source.hmrManifest.symbols.values()].find((entry) => entry.hmrKey.startsWith(prefix))?.id
+
+const resolveWorkspacePath = (relativePath: string) =>
+  fileURLToPath(new URL(relativePath, import.meta.url))
 
 describe('createResumeHmrUpdate', () => {
   beforeEach(() => {
@@ -504,7 +508,7 @@ describe('createResumeHmrUpdate', () => {
   })
 
   it('collects symbols from workspace packages that export managed components through package exports', async () => {
-    const symbols = await collectAppSymbols(path.resolve(__dirname, '../../../docs'))
+    const symbols = await collectAppSymbols(resolveWorkspacePath('../../../docs'))
 
     expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:motion')).toBe(true)
     expect(symbols.some((symbol) => symbol.id === '@eclipsa/motion:AnimatePresence')).toBe(true)
@@ -522,7 +526,7 @@ describe('createResumeHmrUpdate', () => {
   })
 
   it('loads workspace motion symbol modules through the virtual symbol pipeline', async () => {
-    const filePath = path.resolve(__dirname, '../../motion/motion.tsx')
+    const filePath = resolveWorkspacePath('../../motion/motion.tsx')
     const source = await fs.readFile(filePath, 'utf8')
 
     await primeCompilerCache(filePath, source)

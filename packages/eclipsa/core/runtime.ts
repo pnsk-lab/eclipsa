@@ -1,32 +1,19 @@
 import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
-import { isSSRAttrValue, isSSRRawValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { isSSRRawValue, isSSRTemplate } from '../jsx/jsx-dev-runtime.ts'
 import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
-import {
-  deserializePublicValue,
-  serializePublicValue,
-  type SerializedReference,
-  type SerializedValue,
-} from './hooks.ts'
+import { deserializePublicValue, serializePublicValue, type SerializedValue } from './hooks.ts'
 import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
 import type { Insertable } from './client/types.ts'
-import {
-  getContextProviderMeta,
-  getRuntimeContextReference,
-  materializeRuntimeContext,
-  materializeRuntimeContextProvider,
-} from './context.ts'
+import { getContextProviderMeta } from './context.ts'
 import {
   ROUTE_METADATA_HEAD_ATTR,
   composeRouteMetadata,
   type RouteMetadataExport,
 } from './metadata.ts'
 import {
-  __eclipsaComponent,
-  getActionHandleMeta,
-  getActionHookMeta,
   getComponentMeta,
   getExternalComponentMeta,
   getEventMeta,
@@ -35,9 +22,6 @@ import {
   getRegisteredLoaderHookIds,
   getRegisteredLoaderHook,
   getLazyMeta,
-  getLoaderHandleMeta,
-  getLoaderHookMeta,
-  getNavigateMeta,
   getSignalMeta,
   getWatchMeta,
   setNavigateMeta,
@@ -63,364 +47,171 @@ import {
   type RouteModuleManifest,
   type RouteParams,
 } from './router-shared.ts'
+import {
+  ACTION_FORM_ATTR,
+  BIND_CHECKED_ATTR,
+  BIND_CHECKED_PROP,
+  BIND_VALUE_ATTR,
+  BIND_VALUE_PROP,
+  CLIENT_INSERT_OWNER_ID_PREFIX,
+  CLIENT_INSERT_OWNER_SYMBOL,
+  CONTAINER_ID_KEY,
+  DIRTY_FLUSH_PROMISE_KEY,
+  DOM_COMMENT_NODE,
+  DOM_SHOW_COMMENT,
+  DOM_TEXT_NODE,
+  EXTERNAL_ROOT_ATTR,
+  EXTERNAL_ROOT_COMPONENT_ATTR,
+  EXTERNAL_ROOT_KIND_ATTR,
+  PENDING_RESUME_LINK_KEY,
+  PROJECTION_SLOT_TYPE,
+  REF_SIGNAL_ATTR,
+  RESUME_FINAL_STATE_ELEMENT_ID,
+  RESUME_STATE_ELEMENT_ID,
+  ROOT_COMPONENT_ID,
+  ROUTE_ERROR_PROP,
+  ROUTE_NOT_FOUND_KEY,
+  ROUTE_PARAMS_PROP,
+  ROUTER_CURRENT_PATH_SIGNAL_ID,
+  ROUTER_CURRENT_URL_SIGNAL_ID,
+  ROUTER_EVENT_STATE_KEY,
+  ROUTER_IS_NAVIGATING_SIGNAL_ID,
+  ROUTER_LINK_BOUND_KEY,
+  ROUTER_LINK_PREFETCH_BOUND_KEY,
+  SCOPED_STYLE_ATTR,
+  STANDALONE_SIGNAL_ID_KEY,
+  STREAM_STATE_KEY,
+  SUSPENSE_COMPONENT_SYMBOL,
+  getExternalSlotTag,
+} from './runtime/constants.ts'
+import {
+  captureBoundaryFocus,
+  captureDocumentFocus,
+  getBoundaryChildren,
+  getManagedAttributeSnapshot,
+  getRememberedInsertMarkerNodeCount,
+  hasOwnerDocument,
+  isElementNode,
+  isHTMLElementNode,
+  isHTMLAnchorElementNode,
+  isHTMLFormElementNode,
+  isHTMLInputElementNode,
+  isHTMLSelectElementNode,
+  isHTMLTextAreaElementNode,
+  listNodeChildren,
+  rememberInsertMarkerRange,
+  rememberManagedAttributesForNode,
+  rememberManagedAttributesForNodes,
+  replaceManagedAttributeSnapshot,
+  restoreBoundaryFocus,
+  restorePendingFocus as restorePendingFocusInDocument,
+  setRememberedInsertMarkerNodeCount,
+  syncManagedAttributeSnapshot,
+  type PendingFocusRestore,
+} from './runtime/dom.ts'
+import {
+  clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
+  getContainerStack,
+  getContextValueStack,
+  getCurrentContainer,
+  getFrameStack,
+  getResumeContainers,
+  readAsyncSignalSnapshot as readGlobalAsyncSignalSnapshot,
+  writeAsyncSignalSnapshot as writeGlobalAsyncSignalSnapshot,
+} from './runtime/globals.ts'
+import {
+  EMPTY_ROUTE_PARAMS,
+  ROUTE_DOCUMENT_FALLBACK,
+  createRouteElement,
+  createRouterLocation,
+  createStandaloneLocation,
+  findSpecialManifestEntry,
+  getRouteModuleUrl,
+  isRouteDataSuccess,
+  isLoaderSignalId,
+  isRouteSlot,
+  matchRouteManifest,
+  normalizeRoutePath,
+  parseLocationHref,
+  resolveCurrentRouteManifestEntry,
+  resolveNotFoundRouteMatch,
+  resolvePageRouteMatch,
+  resolveRoutableMatch,
+  resolveRouteSlot,
+  routeCacheKey,
+  routePrefetchKey,
+} from './runtime/routes.ts'
+import {
+  createSSRRenderer,
+  escapeAttr,
+  escapeText,
+  isDangerouslySetInnerHTMLProp,
+  resolveDangerouslySetInnerHTML,
+  toEventName,
+} from './runtime/ssr.ts'
+import { createRuntimeSerialization } from './runtime/serialization.ts'
+import type {
+  ClientInsertOwner,
+  ComponentState,
+  CleanupSlot,
+  EffectOptions,
+  ForValue,
+  LoadedRoute,
+  LoadedRouteModule,
+  LoaderSnapshot,
+  NavigationMode,
+  PendingLinkNavigation,
+  PendingResumeLinkNavigation,
+  ProjectionSlotValue,
+  ReactiveEffect,
+  RenderFrame,
+  RenderObject,
+  ResumeActionPayload,
+  ResumeComponentPayload,
+  ResumeLoaderPayload,
+  ResumePayload,
+  ResumeVisiblePayload,
+  ResumeWatchPayload,
+  RouteDataResponse,
+  RoutePrefetchResult,
+  RoutePreflightResult,
+  RouteRenderer,
+  RouteSlotCarrier,
+  RouterEventState,
+  RouterState,
+  RuntimeContainer,
+  RuntimeContextToken,
+  RuntimeSymbolModule,
+  ScopedStyleEntry,
+  ShowValue,
+  SignalRecord,
+  StreamedSuspenseChunk,
+  StreamState,
+  VisibleState,
+  WatchDependency,
+  WatchState,
+} from './runtime/types.ts'
 
-const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
-const CONTEXT_VALUE_STACK_KEY = Symbol.for('eclipsa.context-value-stack')
-const FRAME_STACK_KEY = Symbol.for('eclipsa.frame-stack')
-const DIRTY_FLUSH_PROMISE_KEY = Symbol.for('eclipsa.dirty-flush-promise')
-const ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY = Symbol.for('eclipsa.async-signal-snapshot-cache')
-const STANDALONE_SIGNAL_ID_KEY = Symbol.for('eclipsa.standalone-signal-id')
-const ACTION_FORM_ATTR = 'data-e-action-form'
-const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
-const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
-const ROUTER_CURRENT_URL_SIGNAL_ID = '$router:url'
-const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
-const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
-const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
-const ROUTE_NOT_FOUND_KEY = Symbol.for('eclipsa.route-not-found')
-const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
-const ROUTE_ERROR_PROP = '__eclipsa_route_error'
-const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
-const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
-export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
-export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
-export const SCOPED_STYLE_ATTR = 'data-e-scope'
-const ROOT_COMPONENT_ID = '$root'
-const SUSPENSE_COMPONENT_SYMBOL = '$suspense'
-const ROUTE_SLOT_TYPE = 'route-slot'
-const PROJECTION_SLOT_TYPE = 'projection-slot'
-const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
-const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
-const RENDER_REFERENCE_KIND = 'render'
-const REF_SIGNAL_ATTR = 'data-e-ref'
-const STREAM_STATE_KEY = '__eclipsa_stream'
-const PENDING_RESUME_LINK_KEY = '__eclipsa_pending_route_link'
-const BIND_VALUE_PROP = 'bind:value'
-const BIND_CHECKED_PROP = 'bind:checked'
-const BIND_VALUE_ATTR = 'data-e-bind-value'
-const BIND_CHECKED_ATTR = 'data-e-bind-checked'
-const CLIENT_INSERT_OWNER_SYMBOL = '$client-insert-root'
-const CLIENT_INSERT_OWNER_ID_PREFIX = '$insert:'
-const EXTERNAL_ROOT_ATTR = 'data-e-external-root'
-const EXTERNAL_ROOT_COMPONENT_ATTR = 'data-e-external-component'
-const EXTERNAL_ROOT_KIND_ATTR = 'data-e-external-kind'
-const getExternalSlotTag = (_kind: ExternalComponentDescriptor['kind']) => 'e-slot-host'
-const DOM_TEXT_NODE = 3
-const DOM_COMMENT_NODE = 8
-const DOM_SHOW_COMMENT = 0x80
-type DomConstructorName =
-  | 'Element'
-  | 'HTMLElement'
-  | 'HTMLInputElement'
-  | 'HTMLSelectElement'
-  | 'HTMLTextAreaElement'
-  | 'HTMLAnchorElement'
-  | 'HTMLFormElement'
-
-export interface ResumeComponentPayload {
-  external?: ExternalComponentDescriptor
-  optimizedRoot?: boolean
-  props: SerializedValue
-  projectionSlots?: Record<string, number>
-  scope: string
-  signalIds: string[]
-  symbol: string
-  visibleCount: number
-  watchCount: number
-}
-
-interface ResumeWatchPayload {
-  componentId: string
-  mode: WatchMode
-  scope: string
-  signals: string[]
-  symbol: string
-}
-
-interface ResumeActionPayload {
-  error: SerializedValue
-  input: SerializedValue
-  result: SerializedValue
-}
-
-interface ResumeVisiblePayload {
-  componentId: string
-  scope: string
-  symbol: string
-}
-
-export interface ResumeLoaderPayload {
-  data: SerializedValue
-  error: SerializedValue
-  loaded: boolean
-}
-
-interface LoaderSnapshot {
-  data: unknown
-  error: unknown
-  loaded: boolean
-}
-
-export interface ResumePayload {
-  actions: Record<string, ResumeActionPayload>
-  components: Record<string, ResumeComponentPayload>
-  loaders: Record<string, ResumeLoaderPayload>
-  scopes: Record<string, SerializedValue[]>
-  signals: Record<string, SerializedValue>
-  subscriptions: Record<string, string[]>
-  symbols: Record<string, string>
-  visibles: Record<string, ResumeVisiblePayload>
-  watches: Record<string, ResumeWatchPayload>
-}
-
-interface StreamedSuspenseChunk {
-  boundaryId: string
-  payloadScriptId: string
-  templateId: string
-}
-
-interface StreamState {
-  enqueue: (chunk: StreamedSuspenseChunk) => void
-  pending: StreamedSuspenseChunk[]
-  process?: () => Promise<void>
-  processing?: Promise<void> | null
-}
-
-interface SignalRecord<T = unknown> {
-  effects: Set<ReactiveEffect>
-  handle: {
-    value: T
-  }
-  id: string
-  subscribers: Set<string>
-  value: T
-}
-
-type CleanupCallback = () => void
-
-export type RuntimeContextToken<T = unknown> = symbol & {
-  __eclipsa_context_type__?: T
-}
-
-interface RuntimeContextValue {
-  token: RuntimeContextToken
-  value: unknown
-}
-
-const getDomContexts = (value: unknown): Array<Window | typeof globalThis> => {
-  const contexts: Array<Window | typeof globalThis> = []
-  if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
-    return contexts
-  }
-  if ('ownerDocument' in value) {
-    const ownerDocument = (value as { ownerDocument?: Document | null }).ownerDocument
-    if (ownerDocument?.defaultView) {
-      contexts.push(ownerDocument.defaultView)
-    }
-  }
-  if ('defaultView' in value) {
-    const defaultView = (value as { defaultView?: Window | null }).defaultView
-    if (defaultView) {
-      contexts.push(defaultView)
-    }
-  }
-  contexts.push(globalThis)
-  return contexts
-}
-
-const isDomInstance = <T>(value: unknown, name: DomConstructorName): value is T => {
-  for (const context of getDomContexts(value)) {
-    const ctor = (context as Record<DomConstructorName, unknown>)[name]
-    if (typeof ctor === 'function' && value instanceof ctor) {
-      return true
-    }
-  }
-  return false
-}
-
-const hasOwnerDocument = (value: unknown): value is ParentNode & { ownerDocument: Document } =>
-  !!value &&
-  (typeof value === 'object' || typeof value === 'function') &&
-  'ownerDocument' in value &&
-  !!(value as { ownerDocument?: Document | null }).ownerDocument
-
-const isElementNode = (value: unknown): value is Element =>
-  isDomInstance<Element>(value, 'Element') || isDomInstance<HTMLElement>(value, 'HTMLElement')
-
-const isHTMLElementNode = (value: unknown): value is HTMLElement =>
-  isDomInstance<HTMLElement>(value, 'HTMLElement')
-
-const isHTMLInputElementNode = (value: unknown): value is HTMLInputElement =>
-  isDomInstance<HTMLInputElement>(value, 'HTMLInputElement')
-
-const isHTMLSelectElementNode = (value: unknown): value is HTMLSelectElement =>
-  isDomInstance<HTMLSelectElement>(value, 'HTMLSelectElement')
-
-const isHTMLTextAreaElementNode = (value: unknown): value is HTMLTextAreaElement =>
-  isDomInstance<HTMLTextAreaElement>(value, 'HTMLTextAreaElement')
-
-const isTextEntryElement = (value: unknown): value is HTMLInputElement | HTMLTextAreaElement =>
-  isHTMLInputElementNode(value) || isHTMLTextAreaElementNode(value)
-
-const isHTMLAnchorElementNode = (value: unknown): value is HTMLAnchorElement =>
-  isDomInstance<HTMLAnchorElement>(value, 'HTMLAnchorElement')
-
-const isHTMLFormElementNode = (value: unknown): value is HTMLFormElement =>
-  isDomInstance<HTMLFormElement>(value, 'HTMLFormElement')
-
-interface CleanupSlot {
-  callbacks: CleanupCallback[]
-}
-
-interface ComponentState {
-  active: boolean
-  activateModeOnFlush?: 'patch' | 'replace'
-  didMount: boolean
-  end?: Comment
-  external?: ExternalComponentDescriptor
-  externalSlotHtml?: Map<string, string> | null
-  externalSlotDom?: Map<string, Node[]> | null
-  externalInstance?: unknown
-  externalMeta?: ExternalComponentMeta | null
-  id: string
-  mountCleanupSlots: CleanupSlot[]
-  optimizedRoot?: boolean
-  parentId: string | null
-  prefersEffectOnlyLocalSignalWrites?: boolean
-  props: unknown
-  projectionSlots: Record<string, number> | null
-  rawProps?: Record<string, unknown> | null
-  renderEffectCleanupSlot: CleanupSlot
-  reuseExistingDomOnActivate?: boolean
-  reuseProjectionSlotDomOnActivate?: boolean
-  scopeId: string
-  signalIds: string[]
-  start?: Comment
-  symbol: string
-  suspensePromise?: Promise<unknown> | null
-  visibleCount: number
-  watchCount: number
-}
-
-interface RenderFrame {
-  childCursor: number
-  component: ComponentState
-  container: RuntimeContainer
-  effectCleanupSlot: CleanupSlot
-  insertCursor: number
-  mountCallbacks: Array<() => void>
-  projectionState: {
-    counters: Map<string, number>
-    reuseExistingDom: boolean
-    reuseProjectionSlotDom: boolean
-  }
-  visitedDescendants: Set<string>
-  mode: 'client' | 'ssr'
-  scopedStyles: ScopedStyleEntry[]
-  signalCursor: number
-  visibleCursor: number
-  watchCursor: number
-}
-
-export interface ClientInsertOwner {
-  childIndex: number
-  componentId: string
-  projectionCounters: Array<[string, number]>
-}
-
-interface ScopedStyleEntry {
-  attributes: Record<string, unknown>
-  cssText: string
-}
-
-interface RouterEventState {
-  originalPreventDefault: () => void
-  routerPrevented: boolean
-  userPrevented: boolean
-}
-
-interface RouterState {
-  currentPath: { value: string }
-  currentRoute: LoadedRoute | null
-  currentUrl: { value: string }
-  defaultTitle: string
-  isNavigating: { value: boolean }
-  loadedRoutes: Map<string, LoadedRoute>
-  location: RouteLocation
-  manifest: RouteManifest
-  navigate: Navigate
-  prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
-  routeModuleBusts: Map<string, number>
-  routePrefetches: Map<string, Promise<RoutePrefetchResult>>
-  sequence: number
-}
-
-export interface RuntimeContainer {
-  actions: Map<string, unknown>
-  actionStates: Map<
-    string,
-    {
-      error: unknown
-      input: unknown
-      result: unknown
-    }
-  >
-  components: Map<string, ComponentState>
-  dirty: Set<string>
-  dirtyFlushQueued: boolean
-  doc?: Document
-  eventDispatchPromise: Promise<void> | null
-  externalRenderCache: Map<
-    string,
-    {
-      error?: unknown
-      html?: string
-      pending?: Promise<string>
-      status: 'pending' | 'rejected' | 'resolved'
-    }
-  >
-  id: string
-  imports: Map<string, Promise<RuntimeSymbolModule>>
-  interactivePrefetchCheckQueued: boolean
-  loaderStates: Map<
-    string,
-    {
-      data: unknown
-      error: unknown
-      loaded: boolean
-    }
-  >
-  loaders: Map<string, unknown>
-  nextComponentId: number
-  nextElementId: number
-  nextScopeId: number
-  nextSignalId: number
-  pendingSuspensePromises: Set<Promise<unknown>>
-  resumeReadyPromise: Promise<void> | null
-  rootChildCursor: number
-  rootElement?: HTMLElement
-  router: RouterState | null
-  asyncSignalStates: Map<string, unknown>
-  asyncSignalSnapshotCache: Map<string, unknown>
-  atoms: WeakMap<object, string>
-  nextAtomId: number
-  scopes: Map<string, SerializedValue[]>
-  signals: Map<string, SignalRecord>
-  symbols: Map<string, string>
-  visibilityListenersCleanup: (() => void) | null
-  visibilityCheckQueued: boolean
-  visibles: Map<string, VisibleState>
-  watches: Map<string, WatchState>
-}
-
-interface RuntimeSymbolModule {
-  default: (scope: unknown[], propsOrArg?: unknown, ...args: unknown[]) => unknown
-}
-
-interface ReactiveEffect {
-  fn: () => void
-  signals: Set<SignalRecord>
-}
+export {
+  RESUME_STATE_ELEMENT_ID,
+  RESUME_FINAL_STATE_ELEMENT_ID,
+  SCOPED_STYLE_ATTR,
+} from './runtime/constants.ts'
+export {
+  getRememberedInsertMarkerNodeCount,
+  rememberInsertMarkerRange,
+  rememberManagedAttributesForNode,
+  rememberManagedAttributesForNodes,
+  syncManagedAttributeSnapshot,
+} from './runtime/dom.ts'
+export type {
+  ClientInsertOwner,
+  ResumeComponentPayload,
+  ResumeLoaderPayload,
+  ResumePayload,
+  RuntimeContainer,
+  RuntimeContextToken,
+} from './runtime/types.ts'
 
 const COMPONENT_BOUNDARY_PROPS_CHANGED = Symbol.for('eclipsa.component-boundary-props-changed')
 const COMPONENT_BOUNDARY_SYMBOL_CHANGED = Symbol.for('eclipsa.component-boundary-symbol-changed')
@@ -496,213 +287,7 @@ const wrapGeneratedScopeReferenceError = (
   return wrapped
 }
 
-type WatchDependency = { value: unknown } | (() => unknown)
-type EffectOptions = {
-  dependencies?: WatchDependency[]
-  errorLabel?: string
-  untracked?: boolean
-}
-type WatchMode = 'dynamic' | 'explicit'
-type RouteRenderer = (props: unknown) => unknown
-
-interface LoadedRouteModule {
-  metadata: RouteMetadataExport | null
-  renderer: RouteRenderer
-  symbol: string | null
-  url: string
-}
-
-interface LoadedRoute {
-  entry: RouteModuleManifest
-  error: unknown
-  layouts: LoadedRouteModule[]
-  params: RouteParams
-  pathname: string
-  page: LoadedRouteModule
-  render: RouteRenderer
-}
-
-interface RoutePreflightSuccess {
-  ok: true
-}
-
-interface RoutePreflightRedirect {
-  location: string
-  ok: false
-}
-
-interface RoutePreflightDocumentFallback {
-  document: true
-  ok: false
-}
-
-type RoutePreflightResult =
-  | RoutePreflightSuccess
-  | RoutePreflightRedirect
-  | RoutePreflightDocumentFallback
-
-interface RouteDataSuccess {
-  finalHref: string
-  finalPathname: string
-  kind: 'page' | 'not-found'
-  loaders: Record<string, ResumeLoaderPayload>
-  ok: true
-}
-
-interface RouteDataRedirect {
-  location: string
-  ok: false
-}
-
-interface RouteDataDocumentFallback {
-  document: true
-  ok: false
-}
-
-type RouteDataResponse = RouteDataSuccess | RouteDataRedirect | RouteDataDocumentFallback
-type RoutePrefetchResult = RouteDataResponse
-
-interface RouteSlotValue {
-  __eclipsa_type: typeof ROUTE_SLOT_TYPE
-  pathname: string
-  startLayoutIndex: number
-}
-
-interface RouteSlotCarrier extends RouteSlotValue {
-  [ROUTE_SLOT_ROUTE_KEY]?: LoadedRoute
-}
-
-interface ProjectionSlotValue {
-  __eclipsa_type: typeof PROJECTION_SLOT_TYPE
-  componentId: string
-  name: string
-  occurrence: number
-  source: unknown
-}
-
-interface WatchState {
-  cleanupSlot: CleanupSlot
-  componentId: string
-  effect: ReactiveEffect
-  id: string
-  mode: WatchMode
-  pending: Promise<void> | null
-  resumed: boolean
-  run: (() => void) | null
-  scopeId: string
-  symbol: string
-  track: (() => void) | null
-}
-
-interface VisibleState {
-  cleanupSlot: CleanupSlot
-  componentId: string
-  done: boolean
-  id: string
-  pending: Promise<void> | null
-  run: (() => void | Promise<void>) | null
-  scopeId: string
-  symbol: string
-}
-
-interface PendingLinkNavigation {
-  href: string
-  replace: boolean
-  state: RouterEventState
-}
-
-interface PendingResumeLinkNavigation {
-  href: string
-  replace: boolean
-}
-
-type NavigationMode = 'pop' | 'push' | 'replace'
-
-type RenderObject = Extract<
-  JSX.Element,
-  {
-    isStatic: boolean
-    props: Record<string, unknown>
-    type: JSX.Type
-  }
->
-
-interface RenderComponentTypeRef {
-  scopeId: string
-  symbol: string
-}
-
-interface ForValue<T = unknown> {
-  __e_for: true
-  arr: readonly T[]
-  fallback?: JSX.Element
-  fn: (e: T, i: number) => JSX.Element
-  key?: (e: T, i: number) => string | number | symbol
-}
-
-interface ShowValue<T = unknown> {
-  __e_show: true
-  children: JSX.Element | ((value: T) => JSX.Element)
-  fallback?: JSX.Element | ((value: T) => JSX.Element)
-  when: T
-}
-
 const resolvedRuntimeSymbols = new WeakMap<RuntimeContainer, Map<string, RuntimeSymbolModule>>()
-const managedElementAttributes = new WeakMap<Element, Set<string>>()
-const listNodeChildren = (
-  node: { childNodes?: Iterable<Node> | ArrayLike<Node> } | null | undefined,
-) => Array.from((node?.childNodes ?? []) as Iterable<Node> | ArrayLike<Node>)
-
-const getElementAttributeNames = (element: Element): string[] => {
-  const withGetAttributeNames = element as Element & { getAttributeNames?: () => string[] }
-  if (typeof withGetAttributeNames.getAttributeNames === 'function') {
-    return withGetAttributeNames.getAttributeNames.call(element)
-  }
-
-  const attributes = (
-    element as Element & {
-      attributes?: Map<string, string> | ArrayLike<Attr | { name?: string }>
-    }
-  ).attributes
-  if (attributes instanceof Map) {
-    return [...attributes.keys()]
-  }
-  if (attributes && typeof attributes.length === 'number') {
-    const names: string[] = []
-    for (let index = 0; index < attributes.length; index += 1) {
-      const attribute = attributes[index]
-      if (attribute && typeof attribute === 'object' && 'name' in attribute) {
-        const name = attribute.name
-        if (typeof name === 'string') {
-          names.push(name)
-        }
-      }
-    }
-    return names
-  }
-
-  return []
-}
-
-const hasElementAttribute = (element: Element, name: string): boolean | null => {
-  const withHasAttribute = element as Element & { hasAttribute?: (name: string) => boolean }
-  if (typeof withHasAttribute.hasAttribute === 'function') {
-    return withHasAttribute.hasAttribute.call(element, name)
-  }
-
-  const withGetAttribute = element as Element & { getAttribute?: (name: string) => string | null }
-  if (typeof withGetAttribute.getAttribute === 'function') {
-    return withGetAttribute.getAttribute.call(element, name) !== null
-  }
-
-  const attributes = (element as Element & { attributes?: Map<string, string> }).attributes
-  if (attributes instanceof Map) {
-    return attributes.has(name)
-  }
-
-  return null
-}
-const insertMarkerNodeCounts = new WeakMap<Comment, number>()
 
 const getResolvedRuntimeSymbols = (container: RuntimeContainer) => {
   const existing = resolvedRuntimeSymbols.get(container)
@@ -724,70 +309,6 @@ export const invalidateRuntimeSymbolCaches = (
     resolved.delete(symbolId)
   }
 }
-
-const cloneManagedAttributeSnapshot = (element: Element) =>
-  new Set(getElementAttributeNames(element))
-
-const replaceManagedAttributeSnapshot = (element: Element, names: Iterable<string>) => {
-  managedElementAttributes.set(element, new Set(names))
-}
-
-const getManagedAttributeSnapshot = (element: Element) =>
-  managedElementAttributes.get(element) ?? null
-
-export const syncManagedAttributeSnapshot = (element: Element, name: string) => {
-  const snapshot = getManagedAttributeSnapshot(element) ?? new Set<string>()
-  const hasAttribute = hasElementAttribute(element, name)
-  if (hasAttribute === true) {
-    snapshot.add(name)
-  } else if (hasAttribute === false) {
-    snapshot.delete(name)
-  } else {
-    snapshot.add(name)
-  }
-  replaceManagedAttributeSnapshot(element, snapshot)
-}
-
-export const rememberManagedAttributesForNode = (node: Node | null | undefined) => {
-  if (!node) {
-    return
-  }
-
-  const visit = (current: Node) => {
-    if (isElementNode(current)) {
-      replaceManagedAttributeSnapshot(current, cloneManagedAttributeSnapshot(current))
-    }
-    for (const child of listNodeChildren(current)) {
-      visit(child)
-    }
-  }
-
-  visit(node)
-}
-
-export const rememberManagedAttributesForNodes = (nodes: Iterable<Node>) => {
-  for (const node of nodes) {
-    rememberManagedAttributesForNode(node)
-  }
-}
-
-export const rememberInsertMarkerRange = (
-  marker: Node | null | undefined,
-  nodes: Iterable<Node>,
-) => {
-  if (!(typeof Comment !== 'undefined' ? marker instanceof Comment : marker?.nodeType === 8)) {
-    return
-  }
-
-  let count = 0
-  for (const _node of nodes) {
-    count += 1
-  }
-  insertMarkerNodeCounts.set(marker as Comment, count)
-}
-
-export const getRememberedInsertMarkerNodeCount = (marker: Comment | null | undefined) =>
-  marker ? (insertMarkerNodeCounts.get(marker) ?? 0) : 0
 
 const withResumeHmrTimestamp = (url: string, timestamp: number) => {
   const parsed = new URL(url, 'http://localhost')
@@ -814,95 +335,24 @@ export const bustRuntimeSymbolUrls = (
 const isRenderObject = (value: unknown): value is RenderObject =>
   typeof value === 'object' && value !== null && 'type' in value && 'props' in value
 
-const getContainerStack = (): RuntimeContainer[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
-  const existing = globalRecord[CONTAINER_STACK_KEY]
-  if (Array.isArray(existing)) {
-    return existing as RuntimeContainer[]
-  }
-  const created: RuntimeContainer[] = []
-  globalRecord[CONTAINER_STACK_KEY] = created
-  return created
-}
-
-const getContextValueStack = (): RuntimeContextValue[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
-  const existing = globalRecord[CONTEXT_VALUE_STACK_KEY]
-  if (Array.isArray(existing)) {
-    return existing as RuntimeContextValue[]
-  }
-  const created: RuntimeContextValue[] = []
-  globalRecord[CONTEXT_VALUE_STACK_KEY] = created
-  return created
-}
-
-const getFrameStack = (): RenderFrame[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
-  const existing = globalRecord[FRAME_STACK_KEY]
-  if (Array.isArray(existing)) {
-    return existing as RenderFrame[]
-  }
-  const created: RenderFrame[] = []
-  globalRecord[FRAME_STACK_KEY] = created
-  return created
-}
-
-const getResumeContainers = () => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
-  const existing = globalRecord[RESUME_CONTAINERS_KEY]
-  if (existing instanceof Set) {
-    return existing as Set<RuntimeContainer>
-  }
-  const created = new Set<RuntimeContainer>()
-  globalRecord[RESUME_CONTAINERS_KEY] = created
-  return created
-}
-
-const getCurrentContainer = (): RuntimeContainer | null => {
-  const stack = getContainerStack()
-  return stack.length > 0 ? stack[stack.length - 1] : null
-}
-
-const getAsyncSignalSnapshotCache = () => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
-  const existing = globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY]
-  if (existing instanceof Map) {
-    return existing as Map<string, unknown>
-  }
-  const created = new Map<string, unknown>()
-  globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY] = created
-  return created
-}
-
 export const readAsyncSignalSnapshot = (
   id: string,
   container: RuntimeContainer | null = getCurrentContainer(),
-) =>
-  container?.asyncSignalStates.get(id) ??
-  container?.asyncSignalSnapshotCache.get(id) ??
-  getAsyncSignalSnapshotCache().get(id)
+) => readGlobalAsyncSignalSnapshot(id, container)
 
 export const writeAsyncSignalSnapshot = (
   id: string,
   value: unknown,
   container: RuntimeContainer | null = getCurrentContainer(),
 ) => {
-  container?.asyncSignalStates.set(id, value)
-  container?.asyncSignalSnapshotCache.set(id, value)
-  if (!container) {
-    getAsyncSignalSnapshotCache().set(id, value)
-  }
+  writeGlobalAsyncSignalSnapshot(id, value, container)
 }
 
 export const clearAsyncSignalSnapshot = (
   id: string,
   container: RuntimeContainer | null = getCurrentContainer(),
 ) => {
-  container?.asyncSignalStates.delete(id)
-  container?.asyncSignalSnapshotCache.delete(id)
-  if (!container) {
-    getAsyncSignalSnapshotCache().delete(id)
-  }
+  clearGlobalAsyncSignalSnapshot(id, container)
 }
 
 const getCurrentFrame = (): RenderFrame | null => {
@@ -990,190 +440,6 @@ export const registerRuntimeScopedStyle = (
     cssText,
   })
 }
-
-const normalizeRoutePath = (pathname: string) => {
-  const normalizedPath = pathname.trim() || '/'
-  const withLeadingSlash = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
-  if (withLeadingSlash.length > 1 && withLeadingSlash.endsWith('/')) {
-    return withLeadingSlash.slice(0, -1)
-  }
-  return withLeadingSlash
-}
-
-const parseLocationHref = (href: string) => new URL(href, 'http://localhost')
-
-const createStandaloneLocation = (): RouteLocation => ({
-  get hash() {
-    return typeof window === 'undefined' ? '' : window.location.hash
-  },
-  get href() {
-    return typeof window === 'undefined' ? '/' : window.location.href
-  },
-  get pathname() {
-    return typeof window === 'undefined' ? '/' : normalizeRoutePath(window.location.pathname)
-  },
-  get search() {
-    return typeof window === 'undefined' ? '' : window.location.search
-  },
-})
-
-const createRouterLocation = (router: RouterState): RouteLocation => ({
-  get hash() {
-    return parseLocationHref(router.currentUrl.value).hash
-  },
-  get href() {
-    return router.currentUrl.value
-  },
-  get pathname() {
-    return normalizeRoutePath(parseLocationHref(router.currentUrl.value).pathname)
-  },
-  get search() {
-    return parseLocationHref(router.currentUrl.value).search
-  },
-})
-
-const EMPTY_ROUTE_PARAMS = Object.freeze({}) as RouteParams
-
-const splitRoutePath = (pathname: string) => normalizeRoutePath(pathname).split('/').filter(Boolean)
-
-const matchRouteSegments = (
-  segments: RouteModuleManifest['segments'],
-  pathnameSegments: string[],
-  routeIndex = 0,
-  pathIndex = 0,
-  params: RouteParams = {},
-): RouteParams | null => {
-  if (routeIndex >= segments.length) {
-    return pathIndex >= pathnameSegments.length ? params : null
-  }
-
-  const segment = segments[routeIndex]!
-  switch (segment.kind) {
-    case 'static':
-      if (pathnameSegments[pathIndex] !== segment.value) {
-        return null
-      }
-      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, params)
-    case 'required':
-      if (pathIndex >= pathnameSegments.length) {
-        return null
-      }
-      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, {
-        ...params,
-        [segment.value]: pathnameSegments[pathIndex],
-      })
-    case 'optional': {
-      const consumed =
-        pathIndex < pathnameSegments.length
-          ? matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex + 1, {
-              ...params,
-              [segment.value]: pathnameSegments[pathIndex],
-            })
-          : null
-      if (consumed) {
-        return consumed
-      }
-      return matchRouteSegments(segments, pathnameSegments, routeIndex + 1, pathIndex, {
-        ...params,
-        [segment.value]: undefined,
-      })
-    }
-    case 'rest': {
-      const rest = pathnameSegments.slice(pathIndex)
-      if (rest.length === 0) {
-        return null
-      }
-      return matchRouteSegments(
-        segments,
-        pathnameSegments,
-        segments.length,
-        pathnameSegments.length,
-        {
-          ...params,
-          [segment.value]: rest,
-        },
-      )
-    }
-  }
-}
-
-const matchRouteManifest = (manifest: RouteManifest, pathname: string) => {
-  const normalizedPath = normalizeRoutePath(pathname)
-  const pathnameSegments = splitRoutePath(normalizedPath)
-  for (const entry of manifest) {
-    const params = matchRouteSegments(entry.segments, pathnameSegments)
-    if (params) {
-      return {
-        entry,
-        params,
-        pathname: normalizedPath,
-      }
-    }
-  }
-  return null
-}
-
-const scoreSpecialManifestEntry = (entry: RouteModuleManifest, pathname: string) => {
-  const pathnameSegments = splitRoutePath(pathname)
-  let score = 0
-  for (
-    let index = 0;
-    index < entry.segments.length && index < pathnameSegments.length;
-    index += 1
-  ) {
-    const segment = entry.segments[index]!
-    const pathnameSegment = pathnameSegments[index]
-    if (segment.kind === 'static') {
-      if (segment.value !== pathnameSegment) {
-        break
-      }
-      score += 10
-      continue
-    }
-    score += segment.kind === 'rest' ? 1 : 2
-    if (segment.kind === 'rest') {
-      break
-    }
-  }
-  return score
-}
-
-const findSpecialManifestEntry = (
-  manifest: RouteManifest,
-  pathname: string,
-  kind: 'error' | 'notFound',
-) => {
-  const matched = matchRouteManifest(manifest, pathname)
-  if (matched?.entry[kind]) {
-    return matched
-  }
-
-  let best: ReturnType<typeof matchRouteManifest> = null
-  let bestScore = -1
-  for (const entry of manifest) {
-    if (!entry[kind]) {
-      continue
-    }
-    const score = scoreSpecialManifestEntry(entry, pathname)
-    if (score > bestScore) {
-      best = {
-        entry,
-        params: EMPTY_ROUTE_PARAMS,
-        pathname: normalizeRoutePath(pathname),
-      }
-      bestScore = score
-    }
-  }
-  return best
-}
-
-const routeCacheKey = (
-  pathname: string,
-  variant: 'page' | 'loading' | 'error' | 'not-found' = 'page',
-) => `${normalizeRoutePath(pathname)}::${variant}`
-
-const routePrefetchKey = (url: URL) => `${normalizeRoutePath(url.pathname)}${url.search}`
-const isLoaderSignalId = (id: string) => id.startsWith('$loader:')
 
 let currentEffect: ReactiveEffect | null = null
 let currentCleanupSlot: CleanupSlot | null = null
@@ -1405,426 +671,41 @@ const parseInsertMarker = (value: string) => {
   }
 }
 
-const getRenderComponentTypeRef = (value: unknown): RenderComponentTypeRef | null => {
-  if (typeof value !== 'function') {
-    return null
-  }
-  return (
-    ((value as unknown as Record<PropertyKey, unknown>)[RENDER_COMPONENT_TYPE_KEY] as
-      | RenderComponentTypeRef
-      | undefined) ?? null
-  )
-}
+let runtimeSerialization: ReturnType<typeof createRuntimeSerialization> | null = null
 
-const createMaterializedRenderComponentType = (
-  container: RuntimeContainer,
-  symbol: string,
-  scopeId: string,
-) => {
-  const component = __eclipsaComponent(
-    ((props: unknown) => {
-      const module = getResolvedRuntimeSymbols(container).get(symbol)
-      if (!module) {
-        throw new Error(`Missing preloaded render component symbol ${symbol}.`)
-      }
-      return module.default(materializeScope(container, scopeId), props)
-    }) as Component,
-    symbol,
-    () => materializeScope(container, scopeId),
-  )
-  Object.defineProperty(component, RENDER_COMPONENT_TYPE_KEY, {
-    configurable: true,
-    enumerable: false,
-    value: {
-      scopeId,
-      symbol,
-    } satisfies RenderComponentTypeRef,
-    writable: true,
+const getRuntimeSerialization = () => {
+  runtimeSerialization ??= createRuntimeSerialization({
+    createProjectionSlot,
+    ensureRouterState,
+    ensureRuntimeElementId,
+    evaluateProps,
+    findRuntimeElement,
+    getResolvedRuntimeSymbols,
+    isPlainObject,
+    isProjectionSlot,
+    isRenderObject,
+    isRouteSlot,
+    loadSymbol,
+    materializeScope,
+    materializeSymbolReference,
+    registerScope,
+    registerSerializedScope,
+    resolveRenderable: (value) => resolveRenderable(value as JSX.Element),
   })
-  return component
+  return runtimeSerialization
 }
 
-const serializeRenderObjectReference = (
-  container: RuntimeContainer,
-  value: RenderObject,
-): SerializedReference => {
-  if (typeof value.type === 'function' && !getComponentMeta(value.type)) {
-    const resolved = resolveRenderable((value.type as Component)(value.props))
-    if (!isRenderObject(resolved)) {
-      throw new TypeError('Only resumable component render objects can be serialized.')
-    }
-    return serializeRenderObjectReference(container, resolved)
-  }
-
-  const evaluatedProps = evaluateProps(value.props)
-  const key = value.key ?? null
-  const isStatic = value.isStatic === true
-  const metadata = value.metadata ?? null
-
-  if (typeof value.type === 'string') {
-    return {
-      __eclipsa_type: 'ref',
-      data: [
-        'element',
-        value.type,
-        null,
-        serializeRuntimeValue(container, evaluatedProps),
-        serializeRuntimeValue(container, key),
-        isStatic,
-        serializeRuntimeValue(container, metadata),
-      ],
-      kind: RENDER_REFERENCE_KIND,
-      token: 'jsx',
-    }
-  }
-
-  const meta = getComponentMeta(value.type)
-  if (!meta) {
-    throw new TypeError('Only resumable component render objects can be serialized.')
-  }
-
-  return {
-    __eclipsa_type: 'ref',
-    data: [
-      'component',
-      meta.symbol,
-      registerScope(container, meta.captures()),
-      serializeRuntimeValue(container, evaluatedProps),
-      serializeRuntimeValue(container, key),
-      isStatic,
-      serializeRuntimeValue(container, metadata),
-    ],
-    kind: RENDER_REFERENCE_KIND,
-    token: 'jsx',
-  }
-}
-
-const deserializeRenderObjectReference = (
-  container: RuntimeContainer,
-  data: SerializedValue | undefined,
-): RenderObject => {
-  if (!Array.isArray(data) || data.length !== 7) {
-    throw new TypeError('Render references require a seven-part payload.')
-  }
-
-  const [variant, typeValue, scopeValue, propsValue, keyValue, isStaticValue, metadataValue] = data
-  if (variant !== 'element' && variant !== 'component') {
-    throw new TypeError(`Unsupported render reference variant "${String(variant)}".`)
-  }
-  if (typeof isStaticValue !== 'boolean' && isStaticValue !== null && isStaticValue !== undefined) {
-    throw new TypeError('Render references require a boolean static flag.')
-  }
-  const isStatic = isStaticValue === true
-
-  const props = deserializeRuntimeValue(container, propsValue as SerializedValue)
-  const key = deserializeRuntimeValue(container, keyValue as SerializedValue)
-  const metadata = deserializeRuntimeValue(container, metadataValue as SerializedValue)
-
-  if (!props || typeof props !== 'object') {
-    throw new TypeError('Render references require object props.')
-  }
-
-  if (variant === 'element') {
-    if (typeof typeValue !== 'string') {
-      throw new TypeError('Element render references require a string tag name.')
-    }
-    return {
-      isStatic,
-      key: (key ?? undefined) as RenderObject['key'],
-      metadata: (metadata ?? undefined) as RenderObject['metadata'],
-      props: props as Record<string, unknown>,
-      type: typeValue,
-    }
-  }
-
-  if (typeof typeValue !== 'string' || typeof scopeValue !== 'string') {
-    throw new TypeError('Component render references require a symbol id and scope id.')
-  }
-
-  return {
-    isStatic,
-    key: (key ?? undefined) as RenderObject['key'],
-    metadata: (metadata ?? undefined) as RenderObject['metadata'],
-    props: props as Record<string, unknown>,
-    type: createMaterializedRenderComponentType(container, typeValue, scopeValue),
-  }
-}
-
-const preloadResumableValue = async (
+const preloadResumableValue = (
   container: RuntimeContainer,
   value: unknown,
   seen = new Set<unknown>(),
-): Promise<void> => {
-  if (value === null || value === undefined || value === false) {
-    return
-  }
-  if (seen.has(value)) {
-    return
-  }
-  if (typeof value === 'function') {
-    const renderComponentRef = getRenderComponentTypeRef(value)
-    if (!renderComponentRef) {
-      return
-    }
-    seen.add(value)
-    await loadSymbol(container, renderComponentRef.symbol)
-    for (const capturedValue of materializeScope(container, renderComponentRef.scopeId)) {
-      await preloadResumableValue(container, capturedValue, seen)
-    }
-    return
-  }
-  if (Array.isArray(value)) {
-    seen.add(value)
-    for (const entry of value) {
-      await preloadResumableValue(container, entry, seen)
-    }
-    return
-  }
-  if (typeof Node !== 'undefined' && value instanceof Node) {
-    return
-  }
-  if (isProjectionSlot(value)) {
-    return
-  }
-  if (isRenderObject(value)) {
-    seen.add(value)
-    await preloadResumableValue(container, value.type, seen)
-    await preloadResumableValue(container, evaluateProps(value.props), seen)
-    return
-  }
-  if (!isPlainObject(value)) {
-    return
-  }
-
-  seen.add(value)
-  for (const entry of Object.values(value)) {
-    await preloadResumableValue(container, entry, seen)
-  }
-}
+) => getRuntimeSerialization().preloadResumableValue(container, value, seen)
 
 const serializeRuntimeValue = (container: RuntimeContainer, value: unknown): SerializedValue =>
-  serializePublicValue(value, {
-    serializeReference(candidate) {
-      const signalMeta = getSignalMeta(candidate)
-      if (signalMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'signal',
-          token: signalMeta.id,
-        }
-      }
-      if (getNavigateMeta(candidate)) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'navigate',
-          token: 'navigate',
-        }
-      }
-      const actionMeta = getActionHandleMeta(candidate)
-      if (actionMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'action',
-          token: actionMeta.id,
-        }
-      }
-      const actionHookMeta = getActionHookMeta(candidate)
-      if (actionHookMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'action-hook',
-          token: actionHookMeta.id,
-        }
-      }
-      const loaderMeta = getLoaderHandleMeta(candidate)
-      if (loaderMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'loader',
-          token: loaderMeta.id,
-        }
-      }
-      const loaderHookMeta = getLoaderHookMeta(candidate)
-      if (loaderHookMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'loader-hook',
-          token: loaderHookMeta.id,
-        }
-      }
-      const contextReference = getRuntimeContextReference(candidate)
-      if (contextReference) {
-        return {
-          __eclipsa_type: 'ref',
-          data: serializeRuntimeValue(container, {
-            defaultValue: contextReference.defaultValue,
-            hasDefault: contextReference.hasDefault,
-          }),
-          kind: contextReference.kind,
-          token: contextReference.id,
-        }
-      }
-      if (isRouteSlot(candidate)) {
-        return {
-          __eclipsa_type: 'ref',
-          data: serializePublicValue(candidate.startLayoutIndex),
-          kind: 'route-slot',
-          token: candidate.pathname,
-        }
-      }
-      if (isProjectionSlot(candidate)) {
-        return {
-          __eclipsa_type: 'ref',
-          data: serializeRuntimeValue(container, candidate.source),
-          kind: PROJECTION_SLOT_TYPE,
-          token: JSON.stringify([candidate.componentId, candidate.name, candidate.occurrence]),
-        }
-      }
-      if (isRenderObject(candidate)) {
-        return serializeRenderObjectReference(container, candidate)
-      }
-      const lazyMeta = getLazyMeta(candidate)
-      if (lazyMeta) {
-        return {
-          __eclipsa_type: 'ref',
-          data: lazyMeta.captures().map((entry) => serializeRuntimeValue(container, entry)),
-          kind: 'symbol',
-          token: lazyMeta.symbol,
-        }
-      }
-      if (isElementNode(candidate)) {
-        return {
-          __eclipsa_type: 'ref',
-          kind: 'dom',
-          token: ensureRuntimeElementId(container, candidate),
-        }
-      }
-      return null
-    },
-  })
+  getRuntimeSerialization().serializeRuntimeValue(container, value)
 
 const deserializeRuntimeValue = (container: RuntimeContainer, value: SerializedValue): unknown =>
-  deserializePublicValue(value, {
-    deserializeReference(reference) {
-      if (reference.kind === 'navigate') {
-        return ensureRouterState(container).navigate
-      }
-      if (reference.kind === 'action') {
-        const action = container.actions.get(reference.token)
-        if (!action) {
-          throw new Error(`Missing action handle ${reference.token}.`)
-        }
-        return action
-      }
-      if (reference.kind === 'action-hook') {
-        const actionHook = getRegisteredActionHook(reference.token)
-        if (!actionHook) {
-          throw new Error(`Missing action hook ${reference.token}.`)
-        }
-        return actionHook
-      }
-      if (reference.kind === 'loader') {
-        const loader = container.loaders.get(reference.token)
-        if (!loader) {
-          throw new Error(`Missing loader handle ${reference.token}.`)
-        }
-        return loader
-      }
-      if (reference.kind === 'loader-hook') {
-        const loaderHook = getRegisteredLoaderHook(reference.token)
-        if (!loaderHook) {
-          throw new Error(`Missing loader hook ${reference.token}.`)
-        }
-        return loaderHook
-      }
-      if (reference.kind === 'context' || reference.kind === 'context-provider') {
-        const decoded =
-          reference.data === undefined
-            ? null
-            : (deserializeRuntimeValue(container, reference.data as SerializedValue) as {
-                defaultValue?: unknown
-                hasDefault?: unknown
-              } | null)
-        const hasDefault = decoded?.hasDefault === true
-        const defaultValue = hasDefault ? decoded?.defaultValue : undefined
-        const descriptor = {
-          defaultValue,
-          hasDefault,
-          id: reference.token,
-        }
-        return reference.kind === 'context'
-          ? materializeRuntimeContext(descriptor)
-          : materializeRuntimeContextProvider(descriptor)
-      }
-      if (reference.kind === 'route-slot') {
-        const startLayoutIndex =
-          reference.data === undefined ? 0 : deserializePublicValue(reference.data)
-        if (typeof startLayoutIndex !== 'number' || !Number.isInteger(startLayoutIndex)) {
-          throw new TypeError('Route slot references require an integer start layout index.')
-        }
-        return {
-          __eclipsa_type: ROUTE_SLOT_TYPE,
-          pathname: reference.token,
-          startLayoutIndex,
-        } satisfies RouteSlotValue
-      }
-      if (reference.kind === PROJECTION_SLOT_TYPE) {
-        let componentId = ''
-        let name = ''
-        let occurrence = 0
-        try {
-          const parsed = JSON.parse(reference.token)
-          if (
-            !Array.isArray(parsed) ||
-            parsed.length !== 3 ||
-            typeof parsed[0] !== 'string' ||
-            typeof parsed[1] !== 'string' ||
-            typeof parsed[2] !== 'number'
-          ) {
-            throw new Error('invalid projection slot token')
-          }
-          componentId = parsed[0]
-          name = parsed[1]
-          occurrence = parsed[2]
-        } catch {
-          throw new TypeError(
-            'Projection slot references require a component id, name, and occurrence.',
-          )
-        }
-        return createProjectionSlot(
-          componentId,
-          name,
-          occurrence,
-          deserializeRuntimeValue(container, reference.data as SerializedValue),
-        )
-      }
-      if (reference.kind === 'signal') {
-        const record = container.signals.get(reference.token)
-        if (!record) {
-          throw new Error(`Missing signal ${reference.token}.`)
-        }
-        return record.handle
-      }
-      if (reference.kind === 'symbol') {
-        if (!reference.data || !Array.isArray(reference.data)) {
-          throw new TypeError('Symbol references require an encoded scope array.')
-        }
-        const scopeId = registerSerializedScope(container, reference.data)
-        return materializeSymbolReference(container, reference.token, scopeId)
-      }
-      if (reference.kind === RENDER_REFERENCE_KIND) {
-        return deserializeRenderObjectReference(container, reference.data)
-      }
-      if (reference.kind === 'dom') {
-        const element = findRuntimeElement(container, reference.token)
-        if (!element) {
-          throw new Error(`Missing DOM reference ${reference.token}.`)
-        }
-        return element
-      }
-      throw new TypeError(`Unsupported runtime reference kind "${reference.kind}".`)
-    },
-  })
+  getRuntimeSerialization().deserializeRuntimeValue(container, value)
 
 const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
   let nextId = 0
@@ -3453,7 +2334,7 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
         }
 
         const currentMarker = currentChildren[markerIndex]! as Comment
-        const explicitCount = insertMarkerNodeCounts.get(currentMarker)
+        const explicitCount = getRememberedInsertMarkerNodeCount(currentMarker)
         if (explicitCount === undefined) {
           currentIndex = markerIndex + 1
           continue
@@ -3471,7 +2352,7 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
         for (const node of movedRoots) {
           nextChild.parentNode?.insertBefore(node, nextChild)
         }
-        insertMarkerNodeCounts.set(nextChild as Comment, movedRoots.length)
+        setRememberedInsertMarkerNodeCount(nextChild as Comment, movedRoots.length)
 
         for (const componentId of collectComponentBoundaryIds(movedRoots)) {
           preservedComponentIds.add(componentId)
@@ -3668,7 +2549,7 @@ const replaceInsertRangeOwnedNodes = (
   }
 
   rememberManagedAttributesForNodes(parent.childNodes)
-  insertMarkerNodeCounts.set(currentMarker, nextOwnedNodes.length)
+  setRememberedInsertMarkerNodeCount(currentMarker, nextOwnedNodes.length)
   return true
 }
 
@@ -3738,7 +2619,7 @@ const collectPatchSequenceUnits = (nodes: Node[]): PatchSequenceUnit[] | null =>
         continue
       }
 
-      const ownedNodeCount = insertMarkerNodeCounts.get(node as Comment) ?? 0
+      const ownedNodeCount = getRememberedInsertMarkerNodeCount(node as Comment)
       let remaining = ownedNodeCount
       while (remaining > 0) {
         const previous = units[units.length - 1]
@@ -3831,7 +2712,7 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
             return false
           }
         } else {
-          insertMarkerNodeCounts.set(currentUnit.marker, nextOwnedNodes.length)
+          setRememberedInsertMarkerNodeCount(currentUnit.marker, nextOwnedNodes.length)
         }
       }
       continue
@@ -3943,27 +2824,6 @@ export const tryPatchBoundaryContentsInPlace = (
   return tryPatchNodeSequenceInPlace(currentNodes, nextNodes)
 }
 
-interface FocusSnapshot {
-  path: number[]
-  selectionDirection?: 'backward' | 'forward' | 'none' | null
-  selectionEnd?: number | null
-  selectionStart?: number | null
-}
-
-interface PendingFocusRestore {
-  snapshot: FocusSnapshot
-}
-
-const getBoundaryChildren = (start: Comment, end: Comment) => {
-  const nodes: Node[] = []
-  let cursor = start.nextSibling
-  while (cursor && cursor !== end) {
-    nodes.push(cursor)
-    cursor = cursor.nextSibling
-  }
-  return nodes
-}
-
 const collectMountedBoundaryDescendants = (component: ComponentState) =>
   component.start && component.end
     ? collectComponentBoundaryIds(getBoundaryChildren(component.start, component.end))
@@ -3996,230 +2856,6 @@ const collectPreservedProjectionSlotComponentIds = (
     collectProjectionSlotComponentIds(getBoundaryChildren(start, end)),
   )
 
-const getNodePath = (root: Node, target: Node): number[] | null => {
-  if (root === target) {
-    return []
-  }
-
-  const path: number[] = []
-  let cursor: Node | null = target
-  while (cursor && cursor !== root) {
-    const parent: Node | null = cursor.parentNode
-    if (!parent) {
-      return null
-    }
-    const index = Array.prototype.indexOf.call(parent.childNodes, cursor)
-    if (index < 0) {
-      return null
-    }
-    path.unshift(index)
-    cursor = parent
-  }
-
-  return cursor === root ? path : null
-}
-
-const getNodeByPath = (root: Node, path: number[]) => {
-  let cursor: Node | null = root
-  for (const index of path) {
-    const childNodes: NodeListOf<ChildNode> | Node[] | undefined = cursor
-      ? ((cursor.childNodes as NodeListOf<ChildNode>) ?? undefined)
-      : undefined
-    cursor =
-      (childNodes &&
-        ('item' in childNodes
-          ? (childNodes.item(index) as Node | null)
-          : ((childNodes as unknown as Node[])[index] ?? null))) ??
-      null
-    if (!cursor) {
-      return null
-    }
-  }
-  return cursor
-}
-
-const getElementPath = (root: Element, target: Element): number[] | null => {
-  if (root === target) {
-    return []
-  }
-
-  const path: number[] = []
-  let cursor: Element | null = target
-  while (cursor && cursor !== root) {
-    const parent: HTMLElement | null = cursor.parentElement
-    if (!parent) {
-      return null
-    }
-    const index = Array.prototype.indexOf.call(parent.children, cursor)
-    if (index < 0) {
-      return null
-    }
-    path.unshift(index)
-    cursor = parent
-  }
-
-  return cursor === root ? path : null
-}
-
-const getElementByPath = (root: Element, path: number[]) => {
-  let cursor: Element | null = root
-  for (const index of path) {
-    const children: HTMLCollection | Element[] | undefined = cursor
-      ? ((cursor.children as HTMLCollection) ?? undefined)
-      : undefined
-    cursor =
-      (children &&
-        ('item' in children
-          ? (children.item(index) as Element | null)
-          : ((children as unknown as Element[])[index] ?? null))) ??
-      null
-    if (!cursor) {
-      return null
-    }
-  }
-  return cursor
-}
-
-const captureBoundaryFocus = (
-  doc: Document,
-  start: Comment,
-  end: Comment,
-): FocusSnapshot | null => {
-  const activeElement = doc.activeElement
-  if (!isHTMLElementNode(activeElement)) {
-    return null
-  }
-
-  const topLevelNodes = getBoundaryChildren(start, end)
-  for (let i = 0; i < topLevelNodes.length; i++) {
-    const candidate = topLevelNodes[i]
-    if (
-      candidate !== activeElement &&
-      (!isElementNode(candidate) || !candidate.contains(activeElement))
-    ) {
-      continue
-    }
-
-    const innerPath = getNodePath(candidate, activeElement)
-    if (!innerPath) {
-      continue
-    }
-
-    return {
-      path: [i, ...innerPath],
-      selectionDirection: isTextEntryElement(activeElement)
-        ? activeElement.selectionDirection
-        : null,
-      selectionEnd: isTextEntryElement(activeElement) ? activeElement.selectionEnd : null,
-      selectionStart: isTextEntryElement(activeElement) ? activeElement.selectionStart : null,
-    }
-  }
-
-  return null
-}
-
-const restoreBoundaryFocus = (
-  doc: Document,
-  start: Comment,
-  end: Comment,
-  snapshot: FocusSnapshot | null,
-) => {
-  if (!snapshot) {
-    return
-  }
-
-  const [topLevelIndex, ...innerPath] = snapshot.path
-  const root = getBoundaryChildren(start, end)[topLevelIndex]
-  if (!root) {
-    return
-  }
-
-  const nextActive = innerPath.length > 0 ? getNodeByPath(root, innerPath) : root
-  if (!isHTMLElementNode(nextActive)) {
-    return
-  }
-
-  restoreFocusTarget(doc, nextActive, snapshot)
-}
-
-const restoreFocusTarget = (doc: Document, nextActive: HTMLElement, snapshot: FocusSnapshot) => {
-  const restore = () => {
-    if (!nextActive.isConnected) {
-      return false
-    }
-    nextActive.focus({ preventScroll: true })
-    if (
-      isTextEntryElement(nextActive) &&
-      snapshot.selectionStart !== null &&
-      snapshot.selectionStart !== undefined
-    ) {
-      nextActive.setSelectionRange(
-        snapshot.selectionStart,
-        snapshot.selectionEnd ?? snapshot.selectionStart,
-        snapshot.selectionDirection ?? undefined,
-      )
-    }
-    return doc.activeElement === nextActive
-  }
-
-  if (restore()) {
-    return
-  }
-
-  const win = doc.defaultView
-  if (!win) {
-    return
-  }
-
-  let remainingAttempts = 3
-  const retry = () => {
-    if (remainingAttempts <= 0) {
-      return
-    }
-    remainingAttempts--
-    const run = () => {
-      if (restore()) {
-        return
-      }
-      retry()
-    }
-
-    if (typeof win.requestAnimationFrame === 'function') {
-      win.requestAnimationFrame(() => run())
-      return
-    }
-    win.setTimeout(run, 16)
-  }
-
-  retry()
-}
-
-const captureDocumentFocus = (
-  doc: Document,
-  focusSource?: EventTarget | null,
-): FocusSnapshot | null => {
-  const candidate = isHTMLElementNode(focusSource)
-    ? focusSource
-    : isHTMLElementNode(doc.activeElement)
-      ? doc.activeElement
-      : null
-  if (!candidate) {
-    return null
-  }
-
-  const path = getElementPath(doc.body, candidate)
-  if (!path) {
-    return null
-  }
-
-  return {
-    path,
-    selectionDirection: isTextEntryElement(candidate) ? candidate.selectionDirection : null,
-    selectionEnd: isTextEntryElement(candidate) ? candidate.selectionEnd : null,
-    selectionStart: isTextEntryElement(candidate) ? candidate.selectionStart : null,
-  }
-}
-
 const capturePendingFocusRestore = (
   container: RuntimeContainer,
   focusSource?: EventTarget | null,
@@ -4237,195 +2873,33 @@ const capturePendingFocusRestore = (
   }
 }
 
-const shouldSkipPendingFocusRestore = (
-  container: RuntimeContainer,
-  pending: PendingFocusRestore,
-) => {
-  if (!container.doc) {
-    return false
-  }
-
-  const activeElement = container.doc.activeElement
-  if (!isHTMLElementNode(activeElement)) {
-    return false
-  }
-  if (
-    activeElement === container.doc.body ||
-    !activeElement.isConnected ||
-    !container.doc.body.contains(activeElement)
-  ) {
-    return false
-  }
-
-  const activePath = getElementPath(container.doc.body, activeElement)
-  if (!activePath) {
-    return false
-  }
-
-  if (activePath.length !== pending.snapshot.path.length) {
-    return true
-  }
-
-  return activePath.some((index, position) => index !== pending.snapshot.path[position])
-}
-
 const restorePendingFocus = (container: RuntimeContainer, pending: PendingFocusRestore | null) => {
   if (!pending || !container.doc) {
     return
   }
-  if (shouldSkipPendingFocusRestore(container, pending)) {
-    return
-  }
-
-  const nextActive = getElementByPath(container.doc.body, pending.snapshot.path)
-  if (!isHTMLElementNode(nextActive)) {
-    return
-  }
-
-  restoreFocusTarget(container.doc, nextActive, pending.snapshot)
+  restorePendingFocusInDocument(container.doc, pending)
 }
 
-const EVENT_PROP_REGEX = /^on([A-Z].+)$/
-const DANGEROUSLY_SET_INNER_HTML_PROP = 'dangerouslySetInnerHTML'
+let ssrRenderer: ReturnType<typeof createSSRRenderer> | null = null
 
-const resolveDangerouslySetInnerHTML = (value: unknown) =>
-  value === false || value === undefined || value === null ? null : String(value)
-
-const toEventName = (propName: string) => {
-  const matched = propName.match(EVENT_PROP_REGEX)
-  if (!matched) {
-    return null
-  }
-  const [first, ...rest] = matched[1]
-  return `${first.toLowerCase()}${rest.join('')}`
+const getSSRRenderer = () => {
+  ssrRenderer ??= createSSRRenderer({
+    getCurrentContainer,
+    isProjectionSlot: (value) => isProjectionSlot(value),
+    isRouteSlot: (value) => isRouteSlot(value),
+    renderProjectionSlotToString: (value) =>
+      renderProjectionSlotToString(value as ProjectionSlotValue),
+    renderStringNode,
+    resolveRouteSlot: (container, slot) =>
+      resolveRouteSlot(container as RuntimeContainer | null, slot as RouteSlotCarrier),
+  })
+  return ssrRenderer
 }
 
-const TEXT_ESCAPE_REGEX = /[&<>]/
-const ATTR_ESCAPE_REGEX = /[&<>'"]/
+export const renderSSRAttr = (name: string, value: unknown) =>
+  getSSRRenderer().renderSSRAttr(name, value)
 
-const escapeString = (value: string, mode: 'text' | 'attr') => {
-  const escapePattern = mode === 'attr' ? ATTR_ESCAPE_REGEX : TEXT_ESCAPE_REGEX
-  const firstMatch = value.search(escapePattern)
-  if (firstMatch < 0) {
-    return value
-  }
-
-  let output = ''
-  let lastIndex = 0
-  for (let index = firstMatch; index < value.length; index += 1) {
-    let escaped: string | null = null
-    switch (value.charCodeAt(index)) {
-      case 34:
-        escaped = mode === 'attr' ? '&quot;' : null
-        break
-      case 38:
-        escaped = '&amp;'
-        break
-      case 39:
-        escaped = mode === 'attr' ? '&#39;' : null
-        break
-      case 60:
-        escaped = '&lt;'
-        break
-      case 62:
-        escaped = '&gt;'
-        break
-    }
-    if (!escaped) {
-      continue
-    }
-    output += value.slice(lastIndex, index)
-    output += escaped
-    lastIndex = index + 1
-  }
-  return output + value.slice(lastIndex)
-}
-
-const escapeText = (value: string) => escapeString(value, 'text')
-
-const escapeAttr = (value: string) => escapeString(value, 'attr')
-
-export const renderSSRAttr = (name: string, value: unknown) => {
-  if (name === 'key') {
-    return ''
-  }
-  if (value === false || value === undefined || value === null) {
-    return ''
-  }
-  if (value === true) {
-    return ` ${name}`
-  }
-  return ` ${name}="${escapeAttr(String(value))}"`
-}
-
-const renderStringArray = (values: readonly (JSX.Element | JSX.Element[])[]) => {
-  let output = ''
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index]
-    if (Array.isArray(value)) {
-      output += renderStringArray(value)
-      continue
-    }
-    if (value === false || value === null || value === undefined) {
-      continue
-    }
-    if (typeof value === 'string') {
-      output += escapeText(value)
-      continue
-    }
-    if (typeof value === 'number' || typeof value === 'boolean') {
-      output += escapeText(String(value))
-      continue
-    }
-    if (isSSRRawValue(value)) {
-      output += value.value
-      continue
-    }
-    if (isSSRTemplate(value)) {
-      output += renderSSRTemplateNode(value)
-      continue
-    }
-    if (isProjectionSlot(value)) {
-      output += renderProjectionSlotToString(value)
-      continue
-    }
-    if (isRouteSlot(value)) {
-      const routeElement = resolveRouteSlot(getCurrentContainer(), value)
-      if (routeElement) {
-        output += renderStringNode(routeElement as JSX.Element)
-      }
-      continue
-    }
-    output += renderStringNode(value as JSX.Element)
-  }
-  return output
-}
-
-export const renderSSRValue = (value: unknown): string => {
-  if (value === false || value === null || value === undefined) {
-    return ''
-  }
-  if (Array.isArray(value)) {
-    return renderStringArray(value as readonly (JSX.Element | JSX.Element[])[])
-  }
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return escapeText(String(value))
-  }
-  if (isSSRRawValue(value)) {
-    return value.value
-  }
-  if (isSSRTemplate(value)) {
-    return renderSSRTemplateNode(value)
-  }
-  if (isProjectionSlot(value)) {
-    return renderProjectionSlotToString(value)
-  }
-  if (isRouteSlot(value)) {
-    const routeElement = resolveRouteSlot(getCurrentContainer(), value)
-    return routeElement ? renderStringNode(routeElement as JSX.Element) : ''
-  }
-  return renderStringNode(value as JSX.Element)
-}
+export const renderSSRValue = (value: unknown): string => getSSRRenderer().renderSSRValue(value)
 
 export const renderSSRMap = <T>(
   value:
@@ -4436,29 +2910,12 @@ export const renderSSRMap = <T>(
         }
       },
   renderItem: (item: T, index: number) => string,
-): string => {
-  if (Array.isArray(value)) {
-    let output = ''
-    for (let index = 0; index < value.length; index += 1) {
-      if (!(index in value)) {
-        continue
-      }
-      output += renderItem(value[index] as T, index)
-    }
-    return output
-  }
-  return value.map(renderItem).join('')
-}
+): string => getSSRRenderer().renderSSRMap(value, renderItem)
 
-const renderSSRTemplateNode = (template: JSX.SSRTemplate) => {
-  let output = template.strings[0] ?? ''
-  for (let index = 0; index < template.values.length; index += 1) {
-    const value = template.values[index]
-    output += isSSRAttrValue(value) ? renderSSRAttr(value.name, value.value) : renderSSRValue(value)
-    output += template.strings[index + 1] ?? ''
-  }
-  return output
-}
+const renderStringArray = (values: readonly (JSX.Element | JSX.Element[])[]) =>
+  renderSSRValue(values)
+
+const renderSSRTemplateNode = (template: JSX.SSRTemplate) => renderSSRValue(template)
 
 const resolveRenderable = (value: JSX.Element): JSX.Element => {
   let current = value
@@ -4695,7 +3152,11 @@ const captureExternalSlotHtml = (component: ComponentState) => {
 }
 
 const restoreExternalSlotDom = (component: ComponentState, host: HTMLElement) => {
-  if (!component.external || !component.externalSlotDom || typeof host.querySelector !== 'function') {
+  if (
+    !component.external ||
+    !component.externalSlotDom ||
+    typeof host.querySelector !== 'function'
+  ) {
     return
   }
   for (const [name, nodes] of component.externalSlotDom) {
@@ -5028,7 +3489,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       continue
     }
 
-    if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+    if (isDangerouslySetInnerHTMLProp(name)) {
       hasInnerHTML = true
       innerHTML = resolveDangerouslySetInnerHTML(value)
       continue
@@ -5369,7 +3830,7 @@ const applyElementProp = (
     return
   }
 
-  if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+  if (isDangerouslySetInnerHTMLProp(name)) {
     const html = resolveDangerouslySetInnerHTML(value)
     if (html !== null) {
       element.innerHTML = html
@@ -5513,7 +3974,7 @@ export const renderClientNodes = (
       if (resolved.type === 'body' && name === 'data-e-resume') {
         continue
       }
-      if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
+      if (isDangerouslySetInnerHTMLProp(name)) {
         hasInnerHTML = true
       }
       applyElementProp(element, name, value, container)
@@ -5833,74 +4294,6 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
   }
 }
 
-const isRouteSlot = (value: unknown): value is RouteSlotCarrier =>
-  isPlainObject(value) && value.__eclipsa_type === ROUTE_SLOT_TYPE
-
-const createRouteSlot = (route: LoadedRoute, startLayoutIndex: number): RouteSlotCarrier => {
-  const slot: RouteSlotCarrier = {
-    __eclipsa_type: ROUTE_SLOT_TYPE,
-    pathname: route.pathname,
-    startLayoutIndex,
-  }
-  Object.defineProperty(slot, ROUTE_SLOT_ROUTE_KEY, {
-    configurable: true,
-    enumerable: false,
-    value: route,
-    writable: true,
-  })
-  return slot
-}
-
-const resolveRouteSlot = (container: RuntimeContainer | null, slot: RouteSlotCarrier) => {
-  const route =
-    slot[ROUTE_SLOT_ROUTE_KEY] ??
-    container?.router?.loadedRoutes.get(routeCacheKey(slot.pathname, 'page'))
-  if (!route) {
-    return null
-  }
-  return createRouteElement(route, slot.startLayoutIndex)
-}
-
-const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
-  const createRouteProps = (props: Record<string, unknown>) => {
-    const nextProps = {
-      ...props,
-    }
-    Object.defineProperty(nextProps, ROUTE_PARAMS_PROP, {
-      configurable: true,
-      enumerable: false,
-      value: route.params,
-      writable: true,
-    })
-    Object.defineProperty(nextProps, ROUTE_ERROR_PROP, {
-      configurable: true,
-      enumerable: false,
-      value: route.error,
-      writable: true,
-    })
-    return nextProps
-  }
-
-  if (startLayoutIndex >= route.layouts.length) {
-    return jsxDEV(route.page.renderer as unknown as JSX.Type, createRouteProps({}), null, false, {})
-  }
-
-  let children: unknown = null
-  for (let index = route.layouts.length - 1; index >= startLayoutIndex; index -= 1) {
-    const layout = route.layouts[index]!
-    children = jsxDEV(
-      layout.renderer as unknown as JSX.Type,
-      createRouteProps({
-        children: createRouteSlot(route, index + 1),
-      }),
-      null,
-      false,
-      {},
-    )
-  }
-  return children
-}
-
 const trackSuspenseBoundaryPromise = (
   container: RuntimeContainer,
   componentId: string,
@@ -5936,7 +4329,6 @@ const renderSuspenseContentToString = (
     if (!isPendingSignalError(error)) {
       throw error
     }
-    container.pendingSuspensePromises.add(error.promise)
     const component = container.components.get(componentId)
     if (component) {
       component.suspensePromise = error.promise
@@ -6214,14 +4606,7 @@ const loadResolvedRoute = async (
     return existing
   }
 
-  const moduleUrl =
-    variant === 'page'
-      ? matched.entry.page
-      : variant === 'loading'
-        ? matched.entry.loading
-        : variant === 'error'
-          ? matched.entry.error
-          : matched.entry.notFound
+  const moduleUrl = getRouteModuleUrl(matched.entry, variant)
   if (!moduleUrl) {
     return null
   }
@@ -6250,7 +4635,11 @@ const loadResolvedRouteFromSpecial = async (
   pathname: string,
   kind: 'error' | 'notFound',
 ) => {
-  const matched = findSpecialManifestEntry(ensureRouterState(container).manifest, pathname, kind)
+  const manifest = ensureRouterState(container).manifest
+  const matched =
+    kind === 'notFound'
+      ? resolveNotFoundRouteMatch(manifest, pathname)
+      : findSpecialManifestEntry(manifest, pathname, kind)
   if (!matched) {
     return null
   }
@@ -6258,8 +4647,8 @@ const loadResolvedRouteFromSpecial = async (
 }
 
 const loadRouteComponent = async (container: RuntimeContainer, pathname: string) => {
-  const matched = matchRouteManifest(ensureRouterState(container).manifest, pathname)
-  if (!matched || !matched.entry.page) {
+  const matched = resolvePageRouteMatch(ensureRouterState(container).manifest, pathname)
+  if (!matched) {
     return null
   }
   return loadResolvedRoute(container, matched, 'page')
@@ -6678,14 +5067,6 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
   }
 }
 
-const isRouteDataSuccess = (body: RouteDataResponse): body is RouteDataSuccess =>
-  body.ok === true &&
-  typeof body.finalHref === 'string' &&
-  typeof body.finalPathname === 'string' &&
-  (body.kind === 'page' || body.kind === 'not-found') &&
-  !!body.loaders &&
-  typeof body.loaders === 'object'
-
 const extractScriptTextById = (html: string, id: string) => {
   const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
   const idPattern = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i
@@ -6724,39 +5105,27 @@ const parseRouteDataFromHtml = (
     extractScriptTextById(html, RESUME_FINAL_STATE_ELEMENT_ID) ??
     extractScriptTextById(html, RESUME_STATE_ELEMENT_ID)
   if (!payloadText) {
-    return {
-      document: true,
-      ok: false,
-    }
+    return ROUTE_DOCUMENT_FALLBACK
   }
 
   let payload: ResumePayload
   try {
     payload = JSON.parse(payloadText) as ResumePayload
   } catch {
-    return {
-      document: true,
-      ok: false,
-    }
+    return ROUTE_DOCUMENT_FALLBACK
   }
 
   const finalPathname = normalizeRoutePath(finalUrl.pathname)
   const router = ensureRouterState(container)
-  const matched = matchRouteManifest(router.manifest, finalPathname)
-  const notFoundMatched = !matched
-    ? findSpecialManifestEntry(router.manifest, finalPathname, 'notFound')
-    : null
-  if (!matched?.entry.page && !notFoundMatched?.entry.notFound) {
-    return {
-      document: true,
-      ok: false,
-    }
+  const resolvedMatch = resolveRoutableMatch(router.manifest, finalPathname)
+  if (!resolvedMatch) {
+    return ROUTE_DOCUMENT_FALLBACK
   }
 
   return {
     finalHref: finalUrl.href,
     finalPathname,
-    kind: matched?.entry.page ? 'page' : 'not-found',
+    kind: resolvedMatch.kind,
     loaders: payload.loaders ?? {},
     ok: true,
   }
@@ -6776,10 +5145,7 @@ const requestRouteData = async (
     if (response.status >= 200 && response.status < 300) {
       const body = (await response.json()) as RouteDataResponse
       if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
-        return {
-          document: true,
-          ok: false,
-        }
+        return ROUTE_DOCUMENT_FALLBACK
       }
       if (isRouteDataSuccess(body)) {
         return body
@@ -6796,10 +5162,7 @@ const requestRouteData = async (
     return parseRouteDataFromHtml(container, requestUrl, response, html)
   } catch {}
 
-  return {
-    document: true,
-    ok: false,
-  }
+  return ROUTE_DOCUMENT_FALLBACK
 }
 
 const resetRouteLoaderState = (container: RuntimeContainer) => {
@@ -6831,10 +5194,7 @@ const requestRoutePreflight = async (href: string): Promise<RoutePreflightResult
       },
     })
     if (response.status < 200 || response.status >= 300) {
-      return {
-        document: true,
-        ok: false,
-      }
+      return ROUTE_DOCUMENT_FALLBACK
     }
     const finalUrl = new URL(response.url || requestUrl.href, requestUrl.href)
     if (
@@ -6851,10 +5211,7 @@ const requestRoutePreflight = async (href: string): Promise<RoutePreflightResult
       ok: true,
     }
   } catch {
-    return {
-      document: true,
-      ok: false,
-    }
+    return ROUTE_DOCUMENT_FALLBACK
   }
 }
 
@@ -6864,22 +5221,93 @@ const prefetchResolvedRouteModules = async (
   finalUrl: URL,
 ) => {
   const router = ensureRouterState(container)
-  const matched = matchRouteManifest(router.manifest, pathname)
-  if (matched?.entry.page) {
-    await loadResolvedRoute(container, matched)
-    return
-  }
-  const notFoundMatched = findSpecialManifestEntry(router.manifest, pathname, 'notFound')
-  if (notFoundMatched?.entry.notFound) {
-    await loadResolvedRoute(container, notFoundMatched, 'not-found')
+  const resolvedMatch = resolveRoutableMatch(router.manifest, pathname)
+  if (resolvedMatch) {
+    await loadResolvedRoute(container, resolvedMatch.matched, resolvedMatch.kind)
   }
   if (finalUrl.pathname !== pathname) {
     const redirectedPath = normalizeRoutePath(finalUrl.pathname)
-    const redirectedMatched = matchRouteManifest(router.manifest, redirectedPath)
-    if (redirectedMatched?.entry.page) {
-      await loadResolvedRoute(container, redirectedMatched)
+    const redirectedMatch = resolveRoutableMatch(router.manifest, redirectedPath)
+    if (redirectedMatch) {
+      await loadResolvedRoute(container, redirectedMatch.matched, redirectedMatch.kind)
     }
   }
+}
+
+const renderCurrentRoute = (container: RuntimeContainer, route: LoadedRoute) => {
+  renderRouteIntoRoot(container, route.render)
+  ensureRouterState(container).currentRoute = route
+}
+
+const applyCurrentRouteMetadata = (container: RuntimeContainer, route: LoadedRoute, url: URL) => {
+  const doc = container.doc
+  if (!doc) {
+    return
+  }
+  const router = ensureRouterState(container)
+  applyRouteMetadata(doc, route, url, router.defaultTitle)
+}
+
+const commitRouteNavigation = (
+  container: RuntimeContainer,
+  route: LoadedRoute,
+  url: URL,
+  mode: NavigationMode,
+  options?: {
+    writeLocation?: boolean
+  },
+) => {
+  const doc = container.doc
+  if (!doc) {
+    return
+  }
+  const router = ensureRouterState(container)
+  applyCurrentRouteMetadata(container, route, url)
+  commitBrowserNavigation(doc, url, mode)
+  if (options?.writeLocation !== false) {
+    writeRouterLocation(router, url)
+  }
+}
+
+const renderAndCommitRouteNavigation = (
+  container: RuntimeContainer,
+  route: LoadedRoute,
+  url: URL,
+  mode: NavigationMode,
+  options?: {
+    resetLoaders?: boolean
+  },
+) => {
+  if (options?.resetLoaders) {
+    resetRouteLoaderState(container)
+  }
+  renderCurrentRoute(container, route)
+  commitRouteNavigation(container, route, url, mode)
+}
+
+const handleFailedRouteRequest = async (
+  container: RuntimeContainer,
+  doc: Document,
+  url: URL,
+  mode: NavigationMode,
+  redirectDepth: number,
+  result: Extract<RoutePrefetchResult | RoutePreflightResult, { ok: false }>,
+) => {
+  if (!('location' in result)) {
+    fallbackDocumentNavigation(doc, url, mode)
+    return
+  }
+
+  const redirectUrl = new URL(result.location, doc.location.href)
+  if (redirectDepth >= 8 || redirectUrl.origin !== doc.location.origin) {
+    fallbackDocumentNavigation(doc, redirectUrl, mode)
+    return
+  }
+
+  await navigateContainer(container, redirectUrl.href, {
+    mode,
+    redirectDepth: redirectDepth + 1,
+  })
 }
 
 const prefetchRoute = async (container: RuntimeContainer, href: string) => {
@@ -6901,11 +5329,8 @@ const prefetchRoute = async (container: RuntimeContainer, href: string) => {
   }
 
   const pathname = normalizeRoutePath(requestUrl.pathname)
-  const matched = matchRouteManifest(router.manifest, pathname)
-  const specialRoute = !matched
-    ? findSpecialManifestEntry(router.manifest, pathname, 'notFound')
-    : null
-  if (!matched?.entry.page && !specialRoute?.entry.notFound) {
+  const routeTarget = resolveRoutableMatch(router.manifest, pathname)
+  if (!routeTarget) {
     return
   }
 
@@ -6918,20 +5343,14 @@ const prefetchRoute = async (container: RuntimeContainer, href: string) => {
 
       const finalUrl = new URL(result.finalHref, requestUrl.href)
       if (finalUrl.origin !== requestUrl.origin) {
-        return {
-          document: true,
-          ok: false,
-        } satisfies RoutePrefetchResult
+        return ROUTE_DOCUMENT_FALLBACK satisfies RoutePrefetchResult
       }
 
       await prefetchResolvedRouteModules(container, result.finalPathname, finalUrl)
       cachePrefetchedLoaders(container, finalUrl, result.loaders)
       return result
     } catch {
-      return {
-        document: true,
-        ok: false,
-      } satisfies RoutePrefetchResult
+      return ROUTE_DOCUMENT_FALLBACK satisfies RoutePrefetchResult
     }
   })()
 
@@ -6966,9 +5385,7 @@ const navigateContainer = async (
   const pathname = normalizeRoutePath(url.pathname)
   const router = ensureRouterState(container)
   const matched = matchRouteManifest(router.manifest, pathname)
-  const specialPreflightTarget = !matched
-    ? findSpecialManifestEntry(router.manifest, pathname, 'notFound')
-    : null
+  const routeTarget = resolveRoutableMatch(router.manifest, pathname)
 
   const currentRouteUrl = new URL(router.currentUrl.value, doc.location.href)
   const currentHref = `${currentRouteUrl.pathname}${currentRouteUrl.search}${currentRouteUrl.hash}`
@@ -6979,55 +5396,21 @@ const navigateContainer = async (
 
   const prefetchKey = routePrefetchKey(url)
   let pendingPrefetch = router.routePrefetches.get(prefetchKey)
-  if (!pendingPrefetch && (matched?.entry.page || specialPreflightTarget?.entry.notFound)) {
+  if (!pendingPrefetch && routeTarget) {
     await prefetchRoute(container, url.href)
     pendingPrefetch = router.routePrefetches.get(prefetchKey)
   }
   const prefetched = pendingPrefetch ? await pendingPrefetch : null
   if (prefetched && !prefetched.ok) {
-    if ('location' in prefetched) {
-      if (redirectDepth >= 8) {
-        fallbackDocumentNavigation(doc, new URL(prefetched.location, doc.location.href), mode)
-        return
-      }
-      const redirectUrl = new URL(prefetched.location, doc.location.href)
-      if (redirectUrl.origin !== doc.location.origin) {
-        fallbackDocumentNavigation(doc, redirectUrl, mode)
-        return
-      }
-      await navigateContainer(container, redirectUrl.href, {
-        mode,
-        redirectDepth: redirectDepth + 1,
-      })
-      return
-    }
-    fallbackDocumentNavigation(doc, url, mode)
+    await handleFailedRouteRequest(container, doc, url, mode, redirectDepth, prefetched)
     return
   }
 
-  const shouldPreflight =
-    (matched?.entry.page && matched.entry.hasMiddleware) ||
-    (!!specialPreflightTarget?.entry.notFound && specialPreflightTarget.entry.hasMiddleware)
+  const shouldPreflight = !!routeTarget?.matched.entry.hasMiddleware
   if (shouldPreflight && !prefetched) {
     const preflight = await requestRoutePreflight(url.href)
     if (!preflight.ok) {
-      if ('location' in preflight) {
-        if (redirectDepth >= 8) {
-          fallbackDocumentNavigation(doc, new URL(preflight.location, doc.location.href), mode)
-          return
-        }
-        const redirectUrl = new URL(preflight.location, doc.location.href)
-        if (redirectUrl.origin !== doc.location.origin) {
-          fallbackDocumentNavigation(doc, redirectUrl, mode)
-          return
-        }
-        await navigateContainer(container, redirectUrl.href, {
-          mode,
-          redirectDepth: redirectDepth + 1,
-        })
-        return
-      }
-      fallbackDocumentNavigation(doc, url, mode)
+      await handleFailedRouteRequest(container, doc, url, mode, redirectDepth, preflight)
       return
     }
   }
@@ -7037,12 +5420,9 @@ const navigateContainer = async (
       ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound')
       : null
     if (notFoundRoute) {
-      resetRouteLoaderState(container)
-      renderRouteIntoRoot(container, notFoundRoute.render)
-      router.currentRoute = notFoundRoute
-      applyRouteMetadata(doc, notFoundRoute, url, router.defaultTitle)
-      commitBrowserNavigation(doc, url, mode)
-      writeRouterLocation(router, url)
+      renderAndCommitRouteNavigation(container, notFoundRoute, url, mode, {
+        resetLoaders: true,
+      })
       return
     }
     fallbackDocumentNavigation(doc, url, mode)
@@ -7076,8 +5456,7 @@ const navigateContainer = async (
       if (!settled) {
         const loadingRoute = await loadResolvedRoute(container, matched, 'loading')
         if (loadingRoute) {
-          renderRouteIntoRoot(container, loadingRoute.render)
-          router.currentRoute = loadingRoute
+          renderCurrentRoute(container, loadingRoute)
         }
       }
     }
@@ -7105,22 +5484,19 @@ const navigateContainer = async (
         : false
 
     if (!reusedLayout) {
-      renderRouteIntoRoot(container, nextRoute.render)
+      renderCurrentRoute(container, nextRoute)
     }
 
-    applyRouteMetadata(doc, nextRoute, url, router.defaultTitle)
-    commitBrowserNavigation(doc, url, mode)
+    commitRouteNavigation(container, nextRoute, url, mode, {
+      writeLocation: false,
+    })
   } catch (error) {
     if (sequence === router.sequence) {
       const fallbackRoute = isRouteNotFoundError(error)
         ? await loadResolvedRouteFromSpecial(container, pathname, 'notFound')
         : await loadResolvedRoute(container, matched, 'error')
       if (fallbackRoute) {
-        renderRouteIntoRoot(container, fallbackRoute.render)
-        router.currentRoute = fallbackRoute
-        applyRouteMetadata(doc, fallbackRoute, url, router.defaultTitle)
-        commitBrowserNavigation(doc, url, mode)
-        writeRouterLocation(router, url)
+        renderAndCommitRouteNavigation(container, fallbackRoute, url, mode)
         return
       }
       fallbackDocumentNavigation(doc, url, mode)
@@ -7161,15 +5537,6 @@ const routeReferencesModuleUrl = (route: LoadedRoute, fileUrl: string) =>
   route.page.url === fileUrl ||
   route.layouts.some((layout) => layout.url === fileUrl) ||
   routeEntryReferencesModuleUrl(route.entry, fileUrl)
-
-const resolveCurrentRouteManifestEntry = (router: RouterState) => {
-  const currentPath = normalizeRoutePath(router.currentPath.value)
-  const matched = matchRouteManifest(router.manifest, currentPath)
-  if (matched?.entry.page) {
-    return matched.entry
-  }
-  return findSpecialManifestEntry(router.manifest, currentPath, 'notFound')?.entry ?? null
-}
 
 export const invalidateRouteModulesForHmr = (
   container: RuntimeContainer,
@@ -7238,9 +5605,8 @@ export const refreshRouteContainerForHmr = async (
       return true
     }
 
-    renderRouteIntoRoot(container, nextRoute.render)
-    router.currentRoute = nextRoute
-    applyRouteMetadata(doc, nextRoute, new URL(doc.location.href), router.defaultTitle)
+    renderCurrentRoute(container, nextRoute)
+    applyCurrentRouteMetadata(container, nextRoute, new URL(doc.location.href))
     return true
   } catch {
     await refreshRouteContainer(container)
@@ -7358,24 +5724,28 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       throw new Error(`Missing external root host for component ${component.id}.`)
     }
     host.setAttribute('data-e-external-snapshot', component.id)
-    ;(globalThis as typeof globalThis & {
-      __eclipsaExternalSlotSnapshotMap?: Map<
-        HTMLElement,
-        {
-          dom: Map<string, Node[]> | null | undefined
-          html: Map<string, string> | null | undefined
-        }
-      >
-    }).__eclipsaExternalSlotSnapshotMap ??= new Map()
-    ;(globalThis as typeof globalThis & {
-      __eclipsaExternalSlotSnapshotMap?: Map<
-        HTMLElement,
-        {
-          dom: Map<string, Node[]> | null | undefined
-          html: Map<string, string> | null | undefined
-        }
-      >
-    }).__eclipsaExternalSlotSnapshotMap!.set(host, {
+    ;(
+      globalThis as typeof globalThis & {
+        __eclipsaExternalSlotSnapshotMap?: Map<
+          HTMLElement,
+          {
+            dom: Map<string, Node[]> | null | undefined
+            html: Map<string, string> | null | undefined
+          }
+        >
+      }
+    ).__eclipsaExternalSlotSnapshotMap ??= new Map()
+    ;(
+      globalThis as typeof globalThis & {
+        __eclipsaExternalSlotSnapshotMap?: Map<
+          HTMLElement,
+          {
+            dom: Map<string, Node[]> | null | undefined
+            html: Map<string, string> | null | undefined
+          }
+        >
+      }
+    ).__eclipsaExternalSlotSnapshotMap!.set(host, {
       dom: component.externalSlotDom,
       html: component.externalSlotHtml,
     })
@@ -8225,17 +6595,22 @@ export const createResumeContainer = (
     component.externalSlotHtml = captureExternalSlotHtml(component)
     component.externalSlotDom = captureExternalSlotDom(component)
   }
-  ;(globalThis as typeof globalThis & {
-    __eclipsaExternalSlotSnapshotStore?: Record<
-      string,
-      {
-        dom: Map<string, Node[]> | null | undefined
-        html: Map<string, string> | null | undefined
-      }
-    >
-  }).__eclipsaExternalSlotSnapshotStore = Object.fromEntries(
+  ;(
+    globalThis as typeof globalThis & {
+      __eclipsaExternalSlotSnapshotStore?: Record<
+        string,
+        {
+          dom: Map<string, Node[]> | null | undefined
+          html: Map<string, string> | null | undefined
+        }
+      >
+    }
+  ).__eclipsaExternalSlotSnapshotStore = Object.fromEntries(
     [...container.components.values()]
-      .filter((component) => !!component.external && (component.externalSlotDom || component.externalSlotHtml))
+      .filter(
+        (component) =>
+          !!component.external && (component.externalSlotDom || component.externalSlotHtml),
+      )
       .map((component) => [
         component.id,
         {
@@ -8356,12 +6731,7 @@ export const primeRouteModules = async (container: RuntimeContainer) => {
   if (currentRoute) {
     router.currentRoute = currentRoute
     if (container.doc) {
-      applyRouteMetadata(
-        container.doc,
-        currentRoute,
-        new URL(container.doc.location.href),
-        router.defaultTitle,
-      )
+      applyCurrentRouteMetadata(container, currentRoute, new URL(container.doc.location.href))
     }
   }
 }

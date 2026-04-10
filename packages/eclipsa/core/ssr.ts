@@ -46,6 +46,11 @@ const createStreamingResumePayload = (
   renderedComponentIds: Set<string>,
 ): ResumePayload => toResumePayloadSubset(container, ['$root', ...renderedComponentIds])
 
+const getPendingSuspensePromises = (container: RuntimeContainer) =>
+  collectPendingSuspenseBoundaryIds(container)
+    .map((boundaryId) => container.components.get(boundaryId)?.suspensePromise ?? null)
+    .filter((promise): promise is Promise<unknown> => !!promise)
+
 export const renderSSR = (
   render: () => JSX.Element | JSX.Element[],
   options?: {
@@ -102,8 +107,9 @@ export const renderSSRAsync = async (
 
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
-      if (container.pendingSuspensePromises.size > 0) {
-        await Promise.allSettled(container.pendingSuspensePromises)
+      const pendingSuspensePromises = getPendingSuspensePromises(container)
+      if (container.pendingSuspensePromises.size > 0 || pendingSuspensePromises.length > 0) {
+        await Promise.allSettled([...container.pendingSuspensePromises, ...pendingSuspensePromises])
         continue
       }
       asyncSignalSnapshotCache.clear()
