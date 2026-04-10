@@ -2,6 +2,12 @@ import { jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
 import type { Component } from '../component.ts'
 import { getComponentMeta } from '../internal.ts'
 import {
+  INSERT_MARKER_PREFIX,
+  createInsertMarker,
+  parseComponentBoundaryMarker,
+  parseInsertMarker,
+} from '../runtime/markers.ts'
+import {
   assignRuntimeRef,
   bindRuntimeEvent,
   captureClientInsertOwner,
@@ -27,7 +33,6 @@ import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
 
-const INSERT_MARKER_PREFIX = 'ec:i:'
 const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
 const ATTR_UNSET = Symbol('eclipsa.attr-unset')
 
@@ -43,7 +48,7 @@ const ensureInsertMarkerKey = (
     return marker.data
   }
 
-  const key = `${INSERT_MARKER_PREFIX}${runtimeContainer.nextElementId++}`
+  const key = createInsertMarker(runtimeContainer.nextElementId++)
   marker.data = key
   return key
 }
@@ -115,31 +120,12 @@ const collectNodesBeforeMarker = (marker: Node | null | undefined, count: number
   return nodes.length === count ? nodes : []
 }
 
-const COMPONENT_BOUNDARY_START_REGEX = /^ec:c:(.+):start$/
-const COMPONENT_BOUNDARY_END_REGEX = /^ec:c:(.+):end$/
-
 const getBoundaryMarker = (node: Node | null | undefined) => {
   if (!(node instanceof Comment)) {
     return null
   }
 
-  const start = node.data.match(COMPONENT_BOUNDARY_START_REGEX)
-  if (start?.[1]) {
-    return {
-      id: start[1],
-      kind: 'start' as const,
-    }
-  }
-
-  const end = node.data.match(COMPONENT_BOUNDARY_END_REGEX)
-  if (end?.[1]) {
-    return {
-      id: end[1],
-      kind: 'end' as const,
-    }
-  }
-
-  return null
+  return parseComponentBoundaryMarker(node.data)
 }
 
 const canReconnectOwnerRange = (currentNodes: Node[], newNodes: Node[]) => {
@@ -267,7 +253,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
     throw new Error('Client insertions require an active runtime container.')
   }
   const ownerSiteKey =
-    marker instanceof Comment && !marker.data.startsWith(INSERT_MARKER_PREFIX) ? marker.data : null
+    marker instanceof Comment && !parseInsertMarker(marker.data) ? marker.data : null
   const owner =
     captureClientInsertOwner(runtimeContainer, ownerSiteKey) ??
     createDetachedClientInsertOwner(runtimeContainer)

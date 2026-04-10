@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import type { JSX } from '../jsx/types.ts'
 import { renderToString } from '../jsx/mod.ts'
+import { createComponentBoundaryHtmlComment } from './runtime/markers.ts'
 import {
   beginAsyncSSRContainer,
   beginSSRContainer,
@@ -145,8 +146,8 @@ export const renderSSRAsync = async (
 }
 
 const extractBoundaryHtml = (html: string, boundaryId: string) => {
-  const startToken = `<!--ec:c:${boundaryId}:start-->`
-  const endToken = `<!--ec:c:${boundaryId}:end-->`
+  const startToken = createComponentBoundaryHtmlComment(boundaryId, 'start')
+  const endToken = createComponentBoundaryHtmlComment(boundaryId, 'end')
   const startIndex = html.indexOf(startToken)
   if (startIndex < 0) {
     return null

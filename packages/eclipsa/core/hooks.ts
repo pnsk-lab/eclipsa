@@ -9,6 +9,7 @@ import {
   type SerializedValue,
   type SerializeValueOptions,
 } from './serialize.ts'
+import { IS_BROWSER, isPlainObject } from './shared.ts'
 
 export type { DeserializeValueOptions, SerializeValueOptions, SerializedReference, SerializedValue }
 
@@ -119,12 +120,10 @@ let requestContextStorage: AsyncLocalStorage<RequestContextStore> | null = null
 
 let clientHooks: AppHooksModule = {}
 
-const isBrowserRuntime = () => typeof window !== 'undefined' && typeof document !== 'undefined'
-
 type AsyncLocalStorageConstructor = new <T>() => AsyncLocalStorage<T>
 
 const getAsyncLocalStorageConstructor = (): AsyncLocalStorageConstructor | null => {
-  if (isBrowserRuntime() || typeof process === 'undefined') {
+  if (IS_BROWSER || typeof process === 'undefined') {
     return null
   }
   const asyncHooks = (
@@ -146,14 +145,6 @@ const getRequestContextStorage = () => {
   }
   requestContextStorage ??= new AsyncLocalStorageCtor<RequestContextStore>()
   return requestContextStorage
-}
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
 }
 
 const normalizePublicError = (value: unknown): PublicError => {

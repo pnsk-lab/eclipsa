@@ -18,6 +18,7 @@ This file applies to the whole repository.
 - Do not fear large-scale changes. If the change is a good one, it is welcomed. See it through to the end, regardless of the cost. Make changes that prioritize long-term costs over short-term ones.
 - These rules can be broken if a user permits it.
 - 極力 docs/e2e ではなくランタイムのバグとして直す。ドキュメント化されていないのにあきらかに React/Solid と同じノリで書いているのに動かないならフレームワークの問題、明らかに一般的なフレームワークで動かないまたは明文化されている禁じられた書き方をしているのなら docs/e2e の問題
+- Before finishing a task, run `vp lint`, `vp fmt`, and `vp run typecheck` and run test to keep the codebase clean.
 
 ## Common Commands
 

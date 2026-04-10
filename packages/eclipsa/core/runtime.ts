@@ -149,6 +149,20 @@ import {
   resolveDangerouslySetInnerHTML,
   toEventName,
 } from './runtime/ssr.ts'
+import {
+  createComponentBoundaryHtmlComment,
+  createComponentBoundaryPair,
+  createKeyedRangeMarker,
+  createProjectionSlotRangeKey,
+  createProjectionSlotMarker,
+  didComponentBoundaryChange,
+  didComponentBoundaryPropsChange,
+  didComponentBoundarySymbolChange,
+  parseComponentBoundaryMarker,
+  parseInsertMarker,
+  parseKeyedRangeMarker,
+  parseProjectionSlotMarker,
+} from './runtime/markers.ts'
 import { createRuntimeSerialization } from './runtime/serialization.ts'
 import type {
   ClientInsertOwner,
@@ -191,6 +205,7 @@ import type {
   WatchDependency,
   WatchState,
 } from './runtime/types.ts'
+import { isPlainObject } from './shared.ts'
 
 export {
   RESUME_STATE_ELEMENT_ID,
@@ -212,9 +227,6 @@ export type {
   RuntimeContainer,
   RuntimeContextToken,
 } from './runtime/types.ts'
-
-const COMPONENT_BOUNDARY_PROPS_CHANGED = Symbol.for('eclipsa.component-boundary-props-changed')
-const COMPONENT_BOUNDARY_SYMBOL_CHANGED = Symbol.for('eclipsa.component-boundary-symbol-changed')
 
 const isMissingGeneratedScopeReferenceError = (error: unknown): error is ReferenceError =>
   error instanceof ReferenceError && /\b__scope\b/.test(error.message)
@@ -576,14 +588,6 @@ const createLocalWatchRunner =
     runWatchCallback(effect, cleanupSlot, fn, dependencies)
   }
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
-}
-
 const isProjectionSlot = (value: unknown): value is ProjectionSlotValue =>
   isPlainObject(value) && value.__eclipsa_type === PROJECTION_SLOT_TYPE
 
@@ -599,77 +603,6 @@ const createProjectionSlot = (
   occurrence,
   source,
 })
-
-const encodeProjectionSlotName = (value: string) => encodeURIComponent(value)
-const decodeProjectionSlotName = (value: string) => decodeURIComponent(value)
-const encodeKeyedRangeToken = (value: string | number | symbol) => encodeURIComponent(String(value))
-const decodeKeyedRangeToken = (value: string) => {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
-
-const createProjectionSlotMarker = (
-  componentId: string,
-  name: string,
-  occurrence: number,
-  kind: 'start' | 'end',
-) => `ec:s:${componentId}:${encodeProjectionSlotName(name)}:${occurrence}:${kind}`
-const createKeyedRangeMarker = (value: string | number | symbol, kind: 'start' | 'end') =>
-  `ec:k:${encodeKeyedRangeToken(value)}:${kind}`
-
-const COMPONENT_BOUNDARY_MARKER_REGEX = /^ec:c:(.+):(start|end)$/
-const INSERT_MARKER_REGEX = /^ec:i:(.+)$/
-const KEYED_RANGE_MARKER_REGEX = /^ec:k:([^:]+):(start|end)$/
-const PROJECTION_SLOT_MARKER_REGEX = /^ec:s:([^:]+):([^:]+):(\d+):(start|end)$/
-
-const parseComponentBoundaryMarker = (value: string) => {
-  const matched = value.match(COMPONENT_BOUNDARY_MARKER_REGEX)
-  if (!matched) {
-    return null
-  }
-  return {
-    id: matched[1],
-    kind: matched[2] as 'start' | 'end',
-  }
-}
-
-const parseProjectionSlotMarker = (value: string) => {
-  const matched = value.match(PROJECTION_SLOT_MARKER_REGEX)
-  if (!matched) {
-    return null
-  }
-  return {
-    componentId: matched[1],
-    kind: matched[4] as 'start' | 'end',
-    key: `${matched[1]}:${matched[2]}:${matched[3]}`,
-    name: decodeProjectionSlotName(matched[2]),
-    occurrence: Number(matched[3]),
-  }
-}
-
-const parseKeyedRangeMarker = (value: string) => {
-  const matched = value.match(KEYED_RANGE_MARKER_REGEX)
-  if (!matched) {
-    return null
-  }
-  return {
-    key: decodeKeyedRangeToken(matched[1]!),
-    kind: matched[2] as 'start' | 'end',
-  }
-}
-
-const parseInsertMarker = (value: string) => {
-  const matched = value.match(INSERT_MARKER_REGEX)
-  if (!matched) {
-    return null
-  }
-  return {
-    key: matched[1],
-  }
-}
 
 let runtimeSerialization: ReturnType<typeof createRuntimeSerialization> | null = null
 
@@ -1974,9 +1907,9 @@ const collectComponentBoundaryIds = (roots: Node[]) => {
   const ids = new Set<string>()
   const visit = (node: Node) => {
     if (typeof Comment !== 'undefined' ? node instanceof Comment : (node as Node).nodeType === 8) {
-      const matched = (node as Comment).data.match(/^ec:c:(.+):(start|end)$/)
-      if (matched) {
-        ids.add(matched[1]!)
+      const marker = parseComponentBoundaryMarker((node as Comment).data)
+      if (marker) {
+        ids.add(marker.id)
       }
     }
     for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
@@ -2072,21 +2005,7 @@ const preserveComponentBoundaryContentsInRoots = (currentRoots: Node[], nextRoot
   const preservedComponentIds = new Set<string>()
 
   for (const [id, nextRange] of nextRanges) {
-    const boundaryChanged = Boolean(
-      (
-        nextRange.start as Comment & {
-          [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-          [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-        }
-      )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] ||
-      (
-        nextRange.start as Comment & {
-          [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-          [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-        }
-      )[COMPONENT_BOUNDARY_PROPS_CHANGED],
-    )
-    if (boundaryChanged) {
+    if (didComponentBoundaryChange(nextRange.start)) {
       continue
     }
     const currentRange = currentRanges.get(id)
@@ -2722,24 +2641,10 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
         return false
       }
       if (currentUnit.rangeKind === 'component-boundary') {
-        const symbolChanged = Boolean(
-          (
-            nextUnit.start as Comment & {
-              [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-            }
-          )[COMPONENT_BOUNDARY_SYMBOL_CHANGED],
-        )
-        if (symbolChanged) {
+        if (didComponentBoundarySymbolChange(nextUnit.start)) {
           return false
         }
-        const propsChanged = Boolean(
-          (
-            nextUnit.start as Comment & {
-              [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-            }
-          )[COMPONENT_BOUNDARY_PROPS_CHANGED],
-        )
-        if (propsChanged) {
+        if (didComponentBoundaryPropsChange(nextUnit.start)) {
           const nextRangeNodes = nextUnit.bodyNodes
           if (
             !tryPatchBoundaryContentsInPlace(currentUnit.start, currentUnit.end, nextRangeNodes)
@@ -3401,7 +3306,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
         component.projectionSlots,
       )
       const host = createExternalRootHtml(componentId, externalMeta.kind, externalBody)
-      const rendered = `<!--ec:c:${componentId}:start-->${host}<!--ec:c:${componentId}:end-->`
+      const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${host}${createComponentBoundaryHtmlComment(componentId, 'end')}`
       return resolved.key === null || resolved.key === undefined
         ? rendered
         : wrapStringWithKeyedRange(rendered, resolved.key)
@@ -3414,7 +3319,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
-    const rendered = `<!--ec:c:${componentId}:start-->${renderFrameScopedStylesToString(frame)}${body}<!--ec:c:${componentId}:end-->`
+    const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${renderFrameScopedStylesToString(frame)}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
     return resolved.key === null || resolved.key === undefined
       ? rendered
       : wrapStringWithKeyedRange(rendered, resolved.key)
@@ -3590,20 +3495,7 @@ const renderComponentToNodes = (
     )
   const boundaryContentsChanged = propsChanged || (!wasActive && !!previousStart && !!previousEnd)
   if (mode === 'client' && externalMeta && previousStart && previousEnd && !symbolChanged) {
-    const start = container.doc.createComment(`ec:c:${componentId}:start`)
-    const end = container.doc.createComment(`ec:c:${componentId}:end`)
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_PROPS_CHANGED] = false
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = false
+    const { end, start } = createComponentBoundaryPair(container.doc, componentId)
 
     const host = getExternalRoot(component)
     if (wasActive && host && propsChanged) {
@@ -3623,20 +3515,7 @@ const renderComponentToNodes = (
     return [start, end]
   }
   if (mode === 'client' && wasActive && previousStart && previousEnd && !boundaryContentsChanged) {
-    const start = container.doc.createComment(`ec:c:${componentId}:start`)
-    const end = container.doc.createComment(`ec:c:${componentId}:end`)
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_PROPS_CHANGED] = false
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = false
+    const { end, start } = createComponentBoundaryPair(container.doc, componentId)
 
     if (parentFrame) {
       for (const descendantId of expandComponentIdsToDescendants(container, [componentId])) {
@@ -3647,20 +3526,10 @@ const renderComponentToNodes = (
     return [start, end]
   }
   if (externalMeta) {
-    const start = container.doc.createComment(`ec:c:${componentId}:start`)
-    const end = container.doc.createComment(`ec:c:${componentId}:end`)
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_PROPS_CHANGED] = true
-    ;(
-      start as Comment & {
-        [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-        [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-      }
-    )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = symbolChanged
+    const { end, start } = createComponentBoundaryPair(container.doc, componentId, {
+      propsChanged: true,
+      symbolChanged,
+    })
     if (!previousStart || !previousEnd) {
       component.start = start
       component.end = end
@@ -3687,20 +3556,10 @@ const renderComponentToNodes = (
   })
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
-  const start = container.doc.createComment(`ec:c:${componentId}:start`)
-  const end = container.doc.createComment(`ec:c:${componentId}:end`)
-  ;(
-    start as Comment & {
-      [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-      [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-    }
-  )[COMPONENT_BOUNDARY_PROPS_CHANGED] = boundaryContentsChanged
-  ;(
-    start as Comment & {
-      [COMPONENT_BOUNDARY_PROPS_CHANGED]?: boolean
-      [COMPONENT_BOUNDARY_SYMBOL_CHANGED]?: boolean
-    }
-  )[COMPONENT_BOUNDARY_SYMBOL_CHANGED] = symbolChanged
+  const { end, start } = createComponentBoundaryPair(container.doc, componentId, {
+    propsChanged: boundaryContentsChanged,
+    symbolChanged,
+  })
   if (!previousStart || !previousEnd) {
     component.start = start
     component.end = end
@@ -4016,18 +3875,17 @@ const scanComponentBoundaries = (
     if (!isCommentNode) {
       continue
     }
-    const matched = (node as Comment).data.match(/^ec:c:(.+):(start|end)$/)
-    if (!matched) {
+    const marker = parseComponentBoundaryMarker((node as Comment).data)
+    if (!marker) {
       continue
     }
-    const [, id, edge] = matched
-    const boundary = boundaries.get(id) ?? {}
-    if (edge === 'start') {
+    const boundary = boundaries.get(marker.id) ?? {}
+    if (marker.kind === 'start') {
       boundary.start = node as Comment
     } else {
       boundary.end = node as Comment
     }
-    boundaries.set(id, boundary)
+    boundaries.set(marker.id, boundary)
   }
 
   return boundaries
@@ -4414,7 +4272,7 @@ const renderSuspenseComponentToString = (props: SuspenseProps) => {
   )
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  return `<!--ec:c:${componentId}:start-->${body}<!--ec:c:${componentId}:end-->`
+  return `${createComponentBoundaryHtmlComment(componentId, 'start')}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
 }
 
 const renderSuspenseComponentToNodes = (
@@ -4461,8 +4319,7 @@ const renderSuspenseComponentToNodes = (
   if (!container.doc) {
     return bodyNodes
   }
-  const start = container.doc.createComment(`ec:c:${componentId}:start`)
-  const end = container.doc.createComment(`ec:c:${componentId}:end`)
+  const { end, start } = createComponentBoundaryPair(container.doc, componentId)
   if (!component.start || !component.end) {
     component.start = start
     component.end = end
@@ -4930,7 +4787,7 @@ const updateSharedLayoutBoundary = async (
   }
 
   const slotRanges = collectProjectionSlotRanges(getBoundaryChildren(boundary.start, boundary.end))
-  const slotRange = slotRanges.get(`${boundaryId}:${encodeProjectionSlotName('children')}:0`)
+  const slotRange = slotRanges.get(createProjectionSlotRangeKey(boundaryId, 'children', 0))
   if (!slotRange) {
     return rerenderSharedLayoutBoundary()
   }

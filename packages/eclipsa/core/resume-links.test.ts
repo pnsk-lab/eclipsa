@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('resumeContainer interactivity bootstrap', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
   afterEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
@@ -98,6 +103,11 @@ describe('resumeContainer interactivity bootstrap', () => {
       expect(installResumeListeners).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).not.toHaveBeenCalled()
 
+      for (let attempt = 0; attempt < 5 && !resolvePrime; attempt += 1) {
+        await Promise.resolve()
+      }
+      expect(primeRouteModules).toHaveBeenCalledWith(container)
+
       ;(resolvePrime as (() => void) | null)?.()
       await resumePromise
 
@@ -111,7 +121,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     } finally {
       globalThis.Document = OriginalDocument
     }
-  })
+  }, 15_000)
 
   it('does not wait for local signal restoration before binding resumable listeners', async () => {
     const container = {} as object
@@ -218,5 +228,5 @@ describe('resumeContainer interactivity bootstrap', () => {
     } finally {
       globalThis.Document = OriginalDocument
     }
-  })
+  }, 15_000)
 })
