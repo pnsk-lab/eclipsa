@@ -158,6 +158,8 @@ export interface RenderFrame {
   container: RuntimeContainer
   effectCleanupSlot: CleanupSlot
   insertCursor: number
+  keyedRangeCursor: number
+  keyedRangeScopeStack: string[]
   mountCallbacks: Array<() => void>
   projectionState: {
     counters: Map<string, number>
@@ -175,6 +177,7 @@ export interface RenderFrame {
 export interface ClientInsertOwner {
   childIndex: number
   componentId: string
+  keyedRangeCursor: number
   projectionCounters: Array<[string, number]>
 }
 

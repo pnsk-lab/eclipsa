@@ -2,6 +2,7 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   test: {
+    fileParallelism: false,
     include: [
       'atom/**/*.test.ts',
       'core/**/*.test.ts',

@@ -14,6 +14,7 @@ export interface ProjectionSlotMarker {
 }
 
 export interface KeyedRangeMarker {
+  scope: string
   key: string
   kind: MarkerKind
 }
@@ -36,7 +37,7 @@ type ComponentBoundaryComment = Comment & {
 }
 
 const COMPONENT_BOUNDARY_MARKER_REGEX = /^ec:c:(.+):(start|end)$/
-const KEYED_RANGE_MARKER_REGEX = /^ec:k:([^:]+):(start|end)$/
+const KEYED_RANGE_MARKER_REGEX = /^ec:k:([^:]+):([^:]+):(start|end)$/
 const PROJECTION_SLOT_MARKER_REGEX = /^ec:s:([^:]+):([^:]+):(\d+):(start|end)$/
 const INSERT_MARKER_REGEX = /^ec:i:(.+)$/
 
@@ -109,8 +110,11 @@ export const createProjectionSlotMarker = (
   kind: MarkerKind,
 ) => `ec:s:${createProjectionSlotRangeKey(componentId, name, occurrence)}:${kind}`
 
-export const createKeyedRangeMarker = (value: string | number | symbol, kind: MarkerKind) =>
-  `ec:k:${encodeKeyedRangeToken(value)}:${kind}`
+export const createKeyedRangeMarker = (
+  scope: string,
+  value: string | number | symbol,
+  kind: MarkerKind,
+) => `ec:k:${encodeKeyedRangeToken(scope)}:${encodeKeyedRangeToken(value)}:${kind}`
 
 export const createInsertMarker = (key: string | number) => `${INSERT_MARKER_PREFIX}${key}`
 
@@ -149,8 +153,9 @@ export const parseKeyedRangeMarker = (value: string): KeyedRangeMarker | null =>
     return null
   }
   return {
-    key: decodeKeyedRangeToken(matched[1]),
-    kind: matched[2] as MarkerKind,
+    scope: decodeKeyedRangeToken(matched[1]),
+    key: decodeKeyedRangeToken(matched[2]),
+    kind: matched[3] as MarkerKind,
   }
 }
 

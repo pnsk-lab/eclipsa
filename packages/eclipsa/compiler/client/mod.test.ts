@@ -283,6 +283,19 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('=> <li')
   })
 
+  it('passes explicit map keys through lowered For components', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item) => <li key={item.id}>{item.name}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
+  })
+
   it('does not lower non-JSX map expressions to For components', async () => {
     const resultCode = await compileClientModule(
       `<div>{items.map((item) => item.toString())}</div>`,

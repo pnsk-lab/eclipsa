@@ -39,7 +39,8 @@ describe('runtime marker helpers', () => {
       name: 'children/main',
       occurrence: 2,
     })
-    expect(parseKeyedRangeMarker(createKeyedRangeMarker('a/b', 'start'))).toEqual({
+    expect(parseKeyedRangeMarker(createKeyedRangeMarker('docs:sidebar', 'a/b', 'start'))).toEqual({
+      scope: 'docs:sidebar',
       key: 'a/b',
       kind: 'start',
     })

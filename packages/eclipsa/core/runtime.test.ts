@@ -8144,6 +8144,174 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('does not reuse keyed ranges across sibling parents with overlapping keys', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const page = createDetachedRuntimeSignal(container, 's0', {
+        headings: [{ key: 'Why eclipsa?', label: 'Toc Why eclipsa?' }],
+        sections: [
+          { key: 'Getting Started', label: 'Nav Getting Started' },
+          { key: 'Materials', label: 'Nav Materials' },
+          { key: 'Integrations', label: 'Nav Integrations' },
+        ],
+      })
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'div',
+              {
+                children: [
+                  jsxDEV(
+                    'nav',
+                    {
+                      children: page.value.sections.map((section) =>
+                        jsxDEV('a', { children: section.label }, section.key, false, {}),
+                      ),
+                    },
+                    null,
+                    false,
+                    {},
+                  ),
+                  jsxDEV(
+                    'aside',
+                    {
+                      children: page.value.headings.map((heading) =>
+                        jsxDEV('a', { children: heading.label }, heading.key, false, {}),
+                      ),
+                    },
+                    null,
+                    false,
+                    {},
+                  ),
+                ],
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getRoot = () =>
+        host.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'div',
+        )!
+      const getRegionLinks = (tagName: 'aside' | 'nav') => {
+        const region = getRoot().childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === tagName,
+        )
+        return (
+          region?.childNodes.filter(
+            (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'a',
+          ) ?? []
+        )
+      }
+
+      expect(getRegionLinks('nav').map((link) => link.textContent)).toEqual([
+        'Nav Getting Started',
+        'Nav Materials',
+        'Nav Integrations',
+      ])
+      expect(getRegionLinks('aside').map((link) => link.textContent)).toEqual(['Toc Why eclipsa?'])
+
+      const initialNavMaterialsLink = getRegionLinks('nav')[1]!
+
+      page.value = {
+        headings: [
+          { key: 'Materials', label: 'Toc Materials' },
+          { key: 'Integrations', label: 'Toc Integrations' },
+        ],
+        sections: [...page.value.sections],
+      }
+      await flushAsync()
+
+      const navLinks = getRegionLinks('nav')
+      const asideLinks = getRegionLinks('aside')
+      expect(navLinks.map((link) => link.textContent)).toEqual([
+        'Nav Getting Started',
+        'Nav Materials',
+        'Nav Integrations',
+      ])
+      expect(asideLinks.map((link) => link.textContent)).toEqual([
+        'Toc Materials',
+        'Toc Integrations',
+      ])
+      expect(asideLinks[0]).not.toBe(initialNavMaterialsLink)
+    })
+  })
+
+  it('keeps keyed child component contents when same-key items survive an update', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const items = createDetachedRuntimeSignal(container, 's0', [
+        { id: 'first-example', label: 'First example' },
+        { id: 'returned-handle', label: 'Returned handle' },
+        { id: 'form-submission', label: 'Form submission' },
+      ])
+      const TocLinkBody = (props: { label: string }) =>
+        jsxDEV('a', { children: props.label }, null, false, {})
+      const TocLink = __eclipsaComponent(TocLinkBody, 'keyed-toc-link', () => [])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'aside',
+              {
+                children: items.value.map((item) =>
+                  jsxDEV(TocLink, { label: item.label }, item.id, false, {}),
+                ),
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getLinks = () =>
+        host.childNodes.flatMap((node) =>
+          node instanceof FakeElement && node.tagName === 'aside'
+            ? node.childNodes.filter(
+                (child): child is FakeElement =>
+                  child instanceof FakeElement && child.tagName === 'a',
+              )
+            : [],
+        )
+
+      expect(getLinks().map((link) => link.textContent)).toEqual([
+        'First example',
+        'Returned handle',
+        'Form submission',
+      ])
+
+      items.value = [
+        { id: 'first-example', label: 'First example' },
+        { id: 'returned-handle', label: 'Returned handle' },
+        { id: 'manual-reload', label: 'Manual reload' },
+      ]
+      await flushAsync()
+
+      expect(getLinks().map((link) => link.textContent)).toEqual([
+        'First example',
+        'Returned handle',
+        'Manual reload',
+      ])
+    })
+  })
+
   it('renders keyed row elements inside For after live updates', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()

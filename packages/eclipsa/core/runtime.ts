@@ -1311,6 +1311,8 @@ const createFrame = (
   container,
   effectCleanupSlot: options?.effectCleanupSlot ?? component.renderEffectCleanupSlot,
   insertCursor: 0,
+  keyedRangeCursor: 0,
+  keyedRangeScopeStack: [],
   mountCallbacks: [],
   mode,
   projectionState: {
@@ -1955,6 +1957,8 @@ const collectComponentBoundaryRanges = (roots: Node[]) => {
   return ranges
 }
 
+const createKeyedRangeIdentity = (scope: string, key: string) => JSON.stringify([scope, key])
+
 const collectKeyedRangeRanges = (roots: Node[]) => {
   const starts = new Map<string, Comment>()
   const ranges = new Map<string, { end: Comment; start: Comment }>()
@@ -1964,12 +1968,13 @@ const collectKeyedRangeRanges = (roots: Node[]) => {
       const commentNode = node as Comment
       const marker = parseKeyedRangeMarker(commentNode.data)
       if (marker) {
+        const identity = createKeyedRangeIdentity(marker.scope, marker.key)
         if (marker.kind === 'start') {
-          starts.set(marker.key, commentNode)
+          starts.set(identity, commentNode)
         } else {
-          const startNode = starts.get(marker.key)
+          const startNode = starts.get(identity)
           if (startNode) {
-            ranges.set(marker.key, { end: commentNode, start: startNode })
+            ranges.set(identity, { end: commentNode, start: startNode })
           }
         }
       }
@@ -2320,16 +2325,22 @@ export const preserveReusableContentInRoots = (
     preserveProjectionSlots?: boolean
   },
 ) => {
-  const preservedComponentIds = preserveComponentBoundaryContentsInRoots(currentRoots, nextRoots)
+  const preservedComponentIds = new Set<string>()
+
+  // Preserve keyed ranges before nested component boundaries so a range move keeps
+  // the component subtree attached instead of moving boundary contents out first.
+  for (const componentId of preserveKeyedRangeContentsInRoots(currentRoots, nextRoots)) {
+    preservedComponentIds.add(componentId)
+  }
+
+  for (const componentId of preserveComponentBoundaryContentsInRoots(currentRoots, nextRoots)) {
+    preservedComponentIds.add(componentId)
+  }
 
   if (options?.preserveProjectionSlots ?? true) {
     for (const componentId of preserveProjectionSlotContentsInRoots(currentRoots, nextRoots)) {
       preservedComponentIds.add(componentId)
     }
-  }
-
-  for (const componentId of preserveKeyedRangeContentsInRoots(currentRoots, nextRoots)) {
-    preservedComponentIds.add(componentId)
   }
 
   for (const componentId of preserveInsertMarkerContentsInRoots(currentRoots, nextRoots)) {
@@ -2516,7 +2527,7 @@ const getPatchOpaqueRangeToken = (node: Node, kind: 'start' | 'end') => {
   if (keyedRange?.kind === kind) {
     return {
       rangeKind: 'keyed' as const,
-      token: `keyed:${keyedRange.key}`,
+      token: `keyed:${createKeyedRangeIdentity(keyedRange.scope, keyedRange.key)}`,
     }
   }
 
@@ -2818,7 +2829,7 @@ export const renderSSRMap = <T>(
 ): string => getSSRRenderer().renderSSRMap(value, renderItem)
 
 const renderStringArray = (values: readonly (JSX.Element | JSX.Element[])[]) =>
-  renderSSRValue(values)
+  withActiveKeyedRangeScope(allocateKeyedRangeScope(), () => renderSSRValue(values))
 
 const renderSSRTemplateNode = (template: JSX.SSRTemplate) => renderSSRValue(template)
 
@@ -2894,9 +2905,41 @@ const renderProjectionSlotToString = (slot: ProjectionSlotValue) => {
   return `<!--${start}-->${renderStringNode(slot.source as JSX.Element)}<!--${end}-->`
 }
 
-const wrapStringWithKeyedRange = (value: string, key: string | number | symbol) => {
-  const start = createKeyedRangeMarker(key, 'start')
-  const end = createKeyedRangeMarker(key, 'end')
+let unscopedKeyedRangeScopeCounter = 0
+
+const allocateKeyedRangeScope = () => {
+  const frame = getCurrentFrame()
+  if (!frame) {
+    return `global:${unscopedKeyedRangeScopeCounter++}`
+  }
+  return `${frame.component.id}:k${frame.keyedRangeCursor++}`
+}
+
+const withActiveKeyedRangeScope = <T>(scope: string, render: () => T): T => {
+  const frame = getCurrentFrame()
+  if (!frame) {
+    return render()
+  }
+  frame.keyedRangeScopeStack.push(scope)
+  try {
+    return render()
+  } finally {
+    frame.keyedRangeScopeStack.pop()
+  }
+}
+
+const resolveKeyedRangeScope = () => {
+  const frame = getCurrentFrame()
+  const activeScope =
+    frame && frame.keyedRangeScopeStack.length > 0
+      ? frame.keyedRangeScopeStack[frame.keyedRangeScopeStack.length - 1]
+      : null
+  return activeScope ?? allocateKeyedRangeScope()
+}
+
+const wrapStringWithKeyedRange = (value: string, scope: string, key: string | number | symbol) => {
+  const start = createKeyedRangeMarker(scope, key, 'start')
+  const end = createKeyedRangeMarker(scope, key, 'end')
   return `<!--${start}-->${value}<!--${end}-->`
 }
 
@@ -2934,11 +2977,13 @@ const renderForValueToString = <T>(value: ForValue<T>): string => {
     return renderStringNode((value.fallback ?? null) as JSX.Element)
   }
 
+  const scope = allocateKeyedRangeScope()
   let output = ''
   for (let index = 0; index < value.arr.length; index += 1) {
     const item = value.arr[index]!
     output += wrapStringWithKeyedRange(
       renderStringNode(stripForChildRootKey(value.fn(item, index))),
+      scope,
       resolveForItemKey(value, item, index),
     )
   }
@@ -3261,7 +3306,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const rendered = renderSuspenseComponentToString(resolved.props as SuspenseProps)
     return resolved.key === null || resolved.key === undefined
       ? rendered
-      : wrapStringWithKeyedRange(rendered, resolved.key)
+      : wrapStringWithKeyedRange(rendered, resolveKeyedRangeScope(), resolved.key)
   }
 
   if (typeof resolved.type === 'function') {
@@ -3277,7 +3322,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       const rendered = renderStringNode(componentFn(resolved.props))
       return resolved.key === null || resolved.key === undefined
         ? rendered
-        : wrapStringWithKeyedRange(rendered, resolved.key)
+        : wrapStringWithKeyedRange(rendered, resolveKeyedRangeScope(), resolved.key)
     }
 
     const evaluatedProps = evaluateProps(resolved.props)
@@ -3309,7 +3354,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${host}${createComponentBoundaryHtmlComment(componentId, 'end')}`
       return resolved.key === null || resolved.key === undefined
         ? rendered
-        : wrapStringWithKeyedRange(rendered, resolved.key)
+        : wrapStringWithKeyedRange(rendered, resolveKeyedRangeScope(), resolved.key)
     }
 
     const frame = createFrame(container, component, 'ssr')
@@ -3322,7 +3367,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${renderFrameScopedStylesToString(frame)}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
     return resolved.key === null || resolved.key === undefined
       ? rendered
-      : wrapStringWithKeyedRange(rendered, resolved.key)
+      : wrapStringWithKeyedRange(rendered, resolveKeyedRangeScope(), resolved.key)
   }
 
   const attrParts: string[] = []
@@ -3422,14 +3467,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
 
   let childrenText = innerHTML ?? ''
   if (!hasInnerHTML) {
-    const children = resolved.props.children
-    if (Array.isArray(children)) {
-      for (const child of children) {
-        childrenText += renderStringNode(child)
-      }
-    } else {
-      childrenText += renderStringNode(children as JSX.Element)
-    }
+    childrenText += renderStringNode(resolved.props.children as JSX.Element | JSX.Element[])
   }
 
   const rendered =
@@ -3440,7 +3478,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
         }>`
   return resolved.key === null || resolved.key === undefined
     ? rendered
-    : wrapStringWithKeyedRange(rendered, resolved.key)
+    : wrapStringWithKeyedRange(rendered, resolveKeyedRangeScope(), resolved.key)
 }
 
 const createElementNode = (doc: Document, tagName: string) => doc.createElement(tagName)
@@ -3616,11 +3654,12 @@ const renderComponentToNodes = (
 const wrapNodesWithKeyedRange = (
   doc: Document,
   nodes: Node[],
+  scope: string,
   key: string | number | symbol,
 ): Node[] => [
-  doc.createComment(createKeyedRangeMarker(key, 'start')),
+  doc.createComment(createKeyedRangeMarker(scope, key, 'start')),
   ...nodes,
-  doc.createComment(createKeyedRangeMarker(key, 'end')),
+  doc.createComment(createKeyedRangeMarker(scope, key, 'end')),
 ]
 
 const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContainer): Node[] => {
@@ -3628,6 +3667,7 @@ const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContaine
     return renderClientNodes((value.fallback ?? null) as JSX.Element, container)
   }
 
+  const scope = allocateKeyedRangeScope()
   const nodes: Node[] = []
   for (let index = 0; index < value.arr.length; index += 1) {
     const item = value.arr[index]!
@@ -3635,6 +3675,7 @@ const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContaine
       ...wrapNodesWithKeyedRange(
         container.doc!,
         renderClientNodes(stripForChildRootKey(value.fn(item, index)), container),
+        scope,
         resolveForItemKey(value, item, index),
       ),
     )
@@ -3739,7 +3780,9 @@ export const renderClientNodes = (
     throw new Error('Client rendering requires a document.')
   }
   if (Array.isArray(inputElementLike)) {
-    return inputElementLike.flatMap((entry) => renderClientNodes(entry, container))
+    return withActiveKeyedRangeScope(allocateKeyedRangeScope(), () =>
+      inputElementLike.flatMap((entry) => renderClientNodes(entry, container)),
+    )
   }
 
   const resolved = resolveRenderable(inputElementLike as JSX.Element)
@@ -3812,10 +3855,7 @@ export const renderClientNodes = (
       }
     }
   } else if (resolved.type === FRAGMENT) {
-    const children = resolved.props.children
-    nodes = Array.isArray(children)
-      ? children.flatMap((child: JSX.Element) => renderClientNodes(child, container))
-      : renderClientNodes(children as JSX.Element, container)
+    nodes = renderClientNodes(resolved.props.children as JSX.Element | JSX.Element[], container)
   } else {
     const element = createElementNode(container.doc, resolved.type)
     const frame = getCurrentFrame()
@@ -3843,10 +3883,10 @@ export const renderClientNodes = (
       rememberManagedAttributesForNode(element)
       nodes = [element]
     } else {
-      const children = resolved.props.children
-      const childNodes = Array.isArray(children)
-        ? children.flatMap((child: JSX.Element) => renderClientNodes(child, container))
-        : renderClientNodes(children as JSX.Element, container)
+      const childNodes = renderClientNodes(
+        resolved.props.children as JSX.Element | JSX.Element[],
+        container,
+      )
       for (const child of childNodes) {
         element.appendChild(child)
       }
@@ -3858,7 +3898,7 @@ export const renderClientNodes = (
 
   return resolved.key === null || resolved.key === undefined
     ? nodes
-    : wrapNodesWithKeyedRange(container.doc, nodes, resolved.key)
+    : wrapNodesWithKeyedRange(container.doc, nodes, resolveKeyedRangeScope(), resolved.key)
 }
 
 const scanComponentBoundaries = (
@@ -3930,7 +3970,9 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
   }
 
   if (Array.isArray(resolved)) {
-    return resolved.flatMap((entry) => toMountedNodes(entry, container))
+    return withActiveKeyedRangeScope(allocateKeyedRangeScope(), () =>
+      resolved.flatMap((entry) => toMountedNodes(entry, container)),
+    )
   }
   if (resolved === null || resolved === undefined || resolved === false) {
     return [container.doc.createComment('eclipsa-empty')]
@@ -3973,6 +4015,7 @@ export const captureClientInsertOwner = (
   return {
     childIndex: 0,
     componentId: ownerComponentId,
+    keyedRangeCursor: frame.keyedRangeCursor,
     projectionCounters: [...frame.projectionState.counters.entries()],
   }
 }
@@ -3983,6 +4026,7 @@ export const createDetachedClientInsertOwner = (container: RuntimeContainer): Cl
   return {
     childIndex: 0,
     componentId,
+    keyedRangeCursor: 0,
     projectionCounters: [],
   }
 }
@@ -4025,6 +4069,7 @@ export const renderClientInsertableForOwner = (
     reuseProjectionSlotDom: false,
   })
   frame.childCursor = owner.childIndex
+  frame.keyedRangeCursor = owner.keyedRangeCursor
   frame.projectionState.counters = new Map(owner.projectionCounters)
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => renderClientInsertable(value, container)),
@@ -4070,7 +4115,9 @@ export const renderClientInsertable = (
     return []
   }
   if (Array.isArray(value)) {
-    return value.flatMap((entry) => renderClientInsertable(entry, container))
+    return withActiveKeyedRangeScope(allocateKeyedRangeScope(), () =>
+      value.flatMap((entry) => renderClientInsertable(entry, container)),
+    )
   }
 
   let resolved = value
@@ -4659,6 +4706,7 @@ const renderRouteSubtreeForProjectionSlotOwner = (
   const nodes = renderClientInsertableForOwner(source as Insertable, container, {
     childIndex: 0,
     componentId: ownerId,
+    keyedRangeCursor: 0,
     projectionCounters: [],
   })
   return {
