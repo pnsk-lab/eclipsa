@@ -1,4 +1,5 @@
 import { isNoSerialize } from './no-serialize.ts'
+import { isPlainObject } from './shared.ts'
 
 export interface SerializedUndefined {
   __eclipsa_type: 'undefined'
@@ -54,14 +55,6 @@ const DEFAULT_MAX_DEPTH = 64
 const DEFAULT_MAX_ENTRIES = 10_000
 
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
-}
 
 const getSerializedObjectTag = (value: object) => Object.prototype.toString.call(value)
 

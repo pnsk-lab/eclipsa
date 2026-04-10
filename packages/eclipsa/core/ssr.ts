@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import type { JSX } from '../jsx/types.ts'
 import { renderToString } from '../jsx/mod.ts'
+import { createComponentBoundaryHtmlComment } from './runtime/markers.ts'
 import {
   beginAsyncSSRContainer,
   beginSSRContainer,
@@ -45,6 +46,11 @@ const createStreamingResumePayload = (
   container: RuntimeContainer,
   renderedComponentIds: Set<string>,
 ): ResumePayload => toResumePayloadSubset(container, ['$root', ...renderedComponentIds])
+
+const getPendingSuspensePromises = (container: RuntimeContainer) =>
+  collectPendingSuspenseBoundaryIds(container)
+    .map((boundaryId) => container.components.get(boundaryId)?.suspensePromise ?? null)
+    .filter((promise): promise is Promise<unknown> => !!promise)
 
 export const renderSSR = (
   render: () => JSX.Element | JSX.Element[],
@@ -102,8 +108,9 @@ export const renderSSRAsync = async (
 
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
-      if (container.pendingSuspensePromises.size > 0) {
-        await Promise.allSettled(container.pendingSuspensePromises)
+      const pendingSuspensePromises = getPendingSuspensePromises(container)
+      if (container.pendingSuspensePromises.size > 0 || pendingSuspensePromises.length > 0) {
+        await Promise.allSettled([...container.pendingSuspensePromises, ...pendingSuspensePromises])
         continue
       }
       asyncSignalSnapshotCache.clear()
@@ -139,8 +146,8 @@ export const renderSSRAsync = async (
 }
 
 const extractBoundaryHtml = (html: string, boundaryId: string) => {
-  const startToken = `<!--ec:c:${boundaryId}:start-->`
-  const endToken = `<!--ec:c:${boundaryId}:end-->`
+  const startToken = createComponentBoundaryHtmlComment(boundaryId, 'start')
+  const endToken = createComponentBoundaryHtmlComment(boundaryId, 'end')
   const startIndex = html.indexOf(startToken)
   if (startIndex < 0) {
     return null

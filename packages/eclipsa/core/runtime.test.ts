@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { motion } from '../../motion/mod.ts'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
 import { attr, insert } from './client/dom.ts'
@@ -26,6 +27,7 @@ import {
   dispatchDocumentEvent,
   flushDirtyComponents,
   installResumeListeners,
+  primeLocationState,
   preserveReusableContentInRoots,
   rememberInsertMarkerRange,
   renderClientInsertable,
@@ -37,6 +39,7 @@ import {
   type RuntimeContainer,
   withRuntimeContainer,
 } from './runtime.ts'
+import { renderSSRAsync } from './ssr.ts'
 
 class FakeNode {
   static COMMENT_NODE = 8
@@ -115,13 +118,22 @@ class FakeComment extends FakeNode {
 }
 
 const parseSelectorPart = (selector: string) => {
-  const matched = selector.trim().match(/^(?:(?<tag>[a-z0-9-]+))?\[(?<attr>[^\]]+)\]$/i)
+  const matched = selector
+    .trim()
+    .match(/^(?:(?<tag>[a-z0-9-]+))?\[(?<attr>[^=\]]+)(?:=(?<value>"[^"]*"|'[^']*'|[^\]]+))?\]$/i)
   if (!matched?.groups?.attr) {
     return null
   }
+  const rawValue = matched.groups.value ?? null
   return {
     attr: matched.groups.attr,
     tag: matched.groups.tag?.toLowerCase() ?? null,
+    value:
+      rawValue === null
+        ? null
+        : rawValue.startsWith('"') || rawValue.startsWith("'")
+          ? rawValue.slice(1, -1)
+          : rawValue,
   }
 }
 
@@ -133,7 +145,10 @@ const matchesSelectorPart = (element: FakeElement, selector: string) => {
   if (parsed.tag && element.tagName.toLowerCase() !== parsed.tag) {
     return false
   }
-  return element.hasAttribute(parsed.attr)
+  if (!element.hasAttribute(parsed.attr)) {
+    return false
+  }
+  return parsed.value === null || element.getAttribute(parsed.attr) === parsed.value
 }
 
 const queryFakeElements = (root: FakeNode, selector: string) => {
@@ -7988,6 +8003,1245 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('updates external projection slot children when a route-location parent rerender changes active links', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const ensureExternalSlotHost = (host: HTMLElement) => {
+        const fakeHost = host as unknown as FakeElement
+        const existing = queryFakeElements(
+          fakeHost as unknown as FakeNode,
+          'e-slot-host[data-e-slot="children"]',
+        )[0]
+        if (existing) {
+          return
+        }
+        const shell = new FakeElement('div')
+        shell.setAttribute('data-panel', '')
+        const slotHost = new FakeElement('e-slot-host')
+        slotHost.setAttribute('data-e-slot', 'children')
+        shell.appendChild(slotHost)
+        fakeHost.appendChild(shell)
+      }
+
+      const ExternalBody = setExternalComponentMeta((() => null) as any, {
+        async hydrate(host) {
+          ensureExternalSlotHost(host)
+          return { host }
+        },
+        kind: 'react',
+        async renderToString() {
+          return '<div data-panel=""><e-slot-host data-e-slot="children"></e-slot-host></div>'
+        },
+        slots: ['children'],
+        async unmount() {},
+        async update(instance, host) {
+          ensureExternalSlotHost(host)
+          return instance
+        },
+      })
+
+      const ExternalPanel = __eclipsaComponent(
+        ExternalBody as any,
+        'route-location-external-panel',
+        () => [],
+        { children: 1 },
+        { external: { kind: 'react', slots: ['children'] } },
+      )
+
+      const DocLink = __eclipsaComponent(
+        (props: { activeHref: string; href: string; label: string }) =>
+          jsxDEV(
+            'a',
+            {
+              class: props.activeHref === props.href ? 'active' : 'inactive',
+              'data-doc-link': '',
+              href: props.href,
+              children: props.label,
+            },
+            null,
+            false,
+            {},
+          ),
+        'route-location-external-doc-link',
+        () => [],
+      )
+
+      const renderSidebar = () => {
+        const location = useLocation()
+        return jsxDEV(
+          ExternalPanel as any,
+          {
+            children: [
+              jsxDEV(
+                DocLink as any,
+                {
+                  activeHref: location.pathname,
+                  href: '/docs/getting-started/overview',
+                  label: 'Overview',
+                },
+                '/docs/getting-started/overview',
+                false,
+                {},
+              ),
+              jsxDEV(
+                DocLink as any,
+                {
+                  activeHref: location.pathname,
+                  href: '/docs/materials/routing',
+                  label: 'Routing',
+                },
+                '/docs/materials/routing',
+                false,
+                {},
+              ),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Sidebar = __eclipsaComponent(
+        () => renderSidebar(),
+        'route-location-external-sidebar',
+        () => [],
+      )
+
+      container.imports.set(
+        'route-location-external-sidebar',
+        Promise.resolve({
+          default: () => renderSidebar(),
+        }),
+      )
+
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Sidebar as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      await flushAsync()
+      await flushAsync()
+
+      const initialLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(initialLinks).toHaveLength(2)
+      expect(initialLinks[0]?.getAttribute('class')).toBe('active')
+      expect(initialLinks[1]?.getAttribute('class')).toBe('inactive')
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      await flushDirtyComponents(container)
+      await flushAsync()
+      await flushAsync()
+
+      const updatedLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(updatedLinks).toHaveLength(2)
+      expect(updatedLinks[0]?.textContent).toBe('Overview')
+      expect(updatedLinks[1]?.textContent).toBe('Routing')
+      expect(updatedLinks[0]?.getAttribute('class')).toBe('inactive')
+      expect(updatedLinks[1]?.getAttribute('class')).toBe('active')
+    })
+  })
+
+  it('updates getter-backed child props when a route-location parent rerender changes active links', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const Panel = __eclipsaComponent(
+        (props: { children?: JSX.Element | JSX.Element[] }) =>
+          jsxDEV('div', { children: props.children }, null, false, {}),
+        'route-location-inline-panel',
+        () => [],
+      )
+
+      const Dir = __eclipsaComponent(
+        (props: { activeHref: string; links: Array<{ href: string; label: string }> }) =>
+          jsxDEV(
+            Panel as any,
+            {
+              children: props.links.map((link) =>
+                jsxDEV(
+                  'a',
+                  {
+                    class: props.activeHref === link.href ? 'active' : 'inactive',
+                    'data-doc-link': '',
+                    href: link.href,
+                    children: link.label,
+                  },
+                  link.href,
+                  false,
+                  {},
+                ),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+        'route-location-inline-dir',
+        () => [],
+      )
+
+      const sections = [
+        {
+          links: [
+            { href: '/docs/getting-started/overview', label: 'Overview' },
+            { href: '/docs/materials/routing', label: 'Routing' },
+          ],
+          title: 'Docs',
+        },
+      ]
+
+      const renderLayout = () => {
+        const location = useLocation()
+        return jsxDEV(
+          'nav',
+          {
+            children: sections.map((section) => {
+              const props = Object.create(null) as Record<string, unknown>
+              Object.defineProperties(props, {
+                activeHref: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return location.pathname
+                  },
+                },
+                links: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return [...section.links]
+                  },
+                },
+              })
+              return jsxDEV(Dir as any, props, section.title, false, {})
+            }),
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(
+        () => renderLayout(),
+        'route-location-inline-layout',
+        () => [],
+      )
+
+      container.imports.set(
+        'route-location-inline-layout',
+        Promise.resolve({
+          default: () => renderLayout(),
+        }),
+      )
+      container.imports.set(
+        'route-location-inline-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Dir(
+              (propsOrArg as {
+                activeHref: string
+                links: Array<{ href: string; label: string }>
+              }) ?? {
+                activeHref: '',
+                links: [],
+              },
+            ),
+        }),
+      )
+      container.imports.set(
+        'route-location-inline-panel',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Panel((propsOrArg as { children?: JSX.Element | JSX.Element[] }) ?? {}),
+        }),
+      )
+
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      const initialLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(initialLinks).toHaveLength(2)
+      expect(initialLinks[0]?.getAttribute('class')).toBe('active')
+      expect(initialLinks[1]?.getAttribute('class')).toBe('inactive')
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      await flushDirtyComponents(container)
+
+      const updatedLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(updatedLinks).toHaveLength(2)
+      expect(updatedLinks[0]?.getAttribute('class')).toBe('inactive')
+      expect(updatedLinks[1]?.getAttribute('class')).toBe('active')
+    })
+  })
+
+  it('updates motion-wrapped child links when a route-location parent rerender changes active links', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const Dir = __eclipsaComponent(
+        (props: { activeHref: string; links: Array<{ href: string; label: string }> }) =>
+          jsxDEV(
+            motion.div as any,
+            {
+              children: props.links.map((link) =>
+                jsxDEV(
+                  'a',
+                  {
+                    class: props.activeHref === link.href ? 'active' : 'inactive',
+                    'data-doc-link': '',
+                    href: link.href,
+                    children: link.label,
+                  },
+                  link.href,
+                  false,
+                  {},
+                ),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+        'route-location-motion-dir',
+        () => [],
+      )
+
+      const sections = [
+        {
+          links: [
+            { href: '/docs/getting-started/overview', label: 'Overview' },
+            { href: '/docs/materials/routing', label: 'Routing' },
+          ],
+          title: 'Docs',
+        },
+      ]
+
+      const renderLayout = () => {
+        const location = useLocation()
+        return jsxDEV(
+          'nav',
+          {
+            children: sections.map((section) => {
+              const props = Object.create(null) as Record<string, unknown>
+              Object.defineProperties(props, {
+                activeHref: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return location.pathname
+                  },
+                },
+                links: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return [...section.links]
+                  },
+                },
+              })
+              return jsxDEV(Dir as any, props, section.title, false, {})
+            }),
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(
+        () => renderLayout(),
+        'route-location-motion-layout',
+        () => [],
+      )
+
+      container.imports.set(
+        'route-location-motion-layout',
+        Promise.resolve({
+          default: () => renderLayout(),
+        }),
+      )
+      container.imports.set(
+        'route-location-motion-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Dir(
+              (propsOrArg as {
+                activeHref: string
+                links: Array<{ href: string; label: string }>
+              }) ?? {
+                activeHref: '',
+                links: [],
+              },
+            ),
+        }),
+      )
+
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      const initialLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(initialLinks).toHaveLength(2)
+      expect(initialLinks[0]?.getAttribute('class')).toBe('active')
+      expect(initialLinks[1]?.getAttribute('class')).toBe('inactive')
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      await flushDirtyComponents(container)
+
+      const updatedLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(updatedLinks).toHaveLength(2)
+      expect(updatedLinks[0]?.getAttribute('class')).toBe('inactive')
+      expect(updatedLinks[1]?.getAttribute('class')).toBe('active')
+    })
+  })
+
+  it('updates docs-like motion links when a route-location parent rerender changes active links', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const Dir = __eclipsaComponent(
+        (props: {
+          activeHref: string
+          links: Array<{ href: string; label: string }>
+          onLinkClick?: () => void
+        }) =>
+          jsxDEV(
+            motion.div as any,
+            {
+              children: props.links.map((link) =>
+                props.onLinkClick
+                  ? jsxDEV(
+                      Link as any,
+                      {
+                        class: props.activeHref === link.href ? 'active' : 'inactive',
+                        'data-doc-link': '',
+                        href: link.href,
+                        onClick: props.onLinkClick,
+                        children: [
+                          jsxDEV(
+                            'div',
+                            {
+                              class: props.activeHref === link.href ? 'line active-line' : 'line',
+                            },
+                            null,
+                            false,
+                            {},
+                          ),
+                          jsxDEV(
+                            'div',
+                            {
+                              class: 'label',
+                              children: link.label,
+                            },
+                            null,
+                            false,
+                            {},
+                          ),
+                        ],
+                      },
+                      link.href,
+                      false,
+                      {},
+                    )
+                  : jsxDEV(
+                      Link as any,
+                      {
+                        class: props.activeHref === link.href ? 'active' : 'inactive',
+                        'data-doc-link': '',
+                        href: link.href,
+                        children: [
+                          jsxDEV(
+                            'div',
+                            {
+                              class: props.activeHref === link.href ? 'line active-line' : 'line',
+                            },
+                            null,
+                            false,
+                            {},
+                          ),
+                          jsxDEV(
+                            'div',
+                            {
+                              class: 'label',
+                              children: link.label,
+                            },
+                            null,
+                            false,
+                            {},
+                          ),
+                        ],
+                      },
+                      link.href,
+                      false,
+                      {},
+                    ),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+        'route-location-docs-like-dir',
+        () => [],
+      )
+
+      const sections = [
+        {
+          links: [
+            { href: '/docs/getting-started/overview', label: 'Overview' },
+            { href: '/docs/materials/routing', label: 'Routing' },
+          ],
+          title: 'Docs',
+        },
+      ]
+
+      const renderLayout = () => {
+        const location = useLocation()
+        return jsxDEV(
+          'nav',
+          {
+            children: sections.map((section) => {
+              const props = Object.create(null) as Record<string, unknown>
+              Object.defineProperties(props, {
+                activeHref: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return location.pathname
+                  },
+                },
+                links: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return [...section.links]
+                  },
+                },
+              })
+              return jsxDEV(Dir as any, props, section.title, false, {})
+            }),
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(
+        () => renderLayout(),
+        'route-location-docs-like-layout',
+        () => [],
+      )
+
+      container.imports.set(
+        'route-location-docs-like-layout',
+        Promise.resolve({
+          default: () => renderLayout(),
+        }),
+      )
+      container.imports.set(
+        'route-location-docs-like-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Dir(
+              (propsOrArg as {
+                activeHref: string
+                links: Array<{ href: string; label: string }>
+                onLinkClick?: () => void
+              }) ?? {
+                activeHref: '',
+                links: [],
+              },
+            ),
+        }),
+      )
+
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      const initialLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(initialLinks).toHaveLength(2)
+      expect(initialLinks[0]?.getAttribute('class')).toBe('active')
+      expect(initialLinks[1]?.getAttribute('class')).toBe('inactive')
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      await flushDirtyComponents(container)
+
+      const updatedLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(updatedLinks).toHaveLength(2)
+      expect(updatedLinks[0]?.getAttribute('class')).toBe('inactive')
+      expect(updatedLinks[1]?.getAttribute('class')).toBe('active')
+    })
+  })
+
+  it('updates docs-like motion links after component state is resumed into an inactive tree', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const Dir = __eclipsaComponent(
+        (props: {
+          activeHref: string
+          links: Array<{ href: string; label: string }>
+          onLinkClick?: () => void
+        }) =>
+          jsxDEV(
+            motion.div as any,
+            {
+              children: props.links.map((link) =>
+                jsxDEV(
+                  Link as any,
+                  {
+                    class: props.activeHref === link.href ? 'active' : 'inactive',
+                    'data-doc-link': '',
+                    href: link.href,
+                    children: [
+                      jsxDEV(
+                        'div',
+                        {
+                          class: props.activeHref === link.href ? 'line active-line' : 'line',
+                        },
+                        null,
+                        false,
+                        {},
+                      ),
+                      jsxDEV(
+                        'div',
+                        {
+                          class: 'label',
+                          children: link.label,
+                        },
+                        null,
+                        false,
+                        {},
+                      ),
+                    ],
+                  },
+                  link.href,
+                  false,
+                  {},
+                ),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+        'route-location-docs-like-resume-dir',
+        () => [],
+      )
+
+      const sections = [
+        {
+          links: [
+            { href: '/docs/getting-started/overview', label: 'Overview' },
+            { href: '/docs/materials/routing', label: 'Routing' },
+          ],
+          title: 'Docs',
+        },
+      ]
+
+      const renderLayout = () => {
+        const location = useLocation()
+        return jsxDEV(
+          'nav',
+          {
+            children: sections.map((section) => {
+              const props = Object.create(null) as Record<string, unknown>
+              Object.defineProperties(props, {
+                activeHref: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return location.pathname
+                  },
+                },
+                links: {
+                  configurable: true,
+                  enumerable: true,
+                  get() {
+                    return [...section.links]
+                  },
+                },
+              })
+              return jsxDEV(Dir as any, props, section.title, false, {})
+            }),
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(
+        () => renderLayout(),
+        'route-location-docs-like-resume-layout',
+        () => [],
+      )
+
+      container.imports.set(
+        'route-location-docs-like-resume-layout',
+        Promise.resolve({
+          default: () => renderLayout(),
+        }),
+      )
+      container.imports.set(
+        'route-location-docs-like-resume-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Dir(
+              (propsOrArg as {
+                activeHref: string
+                links: Array<{ href: string; label: string }>
+                onLinkClick?: () => void
+              }) ?? {
+                activeHref: '',
+                links: [],
+              },
+            ),
+        }),
+      )
+
+      const doc = container.doc as unknown as FakeDocument
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        ;(doc.body as unknown as FakeElement).appendChild(node)
+      }
+
+      for (const component of container.components.values()) {
+        component.active = false
+        component.didMount = false
+        component.rawProps = null
+      }
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      await flushDirtyComponents(container)
+
+      const updatedLinks = queryFakeElements(doc.body as unknown as FakeNode, 'a[data-doc-link]')
+      expect(updatedLinks).toHaveLength(2)
+      expect(updatedLinks[0]?.getAttribute('class')).toBe('inactive')
+      expect(updatedLinks[1]?.getAttribute('class')).toBe('active')
+    })
+  })
+
+  it('updates keyed docs sidebar links when a shared layout patch rerenders a live shell', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const sections = [
+        {
+          links: [
+            { href: '/docs/getting-started/overview', label: 'Overview' },
+            { href: '/docs/getting-started/quick-start', label: 'Quick Start' },
+          ],
+          title: 'Getting Started',
+        },
+        {
+          links: [
+            { href: '/docs/materials/routing', label: 'Routing' },
+            { href: '/docs/materials/signal', label: 'Signal' },
+          ],
+          title: 'Materials',
+        },
+      ]
+
+      const Dir = __eclipsaComponent(
+        (props: {
+          activeHref: string
+          links: Array<{ href: string; label: string }>
+          title: string
+        }) =>
+          jsxDEV(
+            motion.div as any,
+            {
+              children: props.links.map((link) =>
+                jsxDEV(
+                  Link as any,
+                  {
+                    class: props.activeHref === link.href ? 'active' : 'inactive',
+                    'data-doc-link': `${props.title}:${link.label}`,
+                    href: link.href,
+                    children: [
+                      jsxDEV(
+                        'div',
+                        {
+                          class: props.activeHref === link.href ? 'line active-line' : 'line',
+                        },
+                        null,
+                        false,
+                        {},
+                      ),
+                      jsxDEV(
+                        'div',
+                        {
+                          class: 'label',
+                          children: link.label,
+                        },
+                        null,
+                        false,
+                        {},
+                      ),
+                    ],
+                  },
+                  link.href,
+                  false,
+                  {},
+                ),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+        'shared-layout-docs-dir',
+        () => [],
+      )
+
+      const LayoutBody = (props: { children?: JSX.Element }) => {
+        const location = useLocation()
+        return jsxDEV(
+          'div',
+          {
+            children: [
+              jsxDEV(
+                'nav',
+                {
+                  children: sections.map((section) =>
+                    jsxDEV(
+                      Dir as any,
+                      {
+                        activeHref: location.pathname,
+                        links: [...section.links],
+                        title: section.title,
+                      },
+                      section.title,
+                      false,
+                      {},
+                    ),
+                  ),
+                },
+                null,
+                false,
+                {},
+              ),
+              props.children ?? null,
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(LayoutBody, 'shared-layout-docs-layout', () => [], {
+        children: 1,
+      })
+
+      container.imports.set(
+        'shared-layout-docs-layout',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            LayoutBody((propsOrArg as { children?: JSX.Element }) ?? {}),
+        }),
+      )
+      container.imports.set(
+        'shared-layout-docs-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            Dir(
+              (propsOrArg as {
+                activeHref: string
+                links: Array<{ href: string; label: string }>
+                title: string
+              }) ?? {
+                activeHref: '',
+                links: [],
+                title: '',
+              },
+            ),
+        }),
+      )
+
+      const host = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Layout as any,
+            {
+              children: jsxDEV('main', { children: 'overview' }, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        host.appendChild(node)
+      }
+
+      const getLink = (label: string) =>
+        queryFakeElements(host as unknown as FakeNode, 'a[data-doc-link]').find(
+          (link) => link.textContent === label,
+        ) ?? null
+      const getLine = (label: string) => {
+        const link = getLink(label)
+        if (!link) {
+          return null
+        }
+        return (
+          link.childNodes.find(
+            (child): child is FakeElement =>
+              child instanceof FakeElement && child.tagName === 'div',
+          ) ?? null
+        )
+      }
+
+      expect(getLink('Overview')?.getAttribute('class')).toBe('active')
+      expect(getLink('Routing')?.getAttribute('class')).toBe('inactive')
+
+      const layout = container.components.get('c0')
+      expect(layout).toBeTruthy()
+
+      const nextChildren = jsxDEV('main', { children: 'routing' }, null, false, {})
+      const nextProps = Object.create(null) as Record<string, unknown>
+      Object.defineProperties(
+        nextProps,
+        Object.getOwnPropertyDescriptors((layout!.props as Record<string, unknown>) ?? {}),
+      )
+      Object.defineProperty(nextProps, 'children', {
+        configurable: true,
+        enumerable: true,
+        value: nextChildren,
+        writable: true,
+      })
+
+      layout!.props = nextProps
+      layout!.rawProps = nextProps
+      layout!.active = false
+      layout!.activateModeOnFlush = 'patch'
+      layout!.reuseExistingDomOnActivate = true
+      layout!.reuseProjectionSlotDomOnActivate = true
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      container.dirty.add('c0')
+      await flushDirtyComponents(container)
+
+      expect(getLink('Overview')?.getAttribute('class')).toBe('inactive')
+      expect(getLink('Routing')?.getAttribute('class')).toBe('active')
+      expect(getLine('Overview')?.getAttribute('class')).toBe('line')
+      expect(getLine('Routing')?.getAttribute('class')).toBe('line active-line')
+    })
+  })
+
+  it('serializes router subscriptions when useLocation is only read through getter-backed child props', async () => {
+    const Dir = __eclipsaComponent(
+      (props: { activeHref: string }) =>
+        jsxDEV(
+          'a',
+          { class: props.activeHref === '/docs/getting-started/overview' ? 'active' : 'inactive' },
+          null,
+          false,
+          {},
+        ),
+      'ssr-route-location-dir',
+      () => [],
+    )
+
+    const Layout = __eclipsaComponent(
+      () => {
+        const location = useLocation()
+        const props = Object.create(null) as Record<string, unknown>
+        Object.defineProperty(props, 'activeHref', {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return location.pathname
+          },
+        })
+        return jsxDEV(Dir as any, props, 'docs', false, {})
+      },
+      'ssr-route-location-layout',
+      () => [],
+    )
+
+    const { payload } = await renderSSRAsync(() => jsxDEV(Layout as any, {}, null, false, {}), {
+      prepare(container) {
+        primeLocationState(container, 'https://example.com/docs/getting-started/overview')
+      },
+    })
+
+    expect(payload.subscriptions['$router:url']).toContain('c0')
+  })
+
   it('patches stable-shape boundary contents in place for text and class changes', () => {
     withFakeNodeGlobal(() => {
       const parent = new FakeElement('div')
@@ -8141,6 +9395,174 @@ describe('renderClientInsertable', () => {
       expect(reorderedRows[0]).toBe(secondRow)
       expect(reorderedRows[1]).toBe(firstRow)
       expect(reorderedRows.map((row) => row.textContent)).toEqual(['B', 'A'])
+    })
+  })
+
+  it('does not reuse keyed ranges across sibling parents with overlapping keys', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const page = createDetachedRuntimeSignal(container, 's0', {
+        headings: [{ key: 'Why eclipsa?', label: 'Toc Why eclipsa?' }],
+        sections: [
+          { key: 'Getting Started', label: 'Nav Getting Started' },
+          { key: 'Materials', label: 'Nav Materials' },
+          { key: 'Integrations', label: 'Nav Integrations' },
+        ],
+      })
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'div',
+              {
+                children: [
+                  jsxDEV(
+                    'nav',
+                    {
+                      children: page.value.sections.map((section) =>
+                        jsxDEV('a', { children: section.label }, section.key, false, {}),
+                      ),
+                    },
+                    null,
+                    false,
+                    {},
+                  ),
+                  jsxDEV(
+                    'aside',
+                    {
+                      children: page.value.headings.map((heading) =>
+                        jsxDEV('a', { children: heading.label }, heading.key, false, {}),
+                      ),
+                    },
+                    null,
+                    false,
+                    {},
+                  ),
+                ],
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getRoot = () =>
+        host.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'div',
+        )!
+      const getRegionLinks = (tagName: 'aside' | 'nav') => {
+        const region = getRoot().childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === tagName,
+        )
+        return (
+          region?.childNodes.filter(
+            (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'a',
+          ) ?? []
+        )
+      }
+
+      expect(getRegionLinks('nav').map((link) => link.textContent)).toEqual([
+        'Nav Getting Started',
+        'Nav Materials',
+        'Nav Integrations',
+      ])
+      expect(getRegionLinks('aside').map((link) => link.textContent)).toEqual(['Toc Why eclipsa?'])
+
+      const initialNavMaterialsLink = getRegionLinks('nav')[1]!
+
+      page.value = {
+        headings: [
+          { key: 'Materials', label: 'Toc Materials' },
+          { key: 'Integrations', label: 'Toc Integrations' },
+        ],
+        sections: [...page.value.sections],
+      }
+      await flushAsync()
+
+      const navLinks = getRegionLinks('nav')
+      const asideLinks = getRegionLinks('aside')
+      expect(navLinks.map((link) => link.textContent)).toEqual([
+        'Nav Getting Started',
+        'Nav Materials',
+        'Nav Integrations',
+      ])
+      expect(asideLinks.map((link) => link.textContent)).toEqual([
+        'Toc Materials',
+        'Toc Integrations',
+      ])
+      expect(asideLinks[0]).not.toBe(initialNavMaterialsLink)
+    })
+  })
+
+  it('keeps keyed child component contents when same-key items survive an update', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const items = createDetachedRuntimeSignal(container, 's0', [
+        { id: 'first-example', label: 'First example' },
+        { id: 'returned-handle', label: 'Returned handle' },
+        { id: 'form-submission', label: 'Form submission' },
+      ])
+      const TocLinkBody = (props: { label: string }) =>
+        jsxDEV('a', { children: props.label }, null, false, {})
+      const TocLink = __eclipsaComponent(TocLinkBody, 'keyed-toc-link', () => [])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'aside',
+              {
+                children: items.value.map((item) =>
+                  jsxDEV(TocLink, { label: item.label }, item.id, false, {}),
+                ),
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const getLinks = () =>
+        host.childNodes.flatMap((node) =>
+          node instanceof FakeElement && node.tagName === 'aside'
+            ? node.childNodes.filter(
+                (child): child is FakeElement =>
+                  child instanceof FakeElement && child.tagName === 'a',
+              )
+            : [],
+        )
+
+      expect(getLinks().map((link) => link.textContent)).toEqual([
+        'First example',
+        'Returned handle',
+        'Form submission',
+      ])
+
+      items.value = [
+        { id: 'first-example', label: 'First example' },
+        { id: 'returned-handle', label: 'Returned handle' },
+        { id: 'manual-reload', label: 'Manual reload' },
+      ]
+      await flushAsync()
+
+      expect(getLinks().map((link) => link.textContent)).toEqual([
+        'First example',
+        'Returned handle',
+        'Manual reload',
+      ])
     })
   })
 

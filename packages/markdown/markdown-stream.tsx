@@ -93,7 +93,14 @@ const sanitizeUrl = (value: string) => {
     return null
   }
 
-  const normalized = trimmed.replace(/[\u0000-\u0020]+/g, '').toLowerCase()
+  const normalizedCharacters: string[] = []
+  for (const character of trimmed) {
+    if (character.charCodeAt(0) <= 0x20) {
+      continue
+    }
+    normalizedCharacters.push(character)
+  }
+  const normalized = normalizedCharacters.join('').toLowerCase()
   if (
     normalized.startsWith('javascript:') ||
     normalized.startsWith('vbscript:') ||

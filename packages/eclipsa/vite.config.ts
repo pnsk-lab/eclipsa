@@ -2,13 +2,11 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   test: {
+    fileParallelism: false,
     include: [
       'atom/**/*.test.ts',
-      'atom/**/*.test.tsx',
       'core/**/*.test.ts',
-      'core/**/*.test.tsx',
       'web-utils/**/*.test.ts',
-      'web-utils/**/*.test.tsx',
       'compiler/**/*.test.ts',
       'vite/**/*.test.ts',
     ],

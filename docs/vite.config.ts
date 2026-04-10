@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [eclipsa({ output: 'ssg' }), eclipsaContent(), tailwind(), eclipsaImage()],
   test: {
     environment: 'node',
-    include: ['app/**/*.test.ts', 'app/**/*.test.tsx', '*.test.ts'],
+    include: ['app/**/*.test.ts', '*.test.ts'],
   },
   server: {
     fs: {

@@ -625,9 +625,19 @@ impl<'s> ClientCompiler<'s> {
         )
     }
 
-    fn render_compiler_for(&mut self, arr: String, callback: String) -> String {
+    fn render_compiler_for(
+        &mut self,
+        arr: String,
+        callback: String,
+        key_callback: Option<String>,
+    ) -> String {
         self.uses_for = true;
-        format!("{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback} }})")
+        match key_callback {
+            Some(key_callback) => format!(
+                "{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback}, key: {key_callback} }})"
+            ),
+            None => format!("{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback} }})"),
+        }
     }
 
     fn try_render_conditional_show(
@@ -702,7 +712,11 @@ impl<'s> ClientCompiler<'s> {
 
         let arr = self.render_nested_expression_span(member.object.span(), true)?;
         let compiled_callback = self.render_nested_expression_span(callback.span(), true)?;
-        Ok(Some(self.render_compiler_for(arr, compiled_callback)))
+        let params = self.slice(callback.params.span).to_string();
+        let key_callback = self
+            .extract_map_callback_key(callback)?
+            .map(|key_expression| format!("{params} => {key_expression}"));
+        Ok(Some(self.render_compiler_for(arr, compiled_callback, key_callback)))
     }
 
     fn next_template_id(&mut self) -> String {
@@ -842,6 +856,20 @@ impl<'s> ClientCompiler<'s> {
             };
         }
         Ok(None)
+    }
+
+    fn extract_map_callback_key(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+
+        match unwrap_parenthesized_expression(body) {
+            Expression::JSXElement(element) => self.extract_key(&element.opening_element.attributes),
+            _ => Ok(None),
+        }
     }
 
     fn render_component_props(

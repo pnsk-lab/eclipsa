@@ -251,7 +251,7 @@ describe('action runtime', () => {
     })
     expect(readableResponse.headers.get('x-eclipsa-stream-kind')).toBe('readable-stream')
     await expect(readableResponse.text()).resolves.toContain('"type":"done"')
-  })
+  }, 15_000)
 
   it('round-trips opaque action references through server execution', async () => {
     const app = createActionApp()

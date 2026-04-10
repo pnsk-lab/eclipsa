@@ -1,6 +1,6 @@
+import { jsxDEV } from 'eclipsa/jsx-dev-runtime'
 import { describe, expect, it, vi } from 'vitest'
-
-import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
+import { jsxDEV as jsxDEV2 } from '../jsx/jsx-dev-runtime.ts'
 import { __eclipsaComponent, __eclipsaLazy } from './internal.ts'
 import {
   applyResumeHmrUpdate,
@@ -11,43 +11,34 @@ import {
 } from './runtime.ts'
 import { onCleanup, onVisible, useSignal } from './signal.ts'
 import { renderSSR } from './ssr.ts'
-
 class FakeNode {
-  childNodes: FakeNode[] = []
-  nextSibling: FakeNode | null = null
-  parentNode: FakeElement | null = null
-  previousSibling: FakeNode | null = null
-
+  childNodes = []
+  nextSibling = null
+  parentNode = null
+  previousSibling = null
   remove() {
     this.parentNode?.removeChild(this)
   }
 }
-
 class FakeComment extends FakeNode {
-  constructor(
-    readonly data: string,
-    readonly ownerDocument: FakeDocument,
-  ) {
+  constructor(data, ownerDocument) {
     super()
+    this.data = data
+    this.ownerDocument = ownerDocument
   }
 }
-
 class FakeElement extends FakeNode {
-  attributes = new Map<string, string>()
-  childNodes: FakeNode[] = []
-
-  constructor(
-    readonly tagName: string,
-    readonly ownerDocument: FakeDocument,
-  ) {
+  constructor(tagName, ownerDocument) {
     super()
+    this.tagName = tagName
+    this.ownerDocument = ownerDocument
   }
-
-  appendChild(node: FakeNode) {
+  attributes = /* @__PURE__ */ new Map()
+  childNodes = []
+  appendChild(node) {
     return this.insertBefore(node, null)
   }
-
-  insertBefore(node: FakeNode, referenceNode: FakeNode | null) {
+  insertBefore(node, referenceNode) {
     if (node.parentNode) {
       node.parentNode.removeChild(node)
     }
@@ -70,12 +61,10 @@ class FakeElement extends FakeNode {
     }
     return node
   }
-
-  querySelectorAll(selector?: string) {
-    return this.querySelectorAllBySelector(selector ?? '') as unknown as NodeListOf<Element>
+  querySelectorAll(selector) {
+    return this.querySelectorAllBySelector(selector ?? '')
   }
-
-  removeChild(node: FakeNode) {
+  removeChild(node) {
     const index = this.childNodes.indexOf(node)
     if (index < 0) {
       return node
@@ -94,31 +83,26 @@ class FakeElement extends FakeNode {
     node.nextSibling = null
     return node
   }
-
-  setAttribute(name: string, value: string) {
+  setAttribute(name, value) {
     this.attributes.set(name, value)
   }
-
-  getAttribute(name: string) {
+  getAttribute(name) {
     return this.attributes.get(name) ?? null
   }
-
-  hasAttribute(name: string) {
+  hasAttribute(name) {
     return this.attributes.has(name)
   }
-
-  private querySelectorAllBySelector(selector: string) {
+  querySelectorAllBySelector(selector) {
     const attrMatch = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
     if (!attrMatch) {
       return []
     }
-
     const [, attrName, attrValue] = attrMatch
-    const results: FakeElement[] = []
-    const visit = (node: FakeNode) => {
+    const results = []
+    const visit = (node) => {
       if (node instanceof FakeElement) {
         const currentValue = node.getAttribute(attrName)
-        if (currentValue !== null && (attrValue === undefined || currentValue === attrValue)) {
+        if (currentValue !== null && (attrValue === void 0 || currentValue === attrValue)) {
           results.push(node)
         }
       }
@@ -126,37 +110,32 @@ class FakeElement extends FakeNode {
         visit(child)
       }
     }
-
     visit(this)
     return results
   }
 }
-
 class FakeWindow {
   innerHeight = 100
   innerWidth = 100
-  #listeners = new Map<string, Set<() => void>>()
-
-  addEventListener(eventName: string, listener: () => void) {
-    const listeners = this.#listeners.get(eventName) ?? new Set()
+  #listeners = /* @__PURE__ */ new Map()
+  addEventListener(eventName, listener) {
+    const listeners = this.#listeners.get(eventName) ?? /* @__PURE__ */ new Set()
     listeners.add(listener)
     this.#listeners.set(eventName, listeners)
   }
-
-  emit(eventName: string) {
+  emit(eventName) {
     for (const listener of this.#listeners.get(eventName) ?? []) {
       listener()
     }
   }
-
-  removeEventListener(eventName: string, listener: () => void) {
+  removeEventListener(eventName, listener) {
     this.#listeners.get(eventName)?.delete(listener)
   }
 }
-
 class FakeRange {
-  constructor(private readonly doc: FakeDocument) {}
-
+  constructor(doc) {
+    this.doc = doc
+  }
   getBoundingClientRect() {
     if (this.doc.visible) {
       return {
@@ -173,114 +152,94 @@ class FakeRange {
       top: 0,
     }
   }
-
   getClientRects() {
     const rect = this.getBoundingClientRect()
     return rect.bottom > 0
-      ? ({
+      ? {
           0: rect,
           length: 1,
-        } as unknown as DOMRectList)
-      : ({
+        }
+      : {
           length: 0,
-        } as unknown as DOMRectList)
+        }
   }
-
-  setEndBefore(_node: FakeComment) {}
-
-  setStartAfter(_node: FakeComment) {}
+  setEndBefore(_node) {}
+  setStartAfter(_node) {}
 }
-
 class FakeTreeWalker {
-  currentNode: Comment | null = null
+  constructor(comments) {
+    this.comments = comments
+  }
+  currentNode = null
   #index = -1
-
-  constructor(private readonly comments: FakeComment[]) {}
-
   nextNode() {
     this.#index += 1
-    this.currentNode = (this.comments[this.#index] ?? null) as unknown as Comment | null
+    this.currentNode = this.comments[this.#index] ?? null
     return this.currentNode
   }
 }
-
 class FakeDocument {
-  body = new FakeElement('body', this) as unknown as HTMLElement
-  defaultView = new FakeWindow() as unknown as Window
-  location = { pathname: '/' } as Location
+  body = new FakeElement('body', this)
+  defaultView = new FakeWindow()
+  location = { pathname: '/' }
   visible = false
-  #listeners = new Map<string, Set<() => void>>()
-  #comments: FakeComment[]
-
+  #listeners = /* @__PURE__ */ new Map()
+  #comments
   constructor() {
     const start = new FakeComment('ec:c:c0:start', this)
     const element = new FakeElement('div', this)
     const end = new FakeComment('ec:c:c0:end', this)
-    ;(this.body as unknown as FakeElement).appendChild(start)
-    ;(this.body as unknown as FakeElement).appendChild(element)
-    ;(this.body as unknown as FakeElement).appendChild(end)
+    this.body.appendChild(start)
+    this.body.appendChild(element)
+    this.body.appendChild(end)
     this.#comments = [start, end]
   }
-
-  addEventListener(eventName: string, listener: () => void) {
-    const listeners = this.#listeners.get(eventName) ?? new Set()
+  addEventListener(eventName, listener) {
+    const listeners = this.#listeners.get(eventName) ?? /* @__PURE__ */ new Set()
     listeners.add(listener)
     this.#listeners.set(eventName, listeners)
   }
-
-  createComment(data: string) {
-    return new FakeComment(data, this) as unknown as Comment
+  createComment(data) {
+    return new FakeComment(data, this)
   }
-
-  createElement(tagName: string) {
-    return new FakeElement(tagName, this) as unknown as HTMLElement
+  createElement(tagName) {
+    return new FakeElement(tagName, this)
   }
-
   createRange() {
-    return new FakeRange(this) as unknown as Range
+    return new FakeRange(this)
   }
-
-  createTextNode(data: string) {
-    return new FakeComment(data, this) as unknown as Text
+  createTextNode(data) {
+    return new FakeComment(data, this)
   }
-
   createTreeWalker() {
     return new FakeTreeWalker(this.#comments)
   }
-
   querySelectorAll() {
-    return [] as unknown as NodeListOf<Element>
+    return []
   }
-
-  emit(eventName: string) {
+  emit(eventName) {
     for (const listener of this.#listeners.get(eventName) ?? []) {
       listener()
     }
   }
-
-  removeEventListener(eventName: string, listener: () => void) {
+  removeEventListener(eventName, listener) {
     this.#listeners.get(eventName)?.delete(listener)
   }
 }
-
-const withFakeVisibleDocument = async (
-  fn: (doc: Document, fakeWindow: FakeWindow) => Promise<void>,
-) => {
+const withFakeVisibleDocument = async (fn) => {
   const OriginalComment = globalThis.Comment
   const OriginalDocument = globalThis.Document
   const OriginalHTMLElement = globalThis.HTMLElement
   const OriginalNode = globalThis.Node
   const OriginalNodeFilter = globalThis.NodeFilter
-
-  globalThis.Comment = FakeComment as unknown as typeof Comment
-  globalThis.Document = FakeDocument as unknown as typeof Document
-  globalThis.HTMLElement = FakeElement as unknown as typeof HTMLElement
-  globalThis.Node = FakeNode as unknown as typeof Node
-  globalThis.NodeFilter = { SHOW_COMMENT: 128 } as typeof NodeFilter
-
+  globalThis.Comment = FakeComment
+  globalThis.Document = FakeDocument
+  globalThis.HTMLElement = FakeElement
+  globalThis.Node = FakeNode
+  globalThis.NodeFilter = { SHOW_COMMENT: 128 }
   try {
-    const doc = new FakeDocument() as unknown as Document
-    await fn(doc, (doc as unknown as FakeDocument).defaultView as unknown as FakeWindow)
+    const doc = new FakeDocument()
+    await fn(doc, doc.defaultView)
   } finally {
     globalThis.Comment = OriginalComment
     globalThis.Document = OriginalDocument
@@ -289,12 +248,10 @@ const withFakeVisibleDocument = async (
     globalThis.NodeFilter = OriginalNodeFilter
   }
 }
-
 const flushAsync = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await Promise.resolve()
 }
-
 describe('onVisible', () => {
   it('does not run during SSR and serializes resumable visibility callbacks', () => {
     const visible = vi.fn()
@@ -309,15 +266,22 @@ describe('onVisible', () => {
             () => [],
           ),
         )
-
-        return <button>ready</button>
+        return /* @__PURE__ */ jsxDEV('button', { children: 'ready' }, void 0, false, {
+          fileName: 'packages/eclipsa/core/on-visible.test.ts',
+          lineNumber: 313,
+          columnNumber: 16,
+        })
       },
       'component-symbol',
       () => [],
     )
-
-    const { html, payload } = renderSSR(() => <App />)
-
+    const { html, payload } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
+        fileName: 'packages/eclipsa/core/on-visible.test.ts',
+        lineNumber: 319,
+        columnNumber: 47,
+      }),
+    )
     expect(html).toContain('<button>ready</button>')
     expect(visible).not.toHaveBeenCalled()
     expect(payload.components.c0?.visibleCount).toBe(1)
@@ -327,12 +291,10 @@ describe('onVisible', () => {
       symbol: 'visible-symbol',
     })
   })
-
   it('runs when a resumed SSR boundary becomes visible without activating the component', async () => {
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
-      const globalRecord = globalThis as Record<PropertyKey, unknown>
+      const globalRecord = globalThis
       globalRecord.__eclipsaVisibleRuns = 0
-
       const container = createResumeContainer(doc, {
         actions: {},
         components: {
@@ -383,29 +345,23 @@ describe('onVisible', () => {
         }),
       )
       const cleanup = installResumeListeners(container)
-
       await flushAsync()
       expect(globalRecord.__eclipsaVisibleRuns).toBe(0)
-
-      ;(doc as unknown as FakeDocument).visible = true
+      doc.visible = true
       fakeWindow.emit('resize')
       await flushAsync()
-
       expect(globalRecord.__eclipsaVisibleRuns).toBe(1)
       expect(container.components.get('c0')?.active).toBe(false)
-
       fakeWindow.emit('resize')
       await flushAsync()
       expect(globalRecord.__eclipsaVisibleRuns).toBe(1)
-
       cleanup()
       delete globalRecord.__eclipsaVisibleRuns
     })
   })
-
   it('runs cleanup only when the visible registration is torn down', async () => {
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
-      const events: string[] = []
+      const events = []
       const container = createResumeContainer(doc, {
         actions: {},
         components: {
@@ -457,73 +413,72 @@ describe('onVisible', () => {
           },
         }),
       )
-
       const cleanup = installResumeListeners(container)
-
-      ;(doc as unknown as FakeDocument).visible = true
+      doc.visible = true
       fakeWindow.emit('resize')
       await flushAsync()
       expect(events).toEqual(['run'])
-
-      ;(doc as unknown as FakeDocument).visible = false
+      doc.visible = false
       fakeWindow.emit('resize')
       await flushAsync()
       expect(events).toEqual(['run'])
-
       const Replacement = __eclipsaComponent(
-        () => <span>done</span>,
+        () =>
+          /* @__PURE__ */ jsxDEV('span', { children: 'done' }, void 0, false, {
+            fileName: 'packages/eclipsa/core/on-visible.test.ts',
+            lineNumber: 474,
+            columnNumber: 15,
+          }),
         'replacement-symbol',
         () => [],
       )
-
       container.rootChildCursor = 0
       withRuntimeContainer(container, () => {
-        renderClientInsertable(jsxDEV(Replacement, {}, null, false, {}), container)
+        renderClientInsertable(jsxDEV2(Replacement, {}, null, false, {}), container)
       })
-
       expect(events).toEqual(['run', 'cleanup'])
-
       cleanup()
     })
   })
-
   it('restores signal refs before resumed visible callbacks run', async () => {
-    const globalRecord = globalThis as Record<PropertyKey, unknown>
+    const globalRecord = globalThis
     const App = __eclipsaComponent(
       () => {
-        const ref = useSignal<HTMLElement | undefined>()
-
+        const ref = useSignal()
         onVisible(
           __eclipsaLazy(
             'visible-ref-symbol',
             () => {
-              globalRecord.__eclipsaVisibleRefTag =
-                (ref.value as { tagName?: string } | undefined)?.tagName ?? null
+              globalRecord.__eclipsaVisibleRefTag = ref.value?.tagName ?? null
             },
             () => [ref],
           ),
         )
-
-        return <div ref={ref}>ready</div>
+        return /* @__PURE__ */ jsxDEV('div', { ref, children: 'ready' }, void 0, false, {
+          fileName: 'packages/eclipsa/core/on-visible.test.ts',
+          lineNumber: 507,
+          columnNumber: 16,
+        })
       },
       'component-ref',
       () => [],
     )
-
-    const { html, payload } = renderSSR(() => <App />)
+    const { html, payload } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
+        fileName: 'packages/eclipsa/core/on-visible.test.ts',
+        lineNumber: 513,
+        columnNumber: 47,
+      }),
+    )
     const signalId = payload.components.c0?.signalIds[0]
-
     expect(signalId).toBeTruthy()
     expect(html).toContain(`data-e-ref="${signalId}"`)
     expect(html).not.toContain(' ref=')
-
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
       globalRecord.__eclipsaVisibleRefTag = null
-
-      const body = (doc as unknown as FakeDocument).body as unknown as FakeElement
-      const element = body.childNodes[1] as FakeElement
-      element.setAttribute('data-e-ref', signalId as string)
-
+      const body = doc.body
+      const element = body.childNodes[1]
+      element.setAttribute('data-e-ref', signalId)
       const container = createResumeContainer(doc, {
         ...payload,
         symbols: {
@@ -534,33 +489,27 @@ describe('onVisible', () => {
       container.imports.set(
         'visible-ref-symbol',
         Promise.resolve({
-          default: (scope: unknown[]) => {
-            const [ref] = scope as [{ value?: { tagName?: string } }]
+          default: (scope) => {
+            const [ref] = scope
             globalRecord.__eclipsaVisibleRefTag = ref.value?.tagName ?? null
           },
         }),
       )
-
       const cleanup = installResumeListeners(container)
-
       await flushAsync()
       expect(globalRecord.__eclipsaVisibleRefTag).toBe(null)
-
-      ;(doc as unknown as FakeDocument).visible = true
+      doc.visible = true
       fakeWindow.emit('resize')
       await flushAsync()
-
       expect(globalRecord.__eclipsaVisibleRefTag).toBe('div')
       expect(container.components.get('c0')?.active).toBe(false)
-
       cleanup()
       delete globalRecord.__eclipsaVisibleRefTag
     })
   })
-
   it('reruns resumed visible callbacks after an HMR boundary rerender', async () => {
     await withFakeVisibleDocument(async (doc, fakeWindow) => {
-      const events: string[] = []
+      const events = []
       const container = createResumeContainer(doc, {
         actions: {},
         components: {
@@ -624,19 +573,15 @@ describe('onVisible', () => {
                 () => [],
               ),
             )
-            return jsxDEV('div', { children: 'ready' }, null, false, {})
+            return jsxDEV2('div', { children: 'ready' }, null, false, {})
           },
         }),
       )
-
       const cleanup = installResumeListeners(container)
-
-      ;(doc as unknown as FakeDocument).visible = true
+      doc.visible = true
       fakeWindow.emit('resize')
       await flushAsync()
-
       expect(events).toEqual(['run'])
-
       await applyResumeHmrUpdate(container, {
         fileUrl: '/app/+page.tsx',
         fullReload: false,
@@ -645,9 +590,7 @@ describe('onVisible', () => {
         symbolUrlReplacements: {},
       })
       await flushAsync()
-
       expect(events).toEqual(['run', 'cleanup', 'run'])
-
       cleanup()
     })
   })

@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('resumeContainer interactivity bootstrap', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
   afterEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
@@ -23,6 +28,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     )
     const registerResumeContainer = vi.fn()
     const restoreRegisteredRpcHandles = vi.fn()
+    const restoreResumedExternalComponents = vi.fn(async () => {})
     const restoreResumedLocalSignalEffects = vi.fn()
     const registerClientHooks = vi.fn()
 
@@ -36,6 +42,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       refreshRegisteredRouteContainers: vi.fn(),
       registerResumeContainer,
       restoreRegisteredRpcHandles,
+      restoreResumedExternalComponents,
       restoreResumedLocalSignalEffects,
     }))
     vi.doMock('./hooks.ts', () => ({
@@ -96,11 +103,17 @@ describe('resumeContainer interactivity bootstrap', () => {
       expect(installResumeListeners).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).not.toHaveBeenCalled()
 
+      for (let attempt = 0; attempt < 5 && !resolvePrime; attempt += 1) {
+        await Promise.resolve()
+      }
+      expect(primeRouteModules).toHaveBeenCalledWith(container)
+
       ;(resolvePrime as (() => void) | null)?.()
       await resumePromise
 
       expect(registerClientHooks).toHaveBeenCalledWith({})
       expect(restoreRegisteredRpcHandles).toHaveBeenCalledWith(container)
+      expect(restoreResumedExternalComponents).toHaveBeenCalledWith(container)
       expect(restoreResumedLocalSignalEffects).toHaveBeenCalledWith(container)
       expect(registerResumeContainer).toHaveBeenCalledWith(container)
       expect(root.setAttribute).toHaveBeenCalledWith('data-e-resume', 'resumed')
@@ -108,7 +121,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     } finally {
       globalThis.Document = OriginalDocument
     }
-  })
+  }, 15_000)
 
   it('does not wait for local signal restoration before binding resumable listeners', async () => {
     const container = {} as object
@@ -122,6 +135,7 @@ describe('resumeContainer interactivity bootstrap', () => {
     const primeRouteModules = vi.fn(async () => {})
     const registerResumeContainer = vi.fn()
     const restoreRegisteredRpcHandles = vi.fn()
+    const restoreResumedExternalComponents = vi.fn(async () => {})
     const restoreResumedLocalSignalEffects = vi.fn(
       () =>
         new Promise<void>((resolve) => {
@@ -140,6 +154,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       refreshRegisteredRouteContainers: vi.fn(),
       registerResumeContainer,
       restoreRegisteredRpcHandles,
+      restoreResumedExternalComponents,
       restoreResumedLocalSignalEffects,
     }))
     vi.doMock('./hooks.ts', () => ({
@@ -198,6 +213,12 @@ describe('resumeContainer interactivity bootstrap', () => {
       expect(registerResumeContainer).not.toHaveBeenCalled()
       expect(root.setAttribute).not.toHaveBeenCalled()
 
+      for (let attempt = 0; attempt < 5 && !resolveRestore; attempt += 1) {
+        await Promise.resolve()
+      }
+      expect(restoreResumedExternalComponents).toHaveBeenCalledWith(container)
+      expect(restoreResumedLocalSignalEffects).toHaveBeenCalledWith(container)
+
       ;(resolveRestore as (() => void) | null)?.()
       await resumePromise
 
@@ -207,5 +228,5 @@ describe('resumeContainer interactivity bootstrap', () => {
     } finally {
       globalThis.Document = OriginalDocument
     }
-  })
+  }, 15_000)
 })

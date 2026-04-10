@@ -28,8 +28,8 @@ const restoreSlotNodes = (slotHost: Element, nodes: Node[]) => {
   ) {
     return
   }
-  for (const child of [...slotHost.childNodes]) {
-    child.remove()
+  while (slotHost.firstChild) {
+    slotHost.firstChild.remove()
   }
   for (const node of nodes) {
     slotHost.appendChild(node)
@@ -94,9 +94,7 @@ const findSlotHost = (host: HTMLElement, name: string) => {
   if (typeof host.querySelectorAll !== 'function') {
     return host.querySelector?.(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`) ?? null
   }
-  const matches = [
-    ...host.querySelectorAll<HTMLElement>(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`),
-  ]
+  const matches = [...host.querySelectorAll<HTMLElement>(`${SLOT_HOST_TAG}[data-e-slot="${name}"]`)]
   if (matches.length === 0) {
     return null
   }
@@ -249,24 +247,28 @@ export const eclipsifyReact = <TProps extends Record<string, unknown>>(
       const componentId =
         host.getAttribute('data-e-external-snapshot') ??
         host.getAttribute('data-e-external-component')
-      const snapshotStore = (globalThis as typeof globalThis & {
-        __eclipsaExternalSlotSnapshotStore?: Record<
-          string,
-          {
-            dom?: Map<string, Node[]>
-            html?: Map<string, string>
-          }
-        >
-      }).__eclipsaExternalSlotSnapshotStore
-      const snapshotMap = (globalThis as typeof globalThis & {
-        __eclipsaExternalSlotSnapshotMap?: Map<
-          HTMLElement,
-          {
-            dom?: Map<string, Node[]>
-            html?: Map<string, string>
-          }
-        >
-      }).__eclipsaExternalSlotSnapshotMap
+      const snapshotStore = (
+        globalThis as typeof globalThis & {
+          __eclipsaExternalSlotSnapshotStore?: Record<
+            string,
+            {
+              dom?: Map<string, Node[]>
+              html?: Map<string, string>
+            }
+          >
+        }
+      ).__eclipsaExternalSlotSnapshotStore
+      const snapshotMap = (
+        globalThis as typeof globalThis & {
+          __eclipsaExternalSlotSnapshotMap?: Map<
+            HTMLElement,
+            {
+              dom?: Map<string, Node[]>
+              html?: Map<string, string>
+            }
+          >
+        }
+      ).__eclipsaExternalSlotSnapshotMap
       const snapshotEntry =
         (componentId ? snapshotStore?.[componentId] : undefined) ??
         (() => {
@@ -293,7 +295,10 @@ export const eclipsifyReact = <TProps extends Record<string, unknown>>(
       }
       const root = hydrateRoot(
         host,
-        createElement(component, toReactProps(props, slotNames, instance) as TProps) as ReactElement,
+        createElement(
+          component,
+          toReactProps(props, slotNames, instance) as TProps,
+        ) as ReactElement,
       )
       instance.root = root
       observeSlotDom(host, slotNames, instance)
@@ -336,7 +341,10 @@ export const eclipsifyReact = <TProps extends Record<string, unknown>>(
       }
       const slotState = 'root' in resolved ? resolved : { slotDom: new Map(), slotHtml: new Map() }
       root.render(
-        createElement(component, toReactProps(props, slotNames, slotState) as TProps) as ReactElement,
+        createElement(
+          component,
+          toReactProps(props, slotNames, slotState) as TProps,
+        ) as ReactElement,
       )
       await waitForExternalDomCommit()
       if ('root' in resolved && slotDom) {

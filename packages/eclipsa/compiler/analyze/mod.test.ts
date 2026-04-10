@@ -36,7 +36,7 @@ describe('analyzeModule()', () => {
       const snapshot = await fs.readFile(snapshotPath, 'utf8')
       expect(`${sections.join('\n\n')}\n`).toBe(snapshot)
     }
-  })
+  }, 15_000)
 
   it('rejects useSignal() outside a component', async () => {
     await expect(

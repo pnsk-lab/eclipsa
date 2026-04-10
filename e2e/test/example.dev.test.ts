@@ -1,22 +1,23 @@
-const { readFile, rename, writeFile } = require('node:fs/promises')
-const path = require('node:path')
-const { expect, test } = require('@playwright/test') as typeof import('@playwright/test')
+import { readFile, rename, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { expect, test, type Page } from '@playwright/test'
 
-type Page = import('@playwright/test').Page
+const testDir = path.dirname(fileURLToPath(import.meta.url))
 
-const hmrSvgPagePath = path.resolve(__dirname, '../app/hmr-svg/+page.tsx')
+const hmrSvgPagePath = path.resolve(testDir, '../app/hmr-svg/+page.tsx')
 const hmrBeforeLabel = 'svg hmr before'
 const hmrAfterLabel = 'svg hmr after'
-const imagePagePath = path.resolve(__dirname, '../app/image/+page.tsx')
+const imagePagePath = path.resolve(testDir, '../app/image/+page.tsx')
 const imageHmrBeforeLabel = 'Responsive image metadata should survive navigation, resume, and HMR.'
 const imageHmrAfterLabel =
   'Responsive image metadata should survive navigation, resume, HMR, and page transitions.'
-const contentMarkdownPath = path.resolve(__dirname, '../app/content/docs/guide/getting-started.md')
+const contentMarkdownPath = path.resolve(testDir, '../app/content/docs/guide/getting-started.md')
 const contentBodyBeforeLabel = 'Content body before.'
 const contentBodyAfterLabel = 'Content body after.'
 const contentDescriptionBeforeLabel = 'Content description before'
 const contentDescriptionAfterLabel = 'Content description after'
-const homePagePath = path.resolve(__dirname, '../app/+page.tsx')
+const homePagePath = path.resolve(testDir, '../app/+page.tsx')
 const homeHmrBeforeLabel = 'Go to counter with navigate()'
 const homeHmrAfterLabel = 'Go to counter with navigate()!'
 const hmrTimeout = 15_000

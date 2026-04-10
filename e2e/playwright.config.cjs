@@ -31,5 +31,5 @@ module.exports = defineConfig({
     baseURL,
     trace: 'retain-on-failure',
   },
-  testMatch: ['**/*.test.ts', '**/*.test.cts'],
+  testMatch: ['**/*.test.ts'],
 })
