@@ -31,6 +31,7 @@
     "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "test": "vp test --run",
+    "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
     "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
   },
   "dependencies": {

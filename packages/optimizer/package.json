@@ -46,7 +46,8 @@
     "restore:manifest": "bun ./scripts/sync-package-manifest.ts dev",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "version:napi": "bun ./scripts/run-napi.ts version --package-json-path ./package.json --npm-dir ./npm",
-    "test": "bun run build:native:dev && vp test --run"
+    "test": "bun run build:native:dev && vp test --run",
+    "test:coverage": "bun run build:native:dev && c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run"
   },
   "dependencies": {
     "@emnapi/core": "^1.9.0",

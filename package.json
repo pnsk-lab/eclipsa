@@ -18,6 +18,7 @@
     "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/optimizer --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/content --filter=./packages/motion --filter=./packages/markdown",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
     "test:e2e": "turbo run e2e --filter=./e2e",
     "lint": "vp check",
     "fmt": "vp check --fix"
@@ -29,6 +30,7 @@
     "@types/react-dom": "^19.2.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
+    "c8": "^11.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "turbo": "^2.8.16",

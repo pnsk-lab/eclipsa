@@ -118,7 +118,8 @@
     "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "pack": "bun run build",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "test": "bun run --filter @eclipsa/optimizer build:native:dev && vp test --run"
+    "test": "bun run --filter @eclipsa/optimizer build:native:dev && vp test --run",
+    "test:coverage": "bun run --filter @eclipsa/optimizer build:native:dev && c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run"
   },
   "dependencies": {
     "@eclipsa/optimizer": "workspace:^",
