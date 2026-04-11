@@ -69,6 +69,8 @@ const writeMinimalRuntimeEntry = async (
     hasActionSource?: string
     hasLoaderSource?: string
     renderSSRAsyncSource?: string
+    renderSSRStreamSource?: string
+    serializeResumePayloadSource?: string
   },
 ) => {
   const entriesDir = path.join(root, 'dist/ssr/entries')
@@ -90,9 +92,10 @@ const writeMinimalRuntimeEntry = async (
       'export const jsxDEV = () => ({});',
       options?.renderSSRAsyncSource ??
         'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
-      'export const renderSSRStream = async () => ({ chunks: (async function* () {})(), html: "<html><head></head><body></body></html>", payload: {} });',
+      options?.renderSSRStreamSource ??
+        'export const renderSSRStream = async () => ({ chunks: (async function* () {})(), html: "<html><head></head><body></body></html>", payload: {} });',
       'export const resolvePendingLoaders = async () => undefined;',
-      'export const serializeResumePayload = () => "{}";',
+      options?.serializeResumePayloadSource ?? 'export const serializeResumePayload = () => "{}";',
       'export const composeRouteMetadata = () => null;',
       'export const renderRouteMetadataHead = () => [];',
       'export const attachRequestFetch = () => undefined;',
@@ -241,6 +244,98 @@ describe('build', () => {
 
     expect(appSource).toContain('const document = jsxDEV(SSRRoot, {')
     expect(appSource).not.toContain('const document = SSRRoot({')
+  })
+
+  it('replaces every built app-shell placeholder occurrence before responding', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-placeholder-replace-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      renderSSRStreamSource: [
+        'export const renderSSRStream = async () => ({',
+        '  chunks: (async function* () {})(),',
+        '  html: "<html><head>" +',
+        '    "<script type=\\"application/eclipsa-resume+json\\">__ECLIPSA_RESUME_PAYLOAD__</script>" +',
+        '    "<script type=\\"application/eclipsa-route-manifest+json\\">__ECLIPSA_ROUTE_MANIFEST__</script>" +',
+        '    "<script type=\\"application/eclipsa-app-hooks+json\\">__ECLIPSA_APP_HOOKS__</script>" +',
+        '    "<script>__ECLIPSA_CHUNK_CACHE__</script>" +',
+        '    "<script type=\\"application/eclipsa-resume+json\\">__ECLIPSA_RESUME_PAYLOAD__</script>" +',
+        '    "<script type=\\"application/eclipsa-route-manifest+json\\">__ECLIPSA_ROUTE_MANIFEST__</script>" +',
+        '    "<script type=\\"application/eclipsa-app-hooks+json\\">__ECLIPSA_APP_HOOKS__</script>" +',
+        '    "<script>__ECLIPSA_CHUNK_CACHE__</script>" +',
+        '    "</head><body></body></html>",',
+        '  payload: {},',
+        '});',
+      ].join('\n'),
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(new Request('http://localhost/'))
+    const html = await response.text()
+
+    expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
+    expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+    expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
+    expect(html).not.toContain('__ECLIPSA_CHUNK_CACHE__')
+  })
+
+  it('replaces finite head placeholders inside serialized built resume payloads', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-payload-placeholder-replace-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      renderSSRStreamSource: [
+        'export const renderSSRStream = async () => ({',
+        '  chunks: (async function* () {})(),',
+        '  html: "<html><head></head><body></body></html>",',
+        '  payload: {',
+        '    components: {',
+        '      c0: {',
+        '        props: {',
+        '          head: {',
+        '            children: [',
+        '              { props: { children: "__ECLIPSA_ROUTE_MANIFEST__" }, type: "script" },',
+        '              { props: { children: "__ECLIPSA_APP_HOOKS__" }, type: "script" },',
+        '              { props: { dangerouslySetInnerHTML: "__ECLIPSA_CHUNK_CACHE__" }, type: "script" },',
+        '            ],',
+        '            type: "fragment",',
+        '          },',
+        '        },',
+        '      },',
+        '    },',
+        '  },',
+        '});',
+      ].join('\n'),
+      serializeResumePayloadSource:
+        'export const serializeResumePayload = (payload) => JSON.stringify(payload);',
+    })
+    await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(new Request('http://localhost/'))
+    const html = await response.text()
+
+    expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+    expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
+    expect(html).not.toContain('__ECLIPSA_CHUNK_CACHE__')
+    expect(html).toContain('"children":"[]"')
+    expect(html).toContain('{\\"client\\":null}')
+    expect(html).toContain('eclipsa-chunk-cache-sw.js')
   })
 
   it('serves route-data loader snapshots from the built node app', async () => {

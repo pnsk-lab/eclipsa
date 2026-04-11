@@ -143,6 +143,39 @@ interface RouteServerAccessEntry {
 const replaceHeadPlaceholder = (html: string, placeholder: string, value: string) =>
   html.replaceAll(placeholder, value)
 
+const replaceResumePayloadPlaceholderValue = (
+  value: unknown,
+  replacements: Record<string, string>,
+): unknown => {
+  if (typeof value === 'string') {
+    return replacements[value] ?? value
+  }
+  if (Array.isArray(value)) {
+    let changed = false
+    const next = value.map((entry) => {
+      const replaced = replaceResumePayloadPlaceholderValue(entry, replacements)
+      if (replaced !== entry) {
+        changed = true
+      }
+      return replaced
+    })
+    return changed ? next : value
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+  let changed = false
+  const next: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    const replaced = replaceResumePayloadPlaceholderValue(entry, replacements)
+    if (replaced !== entry) {
+      changed = true
+    }
+    next[key] = replaced
+  }
+  return changed ? next : value
+}
+
 const splitHtmlForStreaming = (html: string) => {
   const bodyCloseIndex = html.lastIndexOf('</body>')
   if (bodyCloseIndex >= 0) {
@@ -672,6 +705,13 @@ const createDevApp = async (init: DevAppInit) => {
     }>
     const { default: Page } = pageModule
     const Layouts = layoutModules.map((module) => module.default)
+    const serializeAppResumePayload = (payload: unknown) =>
+      serializeResumePayload(
+        replaceResumePayloadPlaceholderValue(payload, {
+          [ROUTE_MANIFEST_PLACEHOLDER]: JSON.stringify(routeManifest),
+          [APP_HOOKS_PLACEHOLDER]: JSON.stringify(appHooksManifest),
+        }) as Parameters<typeof serializeResumePayload>[0],
+      )
     const metadata = composeRouteMetadata(
       [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
       {
@@ -764,7 +804,11 @@ const createDevApp = async (init: DevAppInit) => {
     })
     const shellHtml = replaceHeadPlaceholder(
       replaceHeadPlaceholder(
-        replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+        replaceHeadPlaceholder(
+          html,
+          RESUME_PAYLOAD_PLACEHOLDER,
+          serializeAppResumePayload(payload),
+        ),
         ROUTE_MANIFEST_PLACEHOLDER,
         escapeJSONScriptText(JSON.stringify(routeManifest)),
       ),
@@ -788,7 +832,7 @@ const createDevApp = async (init: DevAppInit) => {
               controller.enqueue(
                 encoder.encode(
                   `<template id="${templateId}">${chunk.html}</template>` +
-                    `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeResumePayload(chunk.payload)}</script>` +
+                    `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeAppResumePayload(chunk.payload)}</script>` +
                     `<script>window.__eclipsa_stream.enqueue({boundaryId:${JSON.stringify(chunk.boundaryId)},payloadScriptId:${JSON.stringify(payloadId)},templateId:${JSON.stringify(templateId)}})</script>`,
                 ),
               )
@@ -796,7 +840,7 @@ const createDevApp = async (init: DevAppInit) => {
 
             controller.enqueue(
               encoder.encode(
-                `<script id="${RESUME_FINAL_STATE_ELEMENT_ID}" type="application/eclipsa-resume+json">${serializeResumePayload(latestPayload)}</script>${suffix}`,
+                `<script id="${RESUME_FINAL_STATE_ELEMENT_ID}" type="application/eclipsa-resume+json">${serializeAppResumePayload(latestPayload)}</script>${suffix}`,
               ),
             )
             controller.close()

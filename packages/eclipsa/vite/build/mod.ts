@@ -990,7 +990,47 @@ const resolvePreflightTarget = (pathname) => {
   return null;
 };
 
-const replaceHeadPlaceholder = (html, placeholder, value) => html.replace(placeholder, value);
+const replaceHeadPlaceholder = (html, placeholder, value) => html.replaceAll(placeholder, value);
+const replaceResumePayloadPlaceholderValue = (value, replacements) => {
+  if (typeof value === "string") {
+    return replacements[value] ?? value;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((entry) => {
+      const replaced = replaceResumePayloadPlaceholderValue(entry, replacements);
+      if (replaced !== entry) {
+        changed = true;
+      }
+      return replaced;
+    });
+    return changed ? next : value;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  let changed = false;
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const replaced = replaceResumePayloadPlaceholderValue(entry, replacements);
+    if (replaced !== entry) {
+      changed = true;
+    }
+    next[key] = replaced;
+  }
+  return changed ? next : value;
+};
+const createResumePayloadPlaceholderReplacements = (pathname, payload) => ({
+  [ROUTE_MANIFEST_PLACEHOLDER]: JSON.stringify(routeManifest),
+  [APP_HOOKS_PLACEHOLDER]: JSON.stringify(appHooksManifest),
+  [CHUNK_CACHE_PLACEHOLDER]: createChunkCacheRegistrationScript(pathname, payload),
+});
+const serializeAppResumePayload = (pathname, payload) => serializeResumePayload(
+  replaceResumePayloadPlaceholderValue(
+    payload,
+    createResumePayloadPlaceholderReplacements(pathname, payload),
+  ),
+);
 const splitHtmlForStreaming = (html) => {
   const bodyCloseIndex = html.lastIndexOf("</body>");
   if (bodyCloseIndex >= 0) {
@@ -1180,7 +1220,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
   const shellHtml = replaceHeadPlaceholder(
     replaceHeadPlaceholder(
         replaceHeadPlaceholder(
-          replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
+          replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeAppResumePayload(pathname, payload)),
           CHUNK_CACHE_PLACEHOLDER,
           escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, payload)),
         ),
@@ -1206,7 +1246,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
             controller.enqueue(
               encoder.encode(
                 "<template id=\\"" + templateId + "\\">" + chunk.html + "</template>" +
-                  "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(chunk.payload) + "</script>" +
+                  "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeAppResumePayload(pathname, chunk.payload) + "</script>" +
                   "<script>window.__eclipsa_stream.enqueue({boundaryId:" + JSON.stringify(chunk.boundaryId) + ",payloadScriptId:" + JSON.stringify(payloadId) + ",templateId:" + JSON.stringify(templateId) + "})</script>",
               ),
             );
@@ -1214,7 +1254,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 
           controller.enqueue(
             encoder.encode(
-              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(latestPayload) + "</script>" +
+              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeAppResumePayload(pathname, latestPayload) + "</script>" +
                 "<script>" + escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, latestPayload)) + "</script>" +
                 suffix,
             ),

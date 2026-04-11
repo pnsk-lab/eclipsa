@@ -540,6 +540,97 @@ describe('createDevFetch', () => {
     expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
   })
 
+  it('replaces route metadata placeholders inside serialized dev resume payloads', async () => {
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/app/+ssr-root.tsx') {
+            return {
+              default() {
+                return null
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+              escapeJSONScriptText(value: string) {
+                return value
+              },
+              getStreamingResumeBootstrapScriptContent() {
+                return ''
+              },
+              renderSSRStream() {
+                return {
+                  chunks: (async function* () {})(),
+                  html: '<html><head></head><body></body></html>',
+                  payload: {
+                    components: {
+                      c0: {
+                        props: {
+                          head: {
+                            children: [
+                              {
+                                props: {
+                                  children: '__ECLIPSA_ROUTE_MANIFEST__',
+                                },
+                                type: 'script',
+                              },
+                              {
+                                props: {
+                                  children: '__ECLIPSA_APP_HOOKS__',
+                                },
+                                type: 'script',
+                              },
+                            ],
+                            type: 'fragment',
+                          },
+                        },
+                      },
+                    },
+                  },
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+              serializeResumePayload(payload: unknown) {
+                return JSON.stringify(payload)
+              },
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/'))
+    const html = await response?.text()
+
+    expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
+    expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
+    expect(html).toContain('\\"routePath\\":\\"/\\"')
+    expect(html).toContain('{\\"client\\":null}')
+  })
+
   it('injects the suspense streaming bootstrap script without escaping it', async () => {
     const bootstrapScript = '(()=>window.__eclipsa_stream_boot=1)()'
     const renderNode = (value: any): string => {
