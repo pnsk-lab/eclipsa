@@ -6118,6 +6118,52 @@ export const collectResumeHmrBoundaryIds = (
   return result
 }
 
+const rewriteSerializedSymbolReferenceToken = (
+  value: SerializedValue,
+  affectedIds: ReadonlySet<string>,
+  nextSymbolId: string,
+) => {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      rewriteSerializedSymbolReferenceToken(entry, affectedIds, nextSymbolId)
+    }
+    return
+  }
+
+  if (!value || typeof value !== 'object' || !('__eclipsa_type' in value)) {
+    return
+  }
+
+  switch (value.__eclipsa_type) {
+    case 'object':
+      for (const [, entry] of value.entries) {
+        rewriteSerializedSymbolReferenceToken(entry, affectedIds, nextSymbolId)
+      }
+      return
+    case 'map':
+      for (const [key, entry] of value.entries) {
+        rewriteSerializedSymbolReferenceToken(key, affectedIds, nextSymbolId)
+        rewriteSerializedSymbolReferenceToken(entry, affectedIds, nextSymbolId)
+      }
+      return
+    case 'set':
+      for (const entry of value.entries) {
+        rewriteSerializedSymbolReferenceToken(entry, affectedIds, nextSymbolId)
+      }
+      return
+    case 'ref':
+      if (value.kind === 'symbol' && affectedIds.has(value.token)) {
+        value.token = nextSymbolId
+      }
+      if (value.data !== undefined) {
+        rewriteSerializedSymbolReferenceToken(value.data, affectedIds, nextSymbolId)
+      }
+      return
+    default:
+      return
+  }
+}
+
 export const applyResumeHmrSymbolReplacements = (
   container: RuntimeContainer,
   replacements: Record<string, string>,
@@ -6159,6 +6205,12 @@ export const applyResumeHmrSymbolReplacements = (
     for (const visible of container.visibles.values()) {
       if (affectedIds.has(visible.symbol)) {
         visible.symbol = nextSymbolId
+      }
+    }
+
+    for (const slots of container.scopes.values()) {
+      for (const slot of slots) {
+        rewriteSerializedSymbolReferenceToken(slot, affectedIds, nextSymbolId)
       }
     }
 

@@ -171,6 +171,26 @@ describe('resume HMR runtime helpers', () => {
         ['old-symbol', Promise.resolve({ default: () => null })],
         ['mid-symbol', Promise.resolve({ default: () => null })],
       ]),
+      scopes: new Map([
+        [
+          'sc0',
+          [
+            {
+              __eclipsa_type: 'ref',
+              data: [
+                {
+                  __eclipsa_type: 'ref',
+                  data: [],
+                  kind: 'symbol',
+                  token: 'old-symbol',
+                },
+              ],
+              kind: 'symbol',
+              token: 'old-symbol',
+            },
+          ],
+        ],
+      ]),
       symbols: new Map([['old-symbol', '/app/+page.tsx?eclipsa-symbol=old-symbol']]),
       visibles: new Map([
         [
@@ -216,6 +236,21 @@ describe('resume HMR runtime helpers', () => {
       'old-symbol': '/app/+page.tsx?eclipsa-symbol=mid-symbol',
     })
     expect(container.components.get('c0')?.symbol).toBe('mid-symbol')
+    expect(container.scopes.get('sc0')).toEqual([
+      {
+        __eclipsa_type: 'ref',
+        data: [
+          {
+            __eclipsa_type: 'ref',
+            data: [],
+            kind: 'symbol',
+            token: 'mid-symbol',
+          },
+        ],
+        kind: 'symbol',
+        token: 'mid-symbol',
+      },
+    ])
     expect(container.visibles.get('v0')?.symbol).toBe('mid-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('mid-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['mid-symbol'])).toEqual(['c0'])
@@ -228,6 +263,21 @@ describe('resume HMR runtime helpers', () => {
     expect(container.symbols.get('mid-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.symbols.get('next-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.components.get('c0')?.symbol).toBe('next-symbol')
+    expect(container.scopes.get('sc0')).toEqual([
+      {
+        __eclipsa_type: 'ref',
+        data: [
+          {
+            __eclipsa_type: 'ref',
+            data: [],
+            kind: 'symbol',
+            token: 'next-symbol',
+          },
+        ],
+        kind: 'symbol',
+        token: 'next-symbol',
+      },
+    ])
     expect(container.visibles.get('v0')?.symbol).toBe('next-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('next-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['next-symbol'])).toEqual(['c0'])
