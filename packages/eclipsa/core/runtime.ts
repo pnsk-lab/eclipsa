@@ -686,8 +686,7 @@ const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
 
 const isWritableSignalMeta = (
   meta: SignalMeta<unknown> | null,
-): meta is SignalMeta<unknown> & { kind?: 'signal' } =>
-  !!meta && meta.kind !== 'computed-signal'
+): meta is SignalMeta<unknown> & { kind?: 'signal' } => !!meta && meta.kind !== 'computed-signal'
 
 const getRefSignalId = (value: unknown) => {
   const signalMeta = getSignalMeta(value)
@@ -987,10 +986,10 @@ interface ComputedSignalSnapshot<T> {
   value?: T
 }
 
-const isComputedSignalSnapshot = <T>(
-  value: unknown,
-): value is ComputedSignalSnapshot<T> =>
-  !!value && typeof value === 'object' && (value as ComputedSignalSnapshot<T>).__e_async_computed === true
+const isComputedSignalSnapshot = <T>(value: unknown): value is ComputedSignalSnapshot<T> =>
+  !!value &&
+  typeof value === 'object' &&
+  (value as ComputedSignalSnapshot<T>).__e_async_computed === true
 
 const readComputedSignalValue = <T>(record: SignalRecord<unknown>) => {
   recordSignalRead(record)
