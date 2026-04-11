@@ -67,7 +67,18 @@ export const ROUTE_DOCUMENT_FALLBACK = Object.freeze({
   ok: false,
 } as const)
 
-const splitRoutePath = (pathname: string) => normalizeRoutePath(pathname).split('/').filter(Boolean)
+const decodeRoutePathSegment = (segment: string) => {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+const splitRawRoutePath = (pathname: string) =>
+  normalizeRoutePath(pathname).split('/').filter(Boolean)
+
+const splitRoutePath = (pathname: string) => splitRawRoutePath(pathname).map(decodeRoutePathSegment)
 
 const matchRouteSegments = (
   segments: RouteModuleManifest['segments'],
@@ -172,9 +183,19 @@ export const findSpecialManifestEntry = (
   pathname: string,
   kind: 'error' | 'notFound',
 ) => {
-  const matched = matchRouteManifest(manifest, pathname)
+  const normalizedPath = normalizeRoutePath(pathname)
+  const matched = matchRouteManifest(manifest, normalizedPath)
   if (matched?.entry[kind]) {
     return matched
+  }
+
+  const rawPathSegments = splitRawRoutePath(normalizedPath)
+  for (let length = rawPathSegments.length - 1; length >= 0; length -= 1) {
+    const candidatePath = length === 0 ? '/' : `/${rawPathSegments.slice(0, length).join('/')}`
+    const candidate = matchRouteManifest(manifest, candidatePath)
+    if (candidate?.entry[kind]) {
+      return candidate
+    }
   }
 
   let best: ReturnType<typeof matchRouteManifest> = null
@@ -188,7 +209,7 @@ export const findSpecialManifestEntry = (
       best = {
         entry,
         params: EMPTY_ROUTE_PARAMS,
-        pathname: normalizeRoutePath(pathname),
+        pathname: normalizedPath,
       }
       bestScore = score
     }

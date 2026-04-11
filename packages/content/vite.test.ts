@@ -180,6 +180,44 @@ export const posts = defineCollection({ loader: { load: () => [] } })
     expect(code).not.toContain('zod')
   })
 
+  it('stubs collections exported through an export list in the client environment', async () => {
+    const root = await createTempRoot()
+    const configPath = path.join(root, 'app', 'content.config.ts')
+    await fs.writeFile(
+      configPath,
+      `
+import { defineCollection } from '@eclipsa/content'
+
+const docs = defineCollection({ loader: { load: () => [] } })
+
+export { docs }
+`,
+    )
+    const plugin = getPlugin()
+    const configResolved =
+      typeof plugin.configResolved === 'function'
+        ? plugin.configResolved
+        : plugin.configResolved?.handler
+    await configResolved?.call(
+      {} as any,
+      {
+        root,
+      } as any,
+    )
+
+    const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
+    const code = await load?.call(
+      {
+        environment: {
+          name: 'client',
+        },
+      } as any,
+      configPath,
+    )
+
+    expect(code).toContain('export const docs = Object.freeze')
+  })
+
   it('invalidates registered dev apps and emits a content HMR event for markdown changes', async () => {
     const root = await createTempRoot()
     const plugin = getPlugin()

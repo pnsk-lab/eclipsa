@@ -55,6 +55,17 @@ interface RouteMatch<T> {
   route: T
 }
 
+const decodeRoutePathSegment = (segment: string) => {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+const splitRoutePath = (pathname: string) =>
+  normalizeRoutePath(pathname).split('/').filter(Boolean).map(decodeRoutePathSegment)
+
 const createDirectoryEntry = (): RouteDirectoryEntry => ({
   error: null,
   layout: null,
@@ -278,7 +289,7 @@ const toMatch = <T extends { segments: RoutePathSegment[] }>(
   route: T,
   pathname: string,
 ): RouteMatch<T> | null => {
-  const pathnameSegments = normalizeRoutePath(pathname).split('/').filter(Boolean)
+  const pathnameSegments = splitRoutePath(pathname)
   const params = matchSegments(route.segments, pathnameSegments)
   if (!params) {
     return null

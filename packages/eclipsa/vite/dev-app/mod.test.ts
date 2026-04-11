@@ -1651,6 +1651,121 @@ describe('createDevFetch', () => {
     })
   })
 
+  it('keeps nearest dynamic params when resolving not-found route-data fallbacks', async () => {
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: {
+          entryName: 'special__hello_world___slug____not_found',
+          filePath: '/tmp/app/hello world/[slug]/+not-found.tsx',
+        },
+        page: {
+          entryName: 'route__hello_world___slug____page',
+          filePath: '/tmp/app/hello world/[slug]/+page.tsx',
+        },
+        routePath: '/hello world/[slug]',
+        segments: [
+          { kind: 'static', value: 'hello world' },
+          { kind: 'required', value: 'slug' },
+        ],
+        server: null,
+      },
+    ]
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return { default: userApp }
+          }
+          if (id === '/tmp/app/hello world/[slug]/+not-found.tsx') {
+            return {
+              default(props: any) {
+                return {
+                  params: props.__eclipsa_route_params,
+                  type: 'not-found',
+                }
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              renderSSRAsync(renderDocument: () => any) {
+                const resolveNode = (value: any): any => {
+                  if (!value || typeof value !== 'object') {
+                    return value
+                  }
+                  if (typeof value.type === 'function') {
+                    return resolveNode(value.type(value.props ?? {}))
+                  }
+                  return Object.fromEntries(
+                    Object.entries(value).map(([key, entry]) => [key, resolveNode(entry)]),
+                  )
+                }
+                return {
+                  payload: {
+                    loaders: {
+                      params: {
+                        data: resolveNode(renderDocument()).params,
+                        error: null,
+                        loaded: true,
+                      },
+                    },
+                  },
+                }
+              },
+              resolvePendingLoaders: vi.fn(),
+            }
+          }
+          return {
+            default() {
+              return null
+            },
+          }
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fhello%2520world%2Fada%2Fmissing',
+      ),
+    )
+
+    expect(response?.status).toBe(200)
+    await expect(response?.json()).resolves.toEqual({
+      finalHref: 'http://localhost/hello%20world/ada/missing',
+      finalPathname: '/hello%20world/ada/missing',
+      kind: 'not-found',
+      loaders: {
+        params: {
+          data: {
+            slug: 'ada',
+          },
+          error: null,
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
   it('returns document fallback when route-data loader rendering throws notFound without a special route', async () => {
     const devFetch = createDevFetch({
       resolvedConfig: {
