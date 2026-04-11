@@ -11,6 +11,7 @@ import {
   useRuntimeSignal,
   writeAsyncSignalSnapshot,
 } from './runtime.ts'
+import { setSignalMeta, type SignalMeta } from './internal.ts'
 import { createPendingSignalError, isPendingSignalError } from './suspense.ts'
 
 export interface Signal<T> {
@@ -174,6 +175,16 @@ const createComputedSignalFactory =
         return snapshot.value as T
       },
     })
+    if (signalId !== null) {
+      setSignalMeta(handle, {
+        get: () => handle.value,
+        id: signalId,
+        kind: 'computed-signal',
+        set: () => {
+          throw new TypeError('Computed signals are read-only.')
+        },
+      } satisfies SignalMeta<T>)
+    }
     return handle
   }
 

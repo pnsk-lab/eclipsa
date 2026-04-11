@@ -1,7 +1,12 @@
 import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
 import { isSSRRawValue, isSSRTemplate } from '../jsx/jsx-dev-runtime.ts'
-import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
+import {
+  createPendingSignalError,
+  isPendingSignalError,
+  isSuspenseType,
+  type SuspenseProps,
+} from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import {
   ACTION_CSRF_FIELD,
@@ -642,6 +647,7 @@ const getRuntimeSerialization = () => {
     isRenderObject,
     isRouteSlot,
     loadSymbol,
+    materializeComputedSignalReference,
     materializeScope,
     materializeSymbolReference,
     registerScope,
@@ -678,9 +684,20 @@ const findNextNumericId = (ids: Iterable<string>, prefix: string) => {
   return nextId
 }
 
-const getRefSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+const isWritableSignalMeta = (
+  meta: SignalMeta<unknown> | null,
+): meta is SignalMeta<unknown> & { kind?: 'signal' } =>
+  !!meta && meta.kind !== 'computed-signal'
 
-const getBindableSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+const getRefSignalId = (value: unknown) => {
+  const signalMeta = getSignalMeta(value)
+  return isWritableSignalMeta(signalMeta) ? signalMeta.id : null
+}
+
+const getBindableSignalId = (value: unknown) => {
+  const signalMeta = getSignalMeta(value)
+  return isWritableSignalMeta(signalMeta) ? signalMeta.id : null
+}
 
 export const syncRuntimeRefMarker = (element: Element, value: unknown) => {
   const signalId = getRefSignalId(value)
@@ -706,7 +723,7 @@ export const assignRuntimeRef = (
   container: RuntimeContainer | null = getCurrentContainer(),
 ) => {
   const signalMeta = getSignalMeta<Element | undefined>(value)
-  if (!signalMeta) {
+  if (!isWritableSignalMeta(signalMeta)) {
     return false
   }
 
@@ -954,8 +971,60 @@ const createSignalHandle = <T>(record: SignalRecord<T>, container: RuntimeContai
   setSignalMeta(handle, {
     get: () => record.value,
     id: record.id,
+    kind: 'signal',
     set: (value) => {
       writeSignalValue(container, record, value)
+    },
+  } satisfies SignalMeta<T>)
+  return handle
+}
+
+interface ComputedSignalSnapshot<T> {
+  __e_async_computed: true
+  error?: unknown
+  promise?: Promise<T>
+  status: 'pending' | 'rejected' | 'resolved'
+  value?: T
+}
+
+const isComputedSignalSnapshot = <T>(
+  value: unknown,
+): value is ComputedSignalSnapshot<T> =>
+  !!value && typeof value === 'object' && (value as ComputedSignalSnapshot<T>).__e_async_computed === true
+
+const readComputedSignalValue = <T>(record: SignalRecord<unknown>) => {
+  recordSignalRead(record)
+  const snapshot = record.value
+  if (!isComputedSignalSnapshot<T>(snapshot)) {
+    return snapshot as T
+  }
+  if (snapshot.status === 'pending') {
+    throw createPendingSignalError(snapshot.promise ?? Promise.resolve(undefined))
+  }
+  if (snapshot.status === 'rejected') {
+    throw snapshot.error
+  }
+  return snapshot.value as T
+}
+
+const createComputedSignalHandle = <T>(
+  record: SignalRecord<unknown>,
+  _container: RuntimeContainer | null,
+) => {
+  const handle = {} as { value: T }
+  Object.defineProperty(handle, 'value', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return readComputedSignalValue<T>(record)
+    },
+  })
+  setSignalMeta(handle, {
+    get: () => readComputedSignalValue<T>(record),
+    id: record.id,
+    kind: 'computed-signal',
+    set: () => {
+      throw new TypeError('Computed signals are read-only.')
     },
   } satisfies SignalMeta<T>)
   return handle
@@ -1309,6 +1378,14 @@ const materializeSymbolReference = (
     value: `eclipsa$${symbolId}`,
   })
   return fn
+}
+
+const materializeComputedSignalReference = (container: RuntimeContainer, signalId: string) => {
+  const record = container.signals.get(signalId)
+  if (!record) {
+    throw new Error(`Missing signal ${signalId}.`)
+  }
+  return createComputedSignalHandle(record, container)
 }
 
 const materializeScope = (container: RuntimeContainer, scopeId: string): unknown[] => {
@@ -7553,7 +7630,10 @@ export const createDetachedRuntimeSignal = <T>(
 ): { value: T } => ensureSignalRecord(container, id, fallback).handle
 
 export const getRuntimeComponentId = () => getCurrentFrame()?.component.id ?? null
-export const getRuntimeSignalId = (value: unknown) => getSignalMeta(value)?.id ?? null
+export const getRuntimeSignalId = (value: unknown) => {
+  const signalMeta = getSignalMeta(value)
+  return isWritableSignalMeta(signalMeta) ? signalMeta.id : null
+}
 
 export const useRuntimeNavigate = (): Navigate => {
   const container = getCurrentContainer()

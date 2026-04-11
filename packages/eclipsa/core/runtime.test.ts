@@ -9696,6 +9696,70 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('serializes computed handles as computed-signal references without losing computed semantics', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      let count!: { value: number }
+      let computed!: { value: number }
+
+      const ComputedBody = () => {
+        count = useSignal(1)
+        computed = useComputed(() => count.value * 2, [count])
+        return 'ready'
+      }
+
+      const ComputedComponent = __eclipsaComponent(
+        ComputedBody,
+        'computed-serialization-component',
+        () => [],
+      )
+
+      withRuntimeContainer(container, () => {
+        const nodes = renderClientInsertable(
+          jsxDEV(ComputedComponent as any, {}, null, false, {}),
+          container,
+        )
+        const host = new FakeElement('div')
+        for (const node of nodes as FakeNode[]) {
+          host.appendChild(node)
+        }
+      })
+
+      const serialized = serializeContainerValue(container, {
+        computed,
+      })
+
+      expect(serialized).toEqual({
+        __eclipsa_type: 'object',
+        entries: [
+          [
+            'computed',
+            {
+              __eclipsa_type: 'ref',
+              kind: 'computed-signal',
+              token: 's1',
+            },
+          ],
+        ],
+      })
+
+      const restored = deserializeContainerValue(container, serialized as any) as {
+        computed: { value: number }
+      }
+
+      expect(restored.computed.value).toBe(2)
+
+      count.value = 3
+
+      expect(restored.computed.value).toBe(6)
+      expect(() =>
+        serializeContainerValue(container, {
+          computed: restored.computed,
+        }),
+      ).not.toThrow()
+    })
+  })
+
   it('repopulates keyed For ranges after clearing them', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()

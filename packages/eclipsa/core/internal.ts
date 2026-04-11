@@ -61,6 +61,7 @@ export interface WatchMeta {
 export interface SignalMeta<T = unknown> {
   get(): T
   id: string
+  kind?: 'computed-signal' | 'signal'
   set(value: T): void
 }
 

@@ -57,6 +57,7 @@ interface RuntimeSerializationDependencies {
   isRenderObject: (value: unknown) => value is RenderObject
   isRouteSlot: (value: unknown) => value is RouteSlotValue
   loadSymbol: (container: RuntimeContainer, symbol: string) => Promise<unknown>
+  materializeComputedSignalReference: (container: RuntimeContainer, signalId: string) => unknown
   materializeScope: (container: RuntimeContainer, scopeId: string) => unknown[]
   materializeSymbolReference: (
     container: RuntimeContainer,
@@ -80,6 +81,7 @@ export const createRuntimeSerialization = ({
   isRenderObject,
   isRouteSlot,
   loadSymbol,
+  materializeComputedSignalReference,
   materializeScope,
   materializeSymbolReference,
   registerScope,
@@ -295,7 +297,7 @@ export const createRuntimeSerialization = ({
         if (signalMeta) {
           return {
             __eclipsa_type: 'ref',
-            kind: 'signal',
+            kind: signalMeta.kind === 'computed-signal' ? 'computed-signal' : 'signal',
             token: signalMeta.id,
           }
         }
@@ -490,6 +492,9 @@ export const createRuntimeSerialization = ({
             throw new Error(`Missing signal ${reference.token}.`)
           }
           return record.handle
+        }
+        if (reference.kind === 'computed-signal') {
+          return materializeComputedSignalReference(container, reference.token)
         }
         if (reference.kind === 'symbol') {
           if (!reference.data || !Array.isArray(reference.data)) {
