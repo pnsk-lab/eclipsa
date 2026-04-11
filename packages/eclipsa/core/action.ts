@@ -1,6 +1,18 @@
 import type { JSX } from '../jsx/types.ts'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
+  ACTION_CSRF_COOKIE,
+  ACTION_CSRF_ERROR_MESSAGE,
+  ACTION_CSRF_FIELD,
+  ACTION_CSRF_HEADER,
+  ACTION_CSRF_INPUT_ATTR,
+  applyActionCsrfCookie,
+  ensureActionCsrfToken,
+  readActionCsrfTokenFromDocument,
+  readActionCsrfTokenFromFormData,
+  readActionCsrfTokenFromRequest,
+} from './action-csrf.ts'
+import {
   type AppContext,
   deserializePublicValue,
   getCurrentServerRequestContext,
@@ -28,6 +40,7 @@ const ACTION_STREAM_CONTENT_TYPE = 'application/eclipsa-action-stream+json'
 export const ACTION_FORM_ATTR = 'data-e-action-form'
 export const ACTION_FORM_FIELD = '__e_action'
 const ACTION_INPUT_CACHE_KEY = Symbol.for('eclipsa.action-input-cache')
+const ACTION_CSRF_ERROR_CODE = Symbol.for('eclipsa.action-csrf-error')
 
 declare const ACTION_REF_BRAND: unique symbol
 declare const ACTION_INPUT_TYPE: unique symbol
@@ -258,6 +271,15 @@ interface ActionStateSnapshot {
   result: unknown
 }
 
+class ActionCsrfError extends Error {
+  [ACTION_CSRF_ERROR_CODE] = true
+
+  constructor() {
+    super(ACTION_CSRF_ERROR_MESSAGE)
+    this.name = 'ActionCsrfError'
+  }
+}
+
 interface ActionExecutionValue {
   input: unknown
   kind: 'value'
@@ -322,7 +344,7 @@ const normalizeFormSubmissionInput = (value: unknown) => {
   const normalized = formDataToInputObject(value)
   return Object.fromEntries(
     Object.entries(normalized).flatMap(([key, entry]) => {
-      if (key === ACTION_FORM_FIELD) {
+      if (key === ACTION_FORM_FIELD || key === ACTION_CSRF_FIELD) {
         return []
       }
       if (Array.isArray(entry)) {
@@ -427,6 +449,27 @@ const deserializeActionServerValue = (value: SerializedValue) =>
       throw new TypeError(`Unsupported action input reference kind "${reference.kind}".`)
     },
   })
+
+const isActionCsrfValid = async (c: AppContext<any>) => {
+  const cookieToken = readActionCsrfTokenFromRequest(c)
+  if (!cookieToken) {
+    return false
+  }
+
+  const contentType = c.req.header('content-type') ?? ''
+  if (contentType.startsWith(ACTION_CONTENT_TYPE)) {
+    return c.req.header(ACTION_CSRF_HEADER) === cookieToken
+  }
+  if (
+    contentType.startsWith('application/x-www-form-urlencoded') ||
+    contentType.startsWith('multipart/form-data')
+  ) {
+    const input = await getActionInputCache(c)
+    return isFormDataValue(input) && readActionCsrfTokenFromFormData(input) === cookieToken
+  }
+
+  return false
+}
 
 const deserializeActionClientValue = (container: RuntimeContainer | null, value: SerializedValue) =>
   deserializePublicValue(value, {
@@ -694,6 +737,12 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
   const isFormSubmission = isFormDataValue(input)
   const actionPath = `/__eclipsa/action/${encodeURIComponent(id)}`
   const requestContext = typeof window === 'undefined' ? getCurrentServerRequestContext() : null
+  const csrfToken =
+    typeof document !== 'undefined'
+      ? readActionCsrfTokenFromDocument(document)
+      : requestContext
+        ? ensureActionCsrfToken(requestContext)
+        : null
   const currentRouteUrl =
     typeof window !== 'undefined'
       ? window.location.href
@@ -705,14 +754,36 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
     requestContext && typeof requestContext.var.fetch === 'function'
       ? requestContext.var.fetch
       : fetch
+  const csrfCookie =
+    requestContext && csrfToken
+      ? [
+          requestContext.req.header('cookie'),
+          `${ACTION_CSRF_COOKIE}=${encodeURIComponent(csrfToken)}`,
+        ]
+          .filter(Boolean)
+          .join('; ')
+      : null
+  const body =
+    isFormSubmission && csrfToken
+      ? (() => {
+          const next = new FormData()
+          for (const [name, value] of input.entries()) {
+            next.append(name, value)
+          }
+          next.set(ACTION_CSRF_FIELD, csrfToken)
+          return next
+        })()
+      : isFormSubmission
+        ? input
+        : JSON.stringify({
+            input: serializeActionClientValue(container, input),
+          })
   const response = await fetchImpl(requestUrl, {
-    body: isFormSubmission
-      ? input
-      : JSON.stringify({
-          input: serializeActionClientValue(container, input),
-        }),
+    body,
     headers: {
       accept: `${ACTION_STREAM_CONTENT_TYPE}, ${ACTION_CONTENT_TYPE}`,
+      ...(csrfCookie ? { cookie: csrfCookie } : {}),
+      ...(csrfToken ? { [ACTION_CSRF_HEADER]: csrfToken } : {}),
       ...(currentRouteUrl ? { [ROUTE_RPC_URL_HEADER]: currentRouteUrl } : {}),
       ...(isFormSubmission ? {} : { 'content-type': ACTION_CONTENT_TYPE }),
     },
@@ -832,6 +903,9 @@ export const executeActionSubmission = async (
   if (!action) {
     throw new Error(`Unknown action ${id}.`)
   }
+  if (!(await isActionCsrfValid(c))) {
+    throw new ActionCsrfError()
+  }
   const input = await readActionSubmissionInput(c)
   const result = await composeMiddlewares(c, action.middlewares, action.handler)
   if (result instanceof Response) {
@@ -893,6 +967,16 @@ const createActionFormNode = (id: string, props: ActionFormProps) => {
   hiddenInput.type = 'hidden'
   hiddenInput.value = id
   form.appendChild(hiddenInput)
+
+  const csrfToken = readActionCsrfTokenFromDocument(document)
+  if (csrfToken) {
+    const csrfInput = document.createElement('input')
+    csrfInput.name = ACTION_CSRF_FIELD
+    csrfInput.type = 'hidden'
+    csrfInput.value = csrfToken
+    csrfInput.setAttribute(ACTION_CSRF_INPUT_ATTR, '')
+    form.appendChild(csrfInput)
+  }
 
   for (const [name, value] of Object.entries(props)) {
     if (
@@ -1053,20 +1137,24 @@ export const hasAction = (id: string) => getActionRegistry().has(id)
 export const executeAction = async (id: string, c: AppContext<any>) => {
   try {
     const result = await executeActionSubmission(id, c)
-    return result.kind === 'response' ? result.response : toActionResponse(result.value)
+    const response = result.kind === 'response' ? result.response : toActionResponse(result.value)
+    return applyActionCsrfCookie(response, c)
   } catch (error) {
     const publicError = await transformCurrentPublicError(error, 'action')
-    return new Response(
-      JSON.stringify({
-        error: toSerializedActionError(publicError),
-        ok: false,
-      } satisfies ActionJsonFailure),
-      {
-        headers: {
-          'content-type': ACTION_CONTENT_TYPE,
+    return applyActionCsrfCookie(
+      new Response(
+        JSON.stringify({
+          error: toSerializedActionError(publicError),
+          ok: false,
+        } satisfies ActionJsonFailure),
+        {
+          headers: {
+            'content-type': ACTION_CONTENT_TYPE,
+          },
+          status: error instanceof ActionCsrfError ? 403 : 500,
         },
-        status: 500,
-      },
+      ),
+      c,
     )
   }
 }

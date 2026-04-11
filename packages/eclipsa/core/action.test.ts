@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
+import { ACTION_CSRF_COOKIE, ACTION_CSRF_FIELD, ACTION_CSRF_HEADER } from './action-csrf.ts'
 import {
   __eclipsaAction,
   executeAction,
@@ -13,6 +14,8 @@ import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 import type { RuntimeContainer } from './runtime.ts'
 import { withRuntimeContainer } from './runtime.ts'
 import { serializeValue } from './serialize.ts'
+
+const ACTION_CSRF_TOKEN = 'csrf-token'
 
 const createSchema = <T>(
   validate: (value: unknown) => { issues: readonly { message: string }[] } | { value: T },
@@ -34,6 +37,31 @@ const createActionApp = () => {
     executeAction(c.req.param('id'), c as unknown as AppContext),
   )
   return app
+}
+
+const withActionCsrf = (
+  init: RequestInit,
+  options?: {
+    cookieToken?: string | null
+    form?: boolean
+    token?: string | null
+  },
+) => {
+  const headers = new Headers(init.headers)
+  const cookieToken = options && 'cookieToken' in options ? options.cookieToken : ACTION_CSRF_TOKEN
+  const token = options && 'token' in options ? options.token : ACTION_CSRF_TOKEN
+
+  if (cookieToken) {
+    headers.set('cookie', `${ACTION_CSRF_COOKIE}=${cookieToken}`)
+  }
+  if (!options?.form && token) {
+    headers.set(ACTION_CSRF_HEADER, token)
+  }
+
+  return {
+    ...init,
+    headers,
+  } satisfies RequestInit
 }
 
 const createRuntimeContainer = (): RuntimeContainer =>
@@ -98,18 +126,21 @@ describe('action runtime', () => {
       },
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/sum', {
-      body: JSON.stringify({
-        input: serializeValue({
-          left: 2,
-          right: 3,
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/sum',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue({
+            left: 2,
+            right: 3,
+          }),
         }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
@@ -132,15 +163,18 @@ describe('action runtime', () => {
       async () => 'never',
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/invalid', {
-      body: JSON.stringify({
-        input: serializeValue('nope'),
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/invalid',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue('nope'),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error: unknown; ok: boolean }
@@ -191,19 +225,72 @@ describe('action runtime', () => {
     )
 
     const formData = new FormData()
+    formData.set(ACTION_CSRF_FIELD, ACTION_CSRF_TOKEN)
     formData.set('left', '4')
     formData.set('right', '6')
 
-    const response = await app.request('http://localhost/__eclipsa/action/form-sum', {
-      body: formData,
-      method: 'POST',
-    })
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/form-sum',
+      withActionCsrf(
+        {
+          body: formData,
+          method: 'POST',
+        },
+        { form: true },
+      ),
+    )
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       ok: true,
       value: 10,
     })
+  })
+
+  it('rejects requests with missing or mismatched csrf tokens', async () => {
+    const app = createActionApp()
+    registerAction('secure', [], async () => 'ok')
+
+    const missingToken = await app.request(
+      'http://localhost/__eclipsa/action/secure',
+      withActionCsrf(
+        {
+          body: JSON.stringify({
+            input: serializeValue(null),
+          }),
+          headers: {
+            'content-type': 'application/eclipsa-action+json',
+          },
+          method: 'POST',
+        },
+        { token: null },
+      ),
+    )
+    expect(missingToken.status).toBe(403)
+    await expect(missingToken.json()).resolves.toEqual({
+      error: {
+        __eclipsa_type: 'object',
+        entries: [
+          ['message', 'Invalid CSRF token.'],
+          ['name', 'ActionCsrfError'],
+        ],
+      },
+      ok: false,
+    })
+
+    const formData = new FormData()
+    formData.set(ACTION_CSRF_FIELD, 'wrong-token')
+    const mismatchedToken = await app.request(
+      'http://localhost/__eclipsa/action/secure',
+      withActionCsrf(
+        {
+          body: formData,
+          method: 'POST',
+        },
+        { cookieToken: ACTION_CSRF_TOKEN, form: true, token: 'wrong-token' },
+      ),
+    )
+    expect(mismatchedToken.status).toBe(403)
   })
 
   it('streams async generators and readable streams with framed payloads', async () => {
@@ -225,30 +312,36 @@ describe('action runtime', () => {
         }),
     )
 
-    const generatorResponse = await app.request('http://localhost/__eclipsa/action/stream', {
-      body: JSON.stringify({
-        input: serializeValue(null),
+    const generatorResponse = await app.request(
+      'http://localhost/__eclipsa/action/stream',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue(null),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
     expect(generatorResponse.headers.get('content-type')).toContain(
       'application/eclipsa-action-stream+json',
     )
     expect(generatorResponse.headers.get('x-eclipsa-stream-kind')).toBe('async-generator')
     await expect(generatorResponse.text()).resolves.toContain('"type":"chunk"')
 
-    const readableResponse = await app.request('http://localhost/__eclipsa/action/readable', {
-      body: JSON.stringify({
-        input: serializeValue(null),
+    const readableResponse = await app.request(
+      'http://localhost/__eclipsa/action/readable',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue(null),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
     expect(readableResponse.headers.get('x-eclipsa-stream-kind')).toBe('readable-stream')
     await expect(readableResponse.text()).resolves.toContain('"type":"done"')
   }, 15_000)
@@ -267,22 +360,25 @@ describe('action runtime', () => {
       async (c) => c.var.input,
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/opaque', {
-      body: JSON.stringify({
-        input: {
-          __eclipsa_type: 'ref',
-          data: serializeValue({
-            container: 'rt1',
-          }),
-          kind: 'signal',
-          token: 's0',
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/opaque',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: {
+            __eclipsa_type: 'ref',
+            data: serializeValue({
+              container: 'rt1',
+            }),
+            kind: 'signal',
+            token: 's0',
+          },
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
         },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(await response.json()).toEqual({
       ok: true,

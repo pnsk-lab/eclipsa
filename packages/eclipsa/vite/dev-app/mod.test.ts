@@ -1294,6 +1294,122 @@ describe('createDevFetch', () => {
     })
   })
 
+  it('keeps route-preflight dispatches in-process even when the host header is spoofed', async () => {
+    const originalFetch = globalThis.fetch
+    const externalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = externalFetch as typeof fetch
+
+    try {
+      routes = [
+        {
+          error: null,
+          layouts: [],
+          loading: null,
+          middlewares: [
+            {
+              entryName: 'special__guarded__middleware',
+              filePath: '/tmp/app/guarded/+middleware.ts',
+            },
+          ],
+          notFound: null,
+          page: {
+            entryName: 'route__guarded__page',
+            filePath: '/tmp/app/guarded/+page.tsx',
+          },
+          routePath: '/guarded',
+          segments: [{ kind: 'static', value: 'guarded' }],
+          server: null,
+        },
+      ]
+
+      const devFetch = createDevFetch({
+        resolvedConfig: {
+          root: '/tmp',
+        } as any,
+        devServer: {} as any,
+        deps: {
+          collectAppActions,
+          collectAppLoaders,
+          collectAppSymbols,
+          createDevModuleUrl,
+          createDevSymbolUrl,
+          createRoutes,
+        },
+        runner: {
+          async import(id: string) {
+            if (id === '/app/+server-entry.ts') {
+              return { default: userApp }
+            }
+            if (id === '/tmp/app/guarded/+middleware.ts') {
+              return {
+                default(c: any, next: any) {
+                  if (new URL(c.req.url).searchParams.get('allow') === '1') {
+                    return next()
+                  }
+                  return c.redirect('/counter')
+                },
+              }
+            }
+            if (id === '/app/+ssr-root.tsx') {
+              return {
+                default(props: any) {
+                  return props
+                },
+              }
+            }
+            if (id === 'eclipsa') {
+              return {
+                escapeJSONScriptText(value: string) {
+                  return value
+                },
+                getStreamingResumeBootstrapScriptContent() {
+                  return ''
+                },
+                renderSSRStream() {
+                  return {
+                    chunks: (async function* () {})(),
+                    html: '<html><head></head><body></body></html>',
+                    payload: {},
+                  }
+                },
+                RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+                resolvePendingLoaders: vi.fn(),
+                serializeResumePayload() {
+                  return '{}'
+                },
+              }
+            }
+            return {
+              default() {
+                return null
+              },
+            }
+          },
+        } as any,
+        ssrEnv: {} as any,
+      })
+
+      const response = await devFetch.fetch(
+        new Request(
+          'http://localhost/__eclipsa/route-preflight?href=http%3A%2F%2F169.254.169.254%2Fguarded%3Fallow%3D1',
+          {
+            headers: {
+              host: '169.254.169.254',
+            },
+          },
+        ),
+      )
+
+      expect(response?.status).toBe(200)
+      await expect(response?.json()).resolves.toEqual({
+        ok: true,
+      })
+      expect(externalFetch).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('returns prefetched loader snapshots from the route-data endpoint', async () => {
     const devFetch = createDevFetch({
       resolvedConfig: {

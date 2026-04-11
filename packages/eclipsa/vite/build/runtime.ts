@@ -33,6 +33,7 @@ export {
   hasAction,
   primeActionState,
 } from '../../core/action.ts'
+export { applyActionCsrfCookie, ensureActionCsrfToken } from '../../core/action-csrf.ts'
 export {
   executeLoader,
   hasLoader,

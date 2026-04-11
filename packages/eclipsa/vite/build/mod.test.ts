@@ -60,10 +60,14 @@ const createBuilder = () =>
 const writeMinimalRuntimeEntry = async (
   root: string,
   options?: {
+    applyActionCsrfCookieSource?: string
+    attachRequestFetchSource?: string
+    createRequestFetchSource?: string
     executeActionSource?: string
     executeLoaderSource?: string
     escapeInlineScriptTextSource?: string
     escapeJSONScriptTextSource?: string
+    ensureActionCsrfTokenSource?: string
     getActionFormSubmissionIdSource?: string
     getNormalizedActionInputSource?: string
     hasActionSource?: string
@@ -79,6 +83,10 @@ const writeMinimalRuntimeEntry = async (
     path.join(entriesDir, 'eclipsa_runtime.mjs'),
     [
       'export const Fragment = Symbol.for("fragment");',
+      options?.applyActionCsrfCookieSource ??
+        'export const applyActionCsrfCookie = (response) => response;',
+      options?.attachRequestFetchSource ?? 'export const attachRequestFetch = () => undefined;',
+      options?.createRequestFetchSource ?? 'export const createRequestFetch = () => undefined;',
       options?.executeActionSource ??
         'export const executeAction = async () => new Response(null, { status: 204 });',
       options?.executeLoaderSource ??
@@ -87,6 +95,7 @@ const writeMinimalRuntimeEntry = async (
         'export const escapeInlineScriptText = (value) => value;',
       options?.escapeJSONScriptTextSource ??
         'export const escapeJSONScriptText = (value) => value;',
+      options?.ensureActionCsrfTokenSource ?? 'export const ensureActionCsrfToken = () => "csrf";',
       options?.hasActionSource ?? 'export const hasAction = () => false;',
       options?.hasLoaderSource ?? 'export const hasLoader = () => false;',
       'export const jsxDEV = () => ({});',
@@ -98,8 +107,6 @@ const writeMinimalRuntimeEntry = async (
       options?.serializeResumePayloadSource ?? 'export const serializeResumePayload = () => "{}";',
       'export const composeRouteMetadata = () => null;',
       'export const renderRouteMetadataHead = () => [];',
-      'export const attachRequestFetch = () => undefined;',
-      'export const createRequestFetch = () => undefined;',
       'export const deserializePublicValue = (value) => value;',
       options?.getActionFormSubmissionIdSource ??
         'export const getActionFormSubmissionId = async () => null;',
@@ -423,6 +430,80 @@ describe('build', () => {
       location: 'http://localhost/counter',
       ok: false,
     })
+  })
+
+  it('keeps built route-preflight dispatches in-process even when the host header is spoofed', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-preflight-ssrf-'))
+    const builder = createBuilder()
+    const originalFetch = globalThis.fetch
+    const externalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = externalFetch as typeof fetch
+
+    try {
+      await writeMinimalSsrEntries(root)
+      await writeMinimalRuntimeEntry(root, {
+        attachRequestFetchSource:
+          'export const attachRequestFetch = (c, fetchImpl) => c.set("fetch", fetchImpl);',
+        createRequestFetchSource: 'export const createRequestFetch = () => globalThis.fetch;',
+      })
+      await writeBuiltPageModule(root, 'route__guarded__page', 'export default () => null;\n')
+      await writeBuiltPageModule(
+        root,
+        'special__guarded__middleware',
+        [
+          'export default (c, next) => {',
+          '  if (new URL(c.req.url).searchParams.get("allow") === "1") {',
+          '    return next();',
+          '  }',
+          '  return c.redirect("/counter");',
+          '};',
+        ].join('\n'),
+      )
+      mocks.createRoutes.mockResolvedValue([
+        {
+          ...createRootRoute(),
+          middlewares: [
+            {
+              entryName: 'special__guarded__middleware',
+              filePath: '/tmp/app/guarded/+middleware.ts',
+            },
+          ],
+          page: {
+            entryName: 'route__guarded__page',
+            filePath: '/tmp/app/guarded/+page.tsx',
+          },
+          routePath: '/guarded',
+          segments: [{ kind: 'static', value: 'guarded' }],
+        },
+      ])
+
+      await build(builder, { root }, { output: 'node' })
+
+      const { default: app } = (await import(
+        `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+      )) as {
+        default: { fetch(request: Request): Promise<Response> }
+      }
+
+      const response = await app.fetch(
+        new Request(
+          'http://localhost/__eclipsa/route-preflight?href=http%3A%2F%2F169.254.169.254%2Fguarded%3Fallow%3D1',
+          {
+            headers: {
+              host: '169.254.169.254',
+            },
+          },
+        ),
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({
+        ok: true,
+      })
+      expect(externalFetch).not.toHaveBeenCalled()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   it('runs server hooks and route middleware for built action and loader rpc requests', async () => {

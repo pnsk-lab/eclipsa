@@ -3,6 +3,12 @@ import { FRAGMENT } from '../jsx/shared.ts'
 import { isSSRRawValue, isSSRTemplate } from '../jsx/jsx-dev-runtime.ts'
 import { isPendingSignalError, isSuspenseType, type SuspenseProps } from './suspense.ts'
 import type { ResumeHmrUpdatePayload } from './resume-hmr.ts'
+import {
+  ACTION_CSRF_FIELD,
+  ACTION_CSRF_INPUT_ATTR,
+  getCurrentActionCsrfToken,
+  readActionCsrfTokenFromDocument,
+} from './action-csrf.ts'
 import { deserializePublicValue, serializePublicValue, type SerializedValue } from './hooks.ts'
 import { escapeJSONScriptText } from './serialize.ts'
 import type { Component } from './component.ts'
@@ -425,6 +431,23 @@ const renderFrameScopedStylesToNodes = (frame: RenderFrame, container: RuntimeCo
   frame.scopedStyles.map((style) =>
     renderScopedStyleNode(container, frame.component.scopeId, style),
   )
+
+const createActionCsrfInputString = (token: string) =>
+  `<input ${ACTION_CSRF_INPUT_ATTR}="" name="${escapeAttr(ACTION_CSRF_FIELD)}" type="hidden" value="${escapeAttr(token)}">`
+
+const createActionCsrfInputNode = (doc: Document, token: string) => {
+  const input = createElementNode(doc, 'input')
+  input.setAttribute(ACTION_CSRF_INPUT_ATTR, '')
+  input.setAttribute('name', ACTION_CSRF_FIELD)
+  input.setAttribute('type', 'hidden')
+  input.setAttribute('value', token)
+  return input
+}
+
+const readActionCsrfTokenFromRuntimeDocument = (doc: Document | null | undefined) =>
+  doc && 'cookie' in doc && typeof doc.cookie === 'string'
+    ? readActionCsrfTokenFromDocument(doc)
+    : null
 
 export const registerRuntimeScopedStyle = (
   cssText: string,
@@ -3599,6 +3622,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   const frame = getCurrentFrame()
   let hasInnerHTML = false
   let innerHTML: string | null = null
+  let isActionForm = false
 
   if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
     attrParts.push(`${SCOPED_STYLE_ATTR}="${escapeAttr(frame.component.scopeId)}"`)
@@ -3679,9 +3703,15 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
 
     if (value === true) {
       attrParts.push(name)
+      if (name === ACTION_FORM_ATTR) {
+        isActionForm = true
+      }
       continue
     }
 
+    if (name === ACTION_FORM_ATTR) {
+      isActionForm = true
+    }
     attrParts.push(`${name}="${escapeAttr(String(value))}"`)
   }
 
@@ -3691,6 +3721,12 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
 
   let childrenText = innerHTML ?? ''
   if (!hasInnerHTML) {
+    if (resolved.type === 'form' && isActionForm) {
+      const csrfToken = getCurrentActionCsrfToken()
+      if (csrfToken) {
+        childrenText += createActionCsrfInputString(csrfToken)
+      }
+    }
     childrenText += renderStringNode(resolved.props.children as JSX.Element | JSX.Element[])
   }
 
@@ -4109,6 +4145,12 @@ export const renderClientNodes = (
       rememberManagedAttributesForNode(element)
       nodes = [element]
     } else {
+      if (resolved.type === 'form' && element.getAttribute(ACTION_FORM_ATTR) !== null) {
+        const csrfToken = readActionCsrfTokenFromRuntimeDocument(container.doc)
+        if (csrfToken) {
+          element.appendChild(createActionCsrfInputNode(container.doc, csrfToken))
+        }
+      }
       const childNodes = renderClientNodes(
         resolved.props.children as JSX.Element | JSX.Element[],
         container,

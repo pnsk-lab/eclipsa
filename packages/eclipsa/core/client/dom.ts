@@ -1,6 +1,12 @@
 import { jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
+import {
+  ACTION_CSRF_FIELD,
+  ACTION_CSRF_INPUT_ATTR,
+  readActionCsrfTokenFromDocument,
+} from '../action-csrf.ts'
 import type { Component } from '../component.ts'
 import { getComponentMeta } from '../internal.ts'
+import { ACTION_FORM_ATTR } from '../runtime/constants.ts'
 import {
   INSERT_MARKER_PREFIX,
   createInsertMarker,
@@ -35,6 +41,45 @@ import type { ClientElementLike, Insertable } from './types.ts'
 
 const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
 const ATTR_UNSET = Symbol('eclipsa.attr-unset')
+
+const createActionCsrfInput = (doc: Document, token: string) => {
+  const input = doc.createElement('input')
+  input.setAttribute(ACTION_CSRF_INPUT_ATTR, '')
+  input.setAttribute('name', ACTION_CSRF_FIELD)
+  input.setAttribute('type', 'hidden')
+  input.setAttribute('value', token)
+  return input
+}
+
+const ensureActionCsrfInput = (form: HTMLFormElement) => {
+  const token = readActionCsrfTokenFromDocument(document)
+  if (!token) {
+    return
+  }
+
+  const existing = form.querySelector(`input[${ACTION_CSRF_INPUT_ATTR}]`)
+  const input =
+    existing instanceof HTMLInputElement ? existing : createActionCsrfInput(document, token)
+  input.setAttribute('name', ACTION_CSRF_FIELD)
+  input.setAttribute('type', 'hidden')
+  input.setAttribute('value', token)
+  if (input.parentNode !== form) {
+    form.insertBefore(input, form.firstChild)
+  }
+}
+
+const ensureActionCsrfInputsInNode = (node: Node) => {
+  if (node instanceof HTMLFormElement && node.hasAttribute(ACTION_FORM_ATTR)) {
+    ensureActionCsrfInput(node)
+  }
+  if (node instanceof Element) {
+    for (const form of node.querySelectorAll(`form[${ACTION_FORM_ATTR}]`)) {
+      if (form instanceof HTMLFormElement) {
+        ensureActionCsrfInput(form)
+      }
+    }
+  }
+}
 
 const ensureInsertMarkerKey = (
   marker: Node | undefined,
@@ -240,6 +285,7 @@ export const createTemplate = (html: string): (() => Node) => {
       template.innerHTML = html
     }
     const node = (template.cloneNode(true) as HTMLTemplateElement).content.firstChild as Node
+    ensureActionCsrfInputsInNode(node)
     rememberManagedAttributesForNode(node)
     return node
   }
@@ -656,6 +702,29 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     const resolved = value()
     syncRuntimeRefMarker(elem, resolved)
     assignRuntimeRef(resolved, elem, getRuntimeContainer())
+    return
+  }
+
+  if (name === ACTION_FORM_ATTR) {
+    let lastAssignedValue = ATTR_UNSET as string | symbol | null
+    effect(() => {
+      const resolved = value()
+      const nextValue =
+        resolved === false || resolved === undefined || resolved === null ? null : String(resolved)
+      if (lastAssignedValue === nextValue) {
+        return
+      }
+      if (nextValue === null) {
+        elem.removeAttribute(name)
+      } else {
+        elem.setAttribute(name, nextValue)
+      }
+      syncManagedAttributeSnapshot(elem, name)
+      if (nextValue !== null && elem instanceof HTMLFormElement) {
+        ensureActionCsrfInput(elem)
+      }
+      lastAssignedValue = nextValue
+    })
     return
   }
 

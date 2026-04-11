@@ -605,7 +605,7 @@ const renderAppModule = (
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -660,6 +660,9 @@ const getRequestUrl = (request) => {
   }
   return url;
 };
+
+const createInternalRouteRequestUrl = (request, targetUrl) =>
+  new URL(targetUrl.pathname + targetUrl.search, request.url).href;
 
 const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0, params = {}) => {
   if (routeIndex >= segments.length) {
@@ -1125,6 +1128,7 @@ const invokeRouteServer = async (moduleUrl, c, params) => {
 };
 
 const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status = 200, options) => {
+  ensureActionCsrfToken(c);
   const [pageModule, ...layoutModules] = await Promise.all([
     import(moduleUrl),
     ...route.layouts.map((layout) => import(layout)),
@@ -1232,7 +1236,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
   );
   const { prefix, suffix } = splitHtmlForStreaming(shellHtml);
   const encoder = new TextEncoder();
-  return new Response(
+  return applyActionCsrfCookie(new Response(
     new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode(prefix));
@@ -1271,7 +1275,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
       },
       status,
     },
-  );
+  ), c);
 };
 
 const renderMatchedPage = async (match, c, options) => {
@@ -1362,7 +1366,7 @@ const resolveRouteData = async (href, c) => {
   const headers = new Headers(c.req.raw.headers);
   headers.set(ROUTE_DATA_REQUEST_HEADER, "1");
   const response = await app.fetch(
-    new Request(targetUrl.href, {
+    new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
       headers,
       method: "GET",
       redirect: "manual",
@@ -1395,21 +1399,13 @@ const resolveRoutePreflight = async (href, c) => {
 
   const headers = new Headers(c.req.raw.headers);
   headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, "1");
-  let response;
-  try {
-    response = await c.var.fetch(targetUrl.href, {
+  const response = await app.fetch(
+    new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
       headers,
+      method: "GET",
       redirect: "manual",
-    });
-  } catch {
-    response = await app.fetch(
-      new Request(targetUrl.href, {
-        headers,
-        method: "GET",
-        redirect: "manual",
-      }),
-    );
-  }
+    }),
+  );
 
   if (response.status >= 200 && response.status < 300) {
     return c.json({ ok: true });

@@ -12,6 +12,7 @@ import {
   ROUTE_RPC_URL_HEADER,
   type RouteParams,
 } from '../../core/router-shared.ts'
+import { applyActionCsrfCookie, ensureActionCsrfToken } from '../../core/action-csrf.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import {
   APP_HOOKS_ELEMENT_ID,
@@ -95,6 +96,9 @@ const getRequestUrl = (request: Request) => {
   }
   return url
 }
+
+const createInternalRouteRequestUrl = (request: Request, targetUrl: URL) =>
+  new URL(`${targetUrl.pathname}${targetUrl.search}`, request.url).href
 
 const toAppRelativePath = (root: string, filePath: string) => {
   const relativePath = path.relative(path.join(root, 'app'), filePath)
@@ -669,6 +673,7 @@ const createDevApp = async (init: DevAppInit) => {
       routeError?: unknown
     },
   ) => {
+    ensureActionCsrfToken(c)
     const [
       _primedModules,
       modules,
@@ -818,38 +823,41 @@ const createDevApp = async (init: DevAppInit) => {
     const { prefix, suffix } = splitHtmlForStreaming(shellHtml)
     const encoder = new TextEncoder()
 
-    return new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode(prefix))
-          void (async () => {
-            let latestPayload = payload
+    return applyActionCsrfCookie(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(prefix))
+            void (async () => {
+              let latestPayload = payload
 
-            for await (const chunk of chunks) {
-              latestPayload = chunk.payload
-              const templateId = `eclipsa-suspense-template-${chunk.boundaryId}`
-              const payloadId = `eclipsa-suspense-payload-${chunk.boundaryId}`
+              for await (const chunk of chunks) {
+                latestPayload = chunk.payload
+                const templateId = `eclipsa-suspense-template-${chunk.boundaryId}`
+                const payloadId = `eclipsa-suspense-payload-${chunk.boundaryId}`
+                controller.enqueue(
+                  encoder.encode(
+                    `<template id="${templateId}">${chunk.html}</template>` +
+                      `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeAppResumePayload(chunk.payload)}</script>` +
+                      `<script>window.__eclipsa_stream.enqueue({boundaryId:${JSON.stringify(chunk.boundaryId)},payloadScriptId:${JSON.stringify(payloadId)},templateId:${JSON.stringify(templateId)}})</script>`,
+                  ),
+                )
+              }
+
               controller.enqueue(
                 encoder.encode(
-                  `<template id="${templateId}">${chunk.html}</template>` +
-                    `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeAppResumePayload(chunk.payload)}</script>` +
-                    `<script>window.__eclipsa_stream.enqueue({boundaryId:${JSON.stringify(chunk.boundaryId)},payloadScriptId:${JSON.stringify(payloadId)},templateId:${JSON.stringify(templateId)}})</script>`,
+                  `<script id="${RESUME_FINAL_STATE_ELEMENT_ID}" type="application/eclipsa-resume+json">${serializeAppResumePayload(latestPayload)}</script>${suffix}`,
                 ),
               )
-            }
-
-            controller.enqueue(
-              encoder.encode(
-                `<script id="${RESUME_FINAL_STATE_ELEMENT_ID}" type="application/eclipsa-resume+json">${serializeAppResumePayload(latestPayload)}</script>${suffix}`,
-              ),
-            )
-            controller.close()
-          })().catch((error) => {
-            controller.error(error)
-          })
-        },
-      }),
-      { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
+              controller.close()
+            })().catch((error) => {
+              controller.error(error)
+            })
+          },
+        }),
+        { status, headers: { 'content-type': 'text/html; charset=utf-8' } },
+      ),
+      c,
     )
   }
 
@@ -1000,7 +1008,7 @@ const createDevApp = async (init: DevAppInit) => {
     const headers = new Headers(c.req.raw.headers)
     headers.set(ROUTE_DATA_REQUEST_HEADER, '1')
     const response = await app.fetch(
-      new Request(targetUrl.href, {
+      new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
         headers,
         method: 'GET',
         redirect: 'manual',
@@ -1038,21 +1046,13 @@ const createDevApp = async (init: DevAppInit) => {
 
     const headers = new Headers(c.req.raw.headers)
     headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, '1')
-    let response: Response
-    try {
-      response = await c.var.fetch(targetUrl.href, {
+    const response = await app.fetch(
+      new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
         headers,
+        method: 'GET',
         redirect: 'manual',
-      })
-    } catch {
-      response = await app.fetch(
-        new Request(targetUrl.href, {
-          headers,
-          method: 'GET',
-          redirect: 'manual',
-        }),
-      )
-    }
+      }),
+    )
 
     if (response.status >= 200 && response.status < 300) {
       return c.json({ ok: true })
