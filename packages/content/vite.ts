@@ -36,8 +36,27 @@ const getSearchAssetPath = (base: string) => {
 const isContentConfigId = (root: string, id: string) =>
   normalizeSlashes(path.resolve(stripQuery(id))) === normalizeSlashes(getConfigPath(root))
 
-const getNamedCollectionExports = (source: string) =>
-  [...source.matchAll(/^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=/gm)].map((match) => match[1]!)
+const getNamedCollectionExports = (source: string) => {
+  const exportNames = new Set<string>()
+  for (const match of source.matchAll(/^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=/gm)) {
+    exportNames.add(match[1]!)
+  }
+  for (const match of source.matchAll(
+    /^\s*export\s*\{([\s\S]*?)\}\s*(?:from\s*['"][^'"]+['"])?\s*;?/gm,
+  )) {
+    for (const rawSpecifier of match[1]!.split(',')) {
+      const specifier = rawSpecifier.trim()
+      if (!specifier || specifier.startsWith('type ')) {
+        continue
+      }
+      const parsed = /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(specifier)
+      if (parsed) {
+        exportNames.add(parsed[2] ?? parsed[1]!)
+      }
+    }
+  }
+  return [...exportNames]
+}
 
 const invalidateVirtualRuntime = (server: ViteDevServer) => {
   const graphs = [

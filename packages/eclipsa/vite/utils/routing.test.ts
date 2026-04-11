@@ -196,6 +196,30 @@ describe('routing helpers', () => {
     })
   })
 
+  it('decodes url-encoded path segments before matching routes', () => {
+    const routes: RouteEntry[] = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: null,
+        routePath: '/hello world/[slug]',
+        segments: [
+          { kind: 'static', value: 'hello world' },
+          { kind: 'required', value: 'slug' },
+        ],
+        server: null,
+      },
+    ]
+
+    expect(matchRoute(routes, '/hello%20world/ada%20lovelace')).toMatchObject({
+      params: { slug: 'ada lovelace' },
+      route: routes[0],
+    })
+  })
+
   it('creates module manifests for dev and build route loading', () => {
     const routes: RouteEntry[] = [
       {

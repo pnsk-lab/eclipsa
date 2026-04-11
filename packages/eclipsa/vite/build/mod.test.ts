@@ -72,6 +72,7 @@ const writeMinimalRuntimeEntry = async (
     getNormalizedActionInputSource?: string
     hasActionSource?: string
     hasLoaderSource?: string
+    jsxDEVSource?: string
     renderSSRAsyncSource?: string
     renderSSRStreamSource?: string
     serializeResumePayloadSource?: string
@@ -98,7 +99,7 @@ const writeMinimalRuntimeEntry = async (
       options?.ensureActionCsrfTokenSource ?? 'export const ensureActionCsrfToken = () => "csrf";',
       options?.hasActionSource ?? 'export const hasAction = () => false;',
       options?.hasLoaderSource ?? 'export const hasLoader = () => false;',
-      'export const jsxDEV = () => ({});',
+      options?.jsxDEVSource ?? 'export const jsxDEV = () => ({});',
       options?.renderSSRAsyncSource ??
         'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
       options?.renderSSRStreamSource ??
@@ -731,6 +732,93 @@ describe('build', () => {
         missing: {
           data: null,
           error: { message: 'missing' },
+          loaded: true,
+        },
+      },
+      ok: true,
+    })
+  })
+
+  it('keeps nearest dynamic params when built not-found route-data fallbacks resolve encoded paths', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-not-found-params-'))
+    const builder = createBuilder()
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root, {
+      jsxDEVSource: 'export const jsxDEV = (type, props) => ({ type, props });',
+      renderSSRAsyncSource: [
+        'const resolveNode = (value) => {',
+        '  if (!value || typeof value !== "object") return value;',
+        '  if (typeof value.type === "function") return resolveNode(value.type(value.props ?? {}));',
+        '  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveNode(entry)]));',
+        '};',
+        'export const renderSSRAsync = async (renderDocument) => ({',
+        '  payload: {',
+        '    loaders: {',
+        '      params: {',
+        '        data: resolveNode(renderDocument()).params,',
+        '        error: null,',
+        '        loaded: true,',
+        '      },',
+        '    },',
+        '  },',
+        '});',
+      ].join('\n'),
+    })
+    await writeBuiltPageModule(
+      root,
+      'route__hello_world___slug____page',
+      'export default () => null;\n',
+    )
+    await writeBuiltPageModule(
+      root,
+      'special__hello_world___slug____not_found',
+      'export default (props) => ({ type: "not-found", params: props.__eclipsa_route_params });\n',
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        notFound: {
+          entryName: 'special__hello_world___slug____not_found',
+          filePath: '/tmp/app/hello world/[slug]/+not-found.tsx',
+        },
+        page: {
+          entryName: 'route__hello_world___slug____page',
+          filePath: '/tmp/app/hello world/[slug]/+page.tsx',
+        },
+        routePath: '/hello world/[slug]',
+        segments: [
+          { kind: 'static', value: 'hello world' },
+          { kind: 'required', value: 'slug' },
+        ],
+        server: null,
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(
+      new Request(
+        'http://localhost/__eclipsa/route-data?href=http%3A%2F%2Flocalhost%2Fhello%2520world%2Fada%2Fmissing',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      finalHref: 'http://localhost/hello%20world/ada/missing',
+      finalPathname: '/hello%20world/ada/missing',
+      kind: 'not-found',
+      loaders: {
+        params: {
+          data: {
+            slug: 'ada',
+          },
+          error: null,
           loaded: true,
         },
       },

@@ -648,6 +648,18 @@ const normalizeRoutePath = (pathname) => {
     : withLeadingSlash;
 };
 
+const decodeRoutePathSegment = (segment) => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+const splitRawRoutePath = (pathname) => normalizeRoutePath(pathname).split("/").filter(Boolean);
+
+const splitRoutePath = (pathname) => splitRawRoutePath(pathname).map(decodeRoutePathSegment);
+
 const getRequestUrl = (request) => {
   const url = new URL(request.url);
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
@@ -714,7 +726,7 @@ const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0
 };
 
 const matchRoute = (pathname) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  const pathnameSegments = splitRoutePath(pathname);
   for (const route of routes) {
     const params = matchSegments(route.segments, pathnameSegments);
     if (params) {
@@ -725,7 +737,7 @@ const matchRoute = (pathname) => {
 };
 
 const matchRouteManifestEntry = (pathname) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  const pathnameSegments = splitRoutePath(pathname);
   for (const entry of routeManifest) {
     const params = matchSegments(entry.segments, pathnameSegments);
     if (params) {
@@ -781,7 +793,7 @@ const createChunkCacheRegistrationScript = (pathname, payload) => {
 };
 
 const scoreSpecialRoute = (route, pathname) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  const pathnameSegments = splitRoutePath(pathname);
   let score = 0;
   for (let index = 0; index < route.segments.length && index < pathnameSegments.length; index += 1) {
     const segment = route.segments[index];
@@ -802,9 +814,19 @@ const scoreSpecialRoute = (route, pathname) => {
 };
 
 const findSpecialRoute = (pathname, kind) => {
-  const matched = matchRoute(pathname);
+  const normalizedPath = normalizeRoutePath(pathname);
+  const matched = matchRoute(normalizedPath);
   if (matched?.route[kind]) {
     return matched;
+  }
+
+  const rawPathSegments = splitRawRoutePath(normalizedPath);
+  for (let length = rawPathSegments.length - 1; length >= 0; length -= 1) {
+    const candidatePath = length === 0 ? "/" : "/" + rawPathSegments.slice(0, length).join("/");
+    const candidate = matchRoute(candidatePath);
+    if (candidate?.route[kind]) {
+      return candidate;
+    }
   }
 
   let best = null;

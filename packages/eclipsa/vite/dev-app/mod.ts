@@ -335,7 +335,16 @@ const createRouteElement = (
 }
 
 const scoreSpecialRoute = (route: RouteEntry, pathname: string) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split('/').filter(Boolean)
+  const pathnameSegments = normalizeRoutePath(pathname)
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
   let score = 0
   for (
     let index = 0;
@@ -364,9 +373,19 @@ const findSpecialRoute = (
   pathname: string,
   kind: 'error' | 'notFound',
 ): { params: RouteParams; route: RouteEntry } | null => {
-  const matched = matchRoute(routes, pathname)
+  const normalizedPath = normalizeRoutePath(pathname)
+  const matched = matchRoute(routes, normalizedPath)
   if (matched?.route[kind]) {
     return matched
+  }
+
+  const rawPathSegments = normalizedPath.split('/').filter(Boolean)
+  for (let length = rawPathSegments.length - 1; length >= 0; length -= 1) {
+    const candidatePath = length === 0 ? '/' : `/${rawPathSegments.slice(0, length).join('/')}`
+    const candidate = matchRoute(routes, candidatePath)
+    if (candidate?.route[kind]) {
+      return candidate
+    }
   }
 
   let best: { params: RouteParams; route: RouteEntry } | null = null
