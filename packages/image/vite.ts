@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import sharp from 'sharp'
+import type { Plugin as RollupPlugin } from 'rollup'
 import type { Plugin, ResolvedConfig } from 'vite'
 import type { EclipsaImageOptions, ImageOutputFormat } from './mod.ts'
 
@@ -41,6 +42,8 @@ type PluginContext = {
     type: 'asset'
   }) => string
 }
+
+type ImagePlugin = Plugin & Pick<RollupPlugin, 'resolveFileUrl'>
 
 const splitId = (id: string) => {
   const queryIndex = id.indexOf('?')
@@ -357,7 +360,7 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
   let config: ResolvedConfig | null = null
   const emittedAssetReferenceIds = new Set<string>()
 
-  return {
+  const plugin: ImagePlugin = {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
@@ -429,4 +432,6 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
       return `${VIRTUAL_IMAGE_PREFIX}${resolved.id}?${params.toString()}`
     },
   }
+
+  return plugin
 }

@@ -2,11 +2,12 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { tmpdir } from 'node:os'
 import sharp from 'sharp'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Image } from './mod.ts'
 import {
   createBuildAssetUrl,
   createAssetName,
+  eclipsaImage,
   isAllowedImagePath,
   readLocalImage,
   resolveImageWidths,
@@ -47,6 +48,55 @@ describe('@eclipsa/image helpers', () => {
   it('creates public build asset URLs for emitted files', () => {
     expect(createBuildAssetUrl('assets/example-320w.webp')).toBe('/assets/example-320w.webp')
     expect(createBuildAssetUrl('/assets/example-320w.webp')).toBe('/assets/example-320w.webp')
+  })
+  it('resolves emitted build asset references through the plugin hook', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-build-'))
+    const filePath = path.join(root, 'sample.png')
+    await sharp({
+      create: {
+        background: { alpha: 1, b: 200, g: 120, r: 40 },
+        channels: 4,
+        height: 600,
+        width: 900,
+      },
+    })
+      .png()
+      .toFile(filePath)
+
+    const plugin = eclipsaImage()
+    plugin.configResolved?.({
+      command: 'build',
+      root,
+      server: { fs: { allow: [] } },
+    } as never)
+
+    const emitFile = vi.fn().mockReturnValue('image-ref')
+    await plugin.load?.call(
+      { emitFile } as never,
+      `\0eclipsa-image:${filePath}?eclipsa-image`,
+      undefined,
+    )
+
+    expect(
+      plugin.resolveFileUrl?.call({} as never, {
+        chunkId: 'chunk.js',
+        fileName: 'assets/sample-320w.webp',
+        format: 'es',
+        moduleId: filePath,
+        referenceId: 'image-ref',
+        relativePath: 'assets/sample-320w.webp',
+      }),
+    ).toBe(JSON.stringify('/assets/sample-320w.webp'))
+    expect(
+      plugin.resolveFileUrl?.call({} as never, {
+        chunkId: 'chunk.js',
+        fileName: 'assets/sample-320w.webp',
+        format: 'es',
+        moduleId: filePath,
+        referenceId: 'other-ref',
+        relativePath: 'assets/sample-320w.webp',
+      }),
+    ).toBeNull()
   })
   it('only serves dev image paths inside the configured allowlist', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-root-'))
