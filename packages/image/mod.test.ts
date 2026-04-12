@@ -49,7 +49,7 @@ describe('@eclipsa/image helpers', () => {
     expect(createBuildAssetUrl('assets/example-320w.webp')).toBe('/assets/example-320w.webp')
     expect(createBuildAssetUrl('/assets/example-320w.webp')).toBe('/assets/example-320w.webp')
   })
-  it('resolves emitted build asset references through the plugin hook', async () => {
+  it('inlines public build asset URLs in generated build modules', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-build-'))
     const filePath = path.join(root, 'sample.png')
     await sharp({
@@ -71,32 +71,16 @@ describe('@eclipsa/image helpers', () => {
     } as never)
 
     const emitFile = vi.fn().mockReturnValue('image-ref')
-    await plugin.load?.call(
+    const moduleSource = await plugin.load?.call(
       { emitFile } as never,
       `\0eclipsa-image:${filePath}?eclipsa-image`,
       undefined,
     )
+    const sourceAssetFileName = `assets/${createAssetName(filePath, 900, 'png')}`
 
-    expect(
-      plugin.resolveFileUrl?.call({} as never, {
-        chunkId: 'chunk.js',
-        fileName: 'assets/sample-320w.webp',
-        format: 'es',
-        moduleId: filePath,
-        referenceId: 'image-ref',
-        relativePath: 'assets/sample-320w.webp',
-      }),
-    ).toBe(JSON.stringify('/assets/sample-320w.webp'))
-    expect(
-      plugin.resolveFileUrl?.call({} as never, {
-        chunkId: 'chunk.js',
-        fileName: 'assets/sample-320w.webp',
-        format: 'es',
-        moduleId: filePath,
-        referenceId: 'other-ref',
-        relativePath: 'assets/sample-320w.webp',
-      }),
-    ).toBeNull()
+    expect(emitFile).toHaveBeenCalled()
+    expect(moduleSource).toContain(JSON.stringify(createBuildAssetUrl(sourceAssetFileName)))
+    expect(moduleSource).not.toContain('ROLLUP_FILE_URL')
   })
   it('only serves dev image paths inside the configured allowlist', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-root-'))
