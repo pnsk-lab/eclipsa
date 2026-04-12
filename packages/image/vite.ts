@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import sharp from 'sharp'
-import type { Plugin as RollupPlugin } from 'rollup'
 import type { Plugin, ResolvedConfig } from 'vite'
 import type { EclipsaImageOptions, ImageOutputFormat } from './mod.ts'
 
@@ -43,7 +42,18 @@ type PluginContext = {
   }) => string
 }
 
-type ImagePlugin = Plugin & Pick<RollupPlugin, 'resolveFileUrl'>
+type ResolveFileUrlOptions = {
+  chunkId: string
+  fileName: string
+  format: string
+  moduleId: string
+  referenceId: string
+  relativePath: string
+}
+
+type ImagePlugin = Plugin & {
+  resolveFileUrl?: (options: ResolveFileUrlOptions) => string | null
+}
 
 const splitId = (id: string) => {
   const queryIndex = id.indexOf('?')
