@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Eclipsa App Builder'
+  short_description: 'Guide for building apps with Eclipsa'
+  default_prompt: 'Use $eclipsa to create, structure, or extend an Eclipsa app.'
