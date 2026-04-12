@@ -71,6 +71,7 @@ describe('docs package config', () => {
     expect(workflowRaw).toContain('pull_request:')
     expect(workflowRaw).toContain('push:')
     expect(workflowRaw).toContain('- main')
+    expect(workflowRaw).toContain('bun run --filter @eclipsa/optimizer build:native:dev')
     expect(workflowRaw).toContain('bun run --cwd docs build')
     expect(workflowRaw).toContain('uses: cloudflare/wrangler-action@v3')
     expect(workflowRaw).toContain('accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}')
