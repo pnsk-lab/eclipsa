@@ -26,6 +26,14 @@ npm create eclipsa@latest
 # or use the package manager you like
 ```
 
+## Skills
+
+eclipsa has a agent skills:
+
+```bash
+npx skills add pnsk-lab/eclipsa/skills
+```
+
 ## Features
 
 - 🚥 Signal APIs like [preact](https://preactjs.com/guide/v10/signals/), [Qwik](https://qwik.dev/) and [Vue](https://vuejs.org)
