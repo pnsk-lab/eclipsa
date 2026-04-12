@@ -28,8 +28,8 @@ npm create eclipsa@latest
 
 ## Features
 
-* 🚥 Signal APIs like [preact](https://preactjs.com/guide/v10/signals/), [Qwik](https://qwik.dev/) and [Vue](https://vuejs.org)
-* ▶️ Resumability like [Qwik](https://qwik.dev/)
-* 🔍 Fine-grained Reactivity like [Solid.js](https://www.solidjs.com/) and [Svelte](https://svelte.dev/)
-* 🏎️ JSX Compile like [Solid.js](https://www.solidjs.com/)
-* ✏️ Content Management System like [Astro](https://astro.build/)
+- 🚥 Signal APIs like [preact](https://preactjs.com/guide/v10/signals/), [Qwik](https://qwik.dev/) and [Vue](https://vuejs.org)
+- ▶️ Resumability like [Qwik](https://qwik.dev/)
+- 🔍 Fine-grained Reactivity like [Solid.js](https://www.solidjs.com/) and [Svelte](https://svelte.dev/)
+- 🏎️ JSX Compile like [Solid.js](https://www.solidjs.com/)
+- ✏️ Content Management System like [Astro](https://astro.build/)
