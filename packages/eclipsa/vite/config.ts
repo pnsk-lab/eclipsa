@@ -9,6 +9,7 @@ import {
   collectAppActions,
   collectAppLoaders,
   collectAppSymbols,
+  createBuildSymbolEntryName,
   createSymbolRequestId,
 } from './compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from './options.ts'
@@ -45,7 +46,7 @@ export const createConfig =
       ['client_boot', path.join(root, 'app/+client.dev.tsx')],
       ...(hasAppHooks ? [['app_hooks', appHooksPath] as const] : []),
       ...symbols.map((symbol) => [
-        `symbol__${symbol.id}`,
+        createBuildSymbolEntryName(symbol.id),
         createSymbolRequestId(symbol.filePath, symbol.id),
       ]),
       ...routeModules.map((entry) => [entry.entryName, entry.filePath]),

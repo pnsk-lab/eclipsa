@@ -1298,6 +1298,13 @@ const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
 
 export const withRuntimeContainer = pushContainer
 
+const runReactiveEffectInContainer = <T>(effect: ReactiveEffect, fn: () => T): T => {
+  if (!effect.container) {
+    return fn()
+  }
+  return pushContainer(effect.container, fn)
+}
+
 const withRuntimeContextValue = <T>(token: RuntimeContextToken, value: unknown, fn: () => T): T => {
   const stack = getContextValueStack()
   stack.push({
@@ -1519,6 +1526,7 @@ const getOrCreateWatchState = (
     return existing
   }
   const effect: ReactiveEffect = {
+    container,
     fn() {},
     signals: new Set(),
   }
@@ -7687,25 +7695,29 @@ export const isRouteNotFoundError = (error: unknown) =>
     (error as Record<PropertyKey, unknown>)[ROUTE_NOT_FOUND_KEY] === true)
 
 export const createEffect = (fn: () => void, options?: EffectOptions) => {
+  const container = getCurrentContainer()
   const frame = getCurrentFrame()
   const effect: ReactiveEffect = {
+    container,
     fn() {
-      const dependencies = options?.dependencies
-      if (!dependencies) {
-        collectTrackedDependencies(effect, fn)
-        return
-      }
+      runReactiveEffectInContainer(effect, () => {
+        const dependencies = options?.dependencies
+        if (!dependencies) {
+          collectTrackedDependencies(effect, fn)
+          return
+        }
 
-      collectTrackedDependencies(effect, () => {
-        trackWatchDependencies(dependencies, options?.errorLabel)
+        collectTrackedDependencies(effect, () => {
+          trackWatchDependencies(dependencies, options?.errorLabel)
+        })
+
+        if (options?.untracked) {
+          runWithoutDependencyTracking(fn)
+          return
+        }
+
+        fn()
       })
-
-      if (options?.untracked) {
-        runWithoutDependencyTracking(fn)
-        return
-      }
-
-      fn()
     },
     signals: new Set(),
   }
@@ -7769,8 +7781,11 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID || !watchMeta) {
     const cleanupSlot = createCleanupSlot()
     const effect: ReactiveEffect = {
+      container,
       fn() {
-        createLocalWatchRunner(effect, cleanupSlot, fn, dependencies)()
+        runReactiveEffectInContainer(effect, () => {
+          createLocalWatchRunner(effect, cleanupSlot, fn, dependencies)()
+        })
       },
       signals: new Set(),
     }

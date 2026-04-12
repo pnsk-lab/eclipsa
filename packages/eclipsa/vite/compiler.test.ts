@@ -8,6 +8,8 @@ import {
   collectAppActions,
   collectAppLoaders,
   collectAppSymbols,
+  createBuildSymbolEntryName,
+  createBuildSymbolUrl,
   compileModuleForSSR,
   createSymbolRequestId,
   createDevSymbolUrl,
@@ -523,6 +525,16 @@ describe('createResumeHmrUpdate', () => {
       filePath: '/app/+page.tsx',
       symbolId: 'symbol-123',
     })
+  })
+
+  it('creates URL-safe build symbol entry names for package symbols', () => {
+    expect(createBuildSymbolEntryName('symbol-123')).toBe('symbol__symbol-123')
+    expect(createBuildSymbolEntryName('@eclipsa/motion:motion')).toBe(
+      'symbol__b64_QGVjbGlwc2EvbW90aW9uOm1vdGlvbg',
+    )
+    expect(createBuildSymbolUrl('@eclipsa/motion:motion')).toBe(
+      '/entries/symbol__b64_QGVjbGlwc2EvbW90aW9uOm1vdGlvbg.js',
+    )
   })
 
   it('loads workspace motion symbol modules through the virtual symbol pipeline', async () => {

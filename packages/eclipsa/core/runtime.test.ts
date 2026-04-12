@@ -1293,6 +1293,64 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('preserves the runtime container when an insert rerender re-enters a local helper insert', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const query = createDetachedRuntimeSignal(container, 's0', '')
+      const doc = container.doc as unknown as FakeDocument
+      const host = new FakeElement('div')
+      host.ownerDocument = doc
+      ;(doc.body as unknown as FakeElement).appendChild(host)
+
+      const SearchResultsBody = (props: { query: string }) => {
+        const body = doc.createElement('div') as FakeElement
+        insert(
+          (() =>
+            props.query.trim() === ''
+              ? 'Search titles, headings, content, and code.'
+              : jsxDEV(
+                  'a',
+                  {
+                    href: '/docs/getting-started/overview',
+                    children: 'Overview',
+                  },
+                  null,
+                  false,
+                  {},
+                )) as Parameters<typeof insert>[0],
+          body,
+        )
+        return body as unknown as JSX.Element
+      }
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              'div',
+              {
+                children: [
+                  jsxDEV('input', { type: 'text', value: query.value }, null, false, {}),
+                  SearchResultsBody({ query: query.value }),
+                ],
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+        )
+      })
+
+      expect(host.textContent).toContain('Search titles, headings, content, and code.')
+
+      query.value = 'ov'
+      await flushAsync()
+
+      expect(host.textContent).toContain('Overview')
+    })
+  })
+
   it('keeps client insert refs attached to live elements across in-place patches', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
