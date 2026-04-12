@@ -42,19 +42,6 @@ type PluginContext = {
   }) => string
 }
 
-type ResolveFileUrlOptions = {
-  chunkId: string
-  fileName: string
-  format: string
-  moduleId: string
-  referenceId: string
-  relativePath: string
-}
-
-type ImagePlugin = Plugin & {
-  resolveFileUrl?: (options: ResolveFileUrlOptions) => string | null
-}
-
 const splitId = (id: string) => {
   const queryIndex = id.indexOf('?')
   return queryIndex === -1
@@ -247,36 +234,33 @@ const createBuildModule = (
   variants: ImageVariantAsset[],
   filePath: string,
   emitFile: PluginContext['emitFile'],
-  emittedAssetReferenceIds: Set<string>,
 ) => {
-  const references = variants.map((variant) =>
+  const entries = variants.map((variant) => {
+    const assetFileName = `assets/${createAssetName(filePath, variant.width, variant.format)}`
     emitFile({
-      fileName: `assets/${createAssetName(filePath, variant.width, variant.format)}`,
+      fileName: assetFileName,
       name: createAssetName(filePath, variant.width, variant.format),
       source: variant.buffer,
       type: 'asset',
-    }),
-  )
-  for (const referenceId of references) {
-    emittedAssetReferenceIds.add(referenceId)
-  }
+    })
+
+    return {
+      format: variant.format,
+      height: variant.height,
+      src: createBuildAssetUrl(assetFileName),
+      width: variant.width,
+    }
+  })
   const sourceIndex = variants.length - 1
 
-  return `const variants = [
-${variants
-  .map(
-    (variant, index) =>
-      `  { format: ${JSON.stringify(variant.format)}, height: ${variant.height}, src: import.meta.ROLLUP_FILE_URL_${references[index]}, width: ${variant.width} },`,
-  )
-  .join('\n')}
-];
+  return `const variants = ${JSON.stringify(entries)};
 
 export default {
-  format: ${JSON.stringify(variants[sourceIndex]!.format)},
-  height: ${variants[sourceIndex]!.height},
-  src: import.meta.ROLLUP_FILE_URL_${references[sourceIndex]!},
+  format: ${JSON.stringify(entries[sourceIndex]!.format)},
+  height: ${entries[sourceIndex]!.height},
+  src: ${JSON.stringify(entries[sourceIndex]!.src)},
   variants,
-  width: ${variants[sourceIndex]!.width},
+  width: ${entries[sourceIndex]!.width},
 };
 `
 }
@@ -368,9 +352,8 @@ const writeDevImageResponse = async (
 
 export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
   let config: ResolvedConfig | null = null
-  const emittedAssetReferenceIds = new Set<string>()
 
-  const plugin: ImagePlugin = {
+  const plugin: Plugin = {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
@@ -412,21 +395,10 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
       )
 
       return config?.command === 'build'
-        ? createBuildModule(
-            variants,
-            resolved.filePath,
-            this.emitFile.bind(this),
-            emittedAssetReferenceIds,
-          )
+        ? createBuildModule(variants, resolved.filePath, this.emitFile.bind(this))
         : createDevModule(variants, resolved.filePath)
     },
     name: 'vite-plugin-eclipsa-image',
-    resolveFileUrl({ fileName, referenceId }) {
-      if (!emittedAssetReferenceIds.has(referenceId)) {
-        return null
-      }
-      return JSON.stringify(createBuildAssetUrl(fileName))
-    },
     async resolveId(source, importer) {
       const requested = parseImageRequest(source, options)
       if (!requested) {
