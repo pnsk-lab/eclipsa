@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import fg from 'fast-glob'
@@ -15,6 +16,7 @@ import type { ResumeHmrUpdatePayload } from '../core/resume-hmr.ts'
 
 const SYMBOL_QUERY = 'eclipsa-symbol'
 const SYMBOL_LANG_QUERY = 'lang.js'
+const SIMPLE_BUILD_SYMBOL_PATTERN = /^[A-Za-z0-9_-]+$/
 
 interface AnalyzedEntry {
   analyzed: AnalyzedModule
@@ -503,7 +505,13 @@ export const loadSymbolModuleForSSR = async (id: string) => {
 export const createDevSymbolUrl = (root: string, filePath: string, symbolId: string) =>
   createSymbolRequestId(createDevSourceUrl(root, filePath), symbolId)
 
-export const createBuildSymbolUrl = (symbolId: string) => `/entries/symbol__${symbolId}.js`
+export const createBuildSymbolEntryName = (symbolId: string) =>
+  SIMPLE_BUILD_SYMBOL_PATTERN.test(symbolId)
+    ? `symbol__${symbolId}`
+    : `symbol__b64_${Buffer.from(symbolId).toString('base64url')}`
+
+export const createBuildSymbolUrl = (symbolId: string) =>
+  `/entries/${createBuildSymbolEntryName(symbolId)}.js`
 
 export const createBuildServerActionUrl = (actionId: string) =>
   `../ssr/entries/action__${actionId}.mjs`

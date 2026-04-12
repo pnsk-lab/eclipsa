@@ -53,6 +53,7 @@ const splitId = (id: string) => {
 }
 
 const toOutputExtension = (format: string) => (format === 'jpeg' ? 'jpg' : format)
+export const createBuildAssetUrl = (fileName: string) => `/${fileName.replace(/^\/+/, '')}`
 
 export const toContentType = (format: string) => {
   if (format === 'svg') {
@@ -233,6 +234,7 @@ const createBuildModule = (
   variants: ImageVariantAsset[],
   filePath: string,
   emitFile: PluginContext['emitFile'],
+  emittedAssetReferenceIds: Set<string>,
 ) => {
   const references = variants.map((variant) =>
     emitFile({
@@ -242,6 +244,9 @@ const createBuildModule = (
       type: 'asset',
     }),
   )
+  for (const referenceId of references) {
+    emittedAssetReferenceIds.add(referenceId)
+  }
   const sourceIndex = variants.length - 1
 
   return `const variants = [
@@ -350,6 +355,7 @@ const writeDevImageResponse = async (
 
 export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
   let config: ResolvedConfig | null = null
+  const emittedAssetReferenceIds = new Set<string>()
 
   return {
     configResolved(resolvedConfig) {
@@ -393,10 +399,21 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
       )
 
       return config?.command === 'build'
-        ? createBuildModule(variants, resolved.filePath, this.emitFile.bind(this))
+        ? createBuildModule(
+            variants,
+            resolved.filePath,
+            this.emitFile.bind(this),
+            emittedAssetReferenceIds,
+          )
         : createDevModule(variants, resolved.filePath)
     },
     name: 'vite-plugin-eclipsa-image',
+    resolveFileUrl({ fileName, referenceId }) {
+      if (!emittedAssetReferenceIds.has(referenceId)) {
+        return null
+      }
+      return JSON.stringify(createBuildAssetUrl(fileName))
+    },
     async resolveId(source, importer) {
       const requested = parseImageRequest(source, options)
       if (!requested) {

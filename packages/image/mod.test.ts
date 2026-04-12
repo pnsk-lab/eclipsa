@@ -5,6 +5,7 @@ import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
 import { Image } from './mod.ts'
 import {
+  createBuildAssetUrl,
   createAssetName,
   isAllowedImagePath,
   readLocalImage,
@@ -42,6 +43,10 @@ describe('@eclipsa/image helpers', () => {
     expect(createAssetName('/tmp/one/hero.png', 320, 'png')).not.toBe(
       createAssetName('/tmp/two/hero.png', 320, 'png'),
     )
+  })
+  it('creates public build asset URLs for emitted files', () => {
+    expect(createBuildAssetUrl('assets/example-320w.webp')).toBe('/assets/example-320w.webp')
+    expect(createBuildAssetUrl('/assets/example-320w.webp')).toBe('/assets/example-320w.webp')
   })
   it('only serves dev image paths inside the configured allowlist', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-image-root-'))

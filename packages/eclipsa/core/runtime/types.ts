@@ -104,6 +104,7 @@ export interface StreamState {
 }
 
 export interface ReactiveEffect {
+  container?: RuntimeContainer | null
   fn: () => void
   signals: Set<SignalRecord>
 }
