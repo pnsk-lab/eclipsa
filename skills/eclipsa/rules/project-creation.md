@@ -4,6 +4,16 @@
 
 - The public way to create a new app is `npm create eclipsa@latest`.
 
+## Typical Scaffold Session
+
+```bash
+npm create eclipsa@latest
+# choose a project name
+# choose `vite` or `vite-plus`
+cd my-app
+bun install
+```
+
 ## What The Starter Sets Up
 
 - The starter is a Node SSR app.
@@ -21,6 +31,18 @@
 - `vite.config.ts`: `appType: 'custom'` and `plugins: [eclipsa()]`.
 - `package.json`: `eclipsa` and `hono` in dependencies, TypeScript and selected toolchain in devDependencies.
 
+## Starter Tree
+
+```text
+app/
+  +client.dev.tsx
+  +page.tsx
+  +server-entry.ts
+  +ssr-root.tsx
+package.json
+vite.config.ts
+```
+
 ## Expected Next Steps After Scaffolding
 
 - `bun install`
@@ -33,3 +55,4 @@
 - Keep the initial `+ssr-root.tsx` minimal and standards-based.
 - Put app routes under `app/` instead of inventing a custom route table.
 - Use the generated Vite config unless the user has a concrete integration need.
+- When the user wants a feature, add route files under `app/` instead of rewriting the starter architecture first.

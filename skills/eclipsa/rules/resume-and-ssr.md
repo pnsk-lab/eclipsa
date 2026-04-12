@@ -25,6 +25,24 @@ resumeContainer(document)
 - Keep loader and action data serializable so SSR payloads and resume stay reliable.
 - Prefer Eclipsa navigation primitives over manual full-page reload patterns.
 
+## Browser-Only Pattern
+
+```tsx
+import { onMount, useSignal } from 'eclipsa'
+
+export default function ThemeProbe() {
+  const theme = useSignal('server')
+
+  onMount(() => {
+    theme.value = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+
+  return <p>theme: {theme.value}</p>
+}
+```
+
+This keeps SSR safe because `window` is only touched after the component mounts in the browser.
+
 ## Good Mental Shortcut
 
 - Think "resume" rather than "hydrate the entire page".
