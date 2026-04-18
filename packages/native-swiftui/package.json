@@ -1,0 +1,51 @@
+{
+  "name": "@eclipsa/native-swiftui",
+  "version": "0.0.0",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/native-swiftui"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "import": "./mod.ts"
+    },
+    "./vite": {
+      "types": "./vite.ts",
+      "import": "./vite.ts"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./mod.d.mts",
+        "import": "./mod.mjs"
+      },
+      "./vite": {
+        "types": "./vite.d.mts",
+        "import": "./vite.mjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "host:app": "swift run --package-path ./macos-swiftui EclipsaNativeMacOS",
+    "host:build": "swift build --package-path ./macos-swiftui",
+    "host:smoke": "swift run --quiet --package-path ./macos-swiftui EclipsaNativeSmoke",
+    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "test": "vp test --run",
+    "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
+    "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@eclipsa/native": "workspace:^",
+    "@eclipsa/native-core": "workspace:^"
+  }
+}

@@ -5,6 +5,17 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
+    "paths": {
+      "eclipsa": ["./packages/eclipsa/mod.ts"],
+      "eclipsa/internal": ["./packages/eclipsa/core/internal.ts"],
+      "@eclipsa/optimizer/native": ["./packages/optimizer/native.ts"],
+      "@eclipsa/native": ["./packages/native/mod.ts"],
+      "@eclipsa/native/vite": ["./packages/native/vite.ts"],
+      "@eclipsa/native/jsx-runtime": ["./packages/native/jsx-runtime.ts"],
+      "@eclipsa/native/jsx-dev-runtime": ["./packages/native/jsx-dev-runtime.ts"],
+      "@eclipsa/native-core": ["./packages/native-core/mod.ts"],
+      "@eclipsa/native-swiftui": ["./packages/native-swiftui/mod.ts"]
+    },
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -17,9 +28,6 @@
     "packages/**/*.ts",
     "packages/**/*.tsx",
     "packages/**/*.d.ts",
-    "example/**/*.ts",
-    "example/**/*.tsx",
-    "example/**/*.d.ts",
     "e2e/playwright.config.ts"
   ],
   "exclude": [

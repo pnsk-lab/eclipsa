@@ -3,7 +3,15 @@ import type { Navigate } from './router-shared.ts'
 
 export { __eclipsaAction } from './action.ts'
 export { __eclipsaLoader } from './loader.ts'
-export { getRuntimeComponentId } from './runtime.ts'
+export {
+  createDetachedRuntimeComponent,
+  createDetachedRuntimeContainer,
+  disposeDetachedRuntimeComponent,
+  getRuntimeComponentId,
+  runDetachedRuntimeComponent,
+} from './runtime.ts'
+export type { ComponentState, RuntimeContainer } from './runtime/types.ts'
+export { createRouteElement, isRouteSlot, resolveRouteSlot } from './runtime/routes.ts'
 
 const COMPONENT_META_KEY = Symbol.for('eclipsa.component-meta')
 const EXTERNAL_COMPONENT_META_KEY = Symbol.for('eclipsa.external-component-meta')
