@@ -2,14 +2,17 @@
 
 import * as native from './mod.ts'
 import {
+  createElement,
   bootNativeApplication,
   defineNativeComponent,
   getNativeRuntime,
+  getNativeMap,
   peekNativeRuntime,
+  setNativeMap,
 } from './mod.ts'
 import { useSignal } from 'eclipsa'
 import { createRouteElement } from 'eclipsa/internal'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 interface MockNode {
   children: MockNode[]
@@ -97,6 +100,10 @@ const createMockBridge = () => {
 }
 
 describe('@eclipsa/native runtime', () => {
+  afterEach(() => {
+    setNativeMap({})
+  })
+
   it('rerenders imported native components with useSignal state', () => {
     const mock = createMockBridge()
     const Button = defineNativeComponent<{
@@ -175,6 +182,38 @@ describe('@eclipsa/native runtime', () => {
     expect(labelNode.props.value).toBe('wrapped')
   })
 
+  it('resolves lowercase JSX tags through the native map', () => {
+    const mock = createMockBridge()
+    const Text = defineNativeComponent<{ value: string }>('swiftui:text')
+    const VStack = defineNativeComponent<{ children?: unknown }>('swiftui:vstack')
+    const WindowGroup = defineNativeComponent<{ children?: unknown }>('swiftui:window-group')
+
+    setNativeMap({
+      div: VStack,
+      span: Text,
+      windowGroup: WindowGroup,
+    })
+
+    const App = () => (
+      <windowGroup>
+        <div>
+          <span value="mapped" />
+        </div>
+      </windowGroup>
+    )
+
+    bootNativeApplication(App, mock.bridge)
+
+    const rootNode = mock.getNode(mock.publishedRootIDs.at(-1)!)!
+    const stackNode = mock.getNode(rootNode.children[0]!.id)!
+    const labelNode = mock.getNode(stackNode.children[0]!.id)!
+
+    expect(rootNode.tag).toBe('swiftui:window-group')
+    expect(stackNode.tag).toBe('swiftui:vstack')
+    expect(labelNode.tag).toBe('swiftui:text')
+    expect(labelNode.props.value).toBe('mapped')
+  })
+
   it('exposes the public native runtime bridge helpers', () => {
     const mock = createMockBridge()
 
@@ -185,6 +224,43 @@ describe('@eclipsa/native runtime', () => {
 
     expect(peekNativeRuntime(mock.bridge)).toBe(mock.bridge)
     expect(getNativeRuntime(mock.bridge).renderer.createElement('swiftui:text')).toMatch(/^node-/)
+  })
+
+  it('stores native map updates from plain objects and module-shaped inputs', () => {
+    const Text = defineNativeComponent<{ value: string }>('swiftui:text')
+    const VStack = defineNativeComponent<{ children?: unknown }>('swiftui:vstack')
+
+    expect(setNativeMap({ div: VStack })).toEqual({ div: VStack })
+    expect(getNativeMap()).toEqual({ div: VStack })
+
+    setNativeMap({
+      default: {
+        div: VStack,
+      },
+      span: Text,
+    })
+
+    expect(getNativeMap()).toEqual({
+      div: VStack,
+      span: Text,
+    })
+
+    const element = createElement('div', {
+      children: createElement('span', { value: 'mapped child' }),
+    }) as {
+      props: {
+        children: {
+          props: {
+            value: string
+          }
+          type: string
+        }
+      }
+      type: string
+    }
+    expect(element.type).toBe('swiftui:vstack')
+    expect(element.props.children.type).toBe('swiftui:text')
+    expect(element.props.children.props.value).toBe('mapped child')
   })
 
   it('rerenders and replaces the mounted application input without remounting the host bridge', () => {

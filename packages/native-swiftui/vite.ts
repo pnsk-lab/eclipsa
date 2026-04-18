@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import type { NativeTargetAdapter } from '@eclipsa/native/vite'
 import type { DevEnvironment, ResolvedConfig, ViteDevServer } from 'vite'
 import { createRunnableDevEnvironment } from 'vite'
+import { SWIFTUI_DEFAULT_COMPONENT_MAP } from './platform.ts'
 
 export const NATIVE_SWIFT_ENVIRONMENT_NAME = 'nativeSwift'
 const DEFAULT_HOST_SHUTDOWN_TIMEOUT_MS = 3_000
@@ -282,6 +283,7 @@ export const swiftui = (options: SwiftUITargetOptions = {}): NativeTargetAdapter
       },
     }
   },
+  defaultMap: SWIFTUI_DEFAULT_COMPONENT_MAP,
   environmentName: NATIVE_SWIFT_ENVIRONMENT_NAME,
   name: 'swiftui',
   platform: 'swiftui',

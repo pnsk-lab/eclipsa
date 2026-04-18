@@ -42,10 +42,19 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+layout.tsx'),
     [
-      `import { WindowGroup } from '@eclipsa/native-swiftui'`,
       `export default function Layout(props: { children?: unknown }) {`,
-      `  return <WindowGroup>{props.children}</WindowGroup>`,
+      `  return <windowGroup>{props.children}</windowGroup>`,
       `}`,
+      '',
+    ].join('\n'),
+  )
+  await writeFile(
+    path.join(root, 'app', '+native-map.ts'),
+    [
+      `import { Text, VStack, WindowGroup } from '@eclipsa/native-swiftui'`,
+      `export const div = VStack`,
+      `export const span = Text`,
+      `export const windowGroup = WindowGroup`,
       '',
     ].join('\n'),
   )
@@ -53,10 +62,9 @@ const createFixture = async () => {
     path.join(root, 'app', '+page.tsx'),
     [
       `import { useSignal } from 'eclipsa'`,
-      `import { Text, VStack } from '@eclipsa/native-swiftui'`,
       `export default function App() {`,
       `  const count = useSignal(1)`,
-      `  return <VStack><Text value={\`count \${count.value}\`} /></VStack>`,
+      `  return <div><span value={\`count \${count.value}\`} /></div>`,
       `}`,
       '',
     ].join('\n'),

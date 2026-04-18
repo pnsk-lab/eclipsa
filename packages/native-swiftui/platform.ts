@@ -10,3 +10,16 @@ export const SWIFTUI_DEFAULT_TAG_MAP = {
   vstack: 'swiftui:vstack',
   windowGroup: 'swiftui:window-group',
 } as const
+
+export const SWIFTUI_DEFAULT_COMPONENT_MAP = {
+  button: 'Button',
+  hstack: 'HStack',
+  image: 'Image',
+  list: 'List',
+  spacer: 'Spacer',
+  text: 'Text',
+  textField: 'TextField',
+  toggle: 'Toggle',
+  vstack: 'VStack',
+  windowGroup: 'WindowGroup',
+} as const

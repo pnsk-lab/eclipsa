@@ -106,23 +106,38 @@ const createFixture = async () => {
   await writeFile(
     resolve(root, 'app', '+layout.tsx'),
     [
-      `import { WindowGroup } from '@eclipsa/native-swiftui'`,
       `export default function Layout(props: { children?: unknown }) {`,
-      `  return <WindowGroup>{props.children}</WindowGroup>`,
+      `  return <windowGroup>{props.children}</windowGroup>`,
       `}`,
       '',
     ].join('\n'),
   )
+  await writeNativeMapSource(root)
   return root
+}
+
+const writeNativeMapSource = async (root: string, stackComponent = 'VStack') => {
+  await writeFile(
+    resolve(root, 'app', '+native-map.ts'),
+    [
+      `import { Button, HStack, Text, TextField, Toggle, VStack, WindowGroup } from '@eclipsa/native-swiftui'`,
+      `export const button = Button`,
+      `export const div = ${stackComponent}`,
+      `export const input = TextField`,
+      `export const span = Text`,
+      `export const toggle = Toggle`,
+      `export const windowGroup = WindowGroup`,
+      '',
+    ].join('\n'),
+  )
 }
 
 const writePageSource = async (root: string, title: string) => {
   await writeFile(
     resolve(root, 'app', '+page.tsx'),
     [
-      `import { Text, VStack } from '@eclipsa/native-swiftui'`,
       `export default function App() {`,
-      `  return <VStack><Text value=${JSON.stringify(title)} /></VStack>`,
+      `  return <div><span value=${JSON.stringify(title)} /></div>`,
       `}`,
       '',
     ].join('\n'),
@@ -135,18 +150,17 @@ const writeInteractivePageSource = async (root: string) => {
     [
       `import { getNativeRuntime } from '@eclipsa/native'`,
       `import { useSignal } from 'eclipsa'`,
-      `import { Button, Text, TextField, Toggle, VStack } from '@eclipsa/native-swiftui'`,
       `export default function App() {`,
       `  const count = useSignal(0)`,
       `  const enabled = useSignal(true)`,
       `  const name = useSignal('SwiftUI')`,
       `  const runtimeStatus = useSignal('runtime pending')`,
       `  return (`,
-      `    <VStack spacing={16}>`,
-      `      <Text value="Eclipsa Native SwiftUI" />`,
-      `      <Text value={runtimeStatus.value} />`,
-      `      <Text value={\`Hello \${name.value} · \${enabled.value ? 'enabled' : 'disabled'} · count \${count.value}\`} />`,
-      `      <Button`,
+      `    <div spacing={16}>`,
+      `      <span value="Eclipsa Native SwiftUI" />`,
+      `      <span value={runtimeStatus.value} />`,
+      `      <span value={\`Hello \${name.value} · \${enabled.value ? 'enabled' : 'disabled'} · count \${count.value}\`} />`,
+      `      <button`,
       `        onPress={() => {`,
       `          getNativeRuntime()`,
       `          runtimeStatus.value = 'runtime ready'`,
@@ -154,17 +168,17 @@ const writeInteractivePageSource = async (root: string) => {
       `        }}`,
       `        title={\`Count \${count.value}\`}`,
       `      />`,
-      `      <TextField`,
+      `      <input`,
       `        onInput={(value: string) => { name.value = String(value ?? '') }}`,
       `        placeholder="Name"`,
       `        value={name.value}`,
       `      />`,
-      `      <Toggle`,
+      `      <toggle`,
       `        onToggle={(value: boolean) => { enabled.value = Boolean(value) }}`,
       `        title="Enabled"`,
       `        value={enabled.value}`,
       `      />`,
-      `    </VStack>`,
+      `    </div>`,
       `  )`,
       `}`,
       '',

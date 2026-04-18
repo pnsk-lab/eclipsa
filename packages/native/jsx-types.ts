@@ -12,5 +12,7 @@ export namespace JSX {
     key?: number | string | symbol
   }
 
-  export interface IntrinsicElements {}
+  export interface IntrinsicElements {
+    [elementName: string]: Record<string, unknown>
+  }
 }

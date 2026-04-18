@@ -1,6 +1,8 @@
 # SwiftUI Example
 
-This example uses `@eclipsa/native` with the SwiftUI target.
+This example uses `@eclipsa/native` with the SwiftUI target. Lowercase JSX tags are resolved
+through `app/+native-map.ts`, so the route files can stay close to web-style authoring while the
+map file imports the actual SwiftUI binding components.
 
 Commands:
 

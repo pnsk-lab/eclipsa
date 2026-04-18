@@ -1,5 +1,4 @@
 import { useSignal } from 'eclipsa'
-import { Button, Text, TextField, Toggle, VStack } from '@eclipsa/native-swiftui'
 
 export default function Page() {
   const count = useSignal(0)
@@ -7,31 +6,31 @@ export default function Page() {
   const name = useSignal('SwiftUI')
 
   return (
-    <VStack spacing={16}>
-      <Text value="Eclipsa Native SwiftUI Example" />
-      <Text
+    <div spacing={16}>
+      <span value="Eclipsa Native SwiftUI Example" />
+      <span
         value={`Hello ${name.value} · ${enabled.value ? 'enabled' : 'disabled'} · count ${count.value}`}
       />
-      <Button
+      <button
         onPress={() => {
           count.value += 1
         }}
         title={`Count ${count.value}`}
       />
-      <TextField
+      <input
         onInput={(value: string) => {
           name.value = String(value ?? '')
         }}
         placeholder="Name"
         value={name.value}
       />
-      <Toggle
+      <toggle
         onToggle={(value: boolean) => {
           enabled.value = Boolean(value)
         }}
         title="Enabled"
         value={enabled.value}
       />
-    </VStack>
+    </div>
   )
 }

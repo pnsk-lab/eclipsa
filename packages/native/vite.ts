@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import {
   createNativeJsxTransformOptions,
   emitNativeBootstrapModule,
+  emitResolvedNativeMapModule,
   emitNativeRouteModule,
   isNativeJsxLikeRequest,
 } from '@eclipsa/optimizer/native'
@@ -27,10 +28,13 @@ const VIRTUAL_BOOTSTRAP_MODULE_ID = 'virtual:eclipsa-native/bootstrap'
 const RESOLVED_BOOTSTRAP_MODULE_ID = '\0virtual:eclipsa-native/bootstrap'
 const VIRTUAL_APP_MODULE_ID = 'virtual:eclipsa-native/app'
 const RESOLVED_APP_MODULE_ID = '\0virtual:eclipsa-native/app'
+const VIRTUAL_MAP_MODULE_ID = 'virtual:eclipsa-native/map'
+const RESOLVED_MAP_MODULE_ID = '\0virtual:eclipsa-native/map'
 const VIRTUAL_DEV_CLIENT_MODULE_ID = 'virtual:eclipsa-native/dev-client'
 const RESOLVED_DEV_CLIENT_MODULE_ID = '\0virtual:eclipsa-native/dev-client'
 const DEFAULT_NATIVE_SERVE_PATH = '/__eclipsa_native__'
 const DEFAULT_NATIVE_OUT_DIR = path.join('dist', 'native')
+const DEFAULT_NATIVE_MAP_BASENAME = '+native-map'
 const DEFAULT_NATIVE_PATHNAME = '/'
 
 export interface NativePluginOptions {
@@ -45,6 +49,7 @@ interface ResolvedNativePluginOptions {
   eclipsaDevClientFile: string
   environmentName: string
   manifestPath: string
+  nativeMapFile: string | null
   outDir: string
   route: ResolvedNativeRoute
   root: string
@@ -61,6 +66,7 @@ interface ResolvedNativeRoute {
 
 export interface NativeTargetAdapter {
   bindingPackage: string
+  defaultMap?: Record<string, string>
   environmentName: string
   name: string
   platform: string
@@ -172,6 +178,17 @@ const resolveNativeRoute = async (root: string, pathname: string): Promise<Resol
   }
 }
 
+const resolveNativeMapFile = (root: string) => {
+  const basePath = path.resolve(root, 'app', DEFAULT_NATIVE_MAP_BASENAME)
+  for (const extension of ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']) {
+    const candidate = `${basePath}${extension}`
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
 const resolveNativeOptions = async (
   root: string,
   options: NativePluginOptions,
@@ -195,6 +212,7 @@ const resolveNativeOptions = async (
     ),
     environmentName: options.environmentName ?? target.environmentName,
     manifestPath: `${servePath}/manifest.json`,
+    nativeMapFile: resolveNativeMapFile(root),
     outDir: path.resolve(root, options.outDir ?? DEFAULT_NATIVE_OUT_DIR),
     route,
     root,
@@ -426,12 +444,28 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
       res.end('Not Found')
     })
   },
+  handleHotUpdate(context) {
+    const resolved = state.resolved
+    if (!resolved?.nativeMapFile || context.file !== resolved.nativeMapFile) {
+      return
+    }
+    context.server.ws.send({
+      type: 'custom',
+      event: 'eclipsa:native-map-update',
+      data: {
+        file: resolved.nativeMapFile,
+      },
+    })
+  },
   resolveId(id) {
     if (id === VIRTUAL_BOOTSTRAP_MODULE_ID) {
       return RESOLVED_BOOTSTRAP_MODULE_ID
     }
     if (id === VIRTUAL_APP_MODULE_ID) {
       return RESOLVED_APP_MODULE_ID
+    }
+    if (id === VIRTUAL_MAP_MODULE_ID) {
+      return RESOLVED_MAP_MODULE_ID
     }
     if (id === VIRTUAL_DEV_CLIENT_MODULE_ID) {
       return RESOLVED_DEV_CLIENT_MODULE_ID
@@ -448,6 +482,7 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
         appModuleId: VIRTUAL_APP_MODULE_ID,
         hmr: state.config?.command === 'serve',
         hmrHelpersImport: resolved.eclipsaDevClientFile,
+        mapModuleId: VIRTUAL_MAP_MODULE_ID,
       })
     }
     if (id === RESOLVED_APP_MODULE_ID) {
@@ -458,6 +493,13 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
         pageFile: resolved.route.pageFile,
         params: resolved.route.params,
         pathname: resolved.route.pathname,
+      })
+    }
+    if (id === RESOLVED_MAP_MODULE_ID) {
+      return emitResolvedNativeMapModule({
+        bindingImport: resolved.target.bindingPackage,
+        defaultMap: resolved.target.defaultMap,
+        mapFile: resolved.nativeMapFile,
       })
     }
     if (id === RESOLVED_DEV_CLIENT_MODULE_ID) {

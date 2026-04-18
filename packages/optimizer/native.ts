@@ -4,6 +4,13 @@ export interface EmitNativeBootstrapModuleOptions {
   appModuleId: string
   hmr?: boolean
   hmrHelpersImport?: string
+  mapModuleId?: string
+}
+
+export interface EmitResolvedNativeMapModuleOptions {
+  bindingImport: string
+  defaultMap?: Record<string, string>
+  mapFile?: string | null
 }
 
 export interface EmitNativeRouteModuleOptions {
@@ -38,9 +45,11 @@ export const emitNativeBootstrapModule = ({
   appModuleId,
   hmr = false,
   hmrHelpersImport = 'eclipsa/dev-client',
+  mapModuleId = 'virtual:eclipsa-native/map',
 }: EmitNativeBootstrapModuleOptions) =>
   [
     `import * as appModule from ${JSON.stringify(appModuleId)};`,
+    `import ${JSON.stringify(mapModuleId)};`,
     `import { bootNativeApplication } from ${JSON.stringify(NATIVE_JSX_IMPORT_SOURCE)};`,
     ...(!hmr ? [] : [`import { applyHotUpdate } from ${JSON.stringify(hmrHelpersImport)};`]),
     `const globalState = globalThis;`,
@@ -98,6 +107,22 @@ export const emitNativeBootstrapModule = ({
     ...(!hmr
       ? []
       : [
+          `const refreshNativeMap = (payload) => {`,
+          `  const runner = globalState.__eclipsaNativeModuleRunner;`,
+          `  if (!runner) {`,
+          `    return;`,
+          `  }`,
+          `  const invalidatedModules = [${JSON.stringify(mapModuleId)}];`,
+          `  if (payload && typeof payload === "object" && typeof payload.file === "string") {`,
+          `    invalidatedModules.push(payload.file);`,
+          `  }`,
+          `  runner.invalidateModules(invalidatedModules);`,
+          `  runner.importModule(${JSON.stringify(mapModuleId)}, null);`,
+          `  globalState.__eclipsaNativeMountedApp?.rerender?.();`,
+          `};`,
+          `if (import.meta.hot) {`,
+          `  import.meta.hot.on("eclipsa:native-map-update", refreshNativeMap);`,
+          `}`,
           `globalState.__eclipsaNativeApplyAppUpdate = (nextAppModule) => {`,
           `  updateNativeApplication(nextAppModule ?? currentNativeModule);`,
           `};`,
@@ -105,6 +130,47 @@ export const emitNativeBootstrapModule = ({
     `updateNativeApplication(appModule);`,
     '',
   ].join('\n')
+
+export const emitResolvedNativeMapModule = ({
+  bindingImport,
+  defaultMap = {},
+  mapFile = null,
+}: EmitResolvedNativeMapModuleOptions) => {
+  const defaultEntries =
+    Object.entries(defaultMap).length === 0
+      ? '{}'
+      : `{\n${Object.entries(defaultMap)
+          .map(
+            ([alias, exportName]) =>
+              `  ${JSON.stringify(alias)}: nativeBinding[${JSON.stringify(exportName)}],`,
+          )
+          .join('\n')}\n}`
+
+  return [
+    `import * as nativeBinding from ${JSON.stringify(bindingImport)};`,
+    `import { setNativeMap } from ${JSON.stringify(NATIVE_JSX_IMPORT_SOURCE)};`,
+    mapFile
+      ? `import * as appNativeMapModule from ${JSON.stringify(mapFile)};`
+      : `const appNativeMapModule = {};`,
+    `const toPlainNativeMap = (value) => {`,
+    `  if (!value || typeof value !== "object") {`,
+    `    return {};`,
+    `  }`,
+    `  const namedEntries = Object.fromEntries(`,
+    `    Object.entries(value).filter(([key]) => key !== "__esModule" && key !== "default"),`,
+    `  );`,
+    `  const defaultEntries =`,
+    `    typeof value.default === "object" && value.default !== null ? value.default : {};`,
+    `  return { ...defaultEntries, ...namedEntries };`,
+    `};`,
+    `const defaultNativeMap = ${defaultEntries};`,
+    `const resolveNativeMap = (value) => ({ ...defaultNativeMap, ...toPlainNativeMap(value) });`,
+    `const resolvedNativeMap = resolveNativeMap(appNativeMapModule);`,
+    `setNativeMap(resolvedNativeMap);`,
+    `export default resolvedNativeMap;`,
+    '',
+  ].join('\n')
+}
 
 export const emitNativeRouteModule = ({
   hmr = false,

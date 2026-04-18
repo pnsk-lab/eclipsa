@@ -1,5 +1,5 @@
 import {
-  createElement,
+  createElement as createCoreElement,
   createNativeRoot,
   Fragment,
   NativeComponentType,
@@ -10,6 +10,7 @@ import {
   type NativeComponent,
   type NativeElementType,
   type NativeEventHandler,
+  type NativeKey,
   type NativeRendererAbi,
   type NativeRoot,
 } from '@eclipsa/native-core'
@@ -65,6 +66,15 @@ export type NativeApplicationInput = NativeChild | NativeComponent<object>
 export type DefinedNativeComponent<P extends object> = NativeComponent<
   P & { children?: NativeChild }
 >
+export type NativeMap = Record<string, NativeElementType<object>>
+export type NativeMapModule =
+  | NativeMap
+  | {
+      default?: NativeMap
+      [key: string]: unknown
+    }
+
+let currentNativeMap: NativeMap = {}
 
 const isRootContainer = (value: unknown): value is RootContainer =>
   !!value && typeof value === 'object' && ROOT_CONTAINER_KEY in value
@@ -109,11 +119,69 @@ export const defineNativeComponent = <P extends object>(
   return component
 }
 
+const isNativeMapValue = (value: unknown): value is NativeElementType<object> =>
+  typeof value === 'function' ||
+  typeof value === 'string' ||
+  typeof value === 'symbol' ||
+  isNativeComponentDescriptor(value)
+
+const isNativeMapRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !isNativeMapValue(value)
+
+const mergeNativeMapEntries = (target: NativeMap, source: Record<string, unknown>) => {
+  for (const [key, value] of Object.entries(source)) {
+    if (key === '__esModule' || key === 'default' || !isNativeMapValue(value)) {
+      continue
+    }
+    target[key] = value
+  }
+}
+
+const toNativeMap = (input: NativeMapModule | null | undefined): NativeMap => {
+  if (!input || typeof input !== 'object') {
+    return {}
+  }
+  const nextMap: NativeMap = {}
+  const defaultMap = 'default' in input ? input.default : undefined
+  if (isNativeMapRecord(defaultMap)) {
+    mergeNativeMapEntries(nextMap, defaultMap)
+  }
+  mergeNativeMapEntries(nextMap, input)
+  return nextMap
+}
+
+export const getNativeMap = () => currentNativeMap
+
+export const setNativeMap = (input: NativeMapModule | null | undefined) => {
+  currentNativeMap = toNativeMap(input)
+  return currentNativeMap
+}
+
+export const createElement = <P extends object>(
+  type: NativeElementType<P>,
+  props?: (P & { children?: NativeChild; key?: NativeKey }) | null,
+  ...children: NativeChild[]
+) => createCoreElement(resolveNativeElementType(type), props, ...children)
+
+export const h = createElement
+
 export const resolveNativeElementType = <P extends object>(
   type: NativeElementType<P>,
+  seenAliases = new Set<string>(),
 ): NativeElementType<P> => {
   if (isNativeComponentDescriptor(type)) {
-    return resolveNativeElementType(resolveNativeComponentDescriptor(type))
+    return resolveNativeElementType(resolveNativeComponentDescriptor(type), seenAliases)
+  }
+  if (typeof type === 'string') {
+    const mappedType = currentNativeMap[type]
+    if (!mappedType) {
+      return type
+    }
+    if (seenAliases.has(type)) {
+      throw new Error(`Circular native map alias detected for "${type}".`)
+    }
+    seenAliases.add(type)
+    return resolveNativeElementType(mappedType as NativeElementType<P>, seenAliases)
   }
   return type
 }

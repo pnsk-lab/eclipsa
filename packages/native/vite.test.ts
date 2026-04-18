@@ -47,10 +47,19 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+layout.tsx'),
     [
-      `import { WindowGroup } from '@eclipsa/native-swiftui'`,
       `export default function Layout(props: { children?: unknown }) {`,
-      `  return <WindowGroup>{props.children}</WindowGroup>`,
+      `  return <windowGroup>{props.children}</windowGroup>`,
       `}`,
+      '',
+    ].join('\n'),
+  )
+  await writeFile(
+    path.join(root, 'app', '+native-map.ts'),
+    [
+      `import { Text, VStack, WindowGroup } from '@eclipsa/native-swiftui'`,
+      `export const div = VStack`,
+      `export const span = Text`,
+      `export const windowGroup = WindowGroup`,
       '',
     ].join('\n'),
   )
@@ -58,10 +67,9 @@ const createFixture = async () => {
     path.join(root, 'app', '+page.tsx'),
     [
       `import { useSignal } from 'eclipsa'`,
-      `import { Text, VStack } from '@eclipsa/native-swiftui'`,
       `export default function App() {`,
       `  const count = useSignal(1)`,
-      `  return <VStack><Text value={\`count \${count.value}\`} /></VStack>`,
+      `  return <div><span value={\`count \${count.value}\`} /></div>`,
       `}`,
       '',
     ].join('\n'),
@@ -191,6 +199,10 @@ describe('@eclipsa/native vite plugin', () => {
       const rpcPayload = await rpcResponse.json()
       expect(rpcPayload.result.code).toContain('bootNativeApplication')
       expect(rpcPayload.result.code).toContain('__eclipsaNativeApplyAppUpdate')
+      expect(rpcPayload.result.code).toContain('eclipsa:native-map-update')
+      expect(rpcPayload.result.code).toContain(
+        'runner.importModule("virtual:eclipsa-native/map", null);',
+      )
       expect(rpcPayload.result.code).toContain('resolveNativeHotRegistry')
       expect(rpcPayload.result.code).toContain('currentNativeModule')
       expect(rpcPayload.result.url).toBe('virtual:eclipsa-native/bootstrap')
@@ -212,6 +224,25 @@ describe('@eclipsa/native vite plugin', () => {
       expect(appRpcPayload.result.code).toContain('/app/+page.tsx')
       expect(appRpcPayload.result.code).toContain('__vite_ssr_import_meta__.hot.accept')
       expect(appRpcPayload.result.code).toContain('__eclipsa$hotRegistry')
+
+      const mapRpcResponse = await fetch(`http://127.0.0.1:${port}/__eclipsa_native__/rpc`, {
+        body: JSON.stringify({
+          data: ['virtual:eclipsa-native/map', null, { startOffset: 0 }],
+          name: 'fetchModule',
+        }),
+        headers: {
+          'content-type': 'application/json',
+        },
+        method: 'POST',
+      })
+      expect(mapRpcResponse.status).toBe(200)
+      const mapRpcPayload = await mapRpcResponse.json()
+      expect(mapRpcPayload.result.code).toContain('const resolveNativeMap = (value) =>')
+      expect(mapRpcPayload.result.code).toContain('/app/+native-map.ts')
+      expect(mapRpcPayload.result.code).toContain('setNativeMap')
+      expect(mapRpcPayload.result.code).not.toContain(
+        'globalThis.__eclipsaNativeMountedApp?.rerender?.();',
+      )
     } finally {
       await server.close()
     }

@@ -1,6 +1,7 @@
 import {
   createNativeJsxTransformOptions,
   emitNativeBootstrapModule,
+  emitResolvedNativeMapModule,
   emitNativeRouteModule,
   isNativeJsxLikeRequest,
   isNativeTestLikeRequest,
@@ -39,6 +40,7 @@ describe('optimizer native helpers', () => {
     })
 
     expect(source).toContain('import * as appModule from "virtual:eclipsa-native/app";')
+    expect(source).toContain('import "virtual:eclipsa-native/map";')
     expect(source).toContain('let currentNativeEntry = resolveNativeEntry(appModule);')
     expect(source).toContain('const updateNativeApplication = (nextAppModule = appModule) => {')
     expect(source).toContain('return mountNativeEntry(currentNativeEntry);')
@@ -53,10 +55,32 @@ describe('optimizer native helpers', () => {
     })
 
     expect(source).toContain('import { applyHotUpdate } from "/tmp/eclipsa/dev-client.ts";')
+    expect(source).toContain('import.meta.hot.on("eclipsa:native-map-update", refreshNativeMap);')
+    expect(source).toContain('runner.importModule("virtual:eclipsa-native/map", null);')
     expect(source).toContain('globalState.__eclipsaNativeApplyAppUpdate = (nextAppModule) => {')
     expect(source).toContain('globalState.__eclipsaNativeMountedApp?.rerender?.();')
     expect(source).toContain('let currentNativeModule = appModule;')
     expect(source).toContain('let currentNativeHotRegistry = resolveNativeHotRegistry(appModule);')
+  })
+
+  it('emits a resolved native map module that merges defaults and app overrides', () => {
+    const source = emitResolvedNativeMapModule({
+      bindingImport: '@eclipsa/native-swiftui',
+      defaultMap: {
+        button: 'Button',
+        vstack: 'VStack',
+      },
+      mapFile: '/tmp/app/+native-map.ts',
+    })
+
+    expect(source).toContain('import * as nativeBinding from "@eclipsa/native-swiftui";')
+    expect(source).toContain('import * as appNativeMapModule from "/tmp/app/+native-map.ts";')
+    expect(source).toContain('import { setNativeMap } from "@eclipsa/native";')
+    expect(source).toContain('"button": nativeBinding["Button"]')
+    expect(source).toContain('"vstack": nativeBinding["VStack"]')
+    expect(source).toContain('const resolvedNativeMap = resolveNativeMap(appNativeMapModule);')
+    expect(source).toContain('setNativeMap(resolvedNativeMap);')
+    expect(source).not.toContain('import.meta.hot.accept')
   })
 
   it('emits a native route module source that composes layouts and page via createRouteElement', () => {
