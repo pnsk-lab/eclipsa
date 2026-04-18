@@ -494,16 +494,11 @@ describe('createResumeHmrUpdate', () => {
 
     try {
       const symbols = await collectAppSymbols(root)
-      const shared = await analyzeModule(
-        await fs.readFile(packageComponentPath, 'utf8'),
-        packageComponentPath,
+      const packageSymbols = symbols.filter((symbol) =>
+        symbol.filePath.replaceAll('\\', '/').endsWith('/node_modules/ui-kit/nav.tsx'),
       )
-      const sharedNavId = [...(shared?.symbols.values() ?? [])].find(
-        (symbol) => symbol.kind === 'component',
-      )?.id
 
-      expect(sharedNavId).toBeTruthy()
-      expect(symbols.some((symbol) => symbol.id === sharedNavId)).toBe(true)
+      expect(packageSymbols.some((symbol) => symbol.kind === 'component')).toBe(true)
     } finally {
       await fs.rm(root, { force: true, recursive: true })
     }

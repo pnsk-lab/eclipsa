@@ -6536,6 +6536,41 @@ export const beginAsyncSSRContainer = async <T>(
   }
 }
 
+export const createDetachedRuntimeContainer = () => createContainer({})
+
+export const createDetachedRuntimeComponent = (
+  container: RuntimeContainer,
+  id = `d${container.nextComponentId++}`,
+): ComponentState => getOrCreateComponentState(container, id, id, ROOT_COMPONENT_ID)
+
+export const runDetachedRuntimeComponent = <T>(
+  container: RuntimeContainer,
+  component: ComponentState,
+  render: () => T,
+): T => {
+  clearComponentSubscriptions(container, component.id)
+  const frame = createFrame(container, component, 'ssr')
+  return pushContainer(container, () => pushFrame(frame, render))
+}
+
+export const disposeDetachedRuntimeComponent = (
+  container: RuntimeContainer,
+  component: ComponentState,
+) => {
+  clearComponentSubscriptions(container, component.id)
+  disposeComponentMountCleanups(component)
+  pruneComponentVisibles(container, component, 0)
+  pruneComponentWatches(container, component, 0)
+  for (const signalId of component.signalIds) {
+    container.signals.delete(signalId)
+    container.asyncSignalStates.delete(signalId)
+    container.asyncSignalSnapshotCache.delete(signalId)
+  }
+  container.scopes.delete(component.scopeId)
+  container.dirty.delete(component.id)
+  container.components.delete(component.id)
+}
+
 const createResumePayload = (
   container: RuntimeContainer,
   componentIds?: Iterable<string>,
@@ -7729,6 +7764,10 @@ export const createEffect = (fn: () => void, options?: EffectOptions) => {
   }
 
   effect.fn()
+
+  return () => {
+    clearEffectSignals(effect)
+  }
 }
 
 export const createOnCleanup = (fn: () => void) => {
