@@ -1,0 +1,11 @@
+{
+  "name": "@eclipsa/example-android-compose",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "dev": "vp dev",
+    "test": "bun ./scripts/verify-android-compose-example.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
+  }
+}
