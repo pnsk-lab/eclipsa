@@ -32,6 +32,10 @@ export default defineConfig({
         find: /^@eclipsa\/native-swiftui$/,
         replacement: path.resolve(import.meta.dirname, '../native-swiftui/mod.ts'),
       },
+      {
+        find: /^@eclipsa\/native-compose$/,
+        replacement: path.resolve(import.meta.dirname, '../native-compose/mod.ts'),
+      },
     ],
   },
   test: {

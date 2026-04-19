@@ -54,6 +54,15 @@ const DOC_SECTIONS: DocSection[] = [
     ],
     gradientClass: 'bg-linear-to-br from-purple-700 to-pink-400',
   },
+  {
+    title: 'Native',
+    icon: 'i-tabler-device-mobile-code',
+    links: [
+      { label: 'Overview', href: '/docs/native/overview' },
+      { label: 'Android', href: '/docs/native/android' },
+    ],
+    gradientClass: 'bg-linear-to-br from-amber-700 to-orange-400',
+  },
 ]
 
 const useDocPage = loader(async (c) => {

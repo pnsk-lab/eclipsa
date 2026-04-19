@@ -14,7 +14,8 @@
       "@eclipsa/native/jsx-runtime": ["./packages/native/jsx-runtime.ts"],
       "@eclipsa/native/jsx-dev-runtime": ["./packages/native/jsx-dev-runtime.ts"],
       "@eclipsa/native-core": ["./packages/native-core/mod.ts"],
-      "@eclipsa/native-swiftui": ["./packages/native-swiftui/mod.ts"]
+      "@eclipsa/native-swiftui": ["./packages/native-swiftui/mod.ts"],
+      "@eclipsa/native-compose": ["./packages/native-compose/mod.ts"]
     },
     "strict": true,
     "noEmit": true,
