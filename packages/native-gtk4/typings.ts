@@ -17,15 +17,11 @@ export namespace Gtk {
     halign?: Align
     hexpand?: boolean
     id?: string
-    margin?: boolean | number
+    margin?: number
     sensitive?: boolean
     valign?: Align
     vexpand?: boolean
     visible?: boolean
-  }
-
-  export interface ApplicationProps extends WidgetProps {
-    applicationId?: string
   }
 
   export interface WindowProps extends WidgetProps {

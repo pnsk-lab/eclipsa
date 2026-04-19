@@ -160,7 +160,9 @@ const createJsonResponse = (body: unknown, status = 200) =>
 
 const createTextResponse = (body: string, status: number) => new Response(body, { status })
 
-const handleNativeRpcRequest = async (
+const INTERNAL_NATIVE_RPC_ERROR_MESSAGE = 'Internal native RPC failure.'
+
+export const handleNativeRpcRequest = async (
   environment: FetchableDevEnvironment,
   request: Request,
 ): Promise<Response> => {
@@ -199,10 +201,13 @@ const handleNativeRpcRequest = async (
         )
     }
   } catch (error) {
+    environment.logger.error(
+      error instanceof Error ? error.message : `Native RPC failed: ${String(error)}`,
+    )
     return createJsonResponse(
       {
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: INTERNAL_NATIVE_RPC_ERROR_MESSAGE,
         },
       },
       500,

@@ -6,8 +6,6 @@ import { GTK4_DEFAULT_TAG_MAP } from './platform.ts'
 export type { Gio, GLib, Gtk } from './typings.ts'
 export { GTK4_DEFAULT_TAG_MAP } from './platform.ts'
 
-export const Application: DefinedNativeComponent<Gtk.ApplicationProps> =
-  defineNativeComponent<Gtk.ApplicationProps>(GTK4_DEFAULT_TAG_MAP.application)
 export const Window: DefinedNativeComponent<Gtk.WindowProps> =
   defineNativeComponent<Gtk.WindowProps>(GTK4_DEFAULT_TAG_MAP.window)
 export const Box: DefinedNativeComponent<Gtk.BoxProps> = defineNativeComponent<Gtk.BoxProps>(

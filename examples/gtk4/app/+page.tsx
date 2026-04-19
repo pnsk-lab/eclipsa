@@ -7,7 +7,7 @@ export default function Page() {
 
   return (
     <div orientation="vertical" spacing={16}>
-      <span value="Eclipsa Native GTK 4 Examples」s" />
+      <span value="Eclipsa Native GTK 4 Example" />
       <span
         value={`Hello ${name.value} · ${enabled.value ? 'enabled' : 'disabled'} · count ${count.value}`}
       />

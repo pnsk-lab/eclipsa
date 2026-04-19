@@ -14,6 +14,8 @@ mod app {
     };
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    #[cfg(test)]
+    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     const NODE_ID_DATA_KEY: &str = "eclipsa-native-node-id";
@@ -807,14 +809,9 @@ mod app {
             widget.set_margin_start(margin);
             widget.set_margin_end(margin);
         }
-        if let Some(css_classes) = node.string_prop("cssClasses") {
-            for class_name in css_classes.trim_matches(['[', ']']).split(',') {
-                let class_name = class_name.trim().trim_matches('"');
-                if !class_name.is_empty() {
-                    widget.add_css_class(class_name);
-                }
-            }
-        }
+        let css_classes = parse_css_classes(node.string_prop("cssClasses"));
+        let css_class_refs = css_classes.iter().map(String::as_str).collect::<Vec<_>>();
+        widget.set_css_classes(&css_class_refs);
     }
 
     fn to_align(value: &str) -> Option<Align> {
@@ -825,6 +822,63 @@ mod app {
             "fill" => Some(Align::Fill),
             "start" => Some(Align::Start),
             _ => None,
+        }
+    }
+
+    fn parse_css_classes(value: Option<&str>) -> Vec<String> {
+        value
+            .map(|css_classes| {
+                css_classes
+                    .trim_matches(['[', ']'])
+                    .split(',')
+                    .map(|class_name| class_name.trim().trim_matches('"'))
+                    .filter(|class_name| !class_name.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn test_node(props: &[(&str, &str)]) -> NativeNode {
+            NativeNode {
+                id: "node-1".to_owned(),
+                tag: "gtk4:text".to_owned(),
+                text: None,
+                props: props
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                    .collect::<BTreeMap<_, _>>(),
+                children: Vec::new(),
+            }
+        }
+
+        #[gtk4::test]
+        fn apply_widget_props_replaces_stale_css_classes() {
+            let widget = Label::new(None);
+
+            apply_widget_props(widget.upcast_ref(), &test_node(&[("cssClasses", r#"["first","second"]"#)]));
+            assert_eq!(
+                widget
+                    .css_classes()
+                    .into_iter()
+                    .map(|class_name| class_name.to_string())
+                    .collect::<Vec<_>>(),
+                vec!["first".to_owned(), "second".to_owned()],
+            );
+
+            apply_widget_props(widget.upcast_ref(), &test_node(&[("cssClasses", r#"["second","third"]"#)]));
+            assert_eq!(
+                widget
+                    .css_classes()
+                    .into_iter()
+                    .map(|class_name| class_name.to_string())
+                    .collect::<Vec<_>>(),
+                vec!["second".to_owned(), "third".to_owned()],
+            );
         }
     }
 }

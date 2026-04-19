@@ -1,5 +1,4 @@
 export const GTK4_DEFAULT_TAG_MAP = {
-  application: 'gtk4:application',
   box: 'gtk4:box',
   button: 'gtk4:button',
   image: 'gtk4:image',
@@ -12,7 +11,6 @@ export const GTK4_DEFAULT_TAG_MAP = {
 } as const
 
 export const GTK4_DEFAULT_COMPONENT_MAP = {
-  application: 'Application',
   box: 'Box',
   button: 'Button',
   image: 'Image',
