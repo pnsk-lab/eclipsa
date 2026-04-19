@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   createNativeFetchableDevEnvironment,
@@ -6,12 +7,12 @@ import {
 } from '../native/dev-environment.ts'
 import type { NativeTargetAdapter } from '@eclipsa/native/vite'
 import type { ResolvedConfig } from 'vite'
-import { SWIFTUI_DEFAULT_COMPONENT_MAP } from './platform.ts'
+import { GTK4_DEFAULT_COMPONENT_MAP } from './platform.ts'
 
-export const NATIVE_SWIFT_ENVIRONMENT_NAME = 'nativeSwift'
+export const NATIVE_GTK4_ENVIRONMENT_NAME = 'nativeGtk4'
 const DEFAULT_HOST_STARTUP_TIMEOUT_MS = 30_000
 
-export interface SwiftUITargetOptions {
+export interface GTK4TargetOptions {
   command?: readonly [string, ...string[]]
   cwd?: string
   env?: NodeJS.ProcessEnv
@@ -21,7 +22,7 @@ export interface SwiftUITargetOptions {
   stdio?: SpawnOptions['stdio']
 }
 
-interface ResolvedNativeSwiftTargetOptions {
+interface ResolvedNativeGtk4TargetOptions {
   command: readonly [string, ...string[]]
   cwd: string
   env?: NodeJS.ProcessEnv
@@ -31,20 +32,23 @@ interface ResolvedNativeSwiftTargetOptions {
   stdio: SpawnOptions['stdio']
 }
 
-const defaultHostPackagePath = fileURLToPath(new URL('./macos-swiftui', import.meta.url))
+const defaultHostPackagePath = fileURLToPath(new URL('./gtk4-rust', import.meta.url))
 
-const resolveNativeSwiftTargetOptions = (
+const resolveNativeGtk4TargetOptions = (
   config: ResolvedConfig,
-  options: SwiftUITargetOptions,
-): ResolvedNativeSwiftTargetOptions => {
+  options: GTK4TargetOptions,
+): ResolvedNativeGtk4TargetOptions => {
   const hostPackagePath = options.hostPackagePath ?? defaultHostPackagePath
   return {
     command: options.command ?? [
-      'swift',
+      'cargo',
       'run',
-      '--package-path',
-      hostPackagePath,
-      'EclipsaNativeMacOS',
+      '--manifest-path',
+      join(hostPackagePath, 'Cargo.toml'),
+      '--features',
+      'gtk-ui',
+      '--bin',
+      'eclipsa-native-gtk4',
     ],
     cwd: options.cwd ?? config.root,
     env: options.env,
@@ -55,14 +59,14 @@ const resolveNativeSwiftTargetOptions = (
   }
 }
 
-const createNativeSwiftDevEnvironment = (
+const createNativeGtk4DevEnvironment = (
   name: string,
   config: ResolvedConfig,
   context: NativeFetchableEnvironmentContext,
-  options: SwiftUITargetOptions,
+  options: GTK4TargetOptions,
   manifestPath: string,
 ) => {
-  const resolved = resolveNativeSwiftTargetOptions(config, options)
+  const resolved = resolveNativeGtk4TargetOptions(config, options)
   return createNativeFetchableDevEnvironment(config, context, {
     createHostProcess({ manifestUrl }) {
       const [command, ...args] = resolved.command
@@ -83,20 +87,20 @@ const createNativeSwiftDevEnvironment = (
     manifestPath,
     name,
     shouldLaunch() {
-      return process.platform === 'darwin' || resolved.hasCustomCommand
+      return process.platform === 'linux' || resolved.hasCustomCommand
     },
     startupTimeoutMs: resolved.startupTimeoutMs,
   })
 }
 
-export const swiftui = (options: SwiftUITargetOptions = {}): NativeTargetAdapter => ({
-  bindingPackage: '@eclipsa/native-swiftui',
+export const gtk4 = (options: GTK4TargetOptions = {}): NativeTargetAdapter => ({
+  bindingPackage: '@eclipsa/native-gtk4',
   createEnvironmentOptions({ manifestPath }) {
     return {
       consumer: 'server',
       dev: {
         createEnvironment(name, config, context) {
-          return createNativeSwiftDevEnvironment(
+          return createNativeGtk4DevEnvironment(
             name,
             config,
             context as NativeFetchableEnvironmentContext,
@@ -107,9 +111,9 @@ export const swiftui = (options: SwiftUITargetOptions = {}): NativeTargetAdapter
       },
     }
   },
-  defaultMap: SWIFTUI_DEFAULT_COMPONENT_MAP,
-  environmentName: NATIVE_SWIFT_ENVIRONMENT_NAME,
-  name: 'swiftui',
-  platform: 'swiftui',
+  defaultMap: GTK4_DEFAULT_COMPONENT_MAP,
+  environmentName: NATIVE_GTK4_ENVIRONMENT_NAME,
+  name: 'gtk4',
+  platform: 'linux',
   workspaceFallback: fileURLToPath(new URL('./mod.ts', import.meta.url)),
 })

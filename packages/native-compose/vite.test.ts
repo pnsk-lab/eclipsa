@@ -168,6 +168,13 @@ describe('@eclipsa/native-compose vite environment', () => {
     try {
       await server.listen()
       expect(server.environments[NATIVE_COMPOSE_ENVIRONMENT_NAME]).toBeDefined()
+      expect(
+        typeof (
+          server.environments[NATIVE_COMPOSE_ENVIRONMENT_NAME] as {
+            dispatchFetch?: unknown
+          }
+        ).dispatchFetch,
+      ).toBe('function')
       await waitFor(() => fileExists(launchedFile))
       const launched = JSON.parse(await readFile(launchedFile, 'utf8')) as {
         manifest: {

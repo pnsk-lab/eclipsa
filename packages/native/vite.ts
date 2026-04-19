@@ -14,13 +14,17 @@ import { createRoutes, matchRoute, normalizeRoutePath } from '../eclipsa/vite/ut
 import {
   mergeConfig,
   transformWithOxc,
-  type DevEnvironment,
   type EnvironmentOptions,
+  type FetchableDevEnvironment,
   type Plugin,
   type PluginOption,
   type ResolvedConfig,
   type ViteBuilder,
 } from 'vite'
+import {
+  incomingMessageToRequest,
+  responseForServerResponse,
+} from '../eclipsa/utils/node-connect.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -243,15 +247,6 @@ const createNativeManifestSource = (
     2,
   )
 
-const toSerializableBuiltin = (value: RegExp | string) =>
-  typeof value === 'string'
-    ? value
-    : {
-        flags: value.flags,
-        source: value.source,
-        type: 'regexp' as const,
-      }
-
 const resolveRequestOrigin = (
   req: { headers: Record<string, string | string[] | undefined> },
   server: { config: ResolvedConfig },
@@ -301,15 +296,10 @@ const createNativeDevManifest = (
   target: resolved.target.name,
 })
 
-const readRequestBody = async (request: import('node:http').IncomingMessage) => {
-  const chunks: Buffer[] = []
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
-  return Buffer.concat(chunks).toString('utf8')
-}
-
-const createNativePlugin = (state: NativePluginState, options: NativePluginOptions): Plugin => ({
+const createNativeCorePlugin = (
+  state: NativePluginState,
+  options: NativePluginOptions,
+): Plugin => ({
   name: 'vite-plugin-eclipsa-native',
   enforce: 'pre',
   async config(userConfig) {
@@ -320,9 +310,16 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
       appType: 'custom',
       builder: {},
       environments: {
-        [resolved.environmentName]: createNativeEnvironmentOptions(resolved),
+        [resolved.environmentName]: {},
       },
     }
+  },
+  configEnvironment(name) {
+    const resolved = state.resolved
+    if (!resolved || name !== resolved.environmentName) {
+      return null
+    }
+    return createNativeEnvironmentOptions(resolved)
   },
   configResolved(config) {
     state.config = config
@@ -345,10 +342,17 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
     if (!resolved) {
       throw new Error('Resolved native plugin options are unavailable during configureServer().')
     }
-    const environment = server.environments[resolved.environmentName] as DevEnvironment | undefined
+    const environment = server.environments[resolved.environmentName] as
+      | FetchableDevEnvironment
+      | undefined
     if (!environment) {
       throw new Error(
         `The native Vite plugin expected a dev environment named "${resolved.environmentName}". Configure it with Vite's environment API before starting the dev server.`,
+      )
+    }
+    if (typeof environment.dispatchFetch !== 'function') {
+      throw new Error(
+        `The native Vite plugin expected "${resolved.environmentName}" to be a fetchable dev environment.`,
       )
     }
 
@@ -381,81 +385,44 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
       }
 
       if (requestPath === `${resolved.servePath}/rpc`) {
-        if (req.method !== 'POST') {
-          res.statusCode = 405
-          res.end('Method Not Allowed')
-          return
-        }
-
-        try {
-          const body = await readRequestBody(req)
-          const payload = JSON.parse(body) as {
-            data?: unknown[]
-            name?: string
-          }
-
-          switch (payload.name) {
-            case 'fetchModule': {
-              const [url, importer, options] = payload.data ?? []
-              const result = await environment.fetchModule(
-                String(url ?? ''),
-                importer == null ? undefined : String(importer),
-                (options ?? {}) as { cached?: boolean; startOffset?: number },
-              )
-              res.statusCode = 200
-              res.setHeader('Content-Type', 'application/json; charset=utf-8')
-              res.end(JSON.stringify({ result }))
-              return
-            }
-            case 'getBuiltins': {
-              const builtins = environment.config.resolve.builtins.map(toSerializableBuiltin)
-              res.statusCode = 200
-              res.setHeader('Content-Type', 'application/json; charset=utf-8')
-              res.end(JSON.stringify({ result: builtins }))
-              return
-            }
-            default:
-              res.statusCode = 400
-              res.setHeader('Content-Type', 'application/json; charset=utf-8')
-              res.end(
-                JSON.stringify({
-                  error: {
-                    message: `Unsupported native RPC method: ${String(payload.name ?? '')}`,
-                  },
-                }),
-              )
-              return
-          }
-        } catch (error) {
-          res.statusCode = 500
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          res.end(
-            JSON.stringify({
-              error: {
-                message: error instanceof Error ? error.message : String(error),
-              },
-            }),
-          )
-          return
-        }
+        const response = await environment.dispatchFetch(incomingMessageToRequest(req))
+        await responseForServerResponse(response, res)
+        return
       }
 
       res.statusCode = 404
       res.end('Not Found')
     })
   },
-  handleHotUpdate(context) {
+})
+
+const createNativeHmrPlugin = (state: NativePluginState): Plugin => ({
+  name: 'vite-plugin-eclipsa-native:hmr',
+  enforce: 'post',
+  applyToEnvironment(environment) {
+    return environment.name === state.resolved?.environmentName
+  },
+  hotUpdate(options) {
     const resolved = state.resolved
-    if (!resolved?.nativeMapFile || context.file !== resolved.nativeMapFile) {
+    if (!resolved?.nativeMapFile || options.file !== resolved.nativeMapFile) {
       return
     }
-    context.server.ws.send({
-      type: 'custom',
-      event: 'eclipsa:native-map-update',
-      data: {
-        file: resolved.nativeMapFile,
-      },
+    this.environment.hot.send('eclipsa:native-map-update', {
+      file: resolved.nativeMapFile,
     })
+  },
+})
+
+const createNativePlugin = (state: NativePluginState, options: NativePluginOptions): Plugin[] => [
+  createNativeCorePlugin(state, options),
+  createNativeHmrPlugin(state),
+]
+
+const createNativeResolverPlugin = (state: NativePluginState): Plugin => ({
+  name: 'vite-plugin-eclipsa-native:modules',
+  enforce: 'pre',
+  applyToEnvironment(environment) {
+    return environment.name === state.resolved?.environmentName
   },
   resolveId(id) {
     if (id === VIRTUAL_BOOTSTRAP_MODULE_ID) {
@@ -556,5 +523,5 @@ const createNativePlugin = (state: NativePluginState, options: NativePluginOptio
 
 export const native = (options: NativePluginOptions): PluginOption => {
   const state: NativePluginState = {}
-  return createNativePlugin(state, options)
+  return [...createNativePlugin(state, options), createNativeResolverPlugin(state)]
 }

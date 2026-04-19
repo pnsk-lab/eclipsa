@@ -36,6 +36,10 @@ export default defineConfig({
         find: /^@eclipsa\/native-compose$/,
         replacement: path.resolve(import.meta.dirname, '../native-compose/mod.ts'),
       },
+      {
+        find: /^@eclipsa\/native-gtk4$/,
+        replacement: path.resolve(import.meta.dirname, '../native-gtk4/mod.ts'),
+      },
     ],
   },
   test: {

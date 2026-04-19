@@ -184,6 +184,9 @@ describe('@eclipsa/native vite plugin', () => {
       expect(typeof manifest.rpc).toBe('string')
       expect(typeof manifest.hmr?.url).toBe('string')
       expect(server.environments.nativeSwift).toBeDefined()
+      expect(
+        typeof (server.environments.nativeSwift as { dispatchFetch?: unknown }).dispatchFetch,
+      ).toBe('function')
 
       const rpcResponse = await fetch(`http://127.0.0.1:${port}/__eclipsa_native__/rpc`, {
         body: JSON.stringify({
