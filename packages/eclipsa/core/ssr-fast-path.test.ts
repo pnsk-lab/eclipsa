@@ -1,7 +1,8 @@
 import { Fragment, jsxDEV } from 'eclipsa/jsx-dev-runtime'
 import { describe, expect, it } from 'vitest'
-import { ssrAttr, ssrTemplate } from '../jsx/jsx-dev-runtime.ts'
+import { ssrAttr, ssrRaw, ssrTemplate } from '../jsx/jsx-dev-runtime.ts'
 import { renderSSR } from './ssr.ts'
+
 describe('SSR fast path helpers', () => {
   it('renders dynamic attributes and children through ssrTemplate', () => {
     const View = (props) =>
@@ -55,5 +56,15 @@ describe('SSR fast path helpers', () => {
     expect(html).toContain('<div>template</div>')
     expect(html).toContain('<div>jsx</div>')
     expect(html).not.toContain(' key=')
+  })
+
+  it('renders only helper-created ssrRaw values as trusted HTML', () => {
+    const trusted = ssrRaw('<span>trusted</span>')
+    const forged = { ...trusted, value: '<img src=x onerror="alert(1)" />' }
+
+    const { html } = renderSSR(() => ssrTemplate(['<div>', '', '</div>'], trusted, forged))
+
+    expect(html).toBe('<div><span>trusted</span></div>')
+    expect(html).not.toContain('onerror')
   })
 })
