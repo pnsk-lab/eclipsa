@@ -4,7 +4,7 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { native } from '../native/vite.ts'
-import { NATIVE_SWIFT_ENVIRONMENT_NAME, swiftui } from './vite.ts'
+import { gtk4, NATIVE_GTK4_ENVIRONMENT_NAME } from './vite.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const eclipsaEntry = path.join(repoRoot, 'packages/eclipsa/mod.ts')
@@ -13,8 +13,8 @@ const nativeEntry = path.join(repoRoot, 'packages/native/mod.ts')
 const nativeJsxRuntime = path.join(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = path.join(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = path.join(repoRoot, 'packages/native-core/mod.ts')
-const nativeSwiftUIEntry = path.join(repoRoot, 'packages/native-swiftui/mod.ts')
-const testServerPort = 5183
+const nativeGtk4Entry = path.join(repoRoot, 'packages/native-gtk4/mod.ts')
+const testServerPort = 5185
 
 const fileExists = async (filePath: string) => {
   try {
@@ -37,13 +37,13 @@ const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 10_000) => {
 }
 
 const createFixture = async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-swiftui-env-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-gtk4-env-'))
   await mkdir(path.join(root, 'app'), { recursive: true })
   await writeFile(
     path.join(root, 'app', '+layout.tsx'),
     [
       `export default function Layout(props: { children?: unknown }) {`,
-      `  return <windowGroup>{props.children}</windowGroup>`,
+      `  return <window>{props.children}</window>`,
       `}`,
       '',
     ].join('\n'),
@@ -51,10 +51,10 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+native-map.ts'),
     [
-      `import { Text, VStack, WindowGroup } from '@eclipsa/native-swiftui'`,
-      `export const div = VStack`,
+      `import { Box, Text, Window } from '@eclipsa/native-gtk4'`,
+      `export const div = Box`,
       `export const span = Text`,
-      `export const windowGroup = WindowGroup`,
+      `export const window = Window`,
       '',
     ].join('\n'),
   )
@@ -93,7 +93,7 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
   appType: 'custom' as const,
   plugins: [
     native({
-      target: swiftui({
+      target: gtk4({
         command,
         cwd: root,
         startupTimeoutMs: 15_000,
@@ -128,8 +128,8 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
         replacement: nativeCoreEntry,
       },
       {
-        find: /^@eclipsa\/native-swiftui$/,
-        replacement: nativeSwiftUIEntry,
+        find: /^@eclipsa\/native-gtk4$/,
+        replacement: nativeGtk4Entry,
       },
     ],
   },
@@ -144,7 +144,7 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
   },
 })
 
-describe('@eclipsa/native-swiftui vite environment', () => {
+describe('@eclipsa/native-gtk4 vite environment', () => {
   const cleanup = new Set<string>()
 
   afterEach(async () => {
@@ -154,7 +154,7 @@ describe('@eclipsa/native-swiftui vite environment', () => {
     cleanup.clear()
   })
 
-  it('launches and stops the nativeSwift host automatically during dev', async () => {
+  it('launches and stops a configured GTK 4 host automatically during dev', async () => {
     const root = await createFixture()
     cleanup.add(root)
 
@@ -166,20 +166,22 @@ describe('@eclipsa/native-swiftui vite environment', () => {
 
     try {
       await server.listen()
-      expect(server.environments[NATIVE_SWIFT_ENVIRONMENT_NAME]).toBeDefined()
+      expect(server.environments[NATIVE_GTK4_ENVIRONMENT_NAME]).toBeDefined()
       expect(
-        typeof (server.environments[NATIVE_SWIFT_ENVIRONMENT_NAME] as { dispatchFetch?: unknown })
+        typeof (server.environments[NATIVE_GTK4_ENVIRONMENT_NAME] as { dispatchFetch?: unknown })
           .dispatchFetch,
       ).toBe('function')
       await waitFor(() => fileExists(launchedFile))
       const launched = JSON.parse(await readFile(launchedFile, 'utf8')) as {
         manifest: {
+          platform: string
           target: string
         }
         manifestUrl: string
       }
 
-      expect(launched.manifest.target).toBe('swiftui')
+      expect(launched.manifest.target).toBe('gtk4')
+      expect(launched.manifest.platform).toBe('linux')
       expect(launched.manifestUrl).toContain('/__eclipsa_native__/manifest.json')
     } finally {
       await server.close()
