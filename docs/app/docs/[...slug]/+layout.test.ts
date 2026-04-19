@@ -47,6 +47,8 @@ describe('docs layout', () => {
     expect(result.html).toContain('>Menu</span>')
     expect(result.html).toContain('>Routing</div>')
     expect(result.html).toContain('>Action</div>')
+    expect(result.html).toContain('>Native</div>')
+    expect(result.html).toContain('href="/docs/native/android"')
     expect(result.html).toContain('id="docs-mobile-drawer-shell"')
     expect(result.html).not.toContain('data-testid="docs-mobile-toc-toggle"')
     expect(result.html).not.toContain('id="docs-mobile-toc-shell"')
