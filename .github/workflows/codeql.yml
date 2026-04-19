@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # The Android Compose host introduces Kotlin sources, but the repository
       # does not yet provision an Android SDK in CI. Keeping CodeQL scoped to
