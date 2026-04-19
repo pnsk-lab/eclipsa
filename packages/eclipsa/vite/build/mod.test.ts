@@ -630,6 +630,71 @@ describe('build', () => {
     expect(blockedResponse.status).toBe(404)
   })
 
+  it('runs server hooks for built page route requests', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-page-hooks-'))
+    const builder = createBuilder()
+    const secureServerPath = await writeAppSource(root, 'secure/[id]/+server.ts')
+    await writeAppSource(
+      root,
+      '+hooks.server.ts',
+      'export const handle = async (_c, resolve) => resolve(_c);\n',
+    )
+    await writeMinimalSsrEntries(root)
+    await writeMinimalRuntimeEntry(root)
+    await writeBuiltPageModule(
+      root,
+      'route__secure___id___server',
+      'export const GET = (c) => c.json({ guard: c.get("guard") ?? null, handled: c.get("fromHandle") ?? null, id: c.req.param("id") ?? null });\n',
+    )
+    await writeBuiltPageModule(
+      root,
+      'special__secure__middleware',
+      'export default async (c, next) => { c.set("guard", "secure"); await next(); };\n',
+    )
+    await writeBuiltPageModule(
+      root,
+      'server_hooks',
+      'export const handle = async (c, resolve) => { c.set("fromHandle", "yes"); return resolve(c); };\n',
+    )
+    mocks.createRoutes.mockResolvedValue([
+      {
+        ...createRootRoute(),
+        middlewares: [
+          {
+            entryName: 'special__secure__middleware',
+            filePath: path.join(root, 'app/secure/+middleware.ts'),
+          },
+        ],
+        page: null,
+        routePath: '/secure/[id]',
+        segments: [
+          { kind: 'static', value: 'secure' },
+          { kind: 'required', value: 'id' },
+        ],
+        server: {
+          entryName: 'route__secure___id___server',
+          filePath: secureServerPath,
+        },
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const { default: app } = (await import(
+      `${pathToFileURL(path.join(root, 'dist/ssr/eclipsa_app.mjs')).href}?t=${Date.now()}`
+    )) as {
+      default: { fetch(request: Request): Promise<Response> }
+    }
+
+    const response = await app.fetch(new Request('http://localhost/secure/123'))
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      guard: 'secure',
+      handled: 'yes',
+      id: '123',
+    })
+  })
+
   it('rejects built form posts that target actions outside the current route graph', async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-form-action-'))
     const builder = createBuilder()

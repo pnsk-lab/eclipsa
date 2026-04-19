@@ -1442,24 +1442,33 @@ const resolveRoutePreflight = async (href, c) => {
 };
 
 for (const pageRouteEntry of pageRouteEntries) {
-  app.get(pageRouteEntry.path, async (c) => {
-    const pathname = normalizeRoutePath(getRequestUrl(c.req.raw).pathname);
-    const match = matchRoute(pathname);
-    if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
-      return c.text("Not Found", 404);
-    }
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
-            ? renderRouteData(match.route, pathname, match.params, c, match.route.page, "page")
-            : renderMatchedPage(match, c),
-    );
-  });
+  app.get(pageRouteEntry.path, async (c) =>
+    resolveRequest(c, async (requestContext) => {
+      const pathname = normalizeRoutePath(getRequestUrl(requestContext.req.raw).pathname);
+      const match = matchRoute(pathname);
+      if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
+        return requestContext.text("Not Found", 404);
+      }
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
+        async () =>
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(
+                  match.route,
+                  pathname,
+                  match.params,
+                  requestContext,
+                  match.route.page,
+                  "page",
+                )
+              : renderMatchedPage(match, requestContext),
+      );
+    }),
+  );
 }
 
 app.post("/__eclipsa/action/:id", async (c) =>
@@ -1522,117 +1531,147 @@ app.get("/__eclipsa/loader/:id", async (c) =>
   }),
 );
 
-app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) => {
-  const href = c.req.query("href");
-  if (!href) {
-    return c.json({ document: true, ok: false }, 400);
-  }
-  return resolveRoutePreflight(href, c);
-});
+app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const href = requestContext.req.query("href");
+    if (!href) {
+      return requestContext.json({ document: true, ok: false }, 400);
+    }
+    return resolveRoutePreflight(href, requestContext);
+  }),
+);
 
-app.get(${JSON.stringify(ROUTE_DATA_ENDPOINT)}, async (c) => {
-  const href = c.req.query("href");
-  if (!href) {
-    return c.json({ document: true, ok: false }, 400);
-  }
-  return resolveRouteData(href, c);
-});
+app.get(${JSON.stringify(ROUTE_DATA_ENDPOINT)}, async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const href = requestContext.req.query("href");
+    if (!href) {
+      return requestContext.json({ document: true, ok: false }, 400);
+    }
+    return resolveRouteData(href, requestContext);
+  }),
+);
 
-app.all("*", async (c) => {
-  const pathname = normalizeRoutePath(getRequestUrl(c.req.raw).pathname);
-  const match = matchRoute(pathname);
+app.all("*", async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const pathname = normalizeRoutePath(getRequestUrl(requestContext.req.raw).pathname);
+    const match = matchRoute(pathname);
 
-  if (!match) {
-    const fallback = findSpecialRoute(pathname, "notFound");
-    if (fallback?.route?.notFound) {
+    if (!match) {
+      const fallback = findSpecialRoute(pathname, "notFound");
+      if (fallback?.route?.notFound) {
+        return composeRouteMiddlewares(
+          fallback.route,
+          requestContext,
+          fallback.params,
+          async () =>
+            requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+              ? requestContext.body(null, 204)
+              : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+                ? renderRouteData(
+                    fallback.route,
+                    pathname,
+                    fallback.params,
+                    requestContext,
+                    fallback.route.notFound,
+                    "not-found",
+                  )
+                : renderRouteResponse(
+                    fallback.route,
+                    pathname,
+                    fallback.params,
+                    requestContext,
+                    fallback.route.notFound,
+                    404,
+                  ),
+        );
+      }
+      return requestContext.text("Not Found", 404);
+    }
+
+    if (
+      (requestContext.req.method === "GET" || requestContext.req.method === "HEAD") &&
+      match.route.page
+    ) {
       return composeRouteMiddlewares(
-        fallback.route,
-        c,
-        fallback.params,
+        match.route,
+        requestContext,
+        match.params,
         async () =>
-          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
-              ? renderRouteData(fallback.route, pathname, fallback.params, c, fallback.route.notFound, "not-found")
-              : renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404),
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(
+                  match.route,
+                  pathname,
+                  match.params,
+                  requestContext,
+                  match.route.page,
+                  "page",
+                )
+              : renderMatchedPage(match, requestContext),
       );
     }
-    return c.text("Not Found", 404);
-  }
-
-  if ((c.req.method === "GET" || c.req.method === "HEAD") && match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
+    if (requestContext.req.method === "POST" && match.route.page) {
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
+        async () => {
+          const actionId = await getActionFormSubmissionId(requestContext);
+          if (!actionId) {
+            return match.route.server
+              ? invokeRouteServer(match.route.server, requestContext, match.params)
+              : renderMatchedPage(match, requestContext);
+          }
+          const routeAccess = getRouteServerAccess(match.route);
+          if (!routeAccess.actionIds.includes(actionId)) {
+            return requestContext.text("Not Found", 404);
+          }
+          const moduleUrl = actions[actionId];
+          if (!moduleUrl) {
+            return requestContext.text("Not Found", 404);
+          }
+          if (!hasAction(actionId)) {
+            await import(moduleUrl);
+          }
+          const input = await getNormalizedActionInput(requestContext);
+          const response = await executeAction(actionId, requestContext);
+          const contentType = response.headers.get("content-type") ?? "";
+          if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
+            return response;
+          }
+          const body = await response.json();
+          return renderMatchedPage(match, requestContext, {
+            prepare(container) {
+              primeActionState(container, actionId, {
+                error: body.ok ? undefined : deserializeValue(body.error),
+                input,
+                result: body.ok ? deserializeValue(body.value) : undefined,
+              });
+            },
+          });
+        },
+      );
+    }
+    if (match.route.server) {
+      return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
+        invokeRouteServer(match.route.server, requestContext, match.params),
+      );
+    }
+    if (match.route.page) {
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
         async () =>
-          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-            ? c.body(null, 204)
-            : c.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
-              ? renderRouteData(match.route, pathname, match.params, c, match.route.page, "page")
-              : renderMatchedPage(match, c),
-    );
-  }
-  if (c.req.method === "POST" && match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () => {
-        const actionId = await getActionFormSubmissionId(c);
-        if (!actionId) {
-          return match.route.server
-            ? invokeRouteServer(match.route.server, c, match.params)
-            : renderMatchedPage(match, c);
-        }
-        const routeAccess = getRouteServerAccess(match.route);
-        if (!routeAccess.actionIds.includes(actionId)) {
-          return c.text("Not Found", 404);
-        }
-        const moduleUrl = actions[actionId];
-        if (!moduleUrl) {
-          return c.text("Not Found", 404);
-        }
-        if (!hasAction(actionId)) {
-          await import(moduleUrl);
-        }
-        const input = await getNormalizedActionInput(c);
-        const response = await executeAction(actionId, c);
-        const contentType = response.headers.get("content-type") ?? "";
-        if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
-          return response;
-        }
-        const body = await response.json();
-        return renderMatchedPage(match, c, {
-          prepare(container) {
-            primeActionState(container, actionId, {
-              error: body.ok ? undefined : deserializeValue(body.error),
-              input,
-              result: body.ok ? deserializeValue(body.value) : undefined,
-            });
-          },
-        });
-      },
-    );
-  }
-  if (match.route.server) {
-    return composeRouteMiddlewares(match.route, c, match.params, async () =>
-      invokeRouteServer(match.route.server, c, match.params),
-    );
-  }
-  if (match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-    );
-  }
-  return c.text("Not Found", 404);
-});
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : renderMatchedPage(match, requestContext),
+      );
+    }
+    return requestContext.text("Not Found", 404);
+  }),
+);
 
 export const pageRoutePatterns = [...new Set(pageRouteEntries.map((entry) => entry.path))];
 export default app;
