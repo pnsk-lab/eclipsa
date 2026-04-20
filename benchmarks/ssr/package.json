@@ -1,0 +1,27 @@
+{
+  "name": "benchmarks",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "vite-plus run build:all",
+    "bench": "bun run ./benchmark.js",
+    "bench:bun": "bun run ./benchmark.js",
+    "bench:node": "node ./benchmark.js",
+    "bench:deno": "deno run --import-map=./deno.import-map.json --allow-read --allow-env --allow-sys --node-modules-dir=auto ./benchmark.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "mitata": "^1.0.34"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "vite-plus": "^0.1.16"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "packageManager": "bun@1.3.11"
+}
