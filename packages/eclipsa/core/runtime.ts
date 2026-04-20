@@ -5277,6 +5277,31 @@ const commitBrowserNavigation = (doc: Document, url: URL, mode: NavigationMode) 
   doc.defaultView.history.pushState(null, '', url.href)
 }
 
+const scrollToUrlFragment = (doc: Document, url: URL) => {
+  if (!url.hash) {
+    return
+  }
+
+  const fragment = url.hash.slice(1)
+  if (!fragment) {
+    doc.defaultView?.scrollTo(0, 0)
+    return
+  }
+
+  let decodedFragment = fragment
+  try {
+    decodedFragment = decodeURIComponent(fragment)
+  } catch {
+    // Keep the raw fragment when it is not valid percent-encoding.
+  }
+
+  const namedAnchor = Array.from(doc.querySelectorAll('a[name]')).find(
+    (anchor) => anchor.getAttribute('name') === decodedFragment,
+  )
+  const fragmentTarget = doc.getElementById(decodedFragment) ?? namedAnchor
+  fragmentTarget?.scrollIntoView()
+}
+
 const fallbackDocumentNavigation = (doc: Document, url: URL, mode: NavigationMode) => {
   if (!doc.defaultView) {
     return
@@ -5524,6 +5549,7 @@ const commitRouteNavigation = (
   if (options?.writeLocation !== false) {
     writeRouterLocation(router, url)
   }
+  scrollToUrlFragment(doc, url)
 }
 
 const renderAndCommitRouteNavigation = (
@@ -5690,6 +5716,7 @@ const navigateContainer = async (
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
       writeRouterLocation(router, url)
+      scrollToUrlFragment(doc, url)
     }
     return
   }

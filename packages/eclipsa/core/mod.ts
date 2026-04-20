@@ -1,4 +1,5 @@
 export * from './action.ts'
+export { injectMissingActionCsrfInputs } from './action-csrf.ts'
 export * from './component.ts'
 export * from './context.ts'
 export * from './dynamic.ts'

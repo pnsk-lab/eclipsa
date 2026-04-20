@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import type { JSX } from '../jsx/types.ts'
 import { renderToString } from '../jsx/mod.ts'
+import { getCurrentActionCsrfToken, injectMissingActionCsrfInputs } from './action-csrf.ts'
 import { createComponentBoundaryHtmlComment } from './runtime/markers.ts'
 import {
   beginAsyncSSRContainer,
@@ -59,8 +60,12 @@ export const renderSSR = (
   },
 ): SSRRenderResult => {
   const { container, result } = beginSSRContainer(options?.symbols ?? {}, render)
+  const html = injectMissingActionCsrfInputs(
+    withRuntimeContainer(container, () => renderToString(result)),
+    getCurrentActionCsrfToken(),
+  )
   return {
-    html: withRuntimeContainer(container, () => renderToString(result)),
+    html,
     payload: toResumePayload(container),
   }
 }
@@ -107,7 +112,10 @@ export const renderSSRAsync = async (
     )
 
     try {
-      const html = withRuntimeContainer(container, () => renderToString(result))
+      const html = injectMissingActionCsrfInputs(
+        withRuntimeContainer(container, () => renderToString(result)),
+        getCurrentActionCsrfToken(),
+      )
       const pendingSuspensePromises = getPendingSuspensePromises(container)
       if (container.pendingSuspensePromises.size > 0 || pendingSuspensePromises.length > 0) {
         await Promise.allSettled([...container.pendingSuspensePromises, ...pendingSuspensePromises])
@@ -205,7 +213,10 @@ const renderStreamingAttempt = async (
     )
 
     try {
-      const html = withRuntimeContainer(container, () => renderToString(result))
+      const html = injectMissingActionCsrfInputs(
+        withRuntimeContainer(container, () => renderToString(result)),
+        getCurrentActionCsrfToken(),
+      )
       if (container.pendingSuspensePromises.size > 0) {
         await Promise.allSettled(container.pendingSuspensePromises)
         continue

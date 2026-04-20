@@ -12,7 +12,11 @@ import {
   ROUTE_RPC_URL_HEADER,
   type RouteParams,
 } from '../../core/router-shared.ts'
-import { applyActionCsrfCookie, ensureActionCsrfToken } from '../../core/action-csrf.ts'
+import {
+  applyActionCsrfCookie,
+  ensureActionCsrfToken,
+  injectMissingActionCsrfInputs,
+} from '../../core/action-csrf.ts'
 import type { SSRRootProps } from '../../core/types.ts'
 import {
   APP_HOOKS_ELEMENT_ID,
@@ -692,7 +696,7 @@ const createDevApp = async (init: DevAppInit) => {
       routeError?: unknown
     },
   ) => {
-    ensureActionCsrfToken(c)
+    const actionCsrfToken = ensureActionCsrfToken(c)
     const [
       _primedModules,
       modules,
@@ -826,18 +830,21 @@ const createDevApp = async (init: DevAppInit) => {
       resolvePendingLoaders: async (container: any) => resolvePendingLoaders(container, c),
       symbols: symbolUrls,
     })
-    const shellHtml = replaceHeadPlaceholder(
+    const shellHtml = injectMissingActionCsrfInputs(
       replaceHeadPlaceholder(
         replaceHeadPlaceholder(
-          html,
-          RESUME_PAYLOAD_PLACEHOLDER,
-          serializeAppResumePayload(payload),
+          replaceHeadPlaceholder(
+            html,
+            RESUME_PAYLOAD_PLACEHOLDER,
+            serializeAppResumePayload(payload),
+          ),
+          ROUTE_MANIFEST_PLACEHOLDER,
+          escapeJSONScriptText(JSON.stringify(routeManifest)),
         ),
-        ROUTE_MANIFEST_PLACEHOLDER,
-        escapeJSONScriptText(JSON.stringify(routeManifest)),
+        APP_HOOKS_PLACEHOLDER,
+        escapeJSONScriptText(JSON.stringify(appHooksManifest)),
       ),
-      APP_HOOKS_PLACEHOLDER,
-      escapeJSONScriptText(JSON.stringify(appHooksManifest)),
+      actionCsrfToken,
     )
     const { prefix, suffix } = splitHtmlForStreaming(shellHtml)
     const encoder = new TextEncoder()
@@ -854,9 +861,10 @@ const createDevApp = async (init: DevAppInit) => {
                 latestPayload = chunk.payload
                 const templateId = `eclipsa-suspense-template-${chunk.boundaryId}`
                 const payloadId = `eclipsa-suspense-payload-${chunk.boundaryId}`
+                const chunkHtml = injectMissingActionCsrfInputs(chunk.html, actionCsrfToken)
                 controller.enqueue(
                   encoder.encode(
-                    `<template id="${templateId}">${chunk.html}</template>` +
+                    `<template id="${templateId}">${chunkHtml}</template>` +
                       `<script id="${payloadId}" type="application/eclipsa-resume+json">${serializeAppResumePayload(chunk.payload)}</script>` +
                       `<script>window.__eclipsa_stream.enqueue({boundaryId:${JSON.stringify(chunk.boundaryId)},payloadScriptId:${JSON.stringify(payloadId)},templateId:${JSON.stringify(templateId)}})</script>`,
                   ),

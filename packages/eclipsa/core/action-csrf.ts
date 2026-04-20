@@ -5,6 +5,7 @@ export const ACTION_CSRF_FIELD = '__e_csrf'
 export const ACTION_CSRF_HEADER = 'x-eclipsa-csrf'
 export const ACTION_CSRF_INPUT_ATTR = 'data-e-action-csrf'
 export const ACTION_CSRF_ERROR_MESSAGE = 'Invalid CSRF token.'
+const ACTION_FORM_ATTR = 'data-e-action-form'
 
 const ACTION_CSRF_TOKEN_KEY = Symbol.for('eclipsa.action-csrf-token')
 const ACTION_CSRF_SET_COOKIE_KEY = Symbol.for('eclipsa.action-csrf-set-cookie')
@@ -116,6 +117,59 @@ export const ensureActionCsrfToken = (c: AppContext<any>) => {
 export const getCurrentActionCsrfToken = () => {
   const context = getCurrentServerRequestContext()
   return context ? ensureActionCsrfToken(context) : null
+}
+
+const createActionCsrfInputHtml = (token: string) =>
+  `<input ${ACTION_CSRF_INPUT_ATTR}="" name="${ACTION_CSRF_FIELD}" type="hidden" value="${token}">`
+
+export const injectMissingActionCsrfInputs = (html: string, token: string | null | undefined) => {
+  if (!token || !html.includes(ACTION_FORM_ATTR)) {
+    return html
+  }
+
+  let output = ''
+  let cursor = 0
+
+  while (cursor < html.length) {
+    const formStart = html.indexOf('<form', cursor)
+    if (formStart < 0) {
+      output += html.slice(cursor)
+      break
+    }
+
+    const openEnd = html.indexOf('>', formStart)
+    if (openEnd < 0) {
+      output += html.slice(cursor)
+      break
+    }
+
+    const openTag = html.slice(formStart, openEnd + 1)
+    if (!openTag.includes(ACTION_FORM_ATTR)) {
+      output += html.slice(cursor, openEnd + 1)
+      cursor = openEnd + 1
+      continue
+    }
+
+    const closeStart = html.indexOf('</form>', openEnd + 1)
+    if (closeStart < 0) {
+      output += html.slice(cursor)
+      break
+    }
+
+    const formInnerHtml = html.slice(openEnd + 1, closeStart)
+    output += html.slice(cursor, openEnd + 1)
+    if (
+      !formInnerHtml.includes(ACTION_CSRF_INPUT_ATTR) &&
+      !formInnerHtml.includes(`name="${ACTION_CSRF_FIELD}"`) &&
+      !formInnerHtml.includes(`name='${ACTION_CSRF_FIELD}'`)
+    ) {
+      output += createActionCsrfInputHtml(token)
+    }
+    output += formInnerHtml
+    cursor = closeStart
+  }
+
+  return output
 }
 
 export const serializeActionCsrfCookie = (token: string, secure: boolean) =>

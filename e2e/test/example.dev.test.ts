@@ -249,6 +249,34 @@ test.describe('example app in dev mode', () => {
     await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
   })
 
+  test('scrolls to hash targets during client-side same-route Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+
+    await expect(page).toHaveURL(/\/hash-nav$/)
+    await expect(
+      page
+        .locator('[data-testid="hash-nav-target"]')
+        .evaluate((element) => element.getBoundingClientRect().top),
+    ).resolves.toBeGreaterThan(2000)
+
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+    await expect
+      .poll(
+        async () =>
+          await page.locator('[data-testid="hash-nav-target"]').evaluate((element) => {
+            const top = element.getBoundingClientRect().top
+            return top >= 0 && top < window.innerHeight
+          }),
+      )
+      .toBe(true)
+  })
+
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
     await page.goto('/layout-location/overview')
 
