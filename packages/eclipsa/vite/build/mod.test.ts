@@ -68,6 +68,7 @@ const writeMinimalRuntimeEntry = async (
     escapeInlineScriptTextSource?: string
     escapeJSONScriptTextSource?: string
     ensureActionCsrfTokenSource?: string
+    injectMissingActionCsrfInputsSource?: string
     getActionFormSubmissionIdSource?: string
     getNormalizedActionInputSource?: string
     hasActionSource?: string
@@ -97,6 +98,8 @@ const writeMinimalRuntimeEntry = async (
       options?.escapeJSONScriptTextSource ??
         'export const escapeJSONScriptText = (value) => value;',
       options?.ensureActionCsrfTokenSource ?? 'export const ensureActionCsrfToken = () => "csrf";',
+      options?.injectMissingActionCsrfInputsSource ??
+        'export const injectMissingActionCsrfInputs = (html) => html;',
       options?.hasActionSource ?? 'export const hasAction = () => false;',
       options?.hasLoaderSource ?? 'export const hasLoader = () => false;',
       options?.jsxDEVSource ?? 'export const jsxDEV = () => ({});',

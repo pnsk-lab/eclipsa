@@ -605,7 +605,7 @@ const renderAppModule = (
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -1150,7 +1150,7 @@ const invokeRouteServer = async (moduleUrl, c, params) => {
 };
 
 const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status = 200, options) => {
-  ensureActionCsrfToken(c);
+  const actionCsrfToken = ensureActionCsrfToken(c);
   const [pageModule, ...layoutModules] = await Promise.all([
     import(moduleUrl),
     ...route.layouts.map((layout) => import(layout)),
@@ -1243,18 +1243,21 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
     symbols: symbolUrls,
   });
-  const shellHtml = replaceHeadPlaceholder(
+  const shellHtml = injectMissingActionCsrfInputs(
     replaceHeadPlaceholder(
-        replaceHeadPlaceholder(
-          replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeAppResumePayload(pathname, payload)),
-          CHUNK_CACHE_PLACEHOLDER,
-          escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, payload)),
-        ),
-      ROUTE_MANIFEST_PLACEHOLDER,
-      escapeJSONScriptText(JSON.stringify(routeManifest)),
+      replaceHeadPlaceholder(
+          replaceHeadPlaceholder(
+            replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeAppResumePayload(pathname, payload)),
+            CHUNK_CACHE_PLACEHOLDER,
+            escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, payload)),
+          ),
+        ROUTE_MANIFEST_PLACEHOLDER,
+        escapeJSONScriptText(JSON.stringify(routeManifest)),
+      ),
+      APP_HOOKS_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(appHooksManifest)),
     ),
-    APP_HOOKS_PLACEHOLDER,
-    escapeJSONScriptText(JSON.stringify(appHooksManifest)),
+    actionCsrfToken,
   );
   const { prefix, suffix } = splitHtmlForStreaming(shellHtml);
   const encoder = new TextEncoder();
@@ -1269,9 +1272,10 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
             latestPayload = chunk.payload;
             const templateId = "eclipsa-suspense-template-" + chunk.boundaryId;
             const payloadId = "eclipsa-suspense-payload-" + chunk.boundaryId;
+            const chunkHtml = injectMissingActionCsrfInputs(chunk.html, actionCsrfToken);
             controller.enqueue(
               encoder.encode(
-                "<template id=\\"" + templateId + "\\">" + chunk.html + "</template>" +
+                "<template id=\\"" + templateId + "\\">" + chunkHtml + "</template>" +
                   "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeAppResumePayload(pathname, chunk.payload) + "</script>" +
                   "<script>window.__eclipsa_stream.enqueue({boundaryId:" + JSON.stringify(chunk.boundaryId) + ",payloadScriptId:" + JSON.stringify(payloadId) + ",templateId:" + JSON.stringify(templateId) + "})</script>",
               ),

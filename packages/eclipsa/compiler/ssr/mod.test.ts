@@ -25,6 +25,16 @@ describe('compileSSRModule', () => {
     expect(resultCode).not.toContain('ssrRaw(')
   })
 
+  it('keeps action forms on the generic JSX path so SSR can inject csrf inputs', async () => {
+    const resultCode = await compileSSRModule(
+      `const view = <form data-e-action-form={actionId} method="post"><button>save</button></form>`,
+      'mod.test.tsx',
+    )
+
+    expect(resultCode).toContain('jsxDEV("form"')
+    expect(resultCode).not.toContain('_ssrRaw("<form')
+  })
+
   it('passes JSX fragment children through component props', async () => {
     const resultCode = await compileSSRModule(
       `const view = <Layout><><span>a</span>{value}</></Layout>`,

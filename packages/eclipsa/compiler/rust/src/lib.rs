@@ -41,6 +41,7 @@ const HMR_CREATE_REGISTRY: &str = "_createHotRegistry";
 const HMR_REGISTRY: &str = "__eclipsa$hotRegistry";
 const FRAGMENT_NAME: &str = "__ECLIPSA_FRAGMENT";
 const DANGEROUSLY_SET_INNER_HTML_PROP: &str = "dangerouslySetInnerHTML";
+const ACTION_FORM_ATTR: &str = "data-e-action-form";
 const SHOW_VALUE_PARAM: &str = "__e_showValue";
 
 #[derive(Debug, Clone)]
@@ -1683,6 +1684,9 @@ impl<'s> SsrCompiler<'s> {
             let attr_name = get_jsx_attribute_name(&attribute.name)?;
             if attr_name == "key" {
                 continue;
+            }
+            if name == "form" && attr_name == ACTION_FORM_ATTR {
+                return Ok(None);
             }
             if attr_name == "ref"
                 || attr_name == DANGEROUSLY_SET_INNER_HTML_PROP
