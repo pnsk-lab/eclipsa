@@ -5,7 +5,7 @@ description: Environment notes for running eclipsa native apps on Android from N
 
 # Android
 
-This page is a practical setup memo for running the Compose host used by `@eclipsa/native-compose`.
+This page is a practical setup memo for running the Compose host used by `@eclipsa/native-android-compose`.
 
 The examples below assume you are working from `examples/android-compose` or another project using the same host package.
 

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -50,10 +50,13 @@ export interface NativePluginOptions {
 }
 
 interface ResolvedNativePluginOptions {
+  bundledHost: ResolvedNativeBundledHost | null
+  commonEntry: string
   eclipsaDevClientFile: string
   environmentName: string
   manifestPath: string
   nativeMapFile: string | null
+  nativeRuntimeEntry: string
   outDir: string
   route: ResolvedNativeRoute
   root: string
@@ -68,8 +71,17 @@ interface ResolvedNativeRoute {
   pathname: string
 }
 
+interface ResolvedNativeBundledHost {
+  manifestFile: string
+  sourceDir: string
+}
+
 export interface NativeTargetAdapter {
   bindingPackage: string
+  bundledHostDir?: string
+  bundledHostFallbackDir?: string
+  commonEntry: string
+  commonEntryFallback?: string
   defaultMap?: Record<string, string>
   environmentName: string
   name: string
@@ -113,6 +125,29 @@ const resolveWorkspaceBinding = (target: ResolvedNativeTarget, root: string) => 
   throw new Error(
     `Native target "${target.name}" requires ${target.bindingPackage}. Install it or provide the matching workspace package before using the native Vite plugin.`,
   )
+}
+
+const resolveBundledHost = (
+  target: ResolvedNativeTarget,
+  bindingEntry: string,
+): ResolvedNativeBundledHost | null => {
+  const packageRoot = path.dirname(bindingEntry)
+  const candidates = [
+    path.resolve(packageRoot, target.bundledHostDir ?? 'host'),
+    target.bundledHostFallbackDir ? path.resolve(packageRoot, target.bundledHostFallbackDir) : null,
+  ].filter((value): value is string => value != null)
+
+  for (const candidate of candidates) {
+    const manifestFile = path.join(candidate, 'manifest.json')
+    if (existsSync(manifestFile)) {
+      return {
+        manifestFile,
+        sourceDir: candidate,
+      }
+    }
+  }
+
+  return null
 }
 
 const resolveWorkspaceImport = (specifier: string, root: string, fallback: string) => {
@@ -203,12 +238,18 @@ const resolveNativeOptions = async (
       'The native Vite plugin requires a platform adapter. Pass native({ target: swiftui() }) or another @eclipsa/native target adapter.',
     )
   }
-  resolveWorkspaceBinding(target, root)
+  const bindingEntry = resolveWorkspaceBinding(target, root)
 
   const route = await resolveNativeRoute(root, options.pathname ?? DEFAULT_NATIVE_PATHNAME)
 
   const servePath = normalizeServePath(options.servePath ?? DEFAULT_NATIVE_SERVE_PATH)
   return {
+    bundledHost: resolveBundledHost(target, bindingEntry),
+    commonEntry: resolveWorkspaceImport(
+      target.commonEntry,
+      root,
+      target.commonEntryFallback ?? target.workspaceFallback ?? target.commonEntry,
+    ),
     eclipsaDevClientFile: resolveWorkspaceImport(
       'eclipsa/dev-client',
       root,
@@ -217,6 +258,11 @@ const resolveNativeOptions = async (
     environmentName: options.environmentName ?? target.environmentName,
     manifestPath: `${servePath}/manifest.json`,
     nativeMapFile: resolveNativeMapFile(root),
+    nativeRuntimeEntry: resolveWorkspaceImport(
+      '@eclipsa/native/runtime',
+      root,
+      fileURLToPath(new URL('./runtime-api.ts', import.meta.url)),
+    ),
     outDir: path.resolve(root, options.outDir ?? DEFAULT_NATIVE_OUT_DIR),
     route,
     root,
@@ -240,6 +286,7 @@ const createNativeManifestSource = (
     {
       bindingPackage: resolved.target.bindingPackage,
       bootstrap: `./${bootstrapFileName}`,
+      host: resolved.bundledHost ? './host/manifest.json' : undefined,
       platform: resolved.target.platform,
       target: resolved.target.name,
     },
@@ -309,6 +356,18 @@ const createNativeCorePlugin = (
     return {
       appType: 'custom',
       builder: {},
+      resolve: {
+        alias: [
+          {
+            find: /^@eclipsa\/native\/runtime$/,
+            replacement: resolved.nativeRuntimeEntry,
+          },
+          {
+            find: /^@eclipsa\/native$/,
+            replacement: resolved.commonEntry,
+          },
+        ],
+      },
       environments: {
         [resolved.environmentName]: {},
       },
@@ -518,6 +577,12 @@ const createNativeResolverPlugin = (state: NativePluginState): Plugin => ({
       createNativeManifestSource(resolved, bootstrapChunk.fileName),
       'utf8',
     )
+    if (resolved.bundledHost) {
+      await cp(resolved.bundledHost.sourceDir, path.join(resolved.outDir, 'host'), {
+        force: true,
+        recursive: true,
+      })
+    }
   },
 })
 

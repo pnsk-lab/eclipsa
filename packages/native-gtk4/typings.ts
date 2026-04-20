@@ -1,46 +1,24 @@
-export namespace GLib {
-  export type Uri = string
-}
-
-export namespace Gio {
-  export type IconName = string
-  export type ResourcePath = string
-}
-
-export namespace Gtk {
-  export type Align = 'baseline' | 'center' | 'end' | 'fill' | 'start'
-  export type Orientation = 'horizontal' | 'vertical'
-  export type SelectionMode = 'browse' | 'multiple' | 'none' | 'single'
-
+export namespace GTK {
   export interface WidgetProps {
-    cssClasses?: readonly string[] | string
-    halign?: Align
-    hexpand?: boolean
+    height?: number
     id?: string
-    margin?: number
-    sensitive?: boolean
-    valign?: Align
-    vexpand?: boolean
+    padding?: boolean | number
+    size?: number
     visible?: boolean
+    width?: number
   }
 
   export interface WindowProps extends WidgetProps {
-    defaultHeight?: number
-    defaultWidth?: number
     title?: string
   }
 
   export interface BoxProps extends WidgetProps {
-    homogeneous?: boolean
-    orientation?: Orientation
+    direction?: 'column' | 'row'
     spacing?: number
   }
 
   export interface TextProps extends WidgetProps {
-    selectable?: boolean
     value?: string
-    wrap?: boolean
-    xalign?: number
   }
 
   export interface ButtonProps extends WidgetProps {
@@ -49,16 +27,14 @@ export namespace Gtk {
   }
 
   export interface ImageProps extends WidgetProps {
-    iconName?: Gio.IconName
-    pixelSize?: number
-    src?: Gio.ResourcePath | GLib.Uri
+    alt?: string
+    src?: string
   }
 
-  export interface TextFieldProps extends WidgetProps {
+  export interface TextInputProps extends WidgetProps {
     onInput?: (value: string) => void
     placeholder?: string
     value?: string
-    visibility?: boolean
   }
 
   export interface SwitchProps extends WidgetProps {
@@ -67,7 +43,7 @@ export namespace Gtk {
     value?: boolean
   }
 
-  export interface ListBoxProps extends WidgetProps {
-    selectionMode?: SelectionMode
+  export interface ListProps extends WidgetProps {
+    spacing?: number
   }
 }

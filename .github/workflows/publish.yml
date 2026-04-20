@@ -14,6 +14,9 @@ on:
           - content
           - motion
           - markdown
+          - native-swiftui
+          - native-android-compose
+          - native-gtk4
       release_type:
         description: 'Version bump type'
         required: true
@@ -119,6 +122,15 @@ jobs:
               ;;
             markdown)
               package_dir="packages/markdown"
+              ;;
+            native-swiftui)
+              package_dir="packages/native-swiftui"
+              ;;
+            native-android-compose)
+              package_dir="packages/native-android-compose"
+              ;;
+            native-gtk4)
+              package_dir="packages/native-gtk4"
               ;;
             *)
               echo "Unsupported package: $PACKAGE_KEY"
@@ -272,6 +284,89 @@ jobs:
         with:
           name: bindings-${{ matrix.settings.target }}
           path: packages/optimizer/generated/*
+          if-no-files-found: error
+
+  build_native_host_artifacts:
+    if: ${{ (inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' || inputs.package == 'native-gtk4') && matrix.settings.package == inputs.package }}
+    needs: prepare
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - package: native-swiftui
+            host: macos-14
+            artifact: darwin-arm64
+            package_dir: packages/native-swiftui
+            build: swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS
+            output: artifacts/darwin-arm64/EclipsaNativeMacOS
+            source: macos-swiftui/.build/debug/EclipsaNativeMacOS
+          - package: native-swiftui
+            host: macos-13
+            artifact: darwin-x64
+            package_dir: packages/native-swiftui
+            build: swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS
+            output: artifacts/darwin-x64/EclipsaNativeMacOS
+            source: macos-swiftui/.build/debug/EclipsaNativeMacOS
+          - package: native-android-compose
+            host: ubuntu-latest
+            artifact: android-universal
+            package_dir: packages/native-android-compose
+            build: ./android-compose/gradlew --project-dir ./android-compose :app:assembleDebug
+            output: artifacts/android-universal/app-debug.apk
+            source: android-compose/app/build/outputs/apk/debug/app-debug.apk
+          - package: native-gtk4
+            host: ubuntu-latest
+            artifact: gtk4-placeholder
+            package_dir: packages/native-gtk4
+            build: mkdir -p artifacts/gtk4-placeholder && printf '{\"placeholder\":true}\n' > artifacts/gtk4-placeholder/placeholder.json
+            output: artifacts/gtk4-placeholder/placeholder.json
+            source: artifacts/gtk4-placeholder/placeholder.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Java
+        if: ${{ matrix.settings.package == 'native-android-compose' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        if: ${{ matrix.settings.package == 'native-android-compose' }}
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        if: ${{ matrix.settings.package == 'native-android-compose' }}
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build native host artifact
+        shell: bash
+        working-directory: ${{ matrix.settings.package_dir }}
+        run: ${{ matrix.settings.build }}
+
+      - name: Stage native host artifact
+        shell: bash
+        working-directory: ${{ matrix.settings.package_dir }}
+        run: |
+          mkdir -p "$(dirname '${{ matrix.settings.output }}')"
+          cp '${{ matrix.settings.source }}' '${{ matrix.settings.output }}'
+
+      - name: Upload native host artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.settings.artifact }}
+          path: ${{ matrix.settings.package_dir }}/${{ matrix.settings.output }}
           if-no-files-found: error
 
   publish_eclipsa:
@@ -517,7 +612,164 @@ jobs:
             --target '${{ github.sha }}'
 
   publish_other:
-    if: ${{ inputs.package != 'eclipsa' }}
+    if: ${{ inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' || inputs.package == 'native-gtk4' }}
+    needs:
+      - prepare
+      - build_native_host_artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download native host artifacts
+        if: ${{ inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' }}
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ needs.prepare.outputs.publish_dir }}/../artifacts
+          pattern: '*'
+          merge-multiple: false
+
+      - name: Update package version for publish
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = process.argv[1];
+          const version = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.version = version;
+          if (pkg.private === true) {
+            pkg.private = false;
+          }
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          " '${{ needs.prepare.outputs.package_json_path }}' '${{ needs.prepare.outputs.version }}'
+
+      - name: Build package
+        if: needs.prepare.outputs.build_command != ''
+        shell: bash
+        run: |
+          if [[ '${{ inputs.package }}' == 'native-swiftui' || '${{ inputs.package }}' == 'native-android-compose' || '${{ inputs.package }}' == 'native-gtk4' ]]; then
+            export ECLIPSA_NATIVE_REQUIRE_HOST_ARTIFACTS=1
+          fi
+          ${{ needs.prepare.outputs.build_command }}
+
+      - name: Verify dist package metadata
+        shell: bash
+        run: |
+          publish_package_json_path='${{ needs.prepare.outputs.publish_package_json_path }}'
+
+          if [ ! -r "$publish_package_json_path" ]; then
+            echo "dist package.json not found or not readable: $publish_package_json_path"
+            exit 1
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const packageJsonPath = process.argv[1];
+          const expectedVersion = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+          if (pkg.private !== false) {
+            throw new Error(\`Expected private=false in \${packageJsonPath}\`);
+          }
+          if (pkg.version !== expectedVersion) {
+            throw new Error(\`Expected version \${expectedVersion} in \${packageJsonPath}, got \${pkg.version}\`);
+          }
+          if (!pkg.repository) {
+            throw new Error(\`Expected repository in \${packageJsonPath}\`);
+          }
+          if (!pkg.exports) {
+            throw new Error(\`Expected exports in \${packageJsonPath}\`);
+          }
+          " "$publish_package_json_path" '${{ needs.prepare.outputs.version }}'
+
+      - name: Verify native host bundle metadata
+        if: ${{ inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' || inputs.package == 'native-gtk4' }}
+        shell: bash
+        run: |
+          host_manifest='${{ needs.prepare.outputs.publish_dir }}/host/manifest.json'
+
+          if [ ! -r "$host_manifest" ]; then
+            echo "host manifest not found or not readable: $host_manifest"
+            exit 1
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const hostManifestPath = process.argv[1];
+          const packageKey = process.argv[2];
+          const manifest = JSON.parse(fs.readFileSync(hostManifestPath, 'utf8'));
+          if (manifest.formatVersion !== 1) {
+            throw new Error(\`Expected formatVersion=1 in \${hostManifestPath}\`);
+          }
+          if (!Array.isArray(manifest.targets)) {
+            throw new Error(\`Expected targets array in \${hostManifestPath}\`);
+          }
+          if (packageKey !== 'native-gtk4' && manifest.targets.length === 0) {
+            throw new Error(\`Expected at least one bundled target in \${hostManifestPath}\`);
+          }
+          " "$host_manifest" '${{ inputs.package }}'
+
+      - name: Pack package tarball
+        id: pack
+        shell: bash
+        run: |
+          publish_dir='${{ needs.prepare.outputs.publish_dir }}'
+          tarball_output="$(cd "$publish_dir" && bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish package tarball to npm
+        shell: bash
+        run: |
+          publish_args=(npm publish '${{ steps.pack.outputs.path }}' --provenance --access public)
+
+          if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
+          fi
+
+          "${publish_args[@]}"
+
+      - name: Create release with generated notes
+        shell: bash
+        run: |
+          gh release create '${{ needs.prepare.outputs.tag }}' \
+            --generate-notes \
+            --target '${{ github.sha }}'
+
+  publish_other_non_native:
+    if: ${{ inputs.package != 'eclipsa' && inputs.package != 'native-swiftui' && inputs.package != 'native-android-compose' && inputs.package != 'native-gtk4' }}
     needs: prepare
     runs-on: ubuntu-latest
     permissions:

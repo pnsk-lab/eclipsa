@@ -7,7 +7,7 @@ description: Build and run eclipsa apps against native hosts such as Android Com
 
 `@eclipsa/native` lets an eclipsa app target a native host instead of the browser DOM.
 
-Right now the main experimental path in this repository is Android via `@eclipsa/native-compose`, which runs an Android host app and feeds it the native dev manifest from your eclipsa app.
+Right now the main experimental path in this repository is Android via `@eclipsa/native-android-compose`, which runs an Android host app and feeds it the native dev manifest from your eclipsa app.
 
 ## What stays the same
 

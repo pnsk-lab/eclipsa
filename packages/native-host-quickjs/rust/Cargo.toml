@@ -1,0 +1,11 @@
+[package]
+name = "eclipsa-native-host-quickjs"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+rquickjs = { version = "0.9", features = ["full"] }
+

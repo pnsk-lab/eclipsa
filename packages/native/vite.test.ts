@@ -9,11 +9,17 @@ import { swiftui } from '../native-swiftui/vite.ts'
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const eclipsaEntry = path.join(repoRoot, 'packages/eclipsa/mod.ts')
 const eclipsaInternalEntry = path.join(repoRoot, 'packages/eclipsa/core/internal.ts')
-const nativeEntry = path.join(repoRoot, 'packages/native/mod.ts')
+const nativeRuntimeEntry = path.join(repoRoot, 'packages/native/runtime-api.ts')
 const nativeJsxRuntime = path.join(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = path.join(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = path.join(repoRoot, 'packages/native-core/mod.ts')
 const nativeSwiftUIEntry = path.join(repoRoot, 'packages/native-swiftui/mod.ts')
+const nativeSwiftUICommonEntry = path.join(repoRoot, 'packages/native-swiftui/common.tsx')
+
+type ResolveAlias = {
+  find: RegExp
+  replacement: string
+}
 
 const createFixture = async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-vite-'))
@@ -66,15 +72,72 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+page.tsx'),
     [
+      `import { Text as CommonText } from '@eclipsa/native'`,
       `import { useSignal } from 'eclipsa'`,
       `export default function App() {`,
       `  const count = useSignal(1)`,
-      `  return <div><span value={\`count \${count.value}\`} /></div>`,
+      `  return <div><CommonText>{\`count \${count.value}\`}</CommonText></div>`,
       `}`,
       '',
     ].join('\n'),
   )
   return root
+}
+
+const createHostTargetFixture = async () => {
+  const packageRoot = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-host-package-'))
+  await mkdir(path.join(packageRoot, 'host', 'binaries', 'darwin-arm64'), { recursive: true })
+  await writeFile(
+    path.join(packageRoot, 'mod.ts'),
+    [
+      `import { defineNativeComponent } from '@eclipsa/native/runtime'`,
+      `export const WindowGroup = defineNativeComponent('fixture:window-group')`,
+      `export const VStack = defineNativeComponent('fixture:vstack')`,
+      `export const Text = defineNativeComponent('fixture:text')`,
+      '',
+    ].join('\n'),
+  )
+  await writeFile(
+    path.join(packageRoot, 'common.tsx'),
+    [
+      `import { Text as NativeText, VStack, WindowGroup } from './mod.ts'`,
+      `export const AppRoot = WindowGroup`,
+      `export const View = VStack`,
+      `export const Text = NativeText`,
+      '',
+    ].join('\n'),
+  )
+  await writeFile(
+    path.join(packageRoot, 'host', 'manifest.json'),
+    JSON.stringify(
+      {
+        assets: [],
+        bundleDir: './host',
+        formatVersion: 1,
+        packageName: '@test/native-host-target',
+        targets: [
+          {
+            arch: 'arm64',
+            entrypoint: './binaries/darwin-arm64/FixtureHost',
+            files: ['./binaries/darwin-arm64/FixtureHost'],
+            id: 'darwin-arm64',
+            os: 'darwin',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  )
+  await writeFile(
+    path.join(packageRoot, 'host', 'binaries', 'darwin-arm64', 'FixtureHost'),
+    '#!/bin/sh\n',
+  )
+  return {
+    commonEntry: path.join(packageRoot, 'common.tsx'),
+    packageRoot,
+    workspaceFallback: path.join(packageRoot, 'mod.ts'),
+  }
 }
 
 const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 10_000) => {
@@ -88,9 +151,18 @@ const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 10_000) => {
   throw new Error(`Timed out after ${timeoutMs}ms`)
 }
 
-const resolveConfig = (root: string) => ({
+const resolveConfig = (
+  root: string,
+  {
+    aliases = [],
+    target = swiftui(),
+  }: {
+    aliases?: ResolveAlias[]
+    target?: Parameters<typeof native>[0]['target']
+  } = {},
+) => ({
   appType: 'custom' as const,
-  plugins: [native({ target: swiftui() })],
+  plugins: [native({ target })],
   resolve: {
     alias: [
       {
@@ -110,17 +182,22 @@ const resolveConfig = (root: string) => ({
         replacement: nativeJsxRuntime,
       },
       {
-        find: /^@eclipsa\/native$/,
-        replacement: nativeEntry,
+        find: /^@eclipsa\/native\/runtime$/,
+        replacement: nativeRuntimeEntry,
       },
       {
         find: /^@eclipsa\/native-core$/,
         replacement: nativeCoreEntry,
       },
       {
+        find: /^@eclipsa\/native-swiftui\/common$/,
+        replacement: nativeSwiftUICommonEntry,
+      },
+      {
         find: /^@eclipsa\/native-swiftui$/,
         replacement: nativeSwiftUIEntry,
       },
+      ...aliases,
     ],
   },
   root,
@@ -154,6 +231,54 @@ describe('@eclipsa/native vite plugin', () => {
     expect(manifestSource).toContain('"bootstrap": "./bootstrap.js"')
   })
 
+  it('copies the bundled native host bundle into the app dist output', async () => {
+    const root = await createFixture()
+    const hostTarget = await createHostTargetFixture()
+    cleanup.add(root)
+    cleanup.add(hostTarget.packageRoot)
+
+    const builder = await createBuilder(
+      resolveConfig(root, {
+        aliases: [
+          {
+            find: /^@test\/native-host-target\/common$/,
+            replacement: hostTarget.commonEntry,
+          },
+          {
+            find: /^@test\/native-host-target$/,
+            replacement: hostTarget.workspaceFallback,
+          },
+        ],
+        target: {
+          bindingPackage: '@test/native-host-target',
+          bundledHostDir: 'host',
+          commonEntry: '@test/native-host-target/common',
+          commonEntryFallback: hostTarget.commonEntry,
+          defaultMap: {
+            div: 'VStack',
+            span: 'Text',
+            windowGroup: 'WindowGroup',
+          },
+          environmentName: 'nativeFixture',
+          name: 'fixture',
+          platform: 'darwin',
+          workspaceFallback: hostTarget.workspaceFallback,
+        },
+      }),
+    )
+    await builder.buildApp()
+
+    const outDir = path.join(root, 'dist', 'native')
+    const manifestSource = await readFile(path.join(outDir, 'manifest.json'), 'utf8')
+    expect(manifestSource).toContain('"host": "./host/manifest.json"')
+    expect(await readFile(path.join(outDir, 'host', 'manifest.json'), 'utf8')).toContain(
+      './binaries/darwin-arm64/FixtureHost',
+    )
+    expect(
+      await readFile(path.join(outDir, 'host', 'binaries', 'darwin-arm64', 'FixtureHost'), 'utf8'),
+    ).toBe('#!/bin/sh\n')
+  })
+
   it('serves a native dev manifest plus module RPC through vite dev', async () => {
     const root = await createFixture()
     cleanup.add(root)
@@ -184,9 +309,14 @@ describe('@eclipsa/native vite plugin', () => {
       expect(typeof manifest.rpc).toBe('string')
       expect(typeof manifest.hmr?.url).toBe('string')
       expect(server.environments.nativeSwift).toBeDefined()
-      expect(
-        typeof (server.environments.nativeSwift as { dispatchFetch?: unknown }).dispatchFetch,
-      ).toBe('function')
+      expect(server.config.resolve.alias).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            find: /^@eclipsa\/native\/runtime$/,
+            replacement: nativeRuntimeEntry,
+          }),
+        ]),
+      )
 
       const rpcResponse = await fetch(`http://127.0.0.1:${port}/__eclipsa_native__/rpc`, {
         body: JSON.stringify({
@@ -227,6 +357,21 @@ describe('@eclipsa/native vite plugin', () => {
       expect(appRpcPayload.result.code).toContain('/app/+page.tsx')
       expect(appRpcPayload.result.code).toContain('__vite_ssr_import_meta__.hot.accept')
       expect(appRpcPayload.result.code).toContain('__eclipsa$hotRegistry')
+
+      const pageRpcResponse = await fetch(`http://127.0.0.1:${port}/__eclipsa_native__/rpc`, {
+        body: JSON.stringify({
+          data: ['/app/+page.tsx', null, { startOffset: 0 }],
+          name: 'fetchModule',
+        }),
+        headers: {
+          'content-type': 'application/json',
+        },
+        method: 'POST',
+      })
+      expect(pageRpcResponse.status).toBe(200)
+      const pageRpcPayload = await pageRpcResponse.json()
+      expect(pageRpcPayload.result.code).toContain('/packages/native-swiftui/common.tsx')
+      expect(pageRpcPayload.result.code).not.toContain('/packages/native/mod.ts')
 
       const mapRpcResponse = await fetch(`http://127.0.0.1:${port}/__eclipsa_native__/rpc`, {
         body: JSON.stringify({

@@ -5,12 +5,12 @@ mod renderer;
 mod snapshot_host;
 mod tree;
 
+pub use host::is_dev_manifest_source;
 pub use host::write_file;
 pub use host::EclipsaGtk4Host;
 pub use host::EventPayload;
 pub use host::HostUiAction;
 pub use host::PumpResult;
-pub use host::is_dev_manifest_source;
 pub use loader::BootstrapScript;
 pub use loader::BootstrapScriptLoading;
 pub use loader::DefaultBootstrapScriptLoader;

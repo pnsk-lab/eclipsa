@@ -1,4 +1,5 @@
 const NATIVE_JSX_IMPORT_SOURCE = '@eclipsa/native'
+const NATIVE_RUNTIME_IMPORT_SOURCE = '@eclipsa/native/runtime'
 
 export interface EmitNativeBootstrapModuleOptions {
   appModuleId: string
@@ -50,7 +51,7 @@ export const emitNativeBootstrapModule = ({
   [
     `import * as appModule from ${JSON.stringify(appModuleId)};`,
     `import ${JSON.stringify(mapModuleId)};`,
-    `import { bootNativeApplication } from ${JSON.stringify(NATIVE_JSX_IMPORT_SOURCE)};`,
+    `import { bootNativeApplication } from ${JSON.stringify(NATIVE_RUNTIME_IMPORT_SOURCE)};`,
     ...(!hmr ? [] : [`import { applyHotUpdate } from ${JSON.stringify(hmrHelpersImport)};`]),
     `const globalState = globalThis;`,
     `const resolveNativeEntry = (value) => value?.default ?? value ?? appModule.default ?? appModule;`,
@@ -148,7 +149,7 @@ export const emitResolvedNativeMapModule = ({
 
   return [
     `import * as nativeBinding from ${JSON.stringify(bindingImport)};`,
-    `import { setNativeMap } from ${JSON.stringify(NATIVE_JSX_IMPORT_SOURCE)};`,
+    `import { setNativeMap } from ${JSON.stringify(NATIVE_RUNTIME_IMPORT_SOURCE)};`,
     mapFile
       ? `import * as appNativeMapModule from ${JSON.stringify(mapFile)};`
       : `const appNativeMapModule = {};`,

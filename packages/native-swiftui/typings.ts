@@ -6,9 +6,12 @@ export namespace Foundation {
 export namespace SwiftUI {
   export interface ViewProps {
     disabled?: boolean
+    height?: number
     hidden?: boolean
     id?: string
     padding?: boolean | number
+    size?: number
+    width?: number
   }
 
   export interface StackProps extends ViewProps {
@@ -49,5 +52,6 @@ export namespace SwiftUI {
 
   export interface ListProps extends ViewProps {
     selection?: string
+    spacing?: number
   }
 }

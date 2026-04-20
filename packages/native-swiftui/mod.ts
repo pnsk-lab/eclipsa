@@ -1,5 +1,5 @@
-import { defineNativeComponent } from '@eclipsa/native'
-import type { DefinedNativeComponent } from '@eclipsa/native'
+import { defineNativeComponent } from '@eclipsa/native/runtime'
+import type { DefinedNativeComponent } from '@eclipsa/native/runtime'
 import type { SwiftUI } from './typings.ts'
 import { SWIFTUI_DEFAULT_TAG_MAP } from './platform.ts'
 

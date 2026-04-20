@@ -1,4 +1,4 @@
-import { Activity, Button, Column, Switch, Text, TextField } from '@eclipsa/native-compose'
+import { Activity, Button, Column, Switch, Text, TextField } from '@eclipsa/native-android-compose'
 
 export const activity = Activity
 export const button = Button

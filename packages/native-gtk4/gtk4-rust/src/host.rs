@@ -15,8 +15,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -215,10 +215,7 @@ impl EclipsaGtk4Host {
         }
     }
 
-    pub fn pump(
-        &mut self,
-        actions: impl IntoIterator<Item = HostUiAction>,
-    ) -> Result<PumpResult> {
+    pub fn pump(&mut self, actions: impl IntoIterator<Item = HostUiAction>) -> Result<PumpResult> {
         for action in actions {
             self.apply_ui_action(action)?;
         }
@@ -729,9 +726,7 @@ mod tests {
                 .send(Message::Text("{\"type\":\"connected\"}".into()))
                 .expect("send connected payload");
             socket
-                .send(Message::Text(
-                    "{\"type\":\"update\",\"updates\":[]}".into(),
-                ))
+                .send(Message::Text("{\"type\":\"update\",\"updates\":[]}".into()))
                 .expect("send update payload");
         });
 
@@ -761,8 +756,12 @@ mod tests {
 
     #[test]
     fn detects_http_manifests_as_dev_sources() {
-        assert!(is_dev_manifest_source(Some("http://127.0.0.1:5179/__eclipsa_native__/manifest.json")));
-        assert!(is_dev_manifest_source(Some("https://example.test/manifest.json")));
+        assert!(is_dev_manifest_source(Some(
+            "http://127.0.0.1:5179/__eclipsa_native__/manifest.json"
+        )));
+        assert!(is_dev_manifest_source(Some(
+            "https://example.test/manifest.json"
+        )));
         assert!(!is_dev_manifest_source(Some("/tmp/eclipsa/manifest.json")));
         assert!(!is_dev_manifest_source(None));
     }
@@ -911,18 +910,23 @@ mod tests {
         let result = host
             .pump(std::iter::empty::<HostUiAction>())
             .expect("pump without actions");
-        assert!(!result.needs_refresh, "pump without actions should not request a refresh");
+        assert!(
+            !result.needs_refresh,
+            "pump without actions should not request a refresh"
+        );
         assert!(!result.requires_full_rebuild);
 
         let (sender, receiver) = mpsc::channel();
         sender
             .send("{\"type\":\"connected\"}".to_owned())
             .expect("send connected payload");
-        let callback = host.context.with(|ctx| -> Result<Persistent<Function<'static>>> {
-            let function = ctx.eval::<Function<'_>, _>("(message) => { void message }")?;
-            Ok(Persistent::save(&ctx, function))
-        })
-        .expect("create persistent hmr callback");
+        let callback = host
+            .context
+            .with(|ctx| -> Result<Persistent<Function<'static>>> {
+                let function = ctx.eval::<Function<'_>, _>("(message) => { void message }")?;
+                Ok(Persistent::save(&ctx, function))
+            })
+            .expect("create persistent hmr callback");
         {
             let mut dev_state = host.dev_state.borrow_mut();
             dev_state.hmr_callback = Some(callback);

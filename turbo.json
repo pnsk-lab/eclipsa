@@ -9,6 +9,14 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
+    "build:native": {
+      "dependsOn": ["^build:native"],
+      "outputs": ["generated/**", "artifacts/**"]
+    },
+    "build:native:dev": {
+      "dependsOn": ["^build:native:dev"],
+      "outputs": ["generated/**"]
+    },
     "pack": {
       "dependsOn": ["^pack"],
       "outputs": ["dist/**"]

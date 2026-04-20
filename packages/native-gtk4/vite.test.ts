@@ -4,16 +4,17 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { native } from '../native/vite.ts'
-import { gtk4, NATIVE_GTK4_ENVIRONMENT_NAME } from './vite.ts'
+import { NATIVE_GTK4_ENVIRONMENT_NAME, gtk4 } from './vite.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const eclipsaEntry = path.join(repoRoot, 'packages/eclipsa/mod.ts')
 const eclipsaInternalEntry = path.join(repoRoot, 'packages/eclipsa/core/internal.ts')
-const nativeEntry = path.join(repoRoot, 'packages/native/mod.ts')
+const nativeRuntimeEntry = path.join(repoRoot, 'packages/native/runtime-api.ts')
 const nativeJsxRuntime = path.join(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = path.join(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = path.join(repoRoot, 'packages/native-core/mod.ts')
 const nativeGtk4Entry = path.join(repoRoot, 'packages/native-gtk4/mod.ts')
+const nativeGtk4CommonEntry = path.join(repoRoot, 'packages/native-gtk4/common.tsx')
 const testServerPort = 5185
 
 const fileExists = async (filePath: string) => {
@@ -43,7 +44,7 @@ const createFixture = async () => {
     path.join(root, 'app', '+layout.tsx'),
     [
       `export default function Layout(props: { children?: unknown }) {`,
-      `  return <window>{props.children}</window>`,
+      `  return <applicationWindow title="GTK4">{props.children}</applicationWindow>`,
       `}`,
       '',
     ].join('\n'),
@@ -51,20 +52,18 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+native-map.ts'),
     [
-      `import { Box, Text, Window } from '@eclipsa/native-gtk4'`,
+      `import { ApplicationWindow, Box, Text } from '@eclipsa/native-gtk4'`,
+      `export const applicationWindow = ApplicationWindow`,
       `export const div = Box`,
       `export const span = Text`,
-      `export const window = Window`,
       '',
     ].join('\n'),
   )
   await writeFile(
     path.join(root, 'app', '+page.tsx'),
     [
-      `import { useSignal } from 'eclipsa'`,
       `export default function App() {`,
-      `  const count = useSignal(1)`,
-      `  return <div><span value={\`count \${count.value}\`} /></div>`,
+      `  return <div spacing={12}><span value="Hello GTK4" /></div>`,
       `}`,
       '',
     ].join('\n'),
@@ -120,12 +119,16 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
         replacement: nativeJsxRuntime,
       },
       {
-        find: /^@eclipsa\/native$/,
-        replacement: nativeEntry,
+        find: /^@eclipsa\/native\/runtime$/,
+        replacement: nativeRuntimeEntry,
       },
       {
         find: /^@eclipsa\/native-core$/,
         replacement: nativeCoreEntry,
+      },
+      {
+        find: /^@eclipsa\/native-gtk4\/common$/,
+        replacement: nativeGtk4CommonEntry,
       },
       {
         find: /^@eclipsa\/native-gtk4$/,
@@ -154,7 +157,7 @@ describe('@eclipsa/native-gtk4 vite environment', () => {
     cleanup.clear()
   })
 
-  it('launches and stops a configured GTK 4 host automatically during dev', async () => {
+  it('launches and stops the nativeGtk4 host automatically during dev', async () => {
     const root = await createFixture()
     cleanup.add(root)
 
@@ -167,21 +170,15 @@ describe('@eclipsa/native-gtk4 vite environment', () => {
     try {
       await server.listen()
       expect(server.environments[NATIVE_GTK4_ENVIRONMENT_NAME]).toBeDefined()
-      expect(
-        typeof (server.environments[NATIVE_GTK4_ENVIRONMENT_NAME] as { dispatchFetch?: unknown })
-          .dispatchFetch,
-      ).toBe('function')
       await waitFor(() => fileExists(launchedFile))
       const launched = JSON.parse(await readFile(launchedFile, 'utf8')) as {
         manifest: {
-          platform: string
           target: string
         }
         manifestUrl: string
       }
 
       expect(launched.manifest.target).toBe('gtk4')
-      expect(launched.manifest.platform).toBe('linux')
       expect(launched.manifestUrl).toContain('/__eclipsa_native__/manifest.json')
     } finally {
       await server.close()

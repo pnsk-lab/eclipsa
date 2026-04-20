@@ -3,19 +3,13 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   resolve: {
-    alias: [
-      {
-        find: /^@eclipsa\/native$/,
-        replacement: path.resolve(import.meta.dirname, '../native/mod.ts'),
-      },
-      {
-        find: /^@eclipsa\/native-core$/,
-        replacement: path.resolve(import.meta.dirname, '../native-core/mod.ts'),
-      },
-    ],
+    alias: {
+      '@eclipsa/native-core': path.resolve(import.meta.dirname, '../native-core/mod.ts'),
+      '@eclipsa/native/runtime': path.resolve(import.meta.dirname, '../native/runtime-api.ts'),
+    },
   },
   test: {
-    include: ['*.test.ts'],
+    include: ['*.test.ts', '*.test.tsx'],
     environment: 'node',
   },
   pack: {

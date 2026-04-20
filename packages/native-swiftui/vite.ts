@@ -91,6 +91,9 @@ const createNativeSwiftDevEnvironment = (
 
 export const swiftui = (options: SwiftUITargetOptions = {}): NativeTargetAdapter => ({
   bindingPackage: '@eclipsa/native-swiftui',
+  bundledHostDir: 'host',
+  bundledHostFallbackDir: 'dist/host',
+  commonEntry: '@eclipsa/native-swiftui/common',
   createEnvironmentOptions({ manifestPath }) {
     return {
       consumer: 'server',
@@ -111,5 +114,6 @@ export const swiftui = (options: SwiftUITargetOptions = {}): NativeTargetAdapter
   environmentName: NATIVE_SWIFT_ENVIRONMENT_NAME,
   name: 'swiftui',
   platform: 'swiftui',
+  commonEntryFallback: fileURLToPath(new URL('./common.tsx', import.meta.url)),
   workspaceFallback: fileURLToPath(new URL('./mod.ts', import.meta.url)),
 })

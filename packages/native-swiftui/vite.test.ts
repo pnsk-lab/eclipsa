@@ -9,11 +9,12 @@ import { NATIVE_SWIFT_ENVIRONMENT_NAME, swiftui } from './vite.ts'
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const eclipsaEntry = path.join(repoRoot, 'packages/eclipsa/mod.ts')
 const eclipsaInternalEntry = path.join(repoRoot, 'packages/eclipsa/core/internal.ts')
-const nativeEntry = path.join(repoRoot, 'packages/native/mod.ts')
+const nativeRuntimeEntry = path.join(repoRoot, 'packages/native/runtime-api.ts')
 const nativeJsxRuntime = path.join(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = path.join(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = path.join(repoRoot, 'packages/native-core/mod.ts')
 const nativeSwiftUIEntry = path.join(repoRoot, 'packages/native-swiftui/mod.ts')
+const nativeSwiftUICommonEntry = path.join(repoRoot, 'packages/native-swiftui/common.tsx')
 const testServerPort = 5183
 
 const fileExists = async (filePath: string) => {
@@ -120,12 +121,16 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
         replacement: nativeJsxRuntime,
       },
       {
-        find: /^@eclipsa\/native$/,
-        replacement: nativeEntry,
+        find: /^@eclipsa\/native\/runtime$/,
+        replacement: nativeRuntimeEntry,
       },
       {
         find: /^@eclipsa\/native-core$/,
         replacement: nativeCoreEntry,
+      },
+      {
+        find: /^@eclipsa\/native-swiftui\/common$/,
+        replacement: nativeSwiftUICommonEntry,
       },
       {
         find: /^@eclipsa\/native-swiftui$/,

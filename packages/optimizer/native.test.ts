@@ -41,6 +41,7 @@ describe('optimizer native helpers', () => {
 
     expect(source).toContain('import * as appModule from "virtual:eclipsa-native/app";')
     expect(source).toContain('import "virtual:eclipsa-native/map";')
+    expect(source).toContain('import { bootNativeApplication } from "@eclipsa/native/runtime";')
     expect(source).toContain('let currentNativeEntry = resolveNativeEntry(appModule);')
     expect(source).toContain('const updateNativeApplication = (nextAppModule = appModule) => {')
     expect(source).toContain('return mountNativeEntry(currentNativeEntry);')
@@ -75,7 +76,7 @@ describe('optimizer native helpers', () => {
 
     expect(source).toContain('import * as nativeBinding from "@eclipsa/native-swiftui";')
     expect(source).toContain('import * as appNativeMapModule from "/tmp/app/+native-map.ts";')
-    expect(source).toContain('import { setNativeMap } from "@eclipsa/native";')
+    expect(source).toContain('import { setNativeMap } from "@eclipsa/native/runtime";')
     expect(source).toContain('"button": nativeBinding["Button"]')
     expect(source).toContain('"vstack": nativeBinding["VStack"]')
     expect(source).toContain('const resolvedNativeMap = resolveNativeMap(appNativeMapModule);')

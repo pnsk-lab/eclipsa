@@ -20,8 +20,8 @@ const run = async () => {
     target: string
   }
 
-  if (manifest.target !== 'compose') {
-    throw new Error(`Expected compose target manifest, got ${manifest.target}.`)
+  if (manifest.target !== 'android-compose') {
+    throw new Error(`Expected android-compose target manifest, got ${manifest.target}.`)
   }
   if (manifest.platform !== 'android') {
     throw new Error(`Expected android platform manifest, got ${manifest.platform}.`)
