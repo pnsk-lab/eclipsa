@@ -1,0 +1,16 @@
+{
+  "name": "js-framework-benchmark-eclipsa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "js-framework-benchmark": {
+    "frameworkVersionFromPackage": "none",
+    "frameworkHomeURL": "https://github.com/pnsk-lab/eclipsa",
+    "issues": [],
+    "language": "JavaScript"
+  },
+  "scripts": {
+    "build-prod": "node ./build.js",
+    "build-dev": "node ./build.js"
+  }
+}

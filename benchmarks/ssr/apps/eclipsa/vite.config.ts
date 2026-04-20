@@ -1,10 +1,10 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-import { eclipsa } from '../../../packages/eclipsa/vite/mod.ts'
+import { eclipsa } from '../../../../packages/eclipsa/vite/mod.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
-const eclipsaPackageDir = path.resolve(rootDir, '../../../packages/eclipsa')
+const eclipsaPackageDir = path.resolve(rootDir, '../../../../packages/eclipsa')
 
 export default defineConfig({
   appType: 'custom',

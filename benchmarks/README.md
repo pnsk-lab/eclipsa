@@ -1,39 +1,18 @@
 # benchmarks
 
-Build the benchmark fixtures first:
+This directory is a dedicated benchmarks monorepo.
+
+## SSR benchmark
 
 ```bash
-bun run build
-# or from the repo root
-bun run benchmark:build
+bun run --cwd benchmarks ssr:build
+bun run --cwd benchmarks ssr:bench:bun
 ```
 
-Run on Bun:
+## Client benchmark (js-framework-benchmark)
 
 ```bash
-bun run bench:bun
-# or from the repo root
-bun run benchmark:bun
+bun run --cwd benchmarks client:bench
 ```
 
-Run on Node.js:
-
-```bash
-node ./benchmark.js
-```
-
-Run on Deno:
-
-```bash
-deno run --import-map=./deno.import-map.json --allow-read --allow-env --allow-sys --node-modules-dir=auto ./benchmark.js
-```
-
-You can also use the package scripts:
-
-```bash
-bun run bench:node
-bun run bench:deno
-# or from the repo root
-bun run benchmark:node
-bun run benchmark:deno
-```
+The client benchmark script clones `krausest/js-framework-benchmark`, adds an `eclipsa` implementation, installs dependencies, and runs the benchmark command.
