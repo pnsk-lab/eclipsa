@@ -1,0 +1,41 @@
+name: 'Code Quality: CodeQL'
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: codeql-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The Android Compose host introduces Kotlin sources, but the repository
+      # does not yet provision an Android SDK in CI. Keeping CodeQL scoped to
+      # JavaScript/TypeScript avoids breaking the default branch until a
+      # dedicated Android/Kotlin analysis job is added.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript

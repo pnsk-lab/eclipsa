@@ -68,6 +68,12 @@
         "mitata": "^1.0.34",
       },
     },
+    "examples/android-compose": {
+      "name": "@eclipsa/example-android-compose",
+    },
+    "examples/gtk4": {
+      "name": "@eclipsa/example-gtk4",
+    },
     "examples/swiftui": {
       "name": "@eclipsa/example-swiftui",
     },
@@ -144,11 +150,27 @@
         "vite": "*",
       },
     },
+    "packages/native-compose": {
+      "name": "@eclipsa/native-compose",
+      "version": "0.0.0",
+      "dependencies": {
+        "@eclipsa/native": "workspace:^",
+        "@eclipsa/native-core": "workspace:^",
+      },
+    },
     "packages/native-core": {
       "name": "@eclipsa/native-core",
       "version": "0.0.0",
       "dependencies": {
         "eclipsa": "workspace:^",
+      },
+    },
+    "packages/native-gtk4": {
+      "name": "@eclipsa/native-gtk4",
+      "version": "0.0.0",
+      "dependencies": {
+        "@eclipsa/native": "workspace:^",
+        "@eclipsa/native-core": "workspace:^",
       },
     },
     "packages/native-swiftui": {
@@ -231,6 +253,10 @@
 
     "@eclipsa/e2e": ["@eclipsa/e2e@workspace:e2e"],
 
+    "@eclipsa/example-android-compose": ["@eclipsa/example-android-compose@workspace:examples/android-compose"],
+
+    "@eclipsa/example-gtk4": ["@eclipsa/example-gtk4@workspace:examples/gtk4"],
+
     "@eclipsa/example-swiftui": ["@eclipsa/example-swiftui@workspace:examples/swiftui"],
 
     "@eclipsa/image": ["@eclipsa/image@workspace:packages/image"],
@@ -241,7 +267,11 @@
 
     "@eclipsa/native": ["@eclipsa/native@workspace:packages/native"],
 
+    "@eclipsa/native-compose": ["@eclipsa/native-compose@workspace:packages/native-compose"],
+
     "@eclipsa/native-core": ["@eclipsa/native-core@workspace:packages/native-core"],
+
+    "@eclipsa/native-gtk4": ["@eclipsa/native-gtk4@workspace:packages/native-gtk4"],
 
     "@eclipsa/native-swiftui": ["@eclipsa/native-swiftui@workspace:packages/native-swiftui"],
 
