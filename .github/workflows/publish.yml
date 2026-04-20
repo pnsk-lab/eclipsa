@@ -11,6 +11,9 @@ on:
           - eclipsa
           - create-eclipsa
           - image
+          - content
+          - motion
+          - markdown
       release_type:
         description: 'Version bump type'
         required: true
@@ -108,6 +111,15 @@ jobs:
             image)
               package_dir="packages/image"
               ;;
+            content)
+              package_dir="packages/content"
+              ;;
+            motion)
+              package_dir="packages/motion"
+              ;;
+            markdown)
+              package_dir="packages/markdown"
+              ;;
             *)
               echo "Unsupported package: $PACKAGE_KEY"
               exit 1
@@ -115,15 +127,9 @@ jobs:
           esac
 
           package_json_path="$package_dir/package.json"
-          if [ "$PACKAGE_KEY" = "eclipsa" ]; then
-            publish_dir="$package_dir"
-            publish_package_json_path="$package_json_path"
-            build_command="bun run --filter eclipsa build:js"
-          else
-            publish_dir="$package_dir/dist"
-            publish_package_json_path="$publish_dir/package.json"
-            build_command="bun run --filter ./$package_dir build"
-          fi
+          publish_dir="$package_dir/dist"
+          publish_package_json_path="$publish_dir/package.json"
+          build_command="bun run --filter ./$package_dir build"
 
           if [ ! -r "$package_json_path" ]; then
             echo "package.json not found or not readable: $package_json_path"
@@ -165,16 +171,7 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure workflow runs on branch
-        shell: bash
-        run: |
-          if [[ '${{ github.ref_type }}' != 'branch' ]]; then
-            echo "This workflow must run on a branch ref to push version updates."
-            echo "Current ref_type: ${{ github.ref_type }}"
-            exit 1
-          fi
-
-  build_eclipsa_bindings:
+  build_optimizer_bindings:
     if: ${{ inputs.package == 'eclipsa' }}
     needs: prepare
     runs-on: ${{ matrix.settings.host }}
@@ -184,31 +181,31 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-apple-darwin
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-apple-darwin
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-apple-darwin
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-apple-darwin
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-pc-windows-msvc
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-pc-windows-msvc
           - host: windows-latest
             target: aarch64-pc-windows-msvc
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-pc-windows-msvc
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-unknown-linux-gnu --use-napi-cross
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-unknown-linux-gnu --use-napi-cross
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-gnu --use-napi-cross
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target x86_64-unknown-linux-musl -x
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target x86_64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target aarch64-unknown-linux-musl -x
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target aarch64-unknown-linux-musl -x
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa --target wasm32-wasip1-threads
+            build: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target wasm32-wasip1-threads
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
 
@@ -256,32 +253,32 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
           pkg.version = version;
           fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          " 'packages/eclipsa/package.json' '${{ needs.prepare.outputs.version }}'
+          " 'packages/optimizer/package.json' '${{ needs.prepare.outputs.version }}'
 
       - name: Build binding
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: ${{ matrix.settings.build }}
 
       - name: Verify WASI binding entry
         if: ${{ matrix.settings.target == 'wasm32-wasip1-threads' }}
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: |
-          node -e "const binding = require('./compiler/native/generated/eclipsa.wasi.cjs'); if (typeof binding.compileClient !== 'function') { throw new Error('Expected compileClient export from WASI binding entry.'); }"
+          node -e "const binding = require('./generated/optimizer.wasi.cjs'); if (typeof binding.compileClient !== 'function') { throw new Error('Expected compileClient export from WASI binding entry.'); }"
 
       - name: Upload binding artifact
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
-          path: packages/eclipsa/compiler/native/generated/*
+          path: packages/optimizer/generated/*
           if-no-files-found: error
 
   publish_eclipsa:
     if: ${{ inputs.package == 'eclipsa' }}
     needs:
       - prepare
-      - build_eclipsa_bindings
+      - build_optimizer_bindings
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -312,92 +309,212 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Update package version for publish
+      - name: Update package versions for publish
         shell: bash
         run: |
           node -e "
           const fs = require('fs');
-          const path = process.argv[1];
-          const version = process.argv[2];
-          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-          pkg.version = version;
-          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          " '${{ needs.prepare.outputs.package_json_path }}' '${{ needs.prepare.outputs.version }}'
+          const version = process.argv[1];
+          const paths = process.argv.slice(2);
+          for (const path of paths) {
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = version;
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          }
+          " '${{ needs.prepare.outputs.version }}' 'packages/eclipsa/package.json' 'packages/optimizer/package.json'
 
-      - name: Build JS package
+      - name: Build optimizer JS package
         shell: bash
-        run: bun run --filter eclipsa build:js
+        run: bun run --filter @eclipsa/optimizer build:js
+
+      - name: Build eclipsa package
+        if: needs.prepare.outputs.build_command != ''
+        shell: bash
+        run: ${{ needs.prepare.outputs.build_command }}
+
+      - name: Verify eclipsa dist package metadata
+        shell: bash
+        run: |
+          publish_package_json_path='${{ needs.prepare.outputs.publish_package_json_path }}'
+
+          if [ ! -r "$publish_package_json_path" ]; then
+            echo "dist package.json not found or not readable: $publish_package_json_path"
+            exit 1
+          fi
+
+          node -e "
+          const fs = require('fs');
+          const packageJsonPath = process.argv[1];
+          const expectedVersion = process.argv[2];
+          const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+          if (pkg.private !== false) {
+            throw new Error(\`Expected private=false in \${packageJsonPath}\`);
+          }
+          if (pkg.version !== expectedVersion) {
+            throw new Error(\`Expected version \${expectedVersion} in \${packageJsonPath}, got \${pkg.version}\`);
+          }
+          if (!pkg.repository) {
+            throw new Error(\`Expected repository in \${packageJsonPath}\`);
+          }
+          if (!pkg.exports) {
+            throw new Error(\`Expected exports in \${packageJsonPath}\`);
+          }
+          " "$publish_package_json_path" '${{ needs.prepare.outputs.version }}'
 
       - name: Generate root WASI loader assets
         shell: bash
-        working-directory: packages/eclipsa
+        working-directory: packages/optimizer
         run: bun run build:native -- --target wasm32-wasip1-threads
 
       - name: Create npm package directories
         shell: bash
-        run: bun run --filter eclipsa create:npm-dirs
+        run: bun run --filter @eclipsa/optimizer create:npm-dirs
 
       - name: Download all binding artifacts
         uses: actions/download-artifact@v4
         with:
-          path: packages/eclipsa/artifacts
+          path: packages/optimizer/artifacts
           pattern: bindings-*
           merge-multiple: false
 
+      - name: Flatten downloaded binding artifacts
+        shell: bash
+        working-directory: packages/optimizer
+        run: bun ./scripts/prepare-downloaded-artifacts.ts
+
       - name: Sync npm package versions
         shell: bash
-        run: bun run --filter eclipsa version:napi
+        run: bun run --filter @eclipsa/optimizer version:napi
 
       - name: Hydrate npm package artifacts
         shell: bash
-        run: bun run --filter eclipsa artifacts
+        run: bun run --filter @eclipsa/optimizer artifacts
 
-      - name: Publish eclipsa package
+      - name: Publish optimizer native packages
         shell: bash
-        working-directory: packages/eclipsa
         run: |
-          publish_args=(npm publish --provenance --access public)
+          publish_args=(--provenance --access public)
+
+          if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
+          fi
+
+          for package_dir in packages/optimizer/npm/*; do
+            if [[ ! -d "$package_dir" ]]; then
+              continue
+            fi
+
+            package_json_path="$package_dir/package.json"
+            if [[ ! -f "$package_json_path" ]]; then
+              echo "Skipping package without package.json: $package_dir"
+              continue
+            fi
+
+            package_name="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.name ?? '');" "$package_json_path")"
+            package_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version ?? '');" "$package_json_path")"
+
+            if [[ -z "$package_name" || -z "$package_version" ]]; then
+              echo "Skipping package with invalid name/version: $package_dir"
+              continue
+            fi
+
+            if npm view "${package_name}@${package_version}" version --json >/dev/null 2>&1; then
+              echo "Skipping already published package: ${package_name}@${package_version}"
+              continue
+            fi
+
+            npm publish "$package_dir" "${publish_args[@]}"
+          done
+
+      - name: Pack optimizer tarball
+        id: pack_optimizer
+        shell: bash
+        working-directory: packages/optimizer
+        run: |
+          bun ./scripts/sync-package-manifest.ts publish
+          tarball_output="$(bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish optimizer package
+        shell: bash
+        run: |
+          optimizer_package_json='packages/optimizer/package.json'
+          package_name="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.name ?? '');" "$optimizer_package_json")"
+          package_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version ?? '');" "$optimizer_package_json")"
+
+          if [[ -z "$package_name" || -z "$package_version" ]]; then
+            echo "Optimizer package.json is missing a valid name/version"
+            exit 1
+          fi
+
+          if npm view "${package_name}@${package_version}" version --json >/dev/null 2>&1; then
+            echo "Skipping already published package: ${package_name}@${package_version}"
+            exit 0
+          fi
+
+          publish_args=(npm publish '${{ steps.pack_optimizer.outputs.path }}' --provenance --access public)
 
           if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
             publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
           fi
 
           "${publish_args[@]}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Pack eclipsa tarball
+        id: pack_eclipsa
+        shell: bash
+        run: |
+          publish_dir='${{ needs.prepare.outputs.publish_dir }}'
+          tarball_output="$(cd "$publish_dir" && bun pm pack --quiet --destination "$RUNNER_TEMP")"
+          tarball_output="$(echo "$tarball_output" | tr -d '\r\n')"
+
+          if [[ "$tarball_output" = /* ]]; then
+            tarball_path="$tarball_output"
+          else
+            tarball_path="$RUNNER_TEMP/$tarball_output"
+          fi
+
+          if [[ ! -f "$tarball_path" ]]; then
+            echo "Tarball was not generated at expected path: $tarball_path"
+            exit 1
+          fi
+
+          echo "path=$tarball_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish eclipsa package
+        shell: bash
+        run: |
+          publish_args=(npm publish '${{ steps.pack_eclipsa.outputs.path }}' --provenance --access public)
+
+          if [[ '${{ needs.prepare.outputs.npm_tag }}' != 'latest' ]]; then
+            publish_args+=(--tag '${{ needs.prepare.outputs.npm_tag }}')
+          fi
+
+          "${publish_args[@]}"
 
       - name: Restore development manifest
         shell: bash
-        run: bun run --filter eclipsa restore:manifest
-
-      - name: Commit and push version update
-        id: version_commit
-        shell: bash
-        run: |
-          file_path='${{ needs.prepare.outputs.package_json_path }}'
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git add "$file_path"
-
-          if git diff --cached --quiet; then
-            echo "No version updates to commit."
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git commit -m 'chore(release): bump eclipsa to v${{ needs.prepare.outputs.version }}'
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: bun run --filter @eclipsa/optimizer restore:manifest
 
       - name: Create release with generated notes
         shell: bash
         run: |
           gh release create '${{ needs.prepare.outputs.tag }}' \
             --generate-notes \
-            --target '${{ steps.version_commit.outputs.sha }}'
+            --target '${{ github.sha }}'
 
   publish_other:
     if: ${{ inputs.package != 'eclipsa' }}
@@ -508,31 +625,9 @@ jobs:
 
           "${publish_args[@]}"
 
-      - name: Commit and push version update
-        id: version_commit
-        shell: bash
-        run: |
-          file_path='${{ needs.prepare.outputs.package_json_path }}'
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git add "$file_path"
-
-          if git diff --cached --quiet; then
-            echo "No version updates to commit."
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git commit -m 'chore(release): bump ${{ inputs.package }} to v${{ needs.prepare.outputs.version }}'
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Create release with generated notes
         shell: bash
         run: |
           gh release create '${{ needs.prepare.outputs.tag }}' \
             --generate-notes \
-            --target '${{ steps.version_commit.outputs.sha }}'
+            --target '${{ github.sha }}'

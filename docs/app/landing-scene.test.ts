@@ -1,166 +1,74 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import {
+  MODEL_ROTATION_OFFSET,
+  getRainDropCount,
+  resizeRainDropStates,
+  resolveUmbrellaRotation,
+  resolveUmbrellaSize,
+} from './landing-scene.ts'
 
-const lifecycle = vi.hoisted(() => ({
-  cleanupCallbacks: [] as Array<() => void>,
-}))
-
-vi.mock('eclipsa', () => ({
-  onCleanup(callback: () => void) {
-    lifecycle.cleanupCallbacks.push(callback)
-  },
-}))
-
-import { setupLandingScene } from './landing-scene.ts'
-
-class FakeEventTarget {
-  listeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
-
-  addEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-    if (!this.listeners.has(type)) {
-      this.listeners.set(type, new Set())
-    }
-
-    this.listeners.get(type)?.add(listener)
-  })
-
-  removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
-    this.listeners.get(type)?.delete(listener)
-  })
-
-  emit(type: string, event: object) {
-    for (const listener of this.listeners.get(type) ?? []) {
-      if (typeof listener === 'function') {
-        listener(event as Event)
-        continue
-      }
-
-      listener.handleEvent(event as Event)
-    }
-  }
-}
-
-const createCanvas = () => {
-  const drawCalls = {
-    lineTo: [] as Array<[number, number]>,
-    moveTo: [] as Array<[number, number]>,
-  }
-
-  const context = {
-    beginPath() {},
-    moveTo(x: number, y: number) {
-      drawCalls.moveTo.push([x, y])
-    },
-    lineTo(x: number, y: number) {
-      drawCalls.lineTo.push([x, y])
-    },
-    stroke() {},
-    fillRect() {},
-    fillStyle: '',
-    strokeStyle: '',
-    lineWidth: 0,
-    lineCap: 'round',
-  } as unknown as CanvasRenderingContext2D
-
-  const canvas = {
-    width: 0,
-    height: 0,
-    getContext: vi.fn(() => context),
-  } as unknown as HTMLCanvasElement
-
-  return { canvas, drawCalls }
-}
-
-const stubDom = (options: { pointerEvents: boolean }) => {
-  const windowTarget = new FakeEventTarget()
-  const documentTarget = new FakeEventTarget()
-  let animationFrame: FrameRequestCallback | undefined
-
-  const fakeWindow = Object.assign(windowTarget, {
-    innerWidth: 375,
-    innerHeight: 667,
-    requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
-      animationFrame = callback
-      return 1
-    }),
-    cancelAnimationFrame: vi.fn(),
-    ...(options.pointerEvents ? { PointerEvent: class FakePointerEvent {} } : {}),
-  })
-
-  vi.stubGlobal('window', fakeWindow)
-  vi.stubGlobal('document', documentTarget)
-
-  return {
-    documentTarget,
-    runFrame() {
-      animationFrame?.(0)
-    },
-  }
-}
-
-describe('setupLandingScene', () => {
-  beforeEach(() => {
-    lifecycle.cleanupCallbacks.length = 0
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-  })
-
-  it('uses the closest active touch pointer when multiple touch pointers are down', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
-
-    const { canvas, drawCalls } = createCanvas()
-    const { documentTarget, runFrame } = stubDom({ pointerEvents: true })
-
-    setupLandingScene({ canvas })
-
-    documentTarget.emit('pointerdown', {
-      clientX: 0,
-      clientY: 0,
-      pointerId: 1,
-      pointerType: 'touch',
+describe('landing scene', () => {
+  it('applies the model rotation offset so authored rotations can stay relative', () => {
+    expect(MODEL_ROTATION_OFFSET).toEqual({
+      x: 90,
+      y: 0,
+      z: 0,
     })
-    documentTarget.emit('pointerdown', {
-      clientX: 197.5,
-      clientY: 356.625,
-      pointerId: 2,
-      pointerType: 'touch',
+    expect(
+      resolveUmbrellaRotation({
+        x: 0,
+        y: 45,
+        z: -10,
+      }),
+    ).toEqual({
+      x: 90,
+      y: 45,
+      z: -10,
     })
-
-    runFrame()
-
-    expect(drawCalls.lineTo[0]?.[0]).toBeGreaterThan(drawCalls.moveTo[0]?.[0] ?? 0)
-    expect(documentTarget.addEventListener).toHaveBeenCalledWith(
-      'pointerup',
-      expect.any(Function),
-      expect.objectContaining({ passive: true }),
-    )
   })
 
-  it('falls back to all active touches when pointer events are unavailable', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  it('resolves normalized umbrella size against the larger viewport dimension', () => {
+    expect(resolveUmbrellaSize(1200, 800, null, 0.5)).toBe(600)
+    expect(resolveUmbrellaSize(800, 1200, null, 0.5)).toBe(600)
+  })
 
-    const { canvas, drawCalls } = createCanvas()
-    const { documentTarget, runFrame } = stubDom({ pointerEvents: false })
+  it('falls back to explicit size when normalized size is not usable', () => {
+    expect(resolveUmbrellaSize(1200, 800, 320, null)).toBe(320)
+    expect(resolveUmbrellaSize(1200, 800, 320, 0)).toBe(320)
+  })
 
-    setupLandingScene({ canvas })
+  it('rescales rain drops to the new viewport instead of resetting their progress on resize', () => {
+    expect(
+      resizeRainDropStates(
+        [
+          {
+            alpha: 0.3,
+            len: 24,
+            speed: 18,
+            vx: 4,
+            x: 900,
+            y: 300,
+            z: 1.2,
+          },
+        ],
+        { height: 600, width: 1200 },
+        { height: 900, width: 600 },
+      ),
+    ).toEqual([
+      {
+        alpha: 0.3,
+        len: 24,
+        speed: 18,
+        vx: 4,
+        x: 450,
+        y: 450,
+        z: 1.2,
+      },
+    ])
+  })
 
-    documentTarget.emit('touchmove', {
-      changedTouches: [
-        { clientX: 0, clientY: 0 },
-        { clientX: 197.5, clientY: 356.625 },
-      ],
-      touches: [
-        { clientX: 0, clientY: 0 },
-        { clientX: 197.5, clientY: 356.625 },
-      ],
-    })
-
-    runFrame()
-
-    expect(drawCalls.lineTo[0]?.[0]).toBeGreaterThan(drawCalls.moveTo[0]?.[0] ?? 0)
-    expect(documentTarget.addEventListener).toHaveBeenCalledWith(
-      'touchend',
-      expect.any(Function),
-      expect.objectContaining({ passive: true }),
-    )
+  it('switches rain density when the viewport crosses the mobile breakpoint', () => {
+    expect(getRainDropCount(767)).toBe(50)
+    expect(getRainDropCount(768)).toBe(150)
   })
 })

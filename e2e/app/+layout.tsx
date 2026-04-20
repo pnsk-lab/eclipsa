@@ -1,4 +1,4 @@
-import { component$, useSignal } from 'eclipsa'
+import { useSignal } from 'eclipsa'
 import { Header } from './Header.tsx'
 
 export const metadata = {
@@ -6,7 +6,7 @@ export const metadata = {
   title: 'E2E App',
 }
 
-export default component$((props: { children?: unknown }) => {
+export default (props: { children?: unknown }) => {
   const layoutCount = useSignal(0)
 
   return (
@@ -15,7 +15,7 @@ export default component$((props: { children?: unknown }) => {
       <p>Shared layout shell updated</p>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           layoutCount.value += 1
         }}
       >
@@ -24,4 +24,4 @@ export default component$((props: { children?: unknown }) => {
       <main>{props.children}</main>
     </div>
   )
-})
+}

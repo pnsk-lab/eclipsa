@@ -1,4 +1,8 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import * as fs from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
+import { analyzeModule } from '../analyze/mod.ts'
 import { compileClientModule } from './mod.ts'
 
 describe('compileClientModule', () => {
@@ -22,8 +26,7 @@ describe('compileClientModule', () => {
   it('injects HMR helpers only when enabled', async () => {
     const resultCode = await compileClientModule(
       `
-        import { component$ } from "eclipsa";
-        export default component$(() => <div />);
+                export default () => <div />;
       `,
       'mod.test.tsx',
       {
@@ -94,6 +97,26 @@ describe('compileClientModule', () => {
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
   })
 
+  it('caches sibling node lookups before earlier inserts can shift child indices', async () => {
+    const resultCode = await compileClientModule(
+      `<div><Header /><p>Shared layout shell updated</p><button>Layout count: {count.value}</button><main>{props.children}</main></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[0\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[2\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[3\];/)
+    expect(resultCode).not.toContain(
+      '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
+    )
+    expect(resultCode).not.toContain(
+      '_insert(() => props.children, _cloned.childNodes[3], _cloned.childNodes[3].childNodes[0]);',
+    )
+  })
+
   it('normalizes multiline JSX text to match SSR output', async () => {
     const resultCode = await compileClientModule(
       `<label>
@@ -107,6 +130,37 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain('<label>Right<input></input></label>')
+  })
+
+  it('embeds static intrinsic attributes into the template html', async () => {
+    const resultCode = await compileClientModule(
+      `<div class="card" data-testid="probe" />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('<div class=\\"card\\" data-testid=\\"probe\\"></div>')
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+    expect(resultCode).not.toContain('_attr(_cloned, "data-testid"')
+  })
+
+  it('keeps dynamic and runtime-only attributes on the runtime attr path', async () => {
+    const resultCode = await compileClientModule(
+      `<div class="card" data-id={id} dangerouslySetInnerHTML="<span>raw</span>" />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('<div class=\\"card\\"></div>')
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+    expect(resultCode).toContain('_attr(_cloned, "data-id", () => id);')
+    expect(resultCode).toContain(
+      '_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");',
+    )
   })
 
   it('emits dangerouslySetInnerHTML through runtime attr application', async () => {
@@ -132,8 +186,10 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('<svg><sodipodi:namedview></sodipodi:namedview></svg>')
-    expect(resultCode).toContain('"xml:space"')
+    expect(resultCode).toContain(
+      '<svg><sodipodi:namedview xml:space=\\"preserve\\"></sodipodi:namedview></svg>',
+    )
+    expect(resultCode).not.toContain('_attr(')
   })
 
   it('accepts raw TSX without a JS-side preprocess step', async () => {
@@ -165,5 +221,141 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('=> <li')
     expect(resultCode).toContain('_createComponent(For')
     expect(resultCode).toContain('<li><!-- 0 --></li>')
+  })
+
+  it('lowers ternaries with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{flag ? <span>on</span> : <span>off</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('when: flag')
+    expect(resultCode).not.toContain('flag ? <span>')
+  })
+
+  it('lowers && expressions with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{count && <span>{count}</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
+    expect(resultCode).toContain('<span><!-- 0 --></span>')
+  })
+
+  it('lowers || expressions with JSX branches to Show components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{label || <span>empty</span>}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('children: (__e_showValue) => __e_showValue')
+    expect(resultCode).toContain('fallback: (__e_showValue) => (() => {')
+  })
+
+  it('lowers direct JSX map expressions to For components', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item, i) => <li key={i}>{item}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('arr: items')
+    expect(resultCode).not.toContain('=> <li')
+  })
+
+  it('passes explicit map keys through lowered For components', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item) => <li key={item.id}>{item.name}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
+  })
+
+  it('does not lower non-JSX map expressions to For components', async () => {
+    const resultCode = await compileClientModule(
+      `<div>{items.map((item) => item.toString())}</div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item) => item.toString())')
+  })
+
+  it('does not lower map expressions inside component children', async () => {
+    const resultCode = await compileClientModule(
+      `<Layout>{items.map((item, i) => <li key={i}>{item}</li>)}</Layout>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).toContain('items.map((item, i) => (() => {')
+  })
+
+  it('does not lower logical JSX expressions inside component children', async () => {
+    const resultCode = await compileClientModule(
+      `<Layout>{flag && <span>ready</span>}</Layout>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).not.toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).toContain('flag && (() => {')
+  })
+
+  it('does not emit free __scope references before the docs layout default symbol', async () => {
+    const clientDir = path.dirname(fileURLToPath(import.meta.url))
+    const layoutPath = path.resolve(clientDir, '../../../../docs/app/docs/[...slug]/+layout.tsx')
+    const tsx = await fs.readFile(layoutPath, 'utf8')
+    const analyzed = await analyzeModule(tsx, layoutPath)
+    const component = [...analyzed.symbols.values()].find(
+      (symbol) => symbol.kind === 'component' && symbol.code.includes('export default'),
+    )
+
+    expect(component).toBeDefined()
+
+    const resultCode = await compileClientModule(component!.code, 'docs-layout-symbol.tsx', {
+      hmr: false,
+    })
+    const defaultMatch = resultCode.match(/export default \(__scope(?:, props)?\)/)
+    const defaultIndex = defaultMatch?.index ?? -1
+
+    expect(defaultIndex).toBeGreaterThan(0)
+    expect(resultCode.slice(0, defaultIndex)).not.toContain('__scope')
   })
 })

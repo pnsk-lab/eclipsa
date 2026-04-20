@@ -1,19 +1,35 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
-const hmrSvgPagePath = fileURLToPath(new URL('../app/hmr-svg/+page.tsx', import.meta.url))
+const testDir = path.dirname(fileURLToPath(import.meta.url))
+
+const hmrSvgPagePath = path.resolve(testDir, '../app/hmr-svg/+page.tsx')
 const hmrBeforeLabel = 'svg hmr before'
 const hmrAfterLabel = 'svg hmr after'
-const imagePagePath = fileURLToPath(new URL('../app/image/+page.tsx', import.meta.url))
+const imagePagePath = path.resolve(testDir, '../app/image/+page.tsx')
 const imageHmrBeforeLabel = 'Responsive image metadata should survive navigation, resume, and HMR.'
 const imageHmrAfterLabel =
   'Responsive image metadata should survive navigation, resume, HMR, and page transitions.'
-
+const contentMarkdownPath = path.resolve(testDir, '../app/content/docs/guide/getting-started.md')
+const contentBodyBeforeLabel = 'Content body before.'
+const contentBodyAfterLabel = 'Content body after.'
+const contentDescriptionBeforeLabel = 'Content description before'
+const contentDescriptionAfterLabel = 'Content description after'
+const homePagePath = path.resolve(testDir, '../app/+page.tsx')
+const homeHmrBeforeLabel = 'Go to counter with navigate()'
+const homeHmrAfterLabel = 'Go to counter with navigate()!'
+const hmrTimeout = 15_000
 const writeSourceAtomically = async (filePath: string, source: string) => {
   const tempPath = `${filePath}.tmp`
   await writeFile(tempPath, source)
   await rename(tempPath, filePath)
+}
+
+const waitForResumedRoute = async (page: Page) => {
+  await expect(page.locator('body')).toHaveAttribute('data-e-resume', 'resumed')
+  await page.waitForTimeout(250)
 }
 
 test.describe('example app in dev mode', () => {
@@ -89,12 +105,30 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
   })
 
+  test('restores the previous route when using the browser back button', async ({ page }) => {
+    await page.goto('/')
+    await waitForResumedRoute(page)
+
+    await page.getByRole('link', { name: 'Open counter with Link' }).click()
+
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByText('Counter page')).toBeVisible()
+
+    await page.goBack()
+
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', { name: 'Go to counter with navigate()' })).toBeVisible()
+    await expect(page.getByText('Counter page')).toHaveCount(0)
+  })
+
   test('does not duplicate route content when navigate() returns into a shared layout', async ({
     page,
   }) => {
     await page.goto('/')
+    await waitForResumedRoute(page)
 
     await page.getByRole('button', { name: /^Layout count:\s*0$/ }).click()
+    await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
     await page.getByRole('button', { name: 'Go to counter with navigate()' }).click()
 
     await expect(page).toHaveURL(/\/counter$/)
@@ -130,15 +164,18 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByText('Guarded page')).toBeVisible()
   })
 
-  test('prefetches route html on link intent and reuses prefetched loader state on navigation', async ({
+  test('prefetches route data on link intent and reuses prefetched loader state on navigation', async ({
     page,
   }) => {
-    const routeRequests: string[] = []
+    const routeDataRequests: string[] = []
     const loaderRequests: string[] = []
     page.on('request', (request) => {
       const url = new URL(request.url())
-      if (url.pathname === '/actions') {
-        routeRequests.push(url.pathname)
+      if (
+        url.pathname === '/__eclipsa/route-data' &&
+        new URL(url.searchParams.get('href')!, page.url()).pathname === '/actions'
+      ) {
+        routeDataRequests.push(request.url())
       }
       if (url.pathname.startsWith('/__eclipsa/loader/')) {
         loaderRequests.push(url.pathname)
@@ -146,26 +183,355 @@ test.describe('example app in dev mode', () => {
     })
 
     await page.goto('/')
-    routeRequests.length = 0
+    routeDataRequests.length = 0
     loaderRequests.length = 0
 
     await page.getByRole('link', { name: 'Open actions without prefetch' }).hover()
     await page.waitForTimeout(250)
-    expect(routeRequests).toHaveLength(0)
+    expect(routeDataRequests).toHaveLength(0)
 
     const actionsLink = page.getByRole('link', { name: 'Actions', exact: true })
 
     await actionsLink.hover()
-    await expect.poll(() => routeRequests.length).toBeGreaterThan(0)
+    await expect.poll(() => routeDataRequests.length).toBeGreaterThan(0)
 
-    routeRequests.length = 0
+    routeDataRequests.length = 0
     loaderRequests.length = 0
 
     await actionsLink.click()
 
     await expect(page).toHaveURL(/\/actions$/)
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
+    await expect.poll(() => routeDataRequests.length).toBe(0)
     await expect.poll(() => loaderRequests.length).toBe(0)
+  })
+
+  test('updates loader-backed catch-all content inside a shared layout on Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/loader-nav/overview')
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('loader-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/inactive/)
+    await page.getByRole('link', { name: /Quick Start/ }).click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'overview' })).toHaveCount(0)
+    await expect(page.getByTestId('loader-nav-overview-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('loader-nav-quick-start-state')).toHaveText(' active')
+    await expect(page.getByTestId('loader-nav-overview-state-link')).toHaveClass(/inactive/)
+    await expect(page.getByTestId('loader-nav-quick-start-state-link')).toHaveClass(/active/)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
+  })
+
+  test('keeps shared-layout loader-nav links stable across repeated Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/loader-nav/overview')
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await page.locator('a[href="/loader-nav/quick-start"]').click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/quick-start$/)
+    await expect(page.locator('a[href="/loader-nav/overview"]')).toHaveCount(1)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
+
+    await page.locator('a[href="/loader-nav/overview"]').click()
+
+    await expect(page).toHaveURL(/\/loader-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.locator('a[href="/loader-nav/overview"]')).toHaveCount(1)
+    await expect(page.locator('a[href="/loader-nav/quick-start"]')).toHaveCount(1)
+  })
+
+  test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
+    await page.goto('/layout-location/overview')
+
+    await expect(page).toHaveURL(/\/layout-location\/overview$/)
+    await expect(page.getByRole('heading', { name: 'layout overview' })).toBeVisible()
+    await expect(page.getByTestId('layout-location-state')).toHaveText('overview-active')
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/overview/)
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/active/)
+
+    await page.getByRole('link', { name: 'Docs', exact: true }).click()
+
+    await expect(page).toHaveURL(/\/layout-location\/docs$/)
+    await expect(page.getByRole('heading', { name: 'layout docs' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'layout overview' })).toHaveCount(0)
+    await expect(page.getByTestId('layout-location-state')).toHaveText('docs-active')
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/docs/)
+    await expect(page.getByTestId('layout-location-nav')).toHaveClass(/inactive/)
+  })
+
+  test('hydrates React islands and keeps projected Eclipsa content live', async ({ page }) => {
+    await page.goto('/react')
+
+    await expect(page).toHaveTitle('React Island | E2E')
+    await expect(page.getByRole('heading', { name: 'React island' })).toBeVisible()
+    await expect(page.getByTestId('react-ssr-copy')).toBeVisible()
+    await expect(page.getByTestId('react-projected-value')).toHaveText('0')
+
+    await waitForResumedRoute(page)
+
+    await page.getByRole('button', { name: 'Increment React' }).click()
+    await expect(page.getByTestId('react-island-count')).toHaveText('React count:1')
+
+    await page.getByRole('button', { name: 'Increment projected React child' }).click()
+    await expect(page.getByTestId('react-projected-value')).toHaveText('1')
+    await expect(page.getByTestId('react-island-count')).toHaveText('React count:1')
+  })
+
+  test('hydrates Vue islands and keeps projected Eclipsa content live', async ({ page }) => {
+    await page.goto('/vue')
+
+    await expect(page).toHaveTitle('Vue Island | E2E')
+    await expect(page.getByRole('heading', { name: 'Vue island' })).toBeVisible()
+    await expect(page.getByTestId('vue-ssr-copy')).toBeVisible()
+    await expect(page.getByTestId('vue-projected-value')).toHaveText('0')
+
+    await waitForResumedRoute(page)
+
+    await page.getByRole('button', { name: 'Increment Vue' }).click()
+    await expect(page.getByTestId('vue-island-count')).toHaveText('Vue count:1')
+
+    await page.getByRole('button', { name: 'Increment projected Vue child' }).click()
+    await expect(page.getByTestId('vue-projected-value')).toHaveText('1')
+    await expect(page.getByTestId('vue-island-count')).toHaveText('Vue count:1')
+  })
+
+  test('runs motion enter/exit and shared layout flows', async ({ page }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    await expect(page).toHaveTitle('Motion | E2E')
+    await expect(page.getByRole('heading', { name: 'Motion Playground' })).toBeVisible()
+    await expect(page.getByTestId('motion-card')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Toggle motion card' }).click()
+    await expect(page.getByTestId('motion-card')).toHaveCSS('opacity', '0')
+    await page.getByRole('button', { name: 'Toggle motion card' }).click()
+    await expect(page.getByTestId('motion-card')).toHaveCSS('opacity', '1')
+
+    await expect(page.getByTestId('motion-indicator')).toHaveText('Left active')
+  })
+
+  test('shares atom state across components and preserves it across Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/atom')
+    await waitForResumedRoute(page)
+
+    await expect(page).toHaveTitle('Atom | E2E')
+    await expect(page.getByRole('heading', { name: 'Atom Playground' })).toBeVisible()
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 0')
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: idle')
+
+    await page.getByTestId('atom-left').click()
+
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-left')).toHaveText('Left atom count: 1')
+    await expect(page.getByTestId('atom-right')).toHaveText('Right atom count: 1')
+
+    await page.getByTestId('atom-label-toggle').click()
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: updated')
+
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+
+    await page.getByRole('link', { name: 'Back home with Link' }).click()
+    await expect(page).toHaveURL(/\/$/)
+
+    await page.getByRole('link', { name: 'Open atom route' }).click()
+
+    await expect(page).toHaveURL(/\/atom$/)
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-left')).toHaveText('Left atom count: 1')
+    await expect(page.getByTestId('atom-right')).toHaveText('Right atom count: 1')
+    await expect(page.getByTestId('atom-label')).toHaveText('Shared atom label: updated')
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 0')
+  })
+
+  test('replays motion animate hook transitions across repeated toggles', async ({ page }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByRole('button', { name: 'Toggle motion card' })
+    const card = page.getByTestId('motion-card')
+
+    await expect(card).toHaveCSS('opacity', '1')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '0')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '1')
+    await toggle.click()
+    await expect(card).toHaveCSS('opacity', '0')
+  })
+
+  test('applies declarative motion animate transforms without imperative animate() calls', async ({
+    page,
+  }) => {
+    await page.goto('/motion')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByRole('button', { name: 'Toggle motion card' })
+    const card = page.getByTestId('motion-card')
+
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+    await toggle.click()
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -16, 0)')
+    await toggle.click()
+    await expect(card).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+  })
+
+  test('updates projection-slot sidebar link state inside a shared layout on Link navigation', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/inactive/)
+
+    await page.getByRole('link', { name: 'Quick Start' }).click()
+
+    await expect(page).toHaveURL(/\/slot-nav\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/inactive/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/active/)
+
+    await page.getByRole('link', { name: 'Overview' }).click()
+
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+    await expect(page.getByTestId('slot-nav-quick-start-state')).toHaveText(' inactive')
+    await expect(page.getByTestId('slot-nav-overview-state-link')).toHaveClass(/active/)
+    await expect(page.getByTestId('slot-nav-quick-start-state-link')).toHaveClass(/inactive/)
+  })
+
+  test('does not reload when repeatedly navigating projection-slot sidebar links inside a shared layout', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const key = '__slotNavLoadCount'
+      const current = Number(sessionStorage.getItem(key) ?? '0')
+      sessionStorage.setItem(key, String(current + 1))
+    })
+
+    await page.goto('/slot-nav/overview')
+    await expect(page).toHaveURL(/\/slot-nav\/overview$/)
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
+      .toBe('1')
+
+    for (const target of ['Quick Start', 'Overview', 'Quick Start', 'Overview'] as const) {
+      await page.getByRole('link', { name: target }).click()
+      await expect(
+        page.getByRole('heading', { name: target.toLowerCase().replace(' ', '-') }),
+      ).toBeVisible()
+      await expect
+        .poll(() => page.evaluate(() => sessionStorage.getItem('__slotNavLoadCount')))
+        .toBe('1')
+    }
+  })
+
+  test('keeps layout-local signal toggles working after resuming a shared projection-slot layout', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+    await waitForResumedRoute(page)
+
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('closed')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-nav-overview-state')).toHaveText(' active')
+  })
+
+  test('keeps the first layout-local signal toggle working after resume when the layout also reads location', async ({
+    page,
+  }) => {
+    await page.goto('/slot-nav/overview')
+    await waitForResumedRoute(page)
+
+    await expect(page.getByTestId('slot-nav-pathname')).toHaveText('/slot-nav/overview')
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('closed')
+
+    await page.getByTestId('slot-nav-toggle').click()
+    await expect(page.getByTestId('slot-nav-toggle-state')).toHaveText('open')
+    await expect(page.getByTestId('slot-nav-pathname')).toHaveText('/slot-nav/overview')
+  })
+
+  test('keeps declarative motion sidebar toggles working after resume inside a shared layout', async ({
+    page,
+  }) => {
+    await page.goto('/slot-motion-nav/overview')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByTestId('slot-motion-nav-toggle')
+    const state = page.getByTestId('slot-motion-nav-toggle-state')
+    const panel = page.getByTestId('slot-motion-nav-panel')
+
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+
+    await toggle.click()
+    await expect(state).toHaveText('closed')
+    await expect(panel).toHaveCSS('max-height', '0px')
+
+    await toggle.click()
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(page.getByTestId('slot-motion-nav-overview-link')).toHaveClass(/active/)
+  })
+
+  test('keeps declarative motion sidebar toggles working after resume across nested layouts', async ({
+    page,
+  }) => {
+    await page.goto('/resume-motion-root/overview')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByTestId('resume-motion-toggle')
+    const state = page.getByTestId('resume-motion-toggle-state')
+    const panel = page.getByTestId('resume-motion-panel')
+
+    await expect(page.getByTestId('resume-motion-root-path')).toHaveText(
+      '/resume-motion-root/overview',
+    )
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+
+    await toggle.click()
+    await expect(state).toHaveText('closed')
+    await expect(panel).toHaveCSS('max-height', '0px')
+
+    await toggle.click()
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByTestId('resume-motion-overview-link')).toHaveClass(/active/)
   })
 
   test('renders responsive image metadata and keeps it stable across navigation', async ({
@@ -193,6 +559,32 @@ test.describe('example app in dev mode', () => {
       'srcset',
       /240w.*480w.*960w.*1200w/,
     )
+  })
+
+  test('renders content collections on SSR and after Link navigation', async ({ page }) => {
+    await page.goto('/content')
+
+    await expect(page).toHaveTitle('Content | /content')
+    await expect(page.getByRole('heading', { name: 'Content Playground' })).toBeVisible()
+    await expect(page.getByTestId('content-description')).toHaveText(contentDescriptionBeforeLabel)
+    await expect(page.getByTestId('content-entry-ids')).toContainText('guide/overview :: Overview')
+    await expect(page.getByTestId('content-entry-ids')).toContainText(
+      'guide/start-here :: Getting Started',
+    )
+    await expect(page.getByTestId('content-headings')).toContainText('h1 :: getting-started')
+    await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toBeVisible()
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toContainText(
+      "const greeting = 'highlighted content'",
+    )
+
+    await page.locator('main').getByRole('link', { name: 'Home', exact: true }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await page.getByRole('link', { name: 'Open content route' }).click()
+
+    await expect(page).toHaveURL(/\/content$/)
+    await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+    await expect(page.locator('[data-testid="content-body"] .shiki')).toBeVisible()
   })
 
   test('keeps component-valued props and children rendered after client updates', async ({
@@ -244,7 +636,9 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByRole('heading', { name: 'Suspense Playground' })).toBeVisible()
   })
 
-  test('shows suspense fallback during Link navigation before resolved content', async ({ page }) => {
+  test('shows suspense fallback during Link navigation before resolved content', async ({
+    page,
+  }) => {
     await page.goto('/')
 
     await page.getByRole('link', { name: 'Suspense' }).click()
@@ -271,6 +665,7 @@ test.describe('example app in dev mode', () => {
 
   test('navigates imperatively and updates the counter', async ({ page }) => {
     await page.goto('/')
+    await waitForResumedRoute(page)
 
     await page.getByRole('button', { name: 'Go to counter with navigate()' }).click()
 
@@ -288,6 +683,7 @@ test.describe('example app in dev mode', () => {
 
   test('runs action$ with middleware and validator on the actions page', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await expect(page.getByRole('heading', { name: 'Action Playground' })).toBeVisible()
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
@@ -308,6 +704,7 @@ test.describe('example app in dev mode', () => {
 
   test('progressively enhances native form submissions through action$', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await page.getByRole('textbox', { name: 'Form Left' }).fill('9')
     await page.getByRole('textbox', { name: 'Form Right' }).fill('3')
@@ -322,6 +719,7 @@ test.describe('example app in dev mode', () => {
 
   test('hydrates loader$ from SSR payload and reloads it over RPC', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await expect(page.getByText(/loader data:\s*loader-ready/)).toBeVisible()
     await expect(page.getByText(/loader last:\s*No manual load yet/)).toBeVisible()
@@ -334,6 +732,7 @@ test.describe('example app in dev mode', () => {
 
   test('shows structured validation failures from action$', async ({ page }) => {
     await page.goto('/actions')
+    await waitForResumedRoute(page)
 
     await page.getByRole('textbox', { name: 'Left', exact: true }).fill('abc')
     await page.getByRole('textbox', { name: 'Right', exact: true }).fill('22')
@@ -410,11 +809,15 @@ test.describe('example app in dev mode', () => {
     try {
       await writeSourceAtomically(hmrSvgPagePath, updatedSource)
       await expect(heading).toBeVisible()
-      await expect(status).toHaveText(hmrAfterLabel)
+      await expect(status).toHaveText(hmrAfterLabel, {
+        timeout: hmrTimeout,
+      })
     } finally {
       await writeSourceAtomically(hmrSvgPagePath, originalSource)
       await expect(heading).toBeVisible()
-      await expect(status).toHaveText(hmrBeforeLabel)
+      await expect(status).toHaveText(hmrBeforeLabel, {
+        timeout: hmrTimeout,
+      })
     }
   })
 
@@ -429,14 +832,92 @@ test.describe('example app in dev mode', () => {
       expect(updatedSource).not.toBe(originalSource)
       await writeSourceAtomically(imagePagePath, updatedSource)
 
-      await expect(page.getByText(imageHmrAfterLabel)).toBeVisible()
+      await expect(page.getByText(imageHmrAfterLabel)).toBeVisible({
+        timeout: hmrTimeout,
+      })
       await expect(page.getByTestId('responsive-image')).toHaveAttribute(
         'srcset',
         /240w.*480w.*960w.*1200w/,
       )
     } finally {
       await writeSourceAtomically(imagePagePath, originalSource)
-      await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible()
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.getByText(imageHmrBeforeLabel)).toBeVisible({
+        timeout: hmrTimeout,
+      })
+    }
+  })
+
+  test('updates content routes after markdown and frontmatter HMR changes', async ({ page }) => {
+    const originalSource = await readFile(contentMarkdownPath, 'utf8')
+
+    try {
+      await page.goto('/content')
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionBeforeLabel,
+      )
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel)
+
+      const updatedSource = originalSource
+        .replace(contentDescriptionBeforeLabel, contentDescriptionAfterLabel)
+        .replace(contentBodyBeforeLabel, contentBodyAfterLabel)
+      expect(updatedSource).not.toBe(originalSource)
+      await writeSourceAtomically(contentMarkdownPath, updatedSource)
+
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionAfterLabel,
+        {
+          timeout: hmrTimeout,
+        },
+      )
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyAfterLabel, {
+        timeout: hmrTimeout,
+      })
+    } finally {
+      await writeSourceAtomically(contentMarkdownPath, originalSource)
+      await expect(page.getByTestId('content-description')).toHaveText(
+        contentDescriptionBeforeLabel,
+        {
+          timeout: hmrTimeout,
+        },
+      )
+      await expect(page.getByTestId('content-body')).toContainText(contentBodyBeforeLabel, {
+        timeout: hmrTimeout,
+      })
+    }
+  })
+
+  test('does not duplicate projected component content across HMR updates', async ({ page }) => {
+    const originalHomeSource = await readFile(homePagePath, 'utf8')
+    const propA = page.getByTestId('probe-aa-0')
+    const propB = page.getByTestId('probe-aa-1')
+    const children = page.getByTestId('probe-children')
+
+    try {
+      await page.goto('/')
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
+
+      const updatedHomeSource = originalHomeSource.replace(homeHmrBeforeLabel, homeHmrAfterLabel)
+      expect(updatedHomeSource).not.toBe(originalHomeSource)
+      await writeSourceAtomically(homePagePath, updatedHomeSource)
+
+      await expect(page.getByRole('button', { name: homeHmrAfterLabel })).toBeVisible({
+        timeout: hmrTimeout,
+      })
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
+    } finally {
+      await writeSourceAtomically(homePagePath, originalHomeSource)
+      await page.goto('/')
+      await expect(page.getByRole('button', { name: homeHmrBeforeLabel })).toBeVisible({
+        timeout: hmrTimeout,
+      })
+      await expect(propA).toHaveText('Prop component content')
+      await expect(propB).toHaveText('Prop component content')
+      await expect(children).toHaveText('Children component content')
     }
   })
 })

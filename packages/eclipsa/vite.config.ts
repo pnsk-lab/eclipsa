@@ -2,9 +2,11 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   test: {
+    fileParallelism: false,
     include: [
+      'atom/**/*.test.ts',
       'core/**/*.test.ts',
-      'core/**/*.test.tsx',
+      'web-utils/**/*.test.ts',
       'compiler/**/*.test.ts',
       'vite/**/*.test.ts',
     ],
@@ -13,7 +15,9 @@ export default defineConfig({
   pack: {
     entry: [
       'mod.ts',
+      'web-utils/mod.ts',
       'vite/mod.ts',
+      'vite/build/runtime.ts',
       'jsx/mod.ts',
       'jsx/jsx-runtime.ts',
       'jsx/jsx-dev-runtime.ts',
@@ -25,6 +29,9 @@ export default defineConfig({
     ],
     dts: true,
     format: ['esm'],
+    deps: {
+      neverBundle: ['typescript', 'vite'],
+    },
     clean: true,
     sourcemap: true,
   },

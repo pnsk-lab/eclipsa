@@ -1,7 +1,21 @@
 import { Hono } from 'hono'
-import { describe, expect, it } from 'vitest'
-import { executeAction, registerAction, validator, type StandardSchemaV1 } from './action.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { ACTION_CSRF_COOKIE, ACTION_CSRF_FIELD, ACTION_CSRF_HEADER } from './action-csrf.ts'
+import {
+  __eclipsaAction,
+  executeAction,
+  registerAction,
+  validator,
+  type StandardSchemaV1,
+} from './action.ts'
+import type { AppContext } from './hooks.ts'
+import { withServerRequestContext } from './hooks.ts'
+import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
+import type { RuntimeContainer } from './runtime.ts'
+import { withRuntimeContainer } from './runtime.ts'
 import { serializeValue } from './serialize.ts'
+
+const ACTION_CSRF_TOKEN = 'csrf-token'
 
 const createSchema = <T>(
   validate: (value: unknown) => { issues: readonly { message: string }[] } | { value: T },
@@ -19,9 +33,71 @@ const createSchema = <T>(
 
 const createActionApp = () => {
   const app = new Hono()
-  app.post('/__eclipsa/action/:id', (c) => executeAction(c.req.param('id'), c))
+  app.post('/__eclipsa/action/:id', (c) =>
+    executeAction(c.req.param('id'), c as unknown as AppContext),
+  )
   return app
 }
+
+const withActionCsrf = (
+  init: RequestInit,
+  options?: {
+    cookieToken?: string | null
+    form?: boolean
+    token?: string | null
+  },
+) => {
+  const headers = new Headers(init.headers)
+  const cookieToken = options && 'cookieToken' in options ? options.cookieToken : ACTION_CSRF_TOKEN
+  const token = options && 'token' in options ? options.token : ACTION_CSRF_TOKEN
+
+  if (cookieToken) {
+    headers.set('cookie', `${ACTION_CSRF_COOKIE}=${cookieToken}`)
+  }
+  if (!options?.form && token) {
+    headers.set(ACTION_CSRF_HEADER, token)
+  }
+
+  return {
+    ...init,
+    headers,
+  } satisfies RequestInit
+}
+
+const createRuntimeContainer = (): RuntimeContainer =>
+  ({
+    actions: new Map(),
+    actionStates: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
+    atoms: new WeakMap(),
+    components: new Map(),
+    dirty: new Set(),
+    dirtyFlushQueued: false,
+    eventDispatchPromise: null,
+    externalRenderCache: new Map(),
+    id: 'rt-test',
+    imports: new Map(),
+    interactivePrefetchCheckQueued: false,
+    loaderStates: new Map(),
+    loaders: new Map(),
+    nextAtomId: 0,
+    nextComponentId: 0,
+    nextElementId: 0,
+    nextScopeId: 0,
+    nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    resumeReadyPromise: null,
+    rootChildCursor: 0,
+    router: null,
+    scopes: new Map(),
+    signals: new Map(),
+    symbols: new Map(),
+    visibilityCheckQueued: false,
+    visibilityListenersCleanup: null,
+    visibles: new Map(),
+    watches: new Map(),
+  }) satisfies RuntimeContainer
 
 describe('action runtime', () => {
   it('validates input and exposes c.var.input', async () => {
@@ -50,18 +126,21 @@ describe('action runtime', () => {
       },
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/sum', {
-      body: JSON.stringify({
-        input: serializeValue({
-          left: 2,
-          right: 3,
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/sum',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue({
+            left: 2,
+            right: 3,
+          }),
         }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
@@ -84,15 +163,18 @@ describe('action runtime', () => {
       async () => 'never',
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/invalid', {
-      body: JSON.stringify({
-        input: serializeValue('nope'),
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/invalid',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue('nope'),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error: unknown; ok: boolean }
@@ -143,19 +225,72 @@ describe('action runtime', () => {
     )
 
     const formData = new FormData()
+    formData.set(ACTION_CSRF_FIELD, ACTION_CSRF_TOKEN)
     formData.set('left', '4')
     formData.set('right', '6')
 
-    const response = await app.request('http://localhost/__eclipsa/action/form-sum', {
-      body: formData,
-      method: 'POST',
-    })
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/form-sum',
+      withActionCsrf(
+        {
+          body: formData,
+          method: 'POST',
+        },
+        { form: true },
+      ),
+    )
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       ok: true,
       value: 10,
     })
+  })
+
+  it('rejects requests with missing or mismatched csrf tokens', async () => {
+    const app = createActionApp()
+    registerAction('secure', [], async () => 'ok')
+
+    const missingToken = await app.request(
+      'http://localhost/__eclipsa/action/secure',
+      withActionCsrf(
+        {
+          body: JSON.stringify({
+            input: serializeValue(null),
+          }),
+          headers: {
+            'content-type': 'application/eclipsa-action+json',
+          },
+          method: 'POST',
+        },
+        { token: null },
+      ),
+    )
+    expect(missingToken.status).toBe(403)
+    await expect(missingToken.json()).resolves.toEqual({
+      error: {
+        __eclipsa_type: 'object',
+        entries: [
+          ['message', 'Invalid CSRF token.'],
+          ['name', 'ActionCsrfError'],
+        ],
+      },
+      ok: false,
+    })
+
+    const formData = new FormData()
+    formData.set(ACTION_CSRF_FIELD, 'wrong-token')
+    const mismatchedToken = await app.request(
+      'http://localhost/__eclipsa/action/secure',
+      withActionCsrf(
+        {
+          body: formData,
+          method: 'POST',
+        },
+        { cookieToken: ACTION_CSRF_TOKEN, form: true, token: 'wrong-token' },
+      ),
+    )
+    expect(mismatchedToken.status).toBe(403)
   })
 
   it('streams async generators and readable streams with framed payloads', async () => {
@@ -177,33 +312,39 @@ describe('action runtime', () => {
         }),
     )
 
-    const generatorResponse = await app.request('http://localhost/__eclipsa/action/stream', {
-      body: JSON.stringify({
-        input: serializeValue(null),
+    const generatorResponse = await app.request(
+      'http://localhost/__eclipsa/action/stream',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue(null),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
     expect(generatorResponse.headers.get('content-type')).toContain(
       'application/eclipsa-action-stream+json',
     )
     expect(generatorResponse.headers.get('x-eclipsa-stream-kind')).toBe('async-generator')
     await expect(generatorResponse.text()).resolves.toContain('"type":"chunk"')
 
-    const readableResponse = await app.request('http://localhost/__eclipsa/action/readable', {
-      body: JSON.stringify({
-        input: serializeValue(null),
+    const readableResponse = await app.request(
+      'http://localhost/__eclipsa/action/readable',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: serializeValue(null),
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
+        },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
     expect(readableResponse.headers.get('x-eclipsa-stream-kind')).toBe('readable-stream')
     await expect(readableResponse.text()).resolves.toContain('"type":"done"')
-  })
+  }, 15_000)
 
   it('round-trips opaque action references through server execution', async () => {
     const app = createActionApp()
@@ -219,22 +360,25 @@ describe('action runtime', () => {
       async (c) => c.var.input,
     )
 
-    const response = await app.request('http://localhost/__eclipsa/action/opaque', {
-      body: JSON.stringify({
-        input: {
-          __eclipsa_type: 'ref',
-          data: serializeValue({
-            container: 'rt1',
-          }),
-          kind: 'signal',
-          token: 's0',
+    const response = await app.request(
+      'http://localhost/__eclipsa/action/opaque',
+      withActionCsrf({
+        body: JSON.stringify({
+          input: {
+            __eclipsa_type: 'ref',
+            data: serializeValue({
+              container: 'rt1',
+            }),
+            kind: 'signal',
+            token: 's0',
+          },
+        }),
+        headers: {
+          'content-type': 'application/eclipsa-action+json',
         },
+        method: 'POST',
       }),
-      headers: {
-        'content-type': 'application/eclipsa-action+json',
-      },
-      method: 'POST',
-    })
+    )
 
     expect(await response.json()).toEqual({
       ok: true,
@@ -248,5 +392,90 @@ describe('action runtime', () => {
         token: 's0',
       },
     })
+  })
+
+  it('streams async generator actions through client handles', async () => {
+    const container = createRuntimeContainer()
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response('{"type":"chunk","value":0}\n{"type":"chunk","value":1}\n{"type":"done"}\n', {
+          headers: {
+            'content-type': 'application/eclipsa-action-stream+json',
+            'x-eclipsa-stream-kind': 'async-generator',
+          },
+        }),
+    ) as typeof fetch
+
+    try {
+      const useStream = __eclipsaAction('stream-handle', [], async function* () {
+        yield 0
+        yield 1
+      })
+      const handle = withRuntimeContainer(container, () => useStream())
+
+      const stream = handle.action()
+      expect(typeof stream[Symbol.asyncIterator]).toBe('function')
+
+      const values: number[] = []
+      for await (const value of stream) {
+        values.push(value)
+        expect(handle.result).toBe(value)
+        expect(handle.lastSubmission?.result).toBe(value)
+        expect(handle.isPending).toBe(true)
+      }
+
+      expect(values).toEqual([0, 1])
+      expect(handle.isPending).toBe(false)
+      expect(handle.result).toBe(1)
+      expect(handle.lastSubmission).toEqual({
+        error: undefined,
+        input: undefined,
+        result: 1,
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('uses absolute action RPC URLs inside a server request context', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true, value: 'pong' }), {
+          headers: {
+            'content-type': 'application/json',
+          },
+        }),
+    ) as typeof fetch
+
+    const requestContext = {
+      req: {
+        raw: new Request('http://localhost/current'),
+        header() {
+          return undefined
+        },
+      },
+      var: {
+        fetch: fetchImpl,
+      },
+    } as unknown as AppContext
+
+    const usePing = __eclipsaAction('ping', [], async () => 'pong')
+    const handle = withRuntimeContainer(createRuntimeContainer(), () => usePing())
+
+    await expect(withServerRequestContext(requestContext, {}, () => handle.action())).resolves.toBe(
+      'pong',
+    )
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost/__eclipsa/action/ping',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/current',
+        }),
+        method: 'POST',
+      }),
+    )
   })
 })

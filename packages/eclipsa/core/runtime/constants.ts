@@ -1,0 +1,46 @@
+import type { ExternalComponentDescriptor } from '../internal.ts'
+
+export const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
+export const CONTEXT_VALUE_STACK_KEY = Symbol.for('eclipsa.context-value-stack')
+export const FRAME_STACK_KEY = Symbol.for('eclipsa.frame-stack')
+export const DIRTY_FLUSH_PROMISE_KEY = Symbol.for('eclipsa.dirty-flush-promise')
+export const ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY = Symbol.for('eclipsa.async-signal-snapshot-cache')
+export const STANDALONE_SIGNAL_ID_KEY = Symbol.for('eclipsa.standalone-signal-id')
+export const ACTION_FORM_ATTR = 'data-e-action-form'
+export const ROUTER_EVENT_STATE_KEY = Symbol.for('eclipsa.router-event-state')
+export const ROUTER_CURRENT_PATH_SIGNAL_ID = '$router:path'
+export const ROUTER_CURRENT_URL_SIGNAL_ID = '$router:url'
+export const ROUTER_IS_NAVIGATING_SIGNAL_ID = '$router:isNavigating'
+export const ROUTER_LINK_BOUND_KEY = Symbol.for('eclipsa.router-link-bound')
+export const ROUTER_LINK_PREFETCH_BOUND_KEY = Symbol.for('eclipsa.router-link-prefetch-bound')
+export const ROUTE_NOT_FOUND_KEY = Symbol.for('eclipsa.route-not-found')
+export const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
+export const ROUTE_ERROR_PROP = '__eclipsa_route_error'
+export const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
+export const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
+export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
+export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
+export const SCOPED_STYLE_ATTR = 'data-e-scope'
+export const ROOT_COMPONENT_ID = '$root'
+export const SUSPENSE_COMPONENT_SYMBOL = '$suspense'
+export const ROUTE_SLOT_TYPE = 'route-slot'
+export const PROJECTION_SLOT_TYPE = 'projection-slot'
+export const CONTAINER_ID_KEY = Symbol.for('eclipsa.runtime-container-id')
+export const RENDER_COMPONENT_TYPE_KEY = Symbol.for('eclipsa.render-component-type')
+export const RENDER_REFERENCE_KIND = 'render'
+export const REF_SIGNAL_ATTR = 'data-e-ref'
+export const STREAM_STATE_KEY = '__eclipsa_stream'
+export const PENDING_RESUME_LINK_KEY = '__eclipsa_pending_route_link'
+export const BIND_VALUE_PROP = 'bind:value'
+export const BIND_CHECKED_PROP = 'bind:checked'
+export const BIND_VALUE_ATTR = 'data-e-bind-value'
+export const BIND_CHECKED_ATTR = 'data-e-bind-checked'
+export const CLIENT_INSERT_OWNER_SYMBOL = '$client-insert-root'
+export const CLIENT_INSERT_OWNER_ID_PREFIX = '$insert:'
+export const EXTERNAL_ROOT_ATTR = 'data-e-external-root'
+export const EXTERNAL_ROOT_COMPONENT_ATTR = 'data-e-external-component'
+export const EXTERNAL_ROOT_KIND_ATTR = 'data-e-external-kind'
+export const getExternalSlotTag = (_kind: ExternalComponentDescriptor['kind']) => 'e-slot-host'
+export const DOM_TEXT_NODE = 3
+export const DOM_COMMENT_NODE = 8
+export const DOM_SHOW_COMMENT = 0x80

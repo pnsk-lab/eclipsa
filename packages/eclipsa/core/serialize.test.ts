@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { deserializeValue, escapeJSONScriptText, serializeValue } from './serialize.ts'
+import {
+  deserializeValue,
+  escapeInlineScriptText,
+  escapeJSONScriptText,
+  serializeValue,
+} from './serialize.ts'
+import { noSerialize } from './no-serialize.ts'
 
 describe('serializeValue', () => {
   it('round-trips nested plain data, maps, and sets', () => {
@@ -31,7 +37,8 @@ describe('serializeValue', () => {
   })
 
   it('rejects sparse arrays', () => {
-    const value = new Array(2)
+    const value: unknown[] = []
+    value.length = 2
     value[1] = 'x'
 
     expect(() => serializeValue(value)).toThrow('Sparse arrays cannot be serialized.')
@@ -50,15 +57,44 @@ describe('serializeValue', () => {
   })
 
   it('rejects unsupported objects commonly involved in server gadget chains', () => {
-    expect(() => serializeValue(new Date())).toThrow('Unsupported object')
-    expect(() => serializeValue(new URL('https://example.com'))).toThrow('Unsupported object')
-    expect(() => serializeValue(new Error('boom'))).toThrow('Unsupported object')
+    expect(() => serializeValue(new Date())).toThrow('[object Date]')
+    expect(() => serializeValue(new URL('https://example.com'))).toThrow('[object URL]')
+    expect(() => serializeValue(new Error('boom'))).toThrow('[object Error]')
+    expect(() => serializeValue(new Date())).toThrow(
+      'Only primitives, plain objects, arrays, Map, Set',
+    )
+    expect(() => serializeValue(new Date())).toThrow('noSerialize()')
+  })
+
+  it('includes the constructor name for custom non-serializable instances', () => {
+    class MotionValueLike {
+      current = 1
+    }
+
+    expect(() => serializeValue(new MotionValueLike())).toThrow(
+      'Unsupported object [object Object] (constructor: MotionValueLike).',
+    )
   })
 
   it('rejects non-finite numbers', () => {
     expect(() => serializeValue(NaN)).toThrow('Non-finite numbers cannot be serialized.')
     expect(() => serializeValue(Infinity)).toThrow('Non-finite numbers cannot be serialized.')
     expect(() => serializeValue(-Infinity)).toThrow('Non-finite numbers cannot be serialized.')
+  })
+
+  it('serializes noSerialize values as undefined', () => {
+    const serialized = serializeValue({
+      fn: noSerialize(() => 'hidden'),
+      nested: noSerialize({ answer: 42 }),
+    })
+
+    expect(serialized).toEqual({
+      __eclipsa_type: 'object',
+      entries: [
+        ['fn', { __eclipsa_type: 'undefined' }],
+        ['nested', { __eclipsa_type: 'undefined' }],
+      ],
+    })
   })
 
   it('keeps hostile keys inert on decode', () => {
@@ -101,15 +137,28 @@ describe('serializeValue', () => {
     }
     expect(() => serializeValue(deep)).toThrow('maximum depth')
 
-    expect(() => serializeValue(new Array(10_100).fill(0))).toThrow('maximum entry budget')
+    expect(() => serializeValue(Array.from({ length: 10_100 }, () => 0))).toThrow(
+      'maximum entry budget',
+    )
   })
 
   it('escapes script-breaking content', () => {
     const escaped = escapeJSONScriptText('"</script>\u2028\u2029&<>"')
     expect(escaped).not.toContain('</script>')
     expect(escaped).toContain('\\u003C')
+    expect(escaped).toContain('\\u003E')
     expect(escaped).toContain('\\u2028')
     expect(escaped).toContain('\\u2029')
     expect(escaped).toContain('\\u0026')
+  })
+
+  it('keeps raw inline script operators intact while escaping html terminators', () => {
+    const escaped = escapeInlineScriptText('(()=>a > b && c < d)</script>\u2028\u2029')
+    expect(escaped).not.toContain('</script>')
+    expect(escaped).toContain('=>a > b')
+    expect(escaped).not.toContain('\\u003E')
+    expect(escaped).toContain('\\u003C')
+    expect(escaped).toContain('\\u2028')
+    expect(escaped).toContain('\\u2029')
   })
 })

@@ -1,27 +1,694 @@
-import { component$, Link, onVisible, useSignal } from 'eclipsa'
-import { setupLandingScene } from './landing-scene.ts'
-import { Logo } from '../components/logo.tsx'
+import {
+  motion,
+  useMotionValue,
+  useMotionValueEvent,
+  useScroll,
+  useSpring,
+  useTransform,
+  type MotionValue,
+} from '@eclipsa/motion'
+import { Link, onCleanup, onMount, useSignal, type Signal } from 'eclipsa'
+import { useLandingScene } from './use-landing-scene.ts'
+import { Image } from '@eclipsa/image'
+import '@eclipsa/image/client'
+import routingVscodeImage from '../assets/routing-vscode.png?eclipsa-image'
 
-export default component$(() => {
-  const rootRef = useSignal<HTMLDivElement | undefined>()
-  const canvasRef = useSignal<HTMLCanvasElement | undefined>()
+export const SECTION_ORDER = ['hero', 'statement', 'features', 'footer'] as const
 
-  onVisible(() => {
-    const root = rootRef.value
-    const canvas = canvasRef.value
+type LandingSectionName = (typeof SECTION_ORDER)[number]
+type SectionRefMap = Record<LandingSectionName, Signal<HTMLElement | undefined>>
+type SectionRangeMap = Partial<Record<LandingSectionName, { end: number; start: number }>>
+type SectionMeasurements = {
+  anchorY: MotionValue<number>
+  ranges: MotionValue<SectionRangeMap>
+}
+type TrackFrame<Field extends string> = { t: number } & Record<Field, number>
+type AbsoluteTrackFrame<Field extends string> = { position: number } & Record<Field, number>
+type SectionTrackMap<Field extends string> = Partial<
+  Record<LandingSectionName, ReadonlyArray<TrackFrame<Field>>>
+>
 
-    if (!root || !canvas) {
-      return
+const OPEN = {
+  hero: [
+    { t: 0, open: 0.15 },
+    { t: 1, open: 1 },
+  ],
+  statement: [],
+} satisfies SectionTrackMap<'open'>
+
+const ROTATE = {
+  hero: [
+    { t: 0, x: -80, y: 0, z: 30 },
+    { t: 0.5, x: -80, y: 0, z: 30 },
+    { t: 1, x: -60, y: 0, z: -7 },
+  ],
+  statement: [{ t: 1, x: 0, y: 0, z: 0 }],
+  features: [
+    {
+      t: 0.2,
+      x: 0,
+      y: 0,
+      z: 0,
+    },
+    {
+      t: 1,
+      x: 0,
+      y: 360 * 1,
+      z: 0,
+    },
+  ],
+} satisfies SectionTrackMap<'x' | 'y' | 'z'>
+
+const SIZE = {
+  hero: [{ t: 0, size: 0.6 }],
+} satisfies SectionTrackMap<'size'>
+
+const POS = {
+  hero: [
+    { t: 0, x: 0.83, y: 0.48 },
+    { t: 1, x: 0.5, y: 0.5 },
+  ],
+  statement: [
+    { t: 0, x: 0.5, y: 0.5 },
+    //{ t: 0.5, x: 0.3, y: 0.5 },
+    //{ t: 1, x: 0.125, y: 0.5 },
+  ],
+  features: [
+    { t: 0.1, x: 0.5, y: 0.5 },
+    { t: 0.2, x: 0.125, y: 0.5 },
+  ],
+} satisfies SectionTrackMap<'x' | 'y'>
+
+const FEATURE_ITEMS = [
+  { iconClass: 'i-tabler-droplet-bolt', title: 'Resumability' },
+  { iconClass: 'i-tabler-cpu', title: 'Compiler' },
+  { iconClass: 'i-tabler-protocol', title: 'Full-Stack' },
+]
+export const VIEWPORT_SECTION_ANCHOR = 0
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+
+const getFirstTrackValue = <Field extends string>(
+  tracks: SectionTrackMap<Field>,
+  key: Field,
+  order: readonly LandingSectionName[] = SECTION_ORDER,
+) => {
+  for (const section of order) {
+    const frames = tracks[section]
+    if (frames?.length) {
+      return frames[0][key]
+    }
+  }
+
+  return 0
+}
+
+export const resolveTrackValue = <Field extends string>(
+  frames: ReadonlyArray<TrackFrame<Field>>,
+  progress: number,
+  key: Field,
+) => {
+  if (frames.length === 0) {
+    return 0
+  }
+
+  const normalized = clamp01(progress)
+  if (normalized <= frames[0].t) {
+    return frames[0][key]
+  }
+
+  for (let index = 1; index < frames.length; index += 1) {
+    const previous = frames[index - 1]
+    const current = frames[index]
+    if (normalized <= current.t) {
+      const span = current.t - previous.t
+      if (span <= 0) {
+        return current[key]
+      }
+      const localProgress = (normalized - previous.t) / span
+      return previous[key] + (current[key] - previous[key]) * localProgress
+    }
+  }
+
+  return frames[frames.length - 1][key]
+}
+
+export const resolveAbsoluteTrackFrames = <Field extends string>(
+  tracks: SectionTrackMap<Field>,
+  ranges: SectionRangeMap,
+  order: readonly LandingSectionName[] = SECTION_ORDER,
+) => {
+  const absoluteFrames: AbsoluteTrackFrame<Field>[] = []
+
+  for (const section of order) {
+    const frames = tracks[section]
+    const range = ranges[section]
+    if (!frames?.length || !range) {
+      continue
     }
 
-    setupLandingScene({ canvas })
+    const span = Math.max(0, range.end - range.start)
+    for (const frame of frames) {
+      absoluteFrames.push({
+        ...frame,
+        position: range.start + span * clamp01(frame.t),
+      })
+    }
+  }
+
+  absoluteFrames.sort((left, right) => left.position - right.position)
+  return absoluteFrames
+}
+
+export const resolveAbsoluteTrackValue = <Field extends string>(
+  frames: ReadonlyArray<AbsoluteTrackFrame<Field>>,
+  position: number,
+  key: Field,
+) => {
+  if (frames.length === 0) {
+    return 0
+  }
+
+  if (position <= frames[0].position) {
+    return frames[0][key]
+  }
+
+  for (let index = 1; index < frames.length; index += 1) {
+    const previous = frames[index - 1]
+    const current = frames[index]
+    if (position <= current.position) {
+      const span = current.position - previous.position
+      if (span <= 0) {
+        return current[key]
+      }
+      const localProgress = (position - previous.position) / span
+      return previous[key] + (current[key] - previous[key]) * localProgress
+    }
+  }
+
+  return frames[frames.length - 1][key]
+}
+
+const measureSectionRanges = (
+  sectionRefs: SectionRefMap,
+  scrollY: number,
+  order: readonly LandingSectionName[] = SECTION_ORDER,
+): SectionRangeMap => {
+  const ranges: SectionRangeMap = {}
+
+  for (const section of order) {
+    const element = sectionRefs[section].value
+    if (!element) {
+      continue
+    }
+
+    const rect = element.getBoundingClientRect()
+    const start = rect.top + scrollY
+    ranges[section] = {
+      end: start + rect.height,
+      start,
+    }
+  }
+
+  return ranges
+}
+
+const areSectionRangesEqual = (
+  left: SectionRangeMap,
+  right: SectionRangeMap,
+  order: readonly LandingSectionName[] = SECTION_ORDER,
+) => {
+  for (const section of order) {
+    const leftRange = left[section]
+    const rightRange = right[section]
+    if (!leftRange && !rightRange) {
+      continue
+    }
+    if (!leftRange || !rightRange) {
+      return false
+    }
+    if (leftRange.start !== rightRange.start || leftRange.end !== rightRange.end) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export const resolveSectionTrackValue = <Field extends string>(
+  tracks: SectionTrackMap<Field>,
+  ranges: SectionRangeMap,
+  anchorY: number,
+  key: Field,
+  order: readonly LandingSectionName[] = SECTION_ORDER,
+) => {
+  const frames = resolveAbsoluteTrackFrames(tracks, ranges, order)
+  if (frames.length === 0) {
+    return getFirstTrackValue(tracks, key, order)
+  }
+
+  return resolveAbsoluteTrackValue(frames, anchorY, key)
+}
+
+export const resolveViewportAnchorY = (
+  scrollY: number,
+  viewportHeight: number,
+  anchor = VIEWPORT_SECTION_ANCHOR,
+) => scrollY + viewportHeight * anchor
+
+export const resolveSectionProgress = (
+  range: { end: number; start: number } | undefined,
+  anchorY: number,
+) => {
+  if (!range) {
+    return 0
+  }
+
+  const span = range.end - range.start
+  if (span <= 0) {
+    return anchorY >= range.end ? 1 : 0
+  }
+
+  return Math.min(1, (anchorY - range.start) / span)
+}
+
+export const resolveFeatureRotation = (degrees: number) => (degrees === 0 ? 0 : -degrees)
+
+const normalizeDegrees = (degrees: number) => {
+  const normalized = degrees % 360
+  return normalized < 0 ? normalized + 360 : normalized
+}
+
+const getCircularDistance = (left: number, right: number) => {
+  const delta = Math.abs(normalizeDegrees(left) - normalizeDegrees(right))
+  return Math.min(delta, 360 - delta)
+}
+
+export const resolveRightmostFeatureIndex = (count: number, rotationDegrees: number) => {
+  if (count <= 0) {
+    return -1
+  }
+
+  let bestIndex = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < count; index += 1) {
+    const angle = normalizeDegrees((360 / count) * index + rotationDegrees)
+    const distance = getCircularDistance(angle, 90)
+
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = index
+    }
+  }
+
+  return bestIndex
+}
+
+export const resolveFeatureOpacity = (
+  index: number,
+  count: number,
+  rotationDegrees: number,
+  inactiveOpacity = 0.5,
+) => (index === resolveRightmostFeatureIndex(count, rotationDegrees) ? 1 : inactiveOpacity)
+
+export const resolveOrbitFollowOffsetX = (
+  normalizedX: number,
+  viewportWidth: number,
+  anchorCenterX: number,
+) => normalizedX * viewportWidth - anchorCenterX
+
+const useSectionMeasurements = (
+  scrollY: MotionValue<number>,
+  sectionRefs: SectionRefMap,
+): SectionMeasurements => {
+  const anchorY = useMotionValue(0)
+  const ranges = useMotionValue<SectionRangeMap>({})
+
+  onMount(() => {
+    const update = () => {
+      const nextScrollY = scrollY.get()
+      const nextRanges = measureSectionRanges(sectionRefs, nextScrollY)
+      const nextAnchorY = resolveViewportAnchorY(nextScrollY, window.innerHeight)
+
+      if (!areSectionRangesEqual(ranges.get(), nextRanges)) {
+        ranges.set(nextRanges)
+      }
+      if (anchorY.get() !== nextAnchorY) {
+        anchorY.set(nextAnchorY)
+      }
+    }
+
+    update()
+    const cleanupScroll = scrollY.on('change', update)
+    window.addEventListener('resize', update)
+
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(update)
+      for (const section of SECTION_ORDER) {
+        const element = sectionRefs[section].value
+        if (element) {
+          resizeObserver.observe(element)
+        }
+      }
+    }
+
+    onCleanup(() => {
+      cleanupScroll()
+      window.removeEventListener('resize', update)
+      resizeObserver?.disconnect()
+    })
   })
 
-  return (
-    <div
-      class="relative flex min-h-screen flex-col overflow-x-hidden bg-[#050505] text-white antialiased font-space-grotesk selection:bg-purple-500 selection:text-white"
-      ref={rootRef}
+  return {
+    anchorY,
+    ranges,
+  }
+}
+
+const useSectionTrackValue = <Field extends string>(
+  measurements: SectionMeasurements,
+  tracks: SectionTrackMap<Field>,
+  key: Field,
+): MotionValue<number> =>
+  useTransform(() =>
+    resolveSectionTrackValue(tracks, measurements.ranges.get(), measurements.anchorY.get(), key),
+  )
+
+const useSectionProgress = (measurements: SectionMeasurements, section: LandingSectionName) =>
+  useTransform(() =>
+    resolveSectionProgress(measurements.ranges.get()[section], measurements.anchorY.get()),
+  )
+
+const useLandingSectionRefs = (): SectionRefMap => ({
+  hero: useSignal<HTMLElement | undefined>(),
+  statement: useSignal<HTMLElement | undefined>(),
+  features: useSignal<HTMLElement | undefined>(),
+  footer: useSignal<HTMLElement | undefined>(),
+})
+
+const useFeatureOrbitPresentation = (
+  umbrellaX: MotionValue<number>,
+  umbrellaRotateY: MotionValue<number>,
+) => {
+  const orbitAnchorRef = useSignal<HTMLDivElement | undefined>()
+  const orbitRef = useSignal<HTMLDivElement | undefined>()
+
+  onMount(() => {
+    let anchorCenterX = 0
+    let activeFeatureIndex = -1
+
+    const getOrbitItems = () =>
+      Array.from(
+        orbitRef.value?.querySelectorAll<HTMLDivElement>('.landing-feature-orbit-item') ?? [],
+      )
+
+    const syncOrbitX = () => {
+      const orbitElement = orbitRef.value
+      if (!orbitElement) {
+        return
+      }
+
+      orbitElement.style.setProperty(
+        '--orbit-follow-x',
+        `${resolveOrbitFollowOffsetX(umbrellaX.get(), window.innerWidth, anchorCenterX)}px`,
+      )
+    }
+
+    const syncOrbitRotation = () => {
+      const orbitElement = orbitRef.value
+      if (!orbitElement) {
+        return
+      }
+
+      const rotationDegrees = resolveFeatureRotation(umbrellaRotateY.get())
+      orbitElement.style.setProperty('--feature-rotation', `${rotationDegrees}deg`)
+
+      const orbitItems = getOrbitItems()
+      const nextActiveFeatureIndex = resolveRightmostFeatureIndex(
+        orbitItems.length,
+        rotationDegrees,
+      )
+      if (nextActiveFeatureIndex === activeFeatureIndex) {
+        return
+      }
+
+      if (activeFeatureIndex >= 0) {
+        orbitItems[activeFeatureIndex]?.removeAttribute('data-active')
+      }
+      if (nextActiveFeatureIndex >= 0) {
+        orbitItems[nextActiveFeatureIndex]?.setAttribute('data-active', 'true')
+      }
+      activeFeatureIndex = nextActiveFeatureIndex
+    }
+
+    const measureAnchor = () => {
+      const anchorElement = orbitAnchorRef.value
+      if (!anchorElement) {
+        return
+      }
+
+      const rect = anchorElement.getBoundingClientRect()
+      anchorCenterX = rect.left + rect.width / 2
+      syncOrbitX()
+    }
+
+    measureAnchor()
+    syncOrbitRotation()
+
+    const cleanupX = umbrellaX.on('change', syncOrbitX)
+    const cleanupRotate = umbrellaRotateY.on('change', syncOrbitRotation)
+    window.addEventListener('resize', measureAnchor)
+
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined' && orbitAnchorRef.value) {
+      resizeObserver = new ResizeObserver(measureAnchor)
+      resizeObserver.observe(orbitAnchorRef.value)
+    }
+
+    onCleanup(() => {
+      cleanupX()
+      cleanupRotate()
+      window.removeEventListener('resize', measureAnchor)
+      resizeObserver?.disconnect()
+    })
+  })
+
+  return {
+    orbitAnchorRef,
+    orbitRef,
+  }
+}
+
+const HeroSection = ({ sectionRef }: { sectionRef: Signal<HTMLElement | undefined> }) => (
+  <div
+    class="relative pl-5 md:pl-15 z-20 flex justify-center h-[calc(100vh-7rem)] max-h-screen flex-col px-4 pb-20 pt-20"
+    id="hero"
+    ref={sectionRef}
+  >
+    <h1 class="uppercase relative z-10 mb-8 mt-15 w-full select-none text-[clamp(3rem,8vw,8rem)] leading-[0.75] tracking-[-0.02em] text-white font-archivo-black">
+      <div>
+        The{' '}
+        <span class="bg-linear-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent">
+          Final
+        </span>
+        <span>-Gen</span>
+      </div>
+      <div>Frontend</div>
+      <div>Framework</div>
+    </h1>
+  </div>
+)
+
+const SectionDivider = () => (
+  <div
+    aria-hidden="true"
+    class="relative z-20 mx-0 my-16 h-[2px] w-full bg-[linear-gradient(90deg,transparent,#9d00ff,transparent)] shadow-[0_0_15px_#9d00ff]"
+  ></div>
+)
+
+const StatementSection = ({
+  progress,
+  sectionRef,
+}: {
+  progress: Signal<number>
+  sectionRef: Signal<HTMLElement | undefined>
+}) => (
+  <section class="z-1 px-4 sm:px-6" ref={sectionRef}>
+    <div class="line flex flex-col gap-[clamp(1rem,4vw,1.75rem)] text-center font-archivo-black text-[clamp(2.75rem,12vw,8rem)] leading-[0.75] tracking-[-0.03em] font-extrabold">
+      <div>
+        <motion.span
+          animate={progress.value >= -1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+          class="bg-linear-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent"
+        >
+          ECLIPSA
+        </motion.span>{' '}
+        <motion.span
+          animate={progress.value >= -0.9 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+        >
+          IS A
+        </motion.span>
+      </div>
+      <motion.div
+        animate={progress.value >= -0.7 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+        initial={false}
+        transition={{ duration: 0.24 }}
+      >
+        JAVASCRIPT
+      </motion.div>
+      <motion.div animate={progress.value >= -0.5 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}>
+        FRONTEND
+      </motion.div>
+      <motion.div animate={progress.value >= -0.3 ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}>
+        FRAMEWORK
+      </motion.div>
+    </div>
+    <motion.div
+      animate={progress.value >= -0.1 ? { opacity: 1, x: 0 } : { opacity: 0, x: 16 }}
+      class="pt-10 text-center text-[clamp(2rem,9vw,4.5rem)] leading-[0.75] tracking-[-0.03em] font-black text-white"
     >
+      with
+    </motion.div>
+  </section>
+)
+
+const SiteFooter = ({ sectionRef }: { sectionRef: Signal<HTMLElement | undefined> }) => (
+  <footer
+    class="relative z-20 mt-10 border-t border-white/5 py-10 text-center text-sm text-zinc-500"
+    id="footer"
+    ref={sectionRef}
+  >
+    <p>&copy; 2025 pnsk-lab MIT License.</p>
+  </footer>
+)
+
+const CompileOutputFlow = ({ visible }: { visible: Signal<boolean> }) => (
+  <div class="landing-compile-flow" data-visible={visible.value ? 'true' : 'false'}>
+    <div class="my-5 text-center text-base sm:text-lg">
+      eclipsa compiles your code and make it faster.
+    </div>
+    <motion.div
+      animate={visible.value ? { opacity: 1, x: 0 } : { opacity: 0, x: -16 }}
+      class="flex w-full gap-4"
+      transition={{ delay: 0 }}
+    >
+      <div class="landing-compile-rail landing-compile-rail-source flex w-7 flex-col">
+        <div class="landing-compile-segment landing-compile-segment-horizontal mt-7 h-px w-full" />
+        <div class="landing-compile-segment landing-compile-segment-vertical grow w-px" />
+        <span class="landing-compile-dot landing-compile-dot-source"></span>
+      </div>
+      <div class="min-w-0 flex-1 flex flex-col gap-2">
+        <div class="text-gray-400">YOUR CODE</div>
+        <pre class="rounded-lg border border-purple-950/50 bg-black/30 p-2 text-[clamp(1rem,4vw,1.25rem)]">{`<div>{count.value}</div>`}</pre>
+      </div>
+    </motion.div>
+
+    <motion.div
+      animate={visible.value ? { opacity: 1, x: 0 } : { opacity: 0, x: 16 }}
+      class="flex w-full gap-4"
+      transition={{ delay: 0.2 }}
+    >
+      <div class="landing-compile-rail landing-compile-rail-client flex w-7 flex-col">
+        <div class="landing-compile-segment landing-compile-segment-vertical h-7 w-px" />
+        <div class="landing-compile-segment landing-compile-segment-horizontal h-px w-full" />
+        <div class="landing-compile-segment landing-compile-segment-vertical grow w-px" />
+        <span class="landing-compile-dot landing-compile-dot-client"></span>
+      </div>
+      <div class="mt-5 min-w-0 flex-1 flex flex-col gap-2">
+        <div class="text-gray-400">Client</div>
+        <pre class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-sm">{`var _cloned = __eclipsaTemplate0();
+var __eclipsaNode0 = _cloned.childNodes[0];
+_insert(() => count.value, _cloned, __eclipsaNode0);
+return _cloned;`}</pre>
+      </div>
+    </motion.div>
+
+    <motion.div
+      animate={visible.value ? { opacity: 1, x: 0 } : { opacity: 0, x: 16 }}
+      class="flex w-full gap-4"
+      transition={{ delay: 0.4 }}
+    >
+      <div class="landing-compile-rail landing-compile-rail-ssr flex w-7 flex-col">
+        <div class="landing-compile-segment landing-compile-segment-vertical h-7 w-px" />
+        <div class="landing-compile-segment landing-compile-segment-horizontal h-px w-full" />
+        <span class="landing-compile-dot landing-compile-dot-ssr"></span>
+      </div>
+      <div class="mt-5 min-w-0 flex-1 flex flex-col gap-2">
+        <div class="text-gray-400">SSR</div>
+        <pre class="bg-black/30 p-2 rounded-lg border border-purple-950/50 text-sm">{`return _ssrTemplate(["<div>", "</div>"], count.value);`}</pre>
+      </div>
+    </motion.div>
+  </div>
+)
+
+export default () => {
+  const sectionRefs = useLandingSectionRefs()
+  const { scrollY } = useScroll()
+  const sectionMeasurements = useSectionMeasurements(scrollY, sectionRefs)
+  const statementProgress = useSectionProgress(sectionMeasurements, 'statement')
+  const statementProgressSignal = useSignal(0)
+  const featuresProgress = useSectionProgress(sectionMeasurements, 'features')
+  const featuresVisibleSignal = useSignal(false)
+  const compilerVisible = useSignal(false)
+  const yourCodeVisible = useSignal(false)
+
+  useMotionValueEvent(statementProgress, 'change', (value) => {
+    statementProgressSignal.value = value
+  })
+  useMotionValueEvent(featuresProgress, 'change', (value) => {
+    featuresVisibleSignal.value = value >= 0
+    compilerVisible.value = value >= 0.23
+    yourCodeVisible.value = value >= 0.24
+  })
+
+  const umbrellaOpen = useSpring(useSectionTrackValue(sectionMeasurements, OPEN, 'open'), {
+    damping: 28,
+    stiffness: 260,
+  })
+  const umbrellaSize = useSpring(useSectionTrackValue(sectionMeasurements, SIZE, 'size'), {
+    damping: 30,
+    stiffness: 240,
+  })
+  const umbrellaX = useSpring(useSectionTrackValue(sectionMeasurements, POS, 'x'), {
+    damping: 30,
+    stiffness: 240,
+  })
+  const umbrellaY = useSpring(useSectionTrackValue(sectionMeasurements, POS, 'y'), {
+    damping: 30,
+    stiffness: 240,
+  })
+  const umbrellaRotateX = useSpring(useSectionTrackValue(sectionMeasurements, ROTATE, 'x'), {
+    damping: 26,
+    stiffness: 220,
+  })
+  const umbrellaRotateY = useSpring(useSectionTrackValue(sectionMeasurements, ROTATE, 'y'), {
+    damping: 26,
+    stiffness: 220,
+  })
+  const umbrellaRotateZ = useSpring(useSectionTrackValue(sectionMeasurements, ROTATE, 'z'), {
+    damping: 26,
+    stiffness: 220,
+  })
+  const { canvasRef } = useLandingScene({
+    motion: {
+      open: umbrellaOpen,
+      positionNormalized: {
+        x: umbrellaX,
+        y: umbrellaY,
+      },
+      rotation: {
+        x: umbrellaRotateX,
+        y: umbrellaRotateY,
+        z: umbrellaRotateZ,
+      },
+      sizeNormalized: umbrellaSize,
+    },
+  })
+  const { orbitAnchorRef, orbitRef } = useFeatureOrbitPresentation(umbrellaX, umbrellaRotateY)
+
+  return (
+    <div class="relative flex min-h-screen flex-col overflow-x-clip bg-[#050505] text-white antialiased font-space-grotesk selection:bg-purple-500 selection:text-white">
       <div
         aria-hidden="true"
         class="pointer-events-none fixed inset-0 z-0 bg-[image:linear-gradient(to_right,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[length:50px_50px]"
@@ -31,231 +698,114 @@ export default component$(() => {
         class="pointer-events-none fixed inset-0 z-[1] h-screen w-screen"
         ref={canvasRef}
       ></canvas>
-      <nav class="fixed top-0 z-50 flex w-full items-center justify-between bg-[linear-gradient(to_bottom,rgba(5,5,5,1),rgba(5,5,5,0))] px-6 py-6">
-        <a class="flex items-center gap-2 text-xl font-urbanist" data-interactive="" href="#hero">
-          <Logo class="w-5 h-5" />
-          <span>eclipsa</span>
-          <span class="text-xs">experimental</span>
-        </a>
 
-        <div class="hidden items-center gap-8 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 md:flex">
-          <Link
-            class="transition-colors hover:text-white"
-            data-interactive=""
-            href={`${import.meta.env.BASE_URL}docs`}
-          >
-            Docs
-          </Link>
-          <Link
-            class="transition-colors hover:text-white"
-            data-interactive=""
-            href={`${import.meta.env.BASE_URL}playground`}
-          >
-            Playground
-          </Link>
-          <Link
-            class="transition-colors hover:text-white"
-            data-interactive=""
-            href={`${import.meta.env.BASE_URL}reference`}
-          >
-            Reference
-          </Link>
-        </div>
+      <HeroSection sectionRef={sectionRefs.hero} />
+      <SectionDivider />
+      <StatementSection sectionRef={sectionRefs.statement} progress={statementProgressSignal} />
 
-        <a
-          aria-label="GitHub"
-          class="text-white transition-colors hover:text-[#9d00ff]"
-          data-interactive=""
-          href="https://github.com/pnsk-lab/eclipsa"
-        >
-          <svg
-            aria-hidden="true"
-            class="h-6 w-6"
-            fill="none"
-            stroke="currentColor"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            viewBox="0 0 24 24"
-          >
-            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20.1 4.77 5.07 5.07 0 0 0 20 1s-1.18-.35-4 1.48a13.38 13.38 0 0 0-7 0C6.18.65 5 1 5 1a5.07 5.07 0 0 0-.1 3.77A5.44 5.44 0 0 0 3.5 8.5c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
-          </svg>
-        </a>
-      </nav>
-
-      <div
-        class="relative z-20 flex h-170 max-h-screen flex-col px-4 pb-20 pt-20 text-center"
-        id="hero"
-      >
-        <h1 class="uppercase relative z-10 mb-8 mt-15 w-full select-none text-black text-[clamp(3rem,8vw,8rem)] leading-[0.75] tracking-[-0.02em] text-white font-archivo-black">
-          The{' '}
-          <span class="bg-gradient-to-r from-[#9d00ff] to-[#7700ff] bg-clip-text text-transparent">
-            Final
-          </span>
-          -Gen Frontend Framework
-        </h1>
-
-        <div class="z-20 mt-10 flex flex-col items-center">
-          <p class="mb-6 max-w-3xl text-xl font-bold uppercase tracking-wide text-white font-archivo-black md:text-2xl">
-            Ultrafast development, ultrafast apps.
-          </p>
-          <p class="mx-auto mb-12 max-w-2xl text-sm font-medium leading-relaxed text-zinc-400 md:text-base">
-            eclipsa aims to be the last frontend framework before AI replaces web app by performance
-            and developer experience.
-          </p>
-
-          <div class="flex flex-col gap-6 sm:flex-row">
-            <button
-              class="relative isolate flex items-center justify-center gap-3 overflow-hidden border border-[rgba(157,0,255,0.5)] px-10 py-4 text-sm font-bold uppercase tracking-[0.1em] text-white transition duration-300 before:absolute before:inset-y-0 before:left-[-100%] before:-z-10 before:w-full before:bg-[linear-gradient(90deg,transparent,rgba(157,0,255,0.4),transparent)] before:content-[''] before:transition-[left] before:duration-500 hover:border-[#9d00ff] hover:shadow-[0_0_20px_rgba(157,0,255,0.4)] hover:before:left-[100%]"
-              data-interactive=""
-              type="button"
+      <section class="landing-features-section" id="features" ref={sectionRefs.features}>
+        <motion.div class="landing-features-stage">
+          <div class="landing-features-orbit-anchor" ref={orbitAnchorRef}>
+            <div
+              class="landing-features-orbit"
+              ref={orbitRef}
+              style={`--feature-count:${FEATURE_ITEMS.length}`}
             >
-              <svg
-                aria-hidden="true"
-                class="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="m4 17 6-6-6-6" />
-                <path d="M12 19h8" />
-              </svg>
-              <span>npm create eclipsa@latest</span>
-            </button>
-
-            <Link
-              class="self-center border-b border-transparent pb-1 text-sm font-bold uppercase tracking-[0.3em] text-zinc-400 transition-all hover:border-[#9d00ff] hover:text-white"
-              data-interactive=""
-              href="/docs"
+              {FEATURE_ITEMS.map((feature, index) => (
+                <div
+                  key={feature.title}
+                  class="landing-feature-orbit-item"
+                  data-active={
+                    index === resolveRightmostFeatureIndex(FEATURE_ITEMS.length, 0)
+                      ? 'true'
+                      : undefined
+                  }
+                  style={`--feature-index: ${index}`}
+                >
+                  <article
+                    class="landing-feature-card flex items-center gap-1 justify-center self-start rounded-lg transition duration-300 hover:-translate-y-2"
+                    data-interactive=""
+                  >
+                    <div
+                      class={`${feature.iconClass} landing-feature-card-icon h-8 w-8 text-[#fbf4ff]`}
+                    />
+                    <motion.div
+                      animate={
+                        featuresVisibleSignal.value ? { opacity: 1, x: 0 } : { opacity: 0, x: -16 }
+                      }
+                    >
+                      <h2 class="font-archivo-black text-[clamp(0.9rem,2vw,1.5rem)] uppercase tracking-wide text-white">
+                        {feature.title}
+                      </h2>
+                    </motion.div>
+                  </article>
+                </div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+        <div class="landing-features-content text-white">
+          <div class="landing-features-content-spacer" />
+          <div class="landing-features-stack">
+            <motion.div
+              class="landing-features-compiler"
+              animate={compilerVisible.value ? { opacity: 1 } : { opacity: 0 }}
             >
-              Read the Docs
-            </Link>
+              <div class="flex min-h-dvh flex-col justify-center">
+                <div class="landing-features-compiler-spacer" />
+                <div class="landing-features-compiler-headline font-extrabold text-[clamp(2rem,5vw,4.5rem)] text-center leading-none tracking-[-0.02em]">
+                  <div>SSR Fast,</div>
+                  <div>Client Fast.</div>
+                </div>
+                <div class="relative mt-8 min-h-[200vh]">
+                  <div class="landing-features-compiler-viewport">
+                    <CompileOutputFlow visible={yourCodeVisible} />
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+            <div class="landing-features-copy">
+              <div class="text-base sm:text-lg">
+                eclipsa is inspired by a lot of modern frameworks, and has a features required for
+                modern development:
+              </div>
+              <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {[
+                  {
+                    icon: 'i-tabler-file-code',
+                    title: 'File System Routing',
+                    link: '/docs/materials/routing',
+                  },
+                ].map((feature) => (
+                  <div
+                    key={feature.title}
+                    class="flex flex-col gap-2 mt-4 border border-purple-950/50 rounded-lg p-4"
+                  >
+                    <div class="flex items-center gap-2">
+                      <div class={`${feature.icon} h-6 w-6 text-[#fbf4ff]`} />
+                      <div class="text-white text-lg">{feature.title}</div>
+                    </div>
+                    <Image
+                      class="max-h-36 object-contain object-left"
+                      src={routingVscodeImage}
+                      decoding="auto"
+                      width={256}
+                      alt={feature.title}
+                    />
+                    <Link href={feature.link} class="text-sm text-purple-400 hover:underline">
+                      Learn more
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div class="landing-features-placeholder bg-amber-200">
+              {'lorem ipsum dolor sit amet'.repeat(1)}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div
-        aria-hidden="true"
-        class="relative z-20 mx-0 my-16 h-[2px] w-full bg-[linear-gradient(90deg,transparent,#9d00ff,transparent)] shadow-[0_0_15px_#9d00ff]"
-      ></div>
-
-      <section class="relative z-20 mx-auto w-full max-w-7xl px-6 py-20" id="features">
-        <div class="grid grid-cols-1 gap-8 md:grid-cols-3">
-          <article
-            class="group rounded-lg border border-white/5 border-t-[rgba(157,0,255,0.3)] bg-[rgba(20,20,25,0.6)] p-8 backdrop-blur-[10px] transition duration-300 hover:-translate-y-2"
-            data-interactive=""
-          >
-            <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(157,0,255,0.1)] transition duration-300 group-hover:scale-110">
-              <svg
-                aria-hidden="true"
-                class="h-6 w-6 text-[#9d00ff]"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M6 19a4 4 0 1 1 .7-7.9A6 6 0 1 1 18 14h1a3 3 0 1 1 0 6Z" />
-                <path d="m13 11-4 6h3l-1 6 4-6h-3Z" />
-              </svg>
-            </div>
-            <h2 class="mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
-              Resumable by Default
-            </h2>
-            <p class="text-sm leading-relaxed text-zinc-400">
-              SSR ships resumable metadata for components, signals, visible callbacks, and watches
-              so the client can wake up only the interactive work it actually needs.
-            </p>
-          </article>
-
-          <article
-            class="group rounded-lg border border-white/5 border-t-[rgba(157,0,255,0.3)] bg-[rgba(20,20,25,0.6)] p-8 backdrop-blur-[10px] transition duration-300 hover:-translate-y-2"
-            data-interactive=""
-          >
-            <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(157,0,255,0.1)] transition duration-300 group-hover:scale-110">
-              <svg
-                aria-hidden="true"
-                class="h-6 w-6 text-[#9d00ff]"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M22 12a10 10 0 0 0-20 0Z" />
-                <path d="M12 12v6a2 2 0 0 0 4 0" />
-              </svg>
-            </div>
-            <h2 class="mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
-              DOM-Compiled Client
-            </h2>
-            <p class="text-sm leading-relaxed text-zinc-400">
-              Client transforms emit direct DOM operations instead of a generic hydration runtime,
-              keeping updates narrow and aligned with the SSR output.
-            </p>
-          </article>
-
-          <article
-            class="group relative overflow-hidden rounded-lg border border-white/5 border-t-[rgba(157,0,255,0.3)] bg-[rgba(20,20,25,0.6)] p-8 backdrop-blur-[10px] transition duration-300 hover:-translate-y-2"
-            data-interactive=""
-          >
-            <div
-              aria-hidden="true"
-              class="pointer-events-none absolute -bottom-4 -right-4 opacity-10"
-            >
-              <svg
-                aria-hidden="true"
-                class="h-32 w-32 text-[#9d00ff]"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M7 16a5 5 0 1 0 10 0c0-2.8-2.4-6.5-5-10-2.6 3.5-5 7.2-5 10Z" />
-                <path d="M5 8a2.5 2.5 0 1 0 5 0c0-1.4-1.2-3.3-2.5-5C6.2 4.7 5 6.6 5 8Z" />
-                <path d="M14 5a2 2 0 1 0 4 0c0-1.1-1-2.6-2-4-1 1.4-2 2.9-2 4Z" />
-              </svg>
-            </div>
-            <div class="relative z-10 mb-6 flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(157,0,255,0.1)] transition duration-300 group-hover:scale-110">
-              <svg
-                aria-hidden="true"
-                class="h-6 w-6 text-[#9d00ff]"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M7 16a5 5 0 1 0 10 0c0-2.8-2.4-6.5-5-10-2.6 3.5-5 7.2-5 10Z" />
-                <path d="M5 8a2.5 2.5 0 1 0 5 0c0-1.4-1.2-3.3-2.5-5C6.2 4.7 5 6.6 5 8Z" />
-                <path d="M14 5a2 2 0 1 0 4 0c0-1.1-1-2.6-2-4-1 1.4-2 2.9-2 4Z" />
-              </svg>
-            </div>
-            <h2 class="relative z-10 mb-3 text-xl uppercase tracking-wide text-white font-archivo-black">
-              Full-Stack Primitives
-            </h2>
-            <p class="relative z-10 text-sm leading-relaxed text-zinc-400">
-              Routing, loaders, actions, and symbol-aware Vite integration live in one pipeline, so
-              SSR, resume, dev HMR, and build output stay consistent.
-            </p>
-          </article>
-        </div>
       </section>
-
-      <footer
-        class="relative z-20 mt-10 border-t border-white/5 py-10 text-center text-sm text-zinc-500"
-        id="footer"
-      >
-        <p>&copy; 2025 pnsk-lab MIT License.</p>
-      </footer>
+      <SiteFooter sectionRef={sectionRefs.footer} />
     </div>
   )
-})
+}

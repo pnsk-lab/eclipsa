@@ -1,11 +1,11 @@
 {
   "name": "eclipsa",
-  "version": "0.2.0-alpha.0",
-  "license": "MIT",
+  "version": "0.0.0",
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
     "url": "https://github.com/pnsk-lab/eclipsa/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pnsk-lab/eclipsa.git",
@@ -17,9 +17,21 @@
       "types": "./mod.ts",
       "import": "./mod.ts"
     },
+    "./atom": {
+      "types": "./atom/mod.ts",
+      "import": "./atom/mod.ts"
+    },
+    "./web-utils": {
+      "types": "./web-utils/mod.ts",
+      "import": "./web-utils/mod.ts"
+    },
     "./vite": {
       "types": "./vite/mod.ts",
       "import": "./vite/mod.ts"
+    },
+    "./vite/build/runtime": {
+      "types": "./vite/build/runtime.ts",
+      "import": "./vite/build/runtime.ts"
     },
     "./jsx-runtime": {
       "types": "./jsx/jsx-runtime.ts",
@@ -56,9 +68,21 @@
         "types": "./mod.d.mts",
         "import": "./mod.mjs"
       },
+      "./atom": {
+        "types": "./atom/mod.d.mts",
+        "import": "./atom/mod.mjs"
+      },
+      "./web-utils": {
+        "types": "./web-utils/mod.d.mts",
+        "import": "./web-utils/mod.mjs"
+      },
       "./vite": {
         "types": "./vite/mod.d.mts",
         "import": "./vite/mod.mjs"
+      },
+      "./vite/build/runtime": {
+        "types": "./vite/build/runtime.d.mts",
+        "import": "./vite/build/runtime.mjs"
       },
       "./jsx-runtime": {
         "types": "./jsx/jsx-runtime.d.mts",
@@ -90,41 +114,19 @@
       }
     }
   },
-  "napi": {
-    "binaryName": "eclipsa",
-    "targets": [
-      "x86_64-apple-darwin",
-      "aarch64-apple-darwin",
-      "x86_64-unknown-linux-gnu",
-      "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-musl",
-      "aarch64-unknown-linux-musl",
-      "x86_64-pc-windows-msvc",
-      "aarch64-pc-windows-msvc",
-      "wasm32-wasip1-threads"
-    ]
-  },
   "scripts": {
-    "artifacts": "bunx @napi-rs/cli artifacts --package-json-path ./package.json --output-dir ./compiler/native/generated --npm-dir ./npm --build-output-dir ./artifacts",
-    "build": "bun run build:js && bun run build:native",
-    "build:js": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
-    "build:native:dev": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa",
-    "build:native": "node -e \"require('node:fs').rmSync('./compiler/native/generated', { recursive: true, force: true })\" && bunx @napi-rs/cli build --platform --release --manifest-path ./compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ./compiler/rust/target --output-dir ./compiler/native/generated --js-package-name eclipsa",
-    "create:npm-dirs": "node -e \"require('node:fs').rmSync('./npm', { recursive: true, force: true })\" && bunx @napi-rs/cli create-npm-dirs --package-json-path ./package.json --npm-dir ./npm",
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
     "pack": "bun run build",
-    "prepublishOnly": "bun ./scripts/sync-package-manifest.ts publish && bunx @napi-rs/cli pre-publish -t npm --package-json-path ./package.json --npm-dir ./npm",
-    "restore:manifest": "bun ./scripts/sync-package-manifest.ts dev",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "version:napi": "bunx @napi-rs/cli version --package-json-path ./package.json --npm-dir ./npm",
-    "test": "bun run build:native:dev && vp test --run"
+    "test": "bun run --filter @eclipsa/optimizer build:native:dev && vp test --run",
+    "test:coverage": "bun run --filter @eclipsa/optimizer build:native:dev && c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run"
   },
   "dependencies": {
-    "@napi-rs/wasm-runtime": "^1.1.1",
+    "@eclipsa/optimizer": "workspace:^",
     "fast-glob": "^3.3.2",
     "hono": "^4.6.4"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.5.1",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1"
   },
   "peerDependencies": {

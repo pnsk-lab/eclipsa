@@ -1,13 +1,13 @@
 import type { Context } from 'hono'
 import type { JSX } from '../jsx/types.ts'
 import { renderToString } from '../jsx/mod.ts'
+import { createComponentBoundaryHtmlComment } from './runtime/markers.ts'
 import {
   beginAsyncSSRContainer,
   beginSSRContainer,
   collectPendingSuspenseBoundaryIds,
   getResumePayloadScriptContent,
   getStreamingResumeBootstrapScriptContent as getStreamingResumeBootstrapScriptContentFromRuntime,
-  renderResolvedSuspenseBoundaryToString,
   toResumePayload,
   toResumePayloadSubset,
   type ResumePayload,
@@ -47,6 +47,11 @@ const createStreamingResumePayload = (
   renderedComponentIds: Set<string>,
 ): ResumePayload => toResumePayloadSubset(container, ['$root', ...renderedComponentIds])
 
+const getPendingSuspensePromises = (container: RuntimeContainer) =>
+  collectPendingSuspenseBoundaryIds(container)
+    .map((boundaryId) => container.components.get(boundaryId)?.suspensePromise ?? null)
+    .filter((promise): promise is Promise<unknown> => !!promise)
+
 export const renderSSR = (
   render: () => JSX.Element | JSX.Element[],
   options?: {
@@ -70,6 +75,15 @@ export const renderSSRAsync = async (
   },
 ): Promise<SSRRenderResult> => {
   const asyncSignalSnapshotCache = new Map<string, unknown>()
+  const externalRenderCache = new Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >()
   const seededLoaderStates = new Map<string, { data: unknown; error: unknown; loaded: boolean }>()
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -88,13 +102,15 @@ export const renderSSRAsync = async (
       },
       {
         asyncSignalSnapshotCache,
+        externalRenderCache,
       },
     )
 
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
-      if (container.pendingSuspensePromises.size > 0) {
-        await Promise.allSettled([...container.pendingSuspensePromises])
+      const pendingSuspensePromises = getPendingSuspensePromises(container)
+      if (container.pendingSuspensePromises.size > 0 || pendingSuspensePromises.length > 0) {
+        await Promise.allSettled([...container.pendingSuspensePromises, ...pendingSuspensePromises])
         continue
       }
       asyncSignalSnapshotCache.clear()
@@ -130,8 +146,8 @@ export const renderSSRAsync = async (
 }
 
 const extractBoundaryHtml = (html: string, boundaryId: string) => {
-  const startToken = `<!--ec:c:${boundaryId}:start-->`
-  const endToken = `<!--ec:c:${boundaryId}:end-->`
+  const startToken = createComponentBoundaryHtmlComment(boundaryId, 'start')
+  const endToken = createComponentBoundaryHtmlComment(boundaryId, 'end')
   const startIndex = html.indexOf(startToken)
   if (startIndex < 0) {
     return null
@@ -153,6 +169,15 @@ const renderStreamingAttempt = async (
   },
   seededLoaderStates: Map<string, { data: unknown; error: unknown; loaded: boolean }>,
   asyncSignalSnapshotCache: Map<string, unknown>,
+  externalRenderCache: Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >,
 ): Promise<{
   container: RuntimeContainer
   html: string
@@ -175,11 +200,16 @@ const renderStreamingAttempt = async (
       },
       {
         asyncSignalSnapshotCache,
+        externalRenderCache,
       },
     )
 
     try {
       const html = withRuntimeContainer(container, () => renderToString(result))
+      if (container.pendingSuspensePromises.size > 0) {
+        await Promise.allSettled(container.pendingSuspensePromises)
+        continue
+      }
       const renderedComponentIds = collectRenderedComponentIdsFromHtml(html)
       return {
         container,
@@ -224,12 +254,22 @@ export const renderSSRStream = async (
   },
 ): Promise<SSRStreamRenderResult> => {
   const asyncSignalSnapshotCache = new Map<string, unknown>()
+  const externalRenderCache = new Map<
+    string,
+    {
+      error?: unknown
+      html?: string
+      pending?: Promise<string>
+      status: 'pending' | 'rejected' | 'resolved'
+    }
+  >()
   const seededLoaderStates = new Map<string, { data: unknown; error: unknown; loaded: boolean }>()
   const initial = await renderStreamingAttempt(
     render,
     options ?? {},
     seededLoaderStates,
     asyncSignalSnapshotCache,
+    externalRenderCache,
   )
 
   if (initial.pendingBoundaryIds.length === 0) {
@@ -261,6 +301,7 @@ export const renderSSRStream = async (
           options ?? {},
           seededLoaderStates,
           asyncSignalSnapshotCache,
+          externalRenderCache,
         )
 
         const nextPending = new Set(next.pendingBoundaryIds)

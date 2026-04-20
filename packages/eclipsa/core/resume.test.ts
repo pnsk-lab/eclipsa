@@ -1,22 +1,43 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   applyResumeHmrSymbolReplacements,
+  applyResumeHmrUpdateToRegisteredContainers,
   applyResumeHmrUpdate,
+  bustRuntimeSymbolUrls,
   collectResumeHmrBoundaryIds,
   createResumeContainer,
+  invalidateRouteModulesForHmr,
+  invalidateRuntimeSymbolCaches,
+  markResumeHmrBoundaryDirty,
+  refreshRouteContainer,
+  refreshRouteContainerForHmr,
+  registerResumeContainer,
+  resolveResumeHmrBoundarySymbols,
   type RuntimeContainer,
 } from './runtime.ts'
 
 const createContainer = (overrides?: Partial<RuntimeContainer>) =>
   ({
+    actionStates: new Map(),
+    actions: new Map(),
+    asyncSignalSnapshotCache: new Map(),
+    asyncSignalStates: new Map(),
+    atoms: new WeakMap(),
     components: new Map(),
     dirty: new Set(),
     doc: undefined,
+    externalRenderCache: new Map(),
+    id: 'rt-test',
     imports: new Map(),
+    loaderStates: new Map(),
+    loaders: new Map(),
+    nextAtomId: 0,
     nextComponentId: 0,
     nextElementId: 0,
     nextScopeId: 0,
     nextSignalId: 0,
+    pendingSuspensePromises: new Set(),
+    router: null,
     rootChildCursor: 0,
     rootElement: undefined,
     scopes: new Map(),
@@ -29,8 +50,16 @@ const createContainer = (overrides?: Partial<RuntimeContainer>) =>
     ...overrides,
   }) as RuntimeContainer
 
+const createCleanupSlot = () => ({ callbacks: [] })
+
+const resetRegisteredResumeContainers = () => {
+  ;(globalThis as Record<PropertyKey, unknown>)[Symbol.for('eclipsa.resume-containers')] =
+    new Set<RuntimeContainer>()
+}
+
 const withFakeResumeDocument = <T>(
   options: {
+    href?: string
     pathname?: string
     comments?: string[]
   },
@@ -49,11 +78,19 @@ const withFakeResumeDocument = <T>(
   }
   class FakeDocument {
     body: HTMLElement
-    location = { pathname: options.pathname ?? '/' } as Location
-    #comments: FakeComment[]
+    location = (() => {
+      const href = options.href ?? `http://example.com${options.pathname ?? '/'}`
+      const url = new URL(href)
+      return {
+        hash: url.hash,
+        href: url.href,
+        origin: url.origin,
+        pathname: url.pathname,
+        search: url.search,
+      } as Location
+    })()
 
     constructor() {
-      this.#comments = (options.comments ?? []).map((data) => new FakeComment(data))
       this.body = { ownerDocument: this } as unknown as HTMLElement
     }
 
@@ -120,6 +157,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -132,6 +170,26 @@ describe('resume HMR runtime helpers', () => {
       imports: new Map([
         ['old-symbol', Promise.resolve({ default: () => null })],
         ['mid-symbol', Promise.resolve({ default: () => null })],
+      ]),
+      scopes: new Map([
+        [
+          'sc0',
+          [
+            {
+              __eclipsa_type: 'ref',
+              data: [
+                {
+                  __eclipsa_type: 'ref',
+                  data: [],
+                  kind: 'symbol',
+                  token: 'old-symbol',
+                },
+              ],
+              kind: 'symbol',
+              token: 'old-symbol',
+            },
+          ],
+        ],
       ]),
       symbols: new Map([['old-symbol', '/app/+page.tsx?eclipsa-symbol=old-symbol']]),
       visibles: new Map([
@@ -162,6 +220,7 @@ describe('resume HMR runtime helpers', () => {
             id: 'w0',
             mode: 'dynamic',
             pending: null,
+            resumed: false,
             run: null,
             scopeId: 'scope-root',
             symbol: 'old-symbol',
@@ -177,6 +236,21 @@ describe('resume HMR runtime helpers', () => {
       'old-symbol': '/app/+page.tsx?eclipsa-symbol=mid-symbol',
     })
     expect(container.components.get('c0')?.symbol).toBe('mid-symbol')
+    expect(container.scopes.get('sc0')).toEqual([
+      {
+        __eclipsa_type: 'ref',
+        data: [
+          {
+            __eclipsa_type: 'ref',
+            data: [],
+            kind: 'symbol',
+            token: 'mid-symbol',
+          },
+        ],
+        kind: 'symbol',
+        token: 'mid-symbol',
+      },
+    ])
     expect(container.visibles.get('v0')?.symbol).toBe('mid-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('mid-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['mid-symbol'])).toEqual(['c0'])
@@ -189,6 +263,21 @@ describe('resume HMR runtime helpers', () => {
     expect(container.symbols.get('mid-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.symbols.get('next-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
     expect(container.components.get('c0')?.symbol).toBe('next-symbol')
+    expect(container.scopes.get('sc0')).toEqual([
+      {
+        __eclipsa_type: 'ref',
+        data: [
+          {
+            __eclipsa_type: 'ref',
+            data: [],
+            kind: 'symbol',
+            token: 'next-symbol',
+          },
+        ],
+        kind: 'symbol',
+        token: 'next-symbol',
+      },
+    ])
     expect(container.visibles.get('v0')?.symbol).toBe('next-symbol')
     expect(container.watches.get('w0')?.symbol).toBe('next-symbol')
     expect(collectResumeHmrBoundaryIds(container, ['next-symbol'])).toEqual(['c0'])
@@ -211,6 +300,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -229,6 +319,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: 'c0',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-header',
             signalIds: [],
             symbol: 'header-symbol',
@@ -256,6 +347,7 @@ describe('resume HMR runtime helpers', () => {
             parentId: '$root',
             props: {},
             projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
             scopeId: 'scope-root',
             signalIds: [],
             start: {} as Comment,
@@ -268,6 +360,46 @@ describe('resume HMR runtime helpers', () => {
     })
 
     expect(collectResumeHmrBoundaryIds(container, ['page-symbol'])).toEqual(['c0'])
+  })
+
+  it('resolves rerender boundary symbols through HMR replacement aliases', () => {
+    const container = createContainer({
+      components: new Map([
+        [
+          'c0',
+          {
+            active: true,
+            didMount: false,
+            end: {} as Comment,
+            id: 'c0',
+            mountCleanupSlots: [],
+            parentId: '$root',
+            props: {},
+            projectionSlots: null,
+            renderEffectCleanupSlot: createCleanupSlot(),
+            scopeId: 'scope-root',
+            signalIds: [],
+            start: {} as Comment,
+            symbol: 'current-symbol',
+            visibleCount: 0,
+            watchCount: 0,
+          },
+        ],
+      ]),
+    })
+
+    const symbolIds = resolveResumeHmrBoundarySymbols({
+      fileUrl: '/app/image/+page.tsx',
+      fullReload: false,
+      rerenderComponentSymbols: ['incoming-symbol'],
+      rerenderOwnerSymbols: [],
+      symbolUrlReplacements: {
+        'incoming-symbol': '/app/image/+page.tsx?eclipsa-symbol=current-symbol',
+      },
+    })
+
+    expect(symbolIds).toEqual(expect.arrayContaining(['incoming-symbol', 'current-symbol']))
+    expect(collectResumeHmrBoundaryIds(container, symbolIds)).toEqual(['c0'])
   })
 
   it('applies replacement-only payloads without requiring DOM rerender', async () => {
@@ -288,6 +420,67 @@ describe('resume HMR runtime helpers', () => {
 
     expect(result).toBe('updated')
     expect(container.symbols.get('next-symbol')).toBe('/app/+page.tsx?eclipsa-symbol=next-symbol')
+  })
+
+  it('forces HMR boundary remounts to rebuild slot content instead of reusing old DOM', () => {
+    const container = createContainer({
+      components: new Map([
+        [
+          'c0',
+          {
+            active: true,
+            didMount: false,
+            end: {} as Comment,
+            id: 'c0',
+            mountCleanupSlots: [],
+            parentId: '$root',
+            props: {},
+            projectionSlots: { children: 1 },
+            renderEffectCleanupSlot: createCleanupSlot(),
+            reuseExistingDomOnActivate: true,
+            reuseProjectionSlotDomOnActivate: true,
+            scopeId: 'scope-root',
+            signalIds: [],
+            start: {} as Comment,
+            symbol: 'layout-symbol',
+            visibleCount: 0,
+            watchCount: 0,
+          },
+        ],
+      ]),
+    })
+
+    expect(markResumeHmrBoundaryDirty(container, 'c0')).toBe(true)
+    expect(container.components.get('c0')?.active).toBe(false)
+    expect(container.components.get('c0')?.reuseExistingDomOnActivate).toBe(false)
+    expect(container.components.get('c0')?.reuseProjectionSlotDomOnActivate).toBe(false)
+    expect(container.dirty).toEqual(new Set(['c0']))
+  })
+
+  it('invalidates cached modules for rerendered symbols even when the symbol id stays stable', () => {
+    const container = createContainer({
+      imports: new Map([
+        ['stable-symbol', Promise.resolve({ default: () => null })],
+        ['other-symbol', Promise.resolve({ default: () => null })],
+      ]),
+    })
+
+    invalidateRuntimeSymbolCaches(container, ['stable-symbol'])
+
+    expect(container.imports.has('stable-symbol')).toBe(false)
+    expect(container.imports.has('other-symbol')).toBe(true)
+  })
+
+  it('cache-busts stable symbol URLs before rerendering unchanged symbol ids', () => {
+    const container = createContainer({
+      symbols: new Map([['stable-symbol', '/app/+page.tsx?eclipsa-symbol=stable-symbol']]),
+    })
+
+    bustRuntimeSymbolUrls(container, ['stable-symbol'], 123)
+
+    expect(container.symbols.get('stable-symbol')).toBe(
+      '/app/+page.tsx?eclipsa-symbol=stable-symbol&t=123',
+    )
   })
 
   it('registers freshly added symbol URLs when the payload includes direct additions', () => {
@@ -377,6 +570,55 @@ describe('resume HMR runtime helpers', () => {
 
         container.signals.get('s0')!.handle.value = 2
         expect(container.dirty).toEqual(new Set(['c0']))
+      },
+    )
+  })
+
+  it('syncs resumed router URLs without queueing location-driven rerenders', () => {
+    withFakeResumeDocument(
+      {
+        comments: ['ec:c:c0:start', 'ec:c:c0:end'],
+        href: 'http://localhost:4173/docs/getting-started/overview',
+      },
+      (doc) => {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: [],
+              symbol: 'layout-symbol',
+              visibleCount: 0,
+              watchCount: 0,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+          },
+          signals: {
+            '$router:isNavigating': false,
+            '$router:path': '/docs/getting-started/overview',
+            '$router:url': 'http://localhost/docs/getting-started/overview',
+          },
+          subscriptions: {
+            '$router:isNavigating': [],
+            '$router:path': [],
+            '$router:url': ['c0'],
+          },
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+
+        expect(container.router?.currentUrl.value).toBe(
+          'http://localhost:4173/docs/getting-started/overview',
+        )
+        expect(container.dirty).toEqual(new Set())
       },
     )
   })
@@ -475,5 +717,348 @@ describe('resume HMR runtime helpers', () => {
       globalThis.NodeFilter = originalNodeFilter
       globalRecord.Element = OriginalElement
     }
+  })
+
+  it('forces current-route refreshes even when the href has not changed', async () => {
+    const replace = vi.fn()
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace,
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/docs/getting-started',
+          origin: 'http://example.com',
+          pathname: '/docs/getting-started',
+          search: '',
+        },
+        title: 'Docs',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+    })
+
+    await refreshRouteContainer(container)
+
+    expect(replace).toHaveBeenCalledWith('http://example.com/docs/getting-started')
+  })
+
+  it('invalidates cached route modules for matching HMR file URLs', () => {
+    const currentUrl = 'http://example.com/image'
+    const currentPrefetchKey = '/image'
+    const imageRoute = {
+      entry: {
+        error: null,
+        hasMiddleware: false,
+        layouts: ['/app/+layout.tsx'],
+        loading: null,
+        notFound: null,
+        page: '/app/image/+page.tsx',
+        routePath: '/image',
+        segments: [],
+        server: null,
+      },
+      error: undefined,
+      layouts: [
+        {
+          metadata: null,
+          renderer: () => null,
+          symbol: 'layout-symbol',
+          url: '/app/+layout.tsx',
+        },
+      ],
+      params: {},
+      pathname: '/image',
+      page: {
+        metadata: null,
+        renderer: () => null,
+        symbol: 'page-symbol',
+        url: '/app/image/+page.tsx',
+      },
+      render: () => null,
+    }
+    const otherRoute = {
+      ...imageRoute,
+      entry: {
+        ...imageRoute.entry,
+        page: '/app/other/+page.tsx',
+        routePath: '/other',
+      },
+      pathname: '/other',
+      page: {
+        ...imageRoute.page,
+        url: '/app/other/+page.tsx',
+      },
+    }
+    const container = createContainer({
+      doc: {
+        location: {
+          href: currentUrl,
+        },
+      } as unknown as Document,
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: imageRoute,
+        currentUrl: { value: currentUrl },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map([
+          ['/image::page', imageRoute],
+          ['/other::page', otherRoute],
+        ]),
+        location: undefined as any,
+        manifest: [imageRoute.entry, otherRoute.entry],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map([[currentPrefetchKey, new Map()]]),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map([[currentPrefetchKey, Promise.resolve({ ok: true } as any)]]),
+        sequence: 0,
+      },
+    })
+
+    const invalidated = invalidateRouteModulesForHmr(container, '/app/image/+page.tsx', 1234)
+
+    expect(invalidated).toBe(true)
+    expect(container.router?.currentRoute).toBeNull()
+    expect(container.router?.loadedRoutes.has('/image::page')).toBe(false)
+    expect(container.router?.loadedRoutes.has('/other::page')).toBe(true)
+    expect(container.router?.prefetchedLoaders.has(currentPrefetchKey)).toBe(false)
+    expect(container.router?.routePrefetches.has(currentPrefetchKey)).toBe(false)
+    expect(container.router?.routeModuleBusts.get('/app/image/+page.tsx')).toBe(1234)
+  })
+
+  it('refreshes matching route containers when resumable HMR cannot patch a boundary', async () => {
+    resetRegisteredResumeContainers()
+    const replace = vi.fn()
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace,
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/image',
+          origin: 'http://example.com',
+          pathname: '/image',
+          search: '',
+        },
+        title: 'Image',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: {
+          entry: {
+            error: null,
+            hasMiddleware: false,
+            layouts: [],
+            loading: null,
+            notFound: null,
+            page: '/app/image/+page.tsx',
+            routePath: '/image',
+            segments: [],
+            server: null,
+          },
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/image',
+          page: {
+            metadata: null,
+            renderer: () => null,
+            symbol: 'page-symbol',
+            url: '/app/image/+page.tsx',
+          },
+          render: () => null,
+        },
+        currentUrl: { value: 'http://example.com/image' },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: undefined as any,
+        manifest: [],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      },
+    })
+    const unregister = registerResumeContainer(container)
+
+    try {
+      const result = await applyResumeHmrUpdateToRegisteredContainers({
+        fileUrl: '/app/image/+page.tsx',
+        fullReload: false,
+        rerenderComponentSymbols: ['missing-symbol'],
+        rerenderOwnerSymbols: [],
+        symbolUrlReplacements: {},
+      })
+
+      expect(result).toBe('updated')
+      expect(replace).toHaveBeenCalledWith('http://example.com/image')
+    } finally {
+      unregister()
+    }
+  })
+
+  it('does not refresh unrelated route containers on resumable HMR fallback', async () => {
+    resetRegisteredResumeContainers()
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace() {},
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/image',
+          origin: 'http://example.com',
+          pathname: '/image',
+          search: '',
+        },
+        title: 'Image',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: {
+          entry: {
+            error: null,
+            hasMiddleware: false,
+            layouts: [],
+            loading: null,
+            notFound: null,
+            page: '/app/image/+page.tsx',
+            routePath: '/image',
+            segments: [],
+            server: null,
+          },
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/image',
+          page: {
+            metadata: null,
+            renderer: () => null,
+            symbol: 'page-symbol',
+            url: '/app/image/+page.tsx',
+          },
+          render: () => null,
+        },
+        currentUrl: { value: 'http://example.com/image' },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: undefined as any,
+        manifest: [],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      },
+    })
+    const unregister = registerResumeContainer(container)
+
+    try {
+      const result = await applyResumeHmrUpdateToRegisteredContainers({
+        fileUrl: '/app/other/+page.tsx',
+        fullReload: false,
+        rerenderComponentSymbols: ['missing-symbol'],
+        rerenderOwnerSymbols: [],
+        symbolUrlReplacements: {},
+      })
+
+      expect(result).toBe('reload')
+    } finally {
+      unregister()
+    }
+  })
+
+  it('refreshes a route container directly for matching HMR module URLs', async () => {
+    const replace = vi.fn()
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace,
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/image',
+          origin: 'http://example.com',
+          pathname: '/image',
+          search: '',
+        },
+        title: 'Image',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: {
+          entry: {
+            error: null,
+            hasMiddleware: false,
+            layouts: [],
+            loading: null,
+            notFound: null,
+            page: '/app/image/+page.tsx',
+            routePath: '/image',
+            segments: [],
+            server: null,
+          },
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/image',
+          page: {
+            metadata: null,
+            renderer: () => null,
+            symbol: 'page-symbol',
+            url: '/app/image/+page.tsx',
+          },
+          render: () => null,
+        },
+        currentUrl: { value: 'http://example.com/image' },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: undefined as any,
+        manifest: [],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      },
+    })
+
+    await expect(
+      refreshRouteContainerForHmr(container, '/app/image/+page.tsx', 4321),
+    ).resolves.toBe(true)
+    expect(container.router?.routeModuleBusts.get('/app/image/+page.tsx')).toBe(4321)
+    expect(replace).toHaveBeenCalledWith('http://example.com/image')
+    await expect(
+      refreshRouteContainerForHmr(container, '/app/other/+page.tsx', 9876),
+    ).resolves.toBe(false)
   })
 })

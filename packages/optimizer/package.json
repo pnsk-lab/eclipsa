@@ -1,0 +1,83 @@
+{
+  "name": "@eclipsa/optimizer",
+  "version": "0.0.0",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/optimizer"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "import": "./mod.ts"
+    },
+    "./native": {
+      "types": "./native.ts",
+      "import": "./native.ts"
+    },
+    "./browser": {
+      "types": "./generated/index.d.ts",
+      "import": "./generated/optimizer.wasi-browser.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/mod.d.mts",
+        "import": "./dist/mod.mjs"
+      },
+      "./native": {
+        "types": "./dist/native.d.mts",
+        "import": "./dist/native.mjs"
+      },
+      "./browser": {
+        "types": "./generated/index.d.ts",
+        "import": "./generated/optimizer.wasi-browser.js"
+      }
+    }
+  },
+  "scripts": {
+    "artifacts": "bun ./scripts/run-napi.ts artifacts --package-json-path ./package.json --output-dir ./generated --npm-dir ./npm --build-output-dir ./artifacts",
+    "build": "bun run build:js && bun run build:native",
+    "build:js": "vp pack",
+    "build:native:dev": "node -e \"require('node:fs').rmSync('./generated', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts build --platform --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer && bun ./scripts/sync-browser-wasm.ts",
+    "build:native": "node -e \"require('node:fs').rmSync('./generated', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer && bun ./scripts/sync-browser-wasm.ts",
+    "create:npm-dirs": "bun ./scripts/create-npm-dirs.ts --package-json-path ./package.json --npm-dir ./npm",
+    "pack": "bun run build",
+    "prepublishOnly": "bun ./scripts/sync-package-manifest.ts publish && bun ./scripts/run-napi.ts pre-publish -t npm --package-json-path ./package.json --npm-dir ./npm",
+    "restore:manifest": "bun ./scripts/sync-package-manifest.ts dev",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "version:napi": "bun ./scripts/run-napi.ts version --package-json-path ./package.json --npm-dir ./npm",
+    "test": "bun run build:native:dev && vp test --run",
+    "test:coverage": "bun run build:native:dev && c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run"
+  },
+  "dependencies": {
+    "@emnapi/core": "^1.9.0",
+    "@emnapi/runtime": "^1.9.0",
+    "@emnapi/wasi-threads": "^1.2.0",
+    "@napi-rs/wasm-runtime": "^1.1.1"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.5.1"
+  },
+  "napi": {
+    "binaryName": "optimizer",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "wasm32-wasip1-threads"
+    ]
+  }
+}

@@ -3,18 +3,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "playwright test",
-    "e2e:headed": "playwright test --headed",
-    "e2e:ui": "playwright test --ui",
+    "e2e": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts",
+    "e2e:headed": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts --headed",
+    "e2e:ui": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts --ui",
     "build": "vp build",
     "dev": "vp dev",
     "start": "bun dist/server/index.mjs",
-    "test": "bun -e \"console.log('Use bun run test:e2e for @eclipsa/e2e.')\"",
+    "test": "bun test ./scripts/*.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@eclipsa/content": "workspace:*",
     "@eclipsa/image": "workspace:*",
+    "@eclipsa/motion": "workspace:*",
+    "@eclipsa/react": "workspace:*",
+    "@eclipsa/vue": "workspace:*",
     "eclipsa": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vue": "^3.5.22",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -1,0 +1,51 @@
+{
+  "name": "@eclipsa/native-gtk4",
+  "version": "0.0.0",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/native-gtk4"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "import": "./mod.ts"
+    },
+    "./vite": {
+      "types": "./vite.ts",
+      "import": "./vite.ts"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./mod.d.mts",
+        "import": "./mod.mjs"
+      },
+      "./vite": {
+        "types": "./vite.d.mts",
+        "import": "./vite.mjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "host:app": "cargo run --manifest-path ./gtk4-rust/Cargo.toml --features gtk-ui --bin eclipsa-native-gtk4",
+    "host:build": "cargo build --manifest-path ./gtk4-rust/Cargo.toml --features gtk-ui --bin eclipsa-native-gtk4",
+    "host:smoke": "cargo run --manifest-path ./gtk4-rust/Cargo.toml --bin eclipsa-native-gtk4-smoke",
+    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "test": "vp test --run",
+    "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
+    "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@eclipsa/native": "workspace:^",
+    "@eclipsa/native-core": "workspace:^"
+  }
+}

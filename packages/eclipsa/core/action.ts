@@ -1,22 +1,38 @@
 import type { JSX } from '../jsx/types.ts'
-import { component$ } from './component.ts'
-import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
-  deserializeValue,
-  serializeValue,
+  ACTION_CSRF_COOKIE,
+  ACTION_CSRF_ERROR_MESSAGE,
+  ACTION_CSRF_FIELD,
+  ACTION_CSRF_HEADER,
+  ACTION_CSRF_INPUT_ATTR,
+  applyActionCsrfCookie,
+  ensureActionCsrfToken,
+  readActionCsrfTokenFromDocument,
+  readActionCsrfTokenFromFormData,
+  readActionCsrfTokenFromRequest,
+} from './action-csrf.ts'
+import {
+  type AppContext,
+  deserializePublicValue,
+  getCurrentServerRequestContext,
+  serializePublicValue,
   type SerializedReference,
   type SerializedValue,
-} from './serialize.ts'
+  transformCurrentPublicError,
+  type WithAppEnv,
+} from './hooks.ts'
 import {
   createDetachedRuntimeSignal,
   ensureRuntimeElementId,
   findRuntimeElement,
+  flushDirtyComponents,
   getRuntimeContainer,
   getRuntimeSignalId,
   type RuntimeContainer,
 } from './runtime.ts'
 import { registerActionHook, setActionHandleMeta, setActionHookMeta } from './internal.ts'
+import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 
 const ACTION_REGISTRY_KEY = Symbol.for('eclipsa.action-registry')
 export const ACTION_CONTENT_TYPE = 'application/eclipsa-action+json'
@@ -24,6 +40,7 @@ const ACTION_STREAM_CONTENT_TYPE = 'application/eclipsa-action-stream+json'
 export const ACTION_FORM_ATTR = 'data-e-action-form'
 export const ACTION_FORM_FIELD = '__e_action'
 const ACTION_INPUT_CACHE_KEY = Symbol.for('eclipsa.action-input-cache')
+const ACTION_CSRF_ERROR_CODE = Symbol.for('eclipsa.action-csrf-error')
 
 declare const ACTION_REF_BRAND: unique symbol
 declare const ACTION_INPUT_TYPE: unique symbol
@@ -87,18 +104,18 @@ type MiddlewareEnv<T> = T extends {
   readonly __eclipsa_action_env__?: infer MiddlewareEnv
 }
   ? Exclude<MiddlewareEnv, undefined> extends Env
-    ? Exclude<MiddlewareEnv, undefined>
+    ? WithAppEnv<Exclude<MiddlewareEnv, undefined>>
     : {}
   : T extends MiddlewareHandler<infer MiddlewareEnv, any, any>
-    ? MiddlewareEnv
-    : {}
+    ? WithAppEnv<MiddlewareEnv>
+    : WithAppEnv<Env>
 
 type ActionEnv<Middlewares extends readonly ActionMiddleware<any>[]> =
   Middlewares extends readonly [infer Head, ...infer Tail]
     ? Tail extends readonly ActionMiddleware<any>[]
       ? MiddlewareEnv<Head> & ActionEnv<Tail>
       : MiddlewareEnv<Head>
-    : {}
+    : WithAppEnv<Env>
 type MiddlewareActionInput<T> = T extends {
   readonly [ACTION_INPUT_TYPE]?: infer Input
 }
@@ -111,11 +128,25 @@ type ActionInput<Middlewares extends readonly ActionMiddleware<any>[]> = [
   ? unknown
   : MiddlewareActionInput<Middlewares[number]>
 
-type ActionInvoker<Input, Output> = unknown extends Input
-  ? (input?: Input | FormData) => Promise<Output>
+type ResolvedActionOutput<Output> = Awaited<Output>
+
+type ActionStreamYield<Output> =
+  ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
+    ? Value
+    : ResolvedActionOutput<Output> extends ReadableStream<infer Value>
+      ? Value
+      : ResolvedActionOutput<Output>
+
+type ActionInvokeResult<Output> =
+  ResolvedActionOutput<Output> extends AsyncIterable<infer Value>
+    ? AsyncGenerator<Value, void, void>
+    : Promise<ResolvedActionOutput<Output>>
+
+type ActionInvoker<Input, Result> = unknown extends Input
+  ? (input?: Input | FormData) => Result
   : undefined extends Input
-    ? (input?: Input | FormData) => Promise<Output>
-    : (input: Input | FormData) => Promise<Output>
+    ? (input?: Input | FormData) => Result
+    : (input: Input | FormData) => Result
 
 export interface ActionSubmission<Input, Output> {
   readonly error: unknown
@@ -127,9 +158,9 @@ export interface ActionFormProps extends Record<string, unknown> {
   children?: JSX.Element | JSX.Element[]
 }
 
-export interface ActionHandle<Input, Output> {
+export interface ActionHandle<Input, Output, InvokeResult = Promise<Output>> {
   Form: (props: ActionFormProps) => JSX.Element
-  action: ActionInvoker<Input, Output>
+  action: ActionInvoker<Input, InvokeResult>
   readonly error: unknown
   readonly formActionId: string
   readonly isPending: boolean
@@ -148,64 +179,74 @@ export interface ActionValidatorMiddleware<Input, Output> extends ActionMiddlewa
   readonly [ACTION_INPUT_TYPE]?: Input
 }
 export type ActionHandler<E extends Env = Env, Output = unknown> = (
-  c: Context<E>,
+  c: AppContext<E>,
 ) => Output | Promise<Output>
 
-type ActionUse<Middlewares extends readonly ActionMiddleware<any>[], Output> = () => ActionHandle<
+type ActionHandlerOutput<Handler extends (...args: any[]) => unknown> = Awaited<ReturnType<Handler>>
+
+type ActionUse<
+  Middlewares extends readonly ActionMiddleware<any>[],
+  Handler extends ActionHandler<any, any>,
+> = () => ActionHandle<
   ActionInput<Middlewares>,
-  Output
+  ActionStreamYield<ActionHandlerOutput<Handler>>,
+  ActionInvokeResult<ActionHandlerOutput<Handler>>
 >
 
 export interface ActionFactory {
-  <Output>(handler: ActionHandler<{}, Output>): ActionUse<[], Output>
-  <M1 extends ActionMiddleware<any>, Output>(
+  <Handler extends ActionHandler<{}, any>>(handler: Handler): ActionUse<[], Handler>
+  <M1 extends ActionMiddleware<any>, Handler extends ActionHandler<ActionEnv<[M1]>, any>>(
     middleware1: M1,
-    handler: ActionHandler<ActionEnv<[M1]>, Output>,
-  ): ActionUse<[M1], Output>
-  <M1 extends ActionMiddleware<any>, M2 extends ActionMiddleware<any>, Output>(
+    handler: Handler,
+  ): ActionUse<[M1], Handler>
+  <
+    M1 extends ActionMiddleware<any>,
+    M2 extends ActionMiddleware<any>,
+    Handler extends ActionHandler<ActionEnv<[M1, M2]>, any>,
+  >(
     middleware1: M1,
     middleware2: M2,
-    handler: ActionHandler<ActionEnv<[M1, M2]>, Output>,
-  ): ActionUse<[M1, M2], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3]>, Output>,
-  ): ActionUse<[M1, M2, M3], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
     M4 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3, M4]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3, M4]>, Output>,
-  ): ActionUse<[M1, M2, M3, M4], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3, M4], Handler>
   <
     M1 extends ActionMiddleware<any>,
     M2 extends ActionMiddleware<any>,
     M3 extends ActionMiddleware<any>,
     M4 extends ActionMiddleware<any>,
     M5 extends ActionMiddleware<any>,
-    Output,
+    Handler extends ActionHandler<ActionEnv<[M1, M2, M3, M4, M5]>, any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
     middleware5: M5,
-    handler: ActionHandler<ActionEnv<[M1, M2, M3, M4, M5]>, Output>,
-  ): ActionUse<[M1, M2, M3, M4, M5], Output>
+    handler: Handler,
+  ): ActionUse<[M1, M2, M3, M4, M5], Handler>
 }
 
 interface RegisteredAction {
@@ -228,6 +269,15 @@ interface ActionStateSnapshot {
   error: unknown
   input: unknown
   result: unknown
+}
+
+class ActionCsrfError extends Error {
+  [ACTION_CSRF_ERROR_CODE] = true
+
+  constructor() {
+    super(ACTION_CSRF_ERROR_MESSAGE)
+    this.name = 'ActionCsrfError'
+  }
 }
 
 interface ActionExecutionValue {
@@ -294,7 +344,7 @@ const normalizeFormSubmissionInput = (value: unknown) => {
   const normalized = formDataToInputObject(value)
   return Object.fromEntries(
     Object.entries(normalized).flatMap(([key, entry]) => {
-      if (key === ACTION_FORM_FIELD) {
+      if (key === ACTION_FORM_FIELD || key === ACTION_CSRF_FIELD) {
         return []
       }
       if (Array.isArray(entry)) {
@@ -308,8 +358,8 @@ const normalizeFormSubmissionInput = (value: unknown) => {
   )
 }
 
-const getActionInputCache = (c: Context<any>) => {
-  const record = c as Context<any> & {
+const getActionInputCache = (c: AppContext<any>) => {
+  const record = c as AppContext<any> & {
     [ACTION_INPUT_CACHE_KEY]?: Promise<unknown>
   }
   if (!record[ACTION_INPUT_CACHE_KEY]) {
@@ -340,13 +390,13 @@ const getActionInputCache = (c: Context<any>) => {
 }
 
 const createActionRefScope = (container: RuntimeContainer | null) =>
-  container ? serializeValue({ container: container.id }) : undefined
+  container ? serializePublicValue({ container: container.id }) : undefined
 
 const readActionRefContainerId = (reference: SerializedReference) => {
   if (!reference.data) {
     return null
   }
-  const decoded = deserializeValue(reference.data)
+  const decoded = deserializePublicValue(reference.data)
   if (!decoded || typeof decoded !== 'object') {
     return null
   }
@@ -355,7 +405,7 @@ const readActionRefContainerId = (reference: SerializedReference) => {
 }
 
 const serializeActionClientValue = (container: RuntimeContainer | null, value: unknown) =>
-  serializeValue(value, {
+  serializePublicValue(value, {
     serializeReference(candidate) {
       const signalId = getRuntimeSignalId(candidate)
       if (signalId) {
@@ -379,7 +429,7 @@ const serializeActionClientValue = (container: RuntimeContainer | null, value: u
   })
 
 const deserializeActionServerValue = (value: SerializedValue) =>
-  deserializeValue(value, {
+  deserializePublicValue(value, {
     deserializeReference(reference) {
       const containerId = readActionRefContainerId(reference)
       if (reference.kind === 'signal') {
@@ -400,8 +450,29 @@ const deserializeActionServerValue = (value: SerializedValue) =>
     },
   })
 
+const isActionCsrfValid = async (c: AppContext<any>) => {
+  const cookieToken = readActionCsrfTokenFromRequest(c)
+  if (!cookieToken) {
+    return false
+  }
+
+  const contentType = c.req.header('content-type') ?? ''
+  if (contentType.startsWith(ACTION_CONTENT_TYPE)) {
+    return c.req.header(ACTION_CSRF_HEADER) === cookieToken
+  }
+  if (
+    contentType.startsWith('application/x-www-form-urlencoded') ||
+    contentType.startsWith('multipart/form-data')
+  ) {
+    const input = await getActionInputCache(c)
+    return isFormDataValue(input) && readActionCsrfTokenFromFormData(input) === cookieToken
+  }
+
+  return false
+}
+
 const deserializeActionClientValue = (container: RuntimeContainer | null, value: SerializedValue) =>
-  deserializeValue(value, {
+  deserializePublicValue(value, {
     deserializeReference(reference) {
       if (!container) {
         throw new TypeError('Action references require an active runtime container.')
@@ -441,7 +512,7 @@ const isOpaqueDomRef = (value: unknown): value is OpaqueDomRef =>
   typeof (value as Record<string, unknown>).token === 'string'
 
 const serializeActionServerValue = (value: unknown) =>
-  serializeValue(value, {
+  serializePublicValue(value, {
     serializeReference(candidate) {
       if (isOpaqueSignalRef(candidate)) {
         return {
@@ -449,7 +520,7 @@ const serializeActionServerValue = (value: unknown) =>
           data:
             candidate.containerId === null
               ? undefined
-              : serializeValue({
+              : serializePublicValue({
                   container: candidate.containerId,
                 }),
           kind: 'signal',
@@ -462,7 +533,7 @@ const serializeActionServerValue = (value: unknown) =>
           data:
             candidate.containerId === null
               ? undefined
-              : serializeValue({
+              : serializePublicValue({
                   container: candidate.containerId,
                 }),
           kind: 'dom',
@@ -480,6 +551,12 @@ const isAsyncGeneratorValue = (
   value: unknown,
 ): value is AsyncGenerator<unknown, unknown, unknown> | AsyncIterable<unknown> =>
   !!value && typeof value === 'object' && Symbol.asyncIterator in value
+
+const isAsyncGeneratorFunctionValue = (
+  value: unknown,
+): value is (...args: any[]) => AsyncGenerator<unknown, unknown, unknown> =>
+  typeof value === 'function' &&
+  Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]'
 
 const toSerializedActionError = (error: unknown): SerializedValue => {
   if (error instanceof Error) {
@@ -658,14 +735,56 @@ const toClientAsyncGenerator = async function* (
 
 const invokeAction = async (id: string, input: unknown, container: RuntimeContainer | null) => {
   const isFormSubmission = isFormDataValue(input)
-  const response = await fetch(`/__eclipsa/action/${encodeURIComponent(id)}`, {
-    body: isFormSubmission
-      ? input
-      : JSON.stringify({
-          input: serializeActionClientValue(container, input),
-        }),
+  const actionPath = `/__eclipsa/action/${encodeURIComponent(id)}`
+  const requestContext = typeof window === 'undefined' ? getCurrentServerRequestContext() : null
+  const csrfToken =
+    typeof document !== 'undefined'
+      ? readActionCsrfTokenFromDocument(document)
+      : requestContext
+        ? ensureActionCsrfToken(requestContext)
+        : null
+  const currentRouteUrl =
+    typeof window !== 'undefined'
+      ? window.location.href
+      : (requestContext?.req.header(ROUTE_RPC_URL_HEADER) ?? requestContext?.req.raw.url ?? null)
+  const requestUrl = requestContext
+    ? new URL(actionPath, requestContext.req.raw.url).href
+    : actionPath
+  const fetchImpl =
+    requestContext && typeof requestContext.var.fetch === 'function'
+      ? requestContext.var.fetch
+      : fetch
+  const csrfCookie =
+    requestContext && csrfToken
+      ? [
+          requestContext.req.header('cookie'),
+          `${ACTION_CSRF_COOKIE}=${encodeURIComponent(csrfToken)}`,
+        ]
+          .filter(Boolean)
+          .join('; ')
+      : null
+  const body =
+    isFormSubmission && csrfToken
+      ? (() => {
+          const next = new FormData()
+          for (const [name, value] of input.entries()) {
+            next.append(name, value)
+          }
+          next.set(ACTION_CSRF_FIELD, csrfToken)
+          return next
+        })()
+      : isFormSubmission
+        ? input
+        : JSON.stringify({
+            input: serializeActionClientValue(container, input),
+          })
+  const response = await fetchImpl(requestUrl, {
+    body,
     headers: {
       accept: `${ACTION_STREAM_CONTENT_TYPE}, ${ACTION_CONTENT_TYPE}`,
+      ...(csrfCookie ? { cookie: csrfCookie } : {}),
+      ...(csrfToken ? { [ACTION_CSRF_HEADER]: csrfToken } : {}),
+      ...(currentRouteUrl ? { [ROUTE_RPC_URL_HEADER]: currentRouteUrl } : {}),
       ...(isFormSubmission ? {} : { 'content-type': ACTION_CONTENT_TYPE }),
     },
     method: 'POST',
@@ -682,7 +801,7 @@ const invokeAction = async (id: string, input: unknown, container: RuntimeContai
 }
 
 const composeMiddlewares = async (
-  c: Context<any>,
+  c: AppContext<any>,
   middlewares: ActionMiddleware<any>[],
   handler: ActionHandler<any, unknown>,
 ): Promise<Response | unknown> => {
@@ -759,15 +878,15 @@ const createHandleSignal = <T>(
   return createDetachedRuntimeSignal(container, `$action:${id}:${key}`, initialValue)
 }
 
-const readActionSubmissionInput = async (c: Context<any>) => {
+const readActionSubmissionInput = async (c: AppContext<any>) => {
   const cached = await getActionInputCache(c)
   const actionVars = c.var as Record<string, unknown>
   return normalizeFormSubmissionInput(actionVars.__e_action_raw_input ?? cached)
 }
 
-export const getNormalizedActionInput = (c: Context<any>) => readActionSubmissionInput(c)
+export const getNormalizedActionInput = (c: AppContext<any>) => readActionSubmissionInput(c)
 
-export const getActionFormSubmissionId = async (c: Context<any>) => {
+export const getActionFormSubmissionId = async (c: AppContext<any>) => {
   const input = await getActionInputCache(c)
   if (!isFormDataValue(input)) {
     return null
@@ -778,11 +897,14 @@ export const getActionFormSubmissionId = async (c: Context<any>) => {
 
 export const executeActionSubmission = async (
   id: string,
-  c: Context<any>,
+  c: AppContext<any>,
 ): Promise<ActionExecutionResult> => {
   const action = getActionRegistry().get(id)
   if (!action) {
     throw new Error(`Unknown action ${id}.`)
+  }
+  if (!(await isActionCsrfValid(c))) {
+    throw new ActionCsrfError()
   }
   const input = await readActionSubmissionInput(c)
   const result = await composeMiddlewares(c, action.middlewares, action.handler)
@@ -846,6 +968,16 @@ const createActionFormNode = (id: string, props: ActionFormProps) => {
   hiddenInput.value = id
   form.appendChild(hiddenInput)
 
+  const csrfToken = readActionCsrfTokenFromDocument(document)
+  if (csrfToken) {
+    const csrfInput = document.createElement('input')
+    csrfInput.name = ACTION_CSRF_FIELD
+    csrfInput.type = 'hidden'
+    csrfInput.value = csrfToken
+    csrfInput.setAttribute(ACTION_CSRF_INPUT_ATTR, '')
+    form.appendChild(csrfInput)
+  }
+
   for (const [name, value] of Object.entries(props)) {
     if (
       name === 'children' ||
@@ -881,8 +1013,8 @@ const createActionFormNode = (id: string, props: ActionFormProps) => {
   return form
 }
 
-export const action$: ActionFactory = (() => {
-  throw new Error('action$() must be compiled by the Eclipsa analyzer before it can run.')
+export const action: ActionFactory = (() => {
+  throw new Error('action() must be compiled by the Eclipsa analyzer before it can run.')
 }) as ActionFactory
 
 export const validator = <Schema extends StandardSchemaV1<any, any>>(
@@ -898,7 +1030,7 @@ export const validator = <Schema extends StandardSchemaV1<any, any>>(
     } catch (error) {
       return c.json(
         {
-          error: serializeValue({
+          error: serializePublicValue({
             issues: [
               {
                 message:
@@ -918,7 +1050,7 @@ export const validator = <Schema extends StandardSchemaV1<any, any>>(
     if ('issues' in validated) {
       return c.json(
         {
-          error: serializeValue({
+          error: serializePublicValue({
             issues: validated.issues,
           }),
           ok: false,
@@ -1002,31 +1134,41 @@ export function registerAction(
 
 export const hasAction = (id: string) => getActionRegistry().has(id)
 
-export const executeAction = async (id: string, c: Context<any>) => {
+export const executeAction = async (id: string, c: AppContext<any>) => {
   try {
     const result = await executeActionSubmission(id, c)
-    return result.kind === 'response' ? result.response : toActionResponse(result.value)
+    const response = result.kind === 'response' ? result.response : toActionResponse(result.value)
+    return applyActionCsrfCookie(response, c)
   } catch (error) {
-    return new Response(
-      JSON.stringify({
-        error: toSerializedActionError(error),
-        ok: false,
-      } satisfies ActionJsonFailure),
-      {
-        headers: {
-          'content-type': ACTION_CONTENT_TYPE,
+    const publicError = await transformCurrentPublicError(error, 'action')
+    return applyActionCsrfCookie(
+      new Response(
+        JSON.stringify({
+          error: toSerializedActionError(publicError),
+          ok: false,
+        } satisfies ActionJsonFailure),
+        {
+          headers: {
+            'content-type': ACTION_CONTENT_TYPE,
+          },
+          status: error instanceof ActionCsrfError ? 403 : 500,
         },
-        status: 500,
-      },
+      ),
+      c,
     )
   }
 }
 
-export const __eclipsaAction = <const Middlewares extends readonly ActionMiddleware<any>[], Output>(
+export const __eclipsaAction = <
+  const Middlewares extends readonly ActionMiddleware<any>[],
+  Handler extends ActionHandler<ActionEnv<Middlewares>, any>,
+>(
   id: string,
   middlewares: readonly [...Middlewares],
-  handler: ActionHandler<ActionEnv<Middlewares>, Output>,
-) => {
+  handler: Handler,
+): ActionUse<Middlewares, Handler> => {
+  type Output = ActionHandlerOutput<Handler>
+
   if (typeof window === 'undefined') {
     getActionRegistry().set(id, {
       handler: handler as ActionHandler<any, unknown>,
@@ -1041,20 +1183,20 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
       const container = getRuntimeContainer()
       const existing = container?.actions.get(id)
       if (existing) {
-        return existing as ActionHandle<ActionInput<Middlewares>, Output>
+        return existing as ReturnType<ActionUse<Middlewares, Handler>>
       }
 
       const initialState = container?.actionStates.get(id)
       const pending = createHandleSignal(container, id, 'pending', false)
-      const result = createHandleSignal<Output | undefined>(
+      const result = createHandleSignal<ActionStreamYield<Output> | undefined>(
         container,
         id,
         'result',
-        initialState?.result as Output | undefined,
+        initialState?.result as ActionStreamYield<Output> | undefined,
       )
       const error = createHandleSignal<unknown>(container, id, 'error', initialState?.error)
       const lastSubmission = createHandleSignal<
-        ActionSubmission<ActionInput<Middlewares>, Output> | undefined
+        ActionSubmission<ActionInput<Middlewares>, ActionStreamYield<Output>> | undefined
       >(
         container,
         id,
@@ -1063,8 +1205,8 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
           ? ({
               error: initialState.error,
               input: initialState.input as ActionInput<Middlewares>,
-              result: initialState.result as Output | undefined,
-            } satisfies ActionSubmission<ActionInput<Middlewares>, Output>)
+              result: initialState.result as ActionStreamYield<Output> | undefined,
+            } satisfies ActionSubmission<ActionInput<Middlewares>, ActionStreamYield<Output>>)
           : undefined,
       )
 
@@ -1084,68 +1226,123 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
         })
       }
 
-      const invoke = async (input: ActionInput<Middlewares> | FormData) => {
+      const flushHandleUpdates = async () => {
+        if (!container) {
+          return
+        }
+        await flushDirtyComponents(container)
+      }
+
+      const applySubmissionChunk = async (
+        input: ActionInput<Middlewares>,
+        value: ActionStreamYield<Output>,
+      ) => {
+        result.value = value
+        lastSubmission.value = {
+          error: undefined,
+          input,
+          result: value,
+        }
+        syncSnapshot()
+        await flushHandleUpdates()
+      }
+
+      const applySubmissionError = async (input: ActionInput<Middlewares>, caught: unknown) => {
+        error.value = caught
+        lastSubmission.value = {
+          error: caught,
+          input,
+          result: result.value,
+        }
+        syncSnapshot()
+        await flushHandleUpdates()
+      }
+
+      const finalizeSubmission = async () => {
+        pending.value = false
+        await flushHandleUpdates()
+      }
+
+      const invoke = (input: ActionInput<Middlewares> | FormData) => {
         pending.value = true
         error.value = undefined
         const normalizedInput = normalizeFormSubmissionInput(input) as ActionInput<Middlewares>
-        try {
-          const value = (await invokeAction(id, input, container)) as Output
-          result.value = value
-          lastSubmission.value = {
-            error: undefined,
-            input: normalizedInput,
-            result: value,
-          }
-          syncSnapshot()
-          return value
-        } catch (caught) {
-          error.value = caught
-          lastSubmission.value = {
-            error: caught,
-            input: normalizedInput,
-            result: undefined,
-          }
-          syncSnapshot()
-          throw caught
-        } finally {
-          pending.value = false
+        const request = invokeAction(id, input, container)
+
+        if (isAsyncGeneratorFunctionValue(handler)) {
+          return (async function* () {
+            try {
+              const value = await request
+              if (isAsyncGeneratorValue(value)) {
+                for await (const chunk of value) {
+                  const resolved = chunk as ActionStreamYield<Output>
+                  await applySubmissionChunk(normalizedInput, resolved)
+                  yield resolved
+                }
+                return
+              }
+              const resolved = value as ActionStreamYield<Output>
+              await applySubmissionChunk(normalizedInput, resolved)
+              yield resolved
+            } catch (caught) {
+              await applySubmissionError(normalizedInput, caught)
+              throw caught
+            } finally {
+              await finalizeSubmission()
+            }
+          })() as ActionInvokeResult<Output>
         }
+
+        return request
+          .then(async (value) => {
+            const resolved = value as ActionStreamYield<Output>
+            await applySubmissionChunk(normalizedInput, resolved)
+            return value as ResolvedActionOutput<Output>
+          })
+          .catch(async (caught) => {
+            await applySubmissionError(normalizedInput, caught)
+            throw caught
+          })
+          .finally(finalizeSubmission) as ActionInvokeResult<Output>
       }
 
-      const Form = component$((props: ActionFormProps) => {
-        if (typeof document !== 'undefined') {
-          return createActionFormNode(id, props) as unknown as JSX.Element
-        }
+      const Form = (props: ActionFormProps) => {
+        const body =
+          typeof document !== 'undefined'
+            ? (createActionFormNode(id, props) as unknown as JSX.Element)
+            : (() => {
+                const nextProps: Record<string, unknown> = {
+                  ...props,
+                  [ACTION_FORM_ATTR]: id,
+                  method: 'post',
+                  children: [
+                    {
+                      isStatic: true,
+                      props: {
+                        name: ACTION_FORM_FIELD,
+                        type: 'hidden',
+                        value: id,
+                      },
+                      type: 'input',
+                    },
+                    props.children,
+                  ],
+                }
+                delete nextProps.action
+                delete nextProps.method
+                return {
+                  isStatic: true,
+                  props: nextProps,
+                  type: 'form',
+                } satisfies JSX.Element
+              })()
 
-        const nextProps: Record<string, unknown> = {
-          ...props,
-          [ACTION_FORM_ATTR]: id,
-          method: 'post',
-          children: [
-            {
-              isStatic: true,
-              props: {
-                name: ACTION_FORM_FIELD,
-                type: 'hidden',
-                value: id,
-              },
-              type: 'input',
-            },
-            props.children,
-          ],
-        }
-        delete nextProps.action
-        delete nextProps.method
-        return {
-          isStatic: true,
-          props: nextProps,
-          type: 'form',
-        } satisfies JSX.Element
-      })
+        return body
+      }
       const actionHandle = setActionHandleMeta(
         {
           Form,
-          action: invoke as ActionInvoker<ActionInput<Middlewares>, Output>,
+          action: invoke as ActionInvoker<ActionInput<Middlewares>, ActionInvokeResult<Output>>,
           get error() {
             return error.value
           },
@@ -1161,14 +1358,18 @@ export const __eclipsaAction = <const Middlewares extends readonly ActionMiddlew
           get result() {
             return result.value
           },
-        } satisfies ActionHandle<ActionInput<Middlewares>, Output>,
+        } satisfies ActionHandle<
+          ActionInput<Middlewares>,
+          ActionStreamYield<Output>,
+          ActionInvokeResult<Output>
+        >,
         id,
       )
       container?.actions.set(id, actionHandle)
       syncSnapshot()
       return actionHandle
     }, id),
-  ) as () => ActionHandle<ActionInput<Middlewares>, Output>
+  ) as ActionUse<Middlewares, Handler>
 
   return useActionHandle
 }

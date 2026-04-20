@@ -10,6 +10,17 @@ interface Effect {
 }
 let currentEffect: Effect | null = null
 
+const isPrimitiveSignalValue = (value: unknown) =>
+  value === null || (typeof value !== 'object' && typeof value !== 'function')
+
+const didSignalValueChange = (previous: unknown, next: unknown) => {
+  if (isPrimitiveSignalValue(previous) && isPrimitiveSignalValue(next)) {
+    return !Object.is(previous, next)
+  }
+
+  return previous !== next
+}
+
 export const signal = <T>(init: T): Signal<T> => {
   let value = init
   const signal: Signal<T> = {
@@ -20,6 +31,9 @@ export const signal = <T>(init: T): Signal<T> => {
       return value
     },
     set(newValue) {
+      if (!didSignalValueChange(value, newValue)) {
+        return value
+      }
       value = newValue
       for (const effect of this.effects) {
         effect.fn()

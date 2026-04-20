@@ -1,0 +1,12 @@
+{
+  "name": "benchmarks-hono",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build --ssr"
+  },
+  "dependencies": {
+    "hono": "^4.10.4",
+    "vite": "^8.0.5"
+  }
+}

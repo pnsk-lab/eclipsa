@@ -1,0 +1,11 @@
+{
+  "name": "@eclipsa/example-swiftui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "dev": "vp dev",
+    "test": "bun ./scripts/verify-swiftui-example.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
+  }
+}

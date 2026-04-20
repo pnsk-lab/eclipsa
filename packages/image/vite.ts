@@ -53,6 +53,7 @@ const splitId = (id: string) => {
 }
 
 const toOutputExtension = (format: string) => (format === 'jpeg' ? 'jpg' : format)
+export const createBuildAssetUrl = (fileName: string) => `/${fileName.replace(/^\/+/, '')}`
 
 export const toContentType = (format: string) => {
   if (format === 'svg') {
@@ -234,31 +235,32 @@ const createBuildModule = (
   filePath: string,
   emitFile: PluginContext['emitFile'],
 ) => {
-  const references = variants.map((variant) =>
+  const entries = variants.map((variant) => {
+    const assetFileName = `assets/${createAssetName(filePath, variant.width, variant.format)}`
     emitFile({
-      fileName: `assets/${createAssetName(filePath, variant.width, variant.format)}`,
+      fileName: assetFileName,
       name: createAssetName(filePath, variant.width, variant.format),
       source: variant.buffer,
       type: 'asset',
-    }),
-  )
+    })
+
+    return {
+      format: variant.format,
+      height: variant.height,
+      src: createBuildAssetUrl(assetFileName),
+      width: variant.width,
+    }
+  })
   const sourceIndex = variants.length - 1
 
-  return `const variants = [
-${variants
-  .map(
-    (variant, index) =>
-      `  { format: ${JSON.stringify(variant.format)}, height: ${variant.height}, src: import.meta.ROLLUP_FILE_URL_${references[index]}, width: ${variant.width} },`,
-  )
-  .join('\n')}
-];
+  return `const variants = ${JSON.stringify(entries)};
 
 export default {
-  format: ${JSON.stringify(variants[sourceIndex]!.format)},
-  height: ${variants[sourceIndex]!.height},
-  src: import.meta.ROLLUP_FILE_URL_${references[sourceIndex]!},
+  format: ${JSON.stringify(entries[sourceIndex]!.format)},
+  height: ${entries[sourceIndex]!.height},
+  src: ${JSON.stringify(entries[sourceIndex]!.src)},
   variants,
-  width: ${variants[sourceIndex]!.width},
+  width: ${entries[sourceIndex]!.width},
 };
 `
 }
@@ -351,7 +353,7 @@ const writeDevImageResponse = async (
 export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
   let config: ResolvedConfig | null = null
 
-  return {
+  const plugin: Plugin = {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
@@ -412,4 +414,6 @@ export const eclipsaImage = (options: EclipsaImageOptions = {}): Plugin => {
       return `${VIRTUAL_IMAGE_PREFIX}${resolved.id}?${params.toString()}`
     },
   }
+
+  return plugin
 }

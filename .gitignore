@@ -1,10 +1,17 @@
 # Dependencies and build outputs
 node_modules
 dist
+.eclipsa
 target
+**/.build
+**/.swiftpm
+Package.resolved
 packages/eclipsa/compiler/native/generated
 packages/eclipsa/npm
 packages/eclipsa/artifacts
+packages/optimizer/generated
+packages/optimizer/npm
+packages/optimizer/artifacts
 
 # Tool caches
 .vite
@@ -17,11 +24,16 @@ coverage
 .env.*
 !.env.example
 
-# Temporary editor/OS files
+# Local editor/IDE files
 .DS_Store
+.vscode
+.idea
 *.swp
 *.swo
 *.tmp
+*.xcuserstate
+DerivedData
+xcuserdata
 
 # Test artifacts
 playwright-report

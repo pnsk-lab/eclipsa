@@ -3,5 +3,12 @@
   "compilerOptions": {
     "types": ["node", "@eclipsa/image/client"]
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts", "../packages/eclipsa/**/*.d.ts"]
+  "include": [
+    "./**/*.ts",
+    "./**/*.cts",
+    "./**/*.tsx",
+    "./**/*.d.ts",
+    "../packages/eclipsa/**/*.d.ts",
+    "../packages/content/**/*.d.ts"
+  ]
 }

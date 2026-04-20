@@ -1,5 +1,6 @@
 mod analyze;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::panic::{self, AssertUnwindSafe};
 
@@ -7,9 +8,11 @@ use napi::Error;
 use napi_derive::napi;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    CallExpression, ExportDefaultDeclaration, Expression, ImportDeclaration, ImportDeclarationSpecifier,
+    ArrowFunctionExpression, CallExpression, ConditionalExpression, ExportDefaultDeclaration,
+    ExportDefaultDeclarationKind, Expression,
     JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
-    JSXExpression, JSXFragment, ModuleExportName, Program,
+    JSXExpression, JSXFragment, JSXMemberExpressionObject, LogicalExpression, LogicalOperator, Program,
+    Statement, StaticMemberExpression, VariableDeclarator,
 };
 use oxc_ast_visit::{walk, Visit};
 use oxc_codegen::Codegen;
@@ -25,14 +28,20 @@ const CLIENT_INSERT: &str = "_insert";
 const CLIENT_ATTR: &str = "_attr";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
 const SSR_JSX_DEV: &str = "_jsxDEV";
-const SSR_ATTR: &str = "_ssrAttr";
+const SSR_RAW: &str = "_ssrRaw";
+const SSR_RENDER_ATTR: &str = "_renderSSRAttr";
+const SSR_RENDER_MAP: &str = "_renderSSRMap";
+const SSR_RENDER_VALUE: &str = "_renderSSRValue";
 const SSR_TEMPLATE: &str = "_ssrTemplate";
+const COMPILER_FOR: &str = "__eclipsaFor";
+const COMPILER_SHOW: &str = "__eclipsaShow";
 const HMR_INIT: &str = "_initHot";
 const HMR_DEFINE_COMPONENT: &str = "_defineHotComponent";
 const HMR_CREATE_REGISTRY: &str = "_createHotRegistry";
 const HMR_REGISTRY: &str = "__eclipsa$hotRegistry";
 const FRAGMENT_NAME: &str = "__ECLIPSA_FRAGMENT";
 const DANGEROUSLY_SET_INNER_HTML_PROP: &str = "dangerouslySetInnerHTML";
+const SHOW_VALUE_PARAM: &str = "__e_showValue";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Replacement {
@@ -52,6 +61,75 @@ struct ClientAttrOp {
     name: String,
     path: Vec<usize>,
     value: String,
+}
+
+struct JsxPresenceCollector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for JsxPresenceCollector {
+    fn visit_jsx_element(&mut self, _element: &JSXElement<'a>) {
+        self.found = true;
+    }
+
+    fn visit_jsx_fragment(&mut self, _fragment: &JSXFragment<'a>) {
+        self.found = true;
+    }
+}
+
+fn expression_contains_jsx<'a>(expression: &Expression<'a>) -> bool {
+    let mut collector = JsxPresenceCollector { found: false };
+    collector.visit_expression(expression);
+    collector.found
+}
+
+fn render_lazy_branch_expression(expression: &str) -> String {
+    format!("({SHOW_VALUE_PARAM}) => ({expression})")
+}
+
+fn render_identity_branch() -> String {
+    format!("({SHOW_VALUE_PARAM}) => ({SHOW_VALUE_PARAM})")
+}
+
+fn get_arrow_expression_body<'a>(expression: &'a ArrowFunctionExpression<'a>) -> Option<&'a Expression<'a>> {
+    if !expression.expression || !expression.body.directives.is_empty() || expression.body.statements.len() != 1 {
+        return None;
+    }
+
+    match &expression.body.statements[0] {
+        Statement::ExpressionStatement(statement) => Some(&statement.expression),
+        _ => None,
+    }
+}
+
+fn unwrap_parenthesized_expression<'a>(mut expression: &'a Expression<'a>) -> &'a Expression<'a> {
+    while let Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    expression
+}
+
+fn is_direct_jsx_map_callback<'a>(callback: &'a ArrowFunctionExpression<'a>) -> bool {
+    let Some(body) = get_arrow_expression_body(callback) else {
+        return false;
+    };
+    matches!(
+        unwrap_parenthesized_expression(body),
+        Expression::JSXElement(_) | Expression::JSXFragment(_)
+    )
+}
+
+fn get_static_map_callee<'a>(call: &'a CallExpression<'a>) -> Option<&'a StaticMemberExpression<'a>> {
+    if call.optional {
+        return None;
+    }
+
+    match &call.callee {
+        Expression::StaticMemberExpression(member) if !member.optional && member.property.name.as_str() == "map" => {
+            Some(member)
+        }
+        _ => None,
+    }
 }
 
 fn to_napi_error(error: String) -> Error {
@@ -171,6 +249,16 @@ fn transform_client(source: &str, id: &str, hmr: bool) -> Result<String, String>
     prefix.push_str(&format!(
         "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, insert as {CLIENT_INSERT}, attr as {CLIENT_ATTR}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
     ));
+    if compiler.uses_for {
+        prefix.push_str(&format!(
+            "import {{ For as {COMPILER_FOR} }} from \"eclipsa\";\n"
+        ));
+    }
+    if compiler.uses_show {
+        prefix.push_str(&format!(
+            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa\";\n"
+        ));
+    }
     if hmr {
         prefix.push_str(&format!(
             "import {{ initHot as {HMR_INIT}, defineHotComponent as {HMR_DEFINE_COMPONENT}, createHotRegistry as {HMR_CREATE_REGISTRY} }} from \"eclipsa/dev-client\";\n"
@@ -195,9 +283,19 @@ fn transform_ssr(source: &str, id: &str) -> Result<String, String> {
     let program = parse_program(&allocator, source, source_type, id)?;
     let mut compiler = SsrCompiler::new(source, source_type);
     let transformed = compiler.apply_root_replacements(&program)?;
-    let prefix = format!(
-        "import {{ jsxDEV as {SSR_JSX_DEV}, ssrAttr as {SSR_ATTR}, ssrTemplate as {SSR_TEMPLATE} }} from \"eclipsa/jsx-dev-runtime\";\n"
+    let mut prefix = format!(
+        "import {{ jsxDEV as {SSR_JSX_DEV}, ssrRaw as {SSR_RAW}, ssrTemplate as {SSR_TEMPLATE} }} from \"eclipsa/jsx-dev-runtime\";\nimport {{ renderSSRAttr as {SSR_RENDER_ATTR}, renderSSRMap as {SSR_RENDER_MAP}, renderSSRValue as {SSR_RENDER_VALUE} }} from \"eclipsa\";\n"
     );
+    if compiler.uses_for {
+        prefix.push_str(&format!(
+            "import {{ For as {COMPILER_FOR} }} from \"eclipsa\";\n"
+        ));
+    }
+    if compiler.uses_show {
+        prefix.push_str(&format!(
+            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa\";\n"
+        ));
+    }
     strip_typescript_syntax(&format!("{prefix}{transformed}"), id)
 }
 
@@ -310,7 +408,43 @@ fn normalize_jsx_text(value: &str) -> Option<String> {
 }
 
 fn is_component_name(name: &str) -> bool {
-    name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase())
+    name.chars().next().is_some_and(|ch| {
+        ch.to_ascii_lowercase() != ch || !ch.is_ascii_alphabetic()
+    }) || name.contains('.')
+}
+
+fn jsx_member_expression_object_to_string(object: &JSXMemberExpressionObject<'_>) -> Result<String, String> {
+    match object {
+        JSXMemberExpressionObject::IdentifierReference(identifier) => {
+            Ok(identifier.name.as_str().to_string())
+        }
+        JSXMemberExpressionObject::MemberExpression(expression) => Ok(format!(
+            "{}.{}",
+            jsx_member_expression_object_to_string(&expression.object)?,
+            expression.property.name.as_str(),
+        )),
+        JSXMemberExpressionObject::ThisExpression(_) => {
+            Err("this-based JSX elements are not supported by the optimizer.".to_string())
+        }
+    }
+}
+
+fn jsx_element_name_to_string(name: &JSXElementName<'_>) -> Result<String, String> {
+    match name {
+        JSXElementName::Identifier(identifier) => Ok(identifier.name.as_str().to_string()),
+        JSXElementName::IdentifierReference(identifier) => Ok(identifier.name.as_str().to_string()),
+        JSXElementName::NamespacedName(name) => {
+            Ok(format!("{}:{}", name.namespace.name.as_str(), name.name.name.as_str()))
+        }
+        JSXElementName::MemberExpression(expression) => Ok(format!(
+            "{}.{}",
+            jsx_member_expression_object_to_string(&expression.object)?,
+            expression.property.name.as_str(),
+        )),
+        JSXElementName::ThisExpression(_) => {
+            Err("this-based JSX elements are not supported by the optimizer.".to_string())
+        }
+    }
 }
 
 fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> Result<String, String> {
@@ -323,19 +457,7 @@ fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> Result<String, String>
 }
 
 fn get_jsx_element_name(name: &JSXElementName<'_>) -> Result<String, String> {
-    match name {
-        JSXElementName::Identifier(identifier) => Ok(identifier.name.as_str().to_string()),
-        JSXElementName::IdentifierReference(identifier) => Ok(identifier.name.as_str().to_string()),
-        JSXElementName::NamespacedName(name) => {
-            Ok(format!("{}:{}", name.namespace.name.as_str(), name.name.name.as_str()))
-        }
-        JSXElementName::MemberExpression(_) => {
-            Err("JSX member expressions are not supported by the optimizer.".to_string())
-        }
-        JSXElementName::ThisExpression(_) => {
-            Err("this-based JSX elements are not supported by the optimizer.".to_string())
-        }
-    }
+    jsx_element_name_to_string(name)
 }
 
 fn try_render_static_attr_expression(name: &str, expression: &Expression<'_>) -> Option<String> {
@@ -362,8 +484,10 @@ fn try_render_static_attr_expression(name: &str, expression: &Expression<'_>) ->
 }
 
 fn event_name_from_prop(name: &str) -> Option<String> {
-    let rest = name.strip_suffix('$')?;
-    let event = rest.strip_prefix("on")?;
+    if name.ends_with('$') {
+        return None;
+    }
+    let event = name.strip_prefix("on")?;
     let mut chars = event.chars();
     let first = chars.next()?;
     if !first.is_ascii_uppercase() {
@@ -375,15 +499,39 @@ fn event_name_from_prop(name: &str) -> Option<String> {
     Some(output)
 }
 
-fn build_node_lookup(base: &str, path: &[usize]) -> (String, String) {
-    let mut marker = base.to_string();
-    let mut parent = base.to_string();
-    for (index, item) in path.iter().enumerate() {
-        marker = format!("{marker}.childNodes[{item}]");
-        if path.len() > 1 && index + 2 == path.len() {
-            parent = marker.clone();
-        }
+fn should_apply_attr_at_runtime(name: &str) -> bool {
+    name == "ref" || name == DANGEROUSLY_SET_INNER_HTML_PROP || event_name_from_prop(name).is_some()
+}
+
+fn collect_node_lookup_paths(path: &[usize]) -> Vec<Vec<usize>> {
+    let mut prefixes = Vec::new();
+    for index in 0..path.len() {
+        prefixes.push(path[..=index].to_vec());
     }
+    prefixes
+}
+
+fn build_node_lookup(
+    base: &str,
+    path: &[usize],
+    cached_nodes: &BTreeMap<Vec<usize>, String>,
+) -> (String, String) {
+    if path.is_empty() {
+        return (base.to_string(), base.to_string());
+    }
+
+    let marker = cached_nodes
+        .get(path)
+        .cloned()
+        .unwrap_or_else(|| base.to_string());
+    let parent = if path.len() > 1 {
+        cached_nodes
+            .get(&path[..path.len() - 1])
+            .cloned()
+            .unwrap_or_else(|| base.to_string())
+    } else {
+        base.to_string()
+    };
     (parent, marker)
 }
 
@@ -392,6 +540,8 @@ struct ClientCompiler<'s> {
     source: &'s str,
     source_type: SourceType,
     templates: Vec<(String, String)>,
+    uses_for: bool,
+    uses_show: bool,
 }
 
 impl<'s> ClientCompiler<'s> {
@@ -401,6 +551,8 @@ impl<'s> ClientCompiler<'s> {
             source,
             source_type,
             templates: Vec::new(),
+            uses_for: false,
+            uses_show: false,
         }
     }
 
@@ -422,8 +574,12 @@ impl<'s> ClientCompiler<'s> {
         &self.source[start..end]
     }
 
-    fn render_nested_jsx_expression(&mut self, expression: &JSXExpression<'_>) -> Result<String, String> {
-        let nested_source = self.slice(expression.span()).to_string();
+    fn render_nested_expression_span(
+        &mut self,
+        span: Span,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        let nested_source = self.slice(span).to_string();
         let allocator = Allocator::default();
         let parsed = parse_expression(&allocator, &nested_source, self.source_type, "<expression>")?;
         let mut nested_compiler = ClientCompiler {
@@ -431,8 +587,11 @@ impl<'s> ClientCompiler<'s> {
             source: &nested_source,
             source_type: self.source_type,
             templates: Vec::new(),
+            uses_for: false,
+            uses_show: false,
         };
         let mut collector = ClientExpressionCollector {
+            allow_flow_lowering,
             compiler: &mut nested_compiler,
             error: None,
             jsx_depth: 0,
@@ -446,7 +605,118 @@ impl<'s> ClientCompiler<'s> {
         let transformed = apply_replacements(&nested_source, &mut replacements)?;
         self.next_template_index = nested_compiler.next_template_index;
         self.templates.extend(nested_compiler.templates);
+        self.uses_for |= nested_compiler.uses_for;
+        self.uses_show |= nested_compiler.uses_show;
         Ok(transformed)
+    }
+
+    fn render_nested_jsx_expression(
+        &mut self,
+        expression: &JSXExpression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        self.render_nested_expression_span(expression.span(), allow_flow_lowering)
+    }
+
+    fn render_compiler_show(&mut self, when: String, children: String, fallback: String) -> String {
+        self.uses_show = true;
+        format!(
+            "{CLIENT_CREATE_COMPONENT}({COMPILER_SHOW}, {{ when: {when}, children: {children}, fallback: {fallback} }})"
+        )
+    }
+
+    fn render_compiler_for(
+        &mut self,
+        arr: String,
+        callback: String,
+        key_callback: Option<String>,
+    ) -> String {
+        self.uses_for = true;
+        match key_callback {
+            Some(key_callback) => format!(
+                "{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback}, key: {key_callback} }})"
+            ),
+            None => format!("{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback} }})"),
+        }
+    }
+
+    fn try_render_conditional_show(
+        &mut self,
+        expression: &ConditionalExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        if !expression_contains_jsx(&expression.consequent)
+            && !expression_contains_jsx(&expression.alternate)
+        {
+            return Ok(None);
+        }
+
+        let test = self.render_nested_expression_span(expression.test.span(), true)?;
+        let consequent = self.render_nested_expression_span(expression.consequent.span(), true)?;
+        let alternate = self.render_nested_expression_span(expression.alternate.span(), true)?;
+        Ok(Some(self.render_compiler_show(
+            test,
+            render_lazy_branch_expression(&consequent),
+            render_lazy_branch_expression(&alternate),
+        )))
+    }
+
+    fn try_render_logical_show(
+        &mut self,
+        expression: &LogicalExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        match expression.operator {
+            LogicalOperator::And => {
+                if !expression_contains_jsx(&expression.right) {
+                    return Ok(None);
+                }
+
+                let left = self.render_nested_expression_span(expression.left.span(), true)?;
+                let right = self.render_nested_expression_span(expression.right.span(), true)?;
+                Ok(Some(self.render_compiler_show(
+                    left,
+                    render_lazy_branch_expression(&right),
+                    render_identity_branch(),
+                )))
+            }
+            LogicalOperator::Or => {
+                if !expression_contains_jsx(&expression.left)
+                    && !expression_contains_jsx(&expression.right)
+                {
+                    return Ok(None);
+                }
+
+                let left = self.render_nested_expression_span(expression.left.span(), true)?;
+                let right = self.render_nested_expression_span(expression.right.span(), true)?;
+                Ok(Some(self.render_compiler_show(
+                    left,
+                    render_identity_branch(),
+                    render_lazy_branch_expression(&right),
+                )))
+            }
+            LogicalOperator::Coalesce => Ok(None),
+        }
+    }
+
+    fn try_render_map_for(&mut self, expression: &CallExpression<'_>) -> Result<Option<String>, String> {
+        let Some(member) = get_static_map_callee(expression) else {
+            return Ok(None);
+        };
+        if expression.arguments.len() != 1 {
+            return Ok(None);
+        }
+
+        let callback = match &expression.arguments[0] {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(callback) if is_direct_jsx_map_callback(callback) => callback,
+            _ => return Ok(None),
+        };
+
+        let arr = self.render_nested_expression_span(member.object.span(), true)?;
+        let compiled_callback = self.render_nested_expression_span(callback.span(), true)?;
+        let params = self.slice(callback.params.span).to_string();
+        let key_callback = self
+            .extract_map_callback_key(callback)?
+            .map(|key_expression| format!("{params} => {key_expression}"));
+        Ok(Some(self.render_compiler_for(arr, compiled_callback, key_callback)))
     }
 
     fn next_template_id(&mut self) -> String {
@@ -492,15 +762,53 @@ impl<'s> ClientCompiler<'s> {
         let template_id = self.next_template_id();
         self.templates.push((template_id.clone(), template_html));
         let mut body = format!("var _cloned = {template_id}();");
+        let mut lookup_paths = Vec::new();
+
+        for insert in &inserts {
+            let path = match insert {
+                ClientInsertOp::Apply { path, .. } => path,
+                ClientInsertOp::Component { path, .. } => path,
+            };
+            for prefix in collect_node_lookup_paths(path) {
+                if !lookup_paths.contains(&prefix) {
+                    lookup_paths.push(prefix);
+                }
+            }
+        }
+
+        for attr in &attrs {
+            for prefix in collect_node_lookup_paths(&attr.path) {
+                if !lookup_paths.contains(&prefix) {
+                    lookup_paths.push(prefix);
+                }
+            }
+        }
+
+        lookup_paths.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
+
+        let mut cached_nodes = BTreeMap::new();
+        for (index, path) in lookup_paths.iter().enumerate() {
+            let variable = format!("__eclipsaNode{index}");
+            let lookup = if path.len() == 1 {
+                format!("_cloned.childNodes[{}]", path[0])
+            } else {
+                let parent = cached_nodes
+                    .get(&path[..path.len() - 1])
+                    .expect("parent lookup should be cached before children");
+                format!("{parent}.childNodes[{}]", path[path.len() - 1])
+            };
+            body.push_str(&format!("var {variable} = {lookup};"));
+            cached_nodes.insert(path.clone(), variable);
+        }
 
         for insert in inserts {
             match insert {
                 ClientInsertOp::Apply { expr, path } => {
-                    let (parent, marker) = build_node_lookup("_cloned", &path);
+                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
                     body.push_str(&format!("{CLIENT_INSERT}(() => {expr}, {parent}, {marker});"));
                 }
                 ClientInsertOp::Component { component, path, props } => {
-                    let (parent, marker) = build_node_lookup("_cloned", &path);
+                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
                     body.push_str(&format!(
                         "{CLIENT_INSERT}({CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
                     ));
@@ -509,7 +817,7 @@ impl<'s> ClientCompiler<'s> {
         }
 
         for attr in attrs {
-            let (_, marker) = build_node_lookup("_cloned", &attr.path);
+            let (_, marker) = build_node_lookup("_cloned", &attr.path, &cached_nodes);
             body.push_str(&format!(
                 "{CLIENT_ATTR}({marker}, {}, () => {});",
                 js_string(&attr.name),
@@ -550,6 +858,20 @@ impl<'s> ClientCompiler<'s> {
         Ok(None)
     }
 
+    fn extract_map_callback_key(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+
+        match unwrap_parenthesized_expression(body) {
+            Expression::JSXElement(element) => self.extract_key(&element.opening_element.attributes),
+            _ => Ok(None),
+        }
+    }
+
     fn render_component_props(
         &mut self,
         attributes: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>,
@@ -583,9 +905,10 @@ impl<'s> ClientCompiler<'s> {
                         }
                         JSXAttributeValue::ExpressionContainer(container) => {
                             let JSXExpression::EmptyExpression(_) = &container.expression else {
-                                let expression = self.render_jsx_expression(&container.expression, true)?;
+                                let expression =
+                                    self.render_jsx_expression(&container.expression, true)?;
                                 if is_key {
-                                    key = Some(self.render_jsx_expression(&container.expression, false)?);
+                                    key = Some(self.render_jsx_expression(&container.expression, true)?);
                                 }
                                 if let Some(expression) = self.try_render_static_component_prop(&container.expression)? {
                                     props.push(format!("{property_key}: {expression}"));
@@ -661,7 +984,11 @@ impl<'s> ClientCompiler<'s> {
         Ok(output)
     }
 
-    fn render_jsx_expression(&mut self, expression: &JSXExpression<'_>, defer_jsx: bool) -> Result<String, String> {
+    fn render_jsx_expression(
+        &mut self,
+        expression: &JSXExpression<'_>,
+        defer_jsx: bool,
+    ) -> Result<String, String> {
         match expression {
             JSXExpression::EmptyExpression(_) => Ok(String::new()),
             JSXExpression::JSXElement(element) => {
@@ -680,7 +1007,7 @@ impl<'s> ClientCompiler<'s> {
                     Ok(compiled)
                 }
             }
-            _ => self.render_nested_jsx_expression(expression),
+            _ => self.render_nested_jsx_expression(expression, !defer_jsx),
         }
     }
 
@@ -752,6 +1079,7 @@ impl<'s> ClientCompiler<'s> {
         attrs: &mut Vec<ClientAttrOp>,
     ) -> Result<String, String> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
+        let mut html = format!("<{name}");
 
         for attribute in &element.opening_element.attributes {
             match attribute {
@@ -760,6 +1088,23 @@ impl<'s> ClientCompiler<'s> {
                 }
                 JSXAttributeItem::Attribute(attribute) => {
                     let attr_name = get_jsx_attribute_name(&attribute.name)?;
+                    if !should_apply_attr_at_runtime(&attr_name) {
+                        match &attribute.value {
+                            None => {
+                                html.push_str(&format!(" {attr_name}"));
+                                continue;
+                            }
+                            Some(JSXAttributeValue::StringLiteral(value)) => {
+                                html.push_str(&format!(
+                                    " {attr_name}=\"{}\"",
+                                    escape_attr(value.value.as_str())
+                                ));
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     let value = match &attribute.value {
                         None => "true".to_string(),
                         Some(JSXAttributeValue::StringLiteral(value)) => js_string(value.value.as_str()),
@@ -777,8 +1122,11 @@ impl<'s> ClientCompiler<'s> {
             }
         }
 
+        html.push('>');
         let children = self.render_fragment_children(&element.children, path, inserts, attrs)?;
-        Ok(format!("<{name}>{children}</{name}>"))
+        html.push_str(&children);
+        html.push_str(&format!("</{name}>"));
+        Ok(html)
     }
 }
 
@@ -789,6 +1137,7 @@ struct ClientRootCollector<'c, 's> {
 }
 
 struct ClientExpressionCollector<'c, 's> {
+    allow_flow_lowering: bool,
     compiler: &'c mut ClientCompiler<'s>,
     error: Option<String>,
     jsx_depth: usize,
@@ -824,6 +1173,48 @@ impl<'a, 'c, 's> Visit<'a> for ClientRootCollector<'c, 's> {
 }
 
 impl<'a, 'c, 's> Visit<'a> for ClientExpressionCollector<'c, 's> {
+    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_map_for(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_conditional_expression(&mut self, expression: &ConditionalExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_conditional_show(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_conditional_expression(self, expression);
+    }
+
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
         if self.error.is_some() {
             return;
@@ -843,6 +1234,27 @@ impl<'a, 'c, 's> Visit<'a> for ClientExpressionCollector<'c, 's> {
         self.jsx_depth += 1;
         walk::walk_jsx_element(self, element);
         self.jsx_depth -= 1;
+    }
+
+    fn visit_logical_expression(&mut self, expression: &LogicalExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_logical_show(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_logical_expression(self, expression);
     }
 
     fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
@@ -870,11 +1282,18 @@ impl<'a, 'c, 's> Visit<'a> for ClientExpressionCollector<'c, 's> {
 struct SsrCompiler<'s> {
     source: &'s str,
     source_type: SourceType,
+    uses_for: bool,
+    uses_show: bool,
 }
 
 impl<'s> SsrCompiler<'s> {
     fn new(source: &'s str, source_type: SourceType) -> Self {
-        Self { source, source_type }
+        Self {
+            source,
+            source_type,
+            uses_for: false,
+            uses_show: false,
+        }
     }
 
     fn apply_root_replacements<'a>(&mut self, program: &Program<'a>) -> Result<String, String> {
@@ -895,15 +1314,22 @@ impl<'s> SsrCompiler<'s> {
         &self.source[start..end]
     }
 
-    fn render_nested_jsx_expression(&mut self, expression: &JSXExpression<'_>) -> Result<String, String> {
-        let nested_source = self.slice(expression.span()).to_string();
+    fn render_nested_expression_span(
+        &mut self,
+        span: Span,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        let nested_source = self.slice(span).to_string();
         let allocator = Allocator::default();
         let parsed = parse_expression(&allocator, &nested_source, self.source_type, "<expression>")?;
         let mut nested_compiler = SsrCompiler {
             source: &nested_source,
             source_type: self.source_type,
+            uses_for: false,
+            uses_show: false,
         };
         let mut collector = SsrExpressionCollector {
+            allow_flow_lowering,
             compiler: &mut nested_compiler,
             error: None,
             jsx_depth: 0,
@@ -914,30 +1340,205 @@ impl<'s> SsrCompiler<'s> {
             return Err(error);
         }
         let mut replacements = collector.replacements;
-        apply_replacements(&nested_source, &mut replacements)
+        let transformed = apply_replacements(&nested_source, &mut replacements)?;
+        self.uses_for |= nested_compiler.uses_for;
+        self.uses_show |= nested_compiler.uses_show;
+        Ok(transformed)
     }
 
-    fn render_jsx_expression(&mut self, expression: &JSXExpression<'_>) -> Result<String, String> {
+    fn render_nested_jsx_expression(
+        &mut self,
+        expression: &JSXExpression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        self.render_nested_expression_span(expression.span(), allow_flow_lowering)
+    }
+
+    fn render_compiler_show(&mut self, when: String, children: String, fallback: String) -> String {
+        self.uses_show = true;
+        format!(
+            "{SSR_JSX_DEV}({COMPILER_SHOW}, {{ \"when\": {when}, \"children\": {children}, \"fallback\": {fallback} }}, null, false, {{}})"
+        )
+    }
+
+    fn render_compiler_for(&mut self, arr: String, callback: String) -> String {
+        self.uses_for = true;
+        format!(
+            "{SSR_JSX_DEV}({COMPILER_FOR}, {{ \"arr\": {arr}, \"fn\": {callback} }}, null, false, {{}})"
+        )
+    }
+
+    fn try_render_conditional_show(
+        &mut self,
+        expression: &ConditionalExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        if !expression_contains_jsx(&expression.consequent)
+            && !expression_contains_jsx(&expression.alternate)
+        {
+            return Ok(None);
+        }
+
+        let test = self.render_nested_expression_span(expression.test.span(), true)?;
+        let consequent = self.render_nested_expression_span(expression.consequent.span(), true)?;
+        let alternate = self.render_nested_expression_span(expression.alternate.span(), true)?;
+        Ok(Some(self.render_compiler_show(
+            test,
+            render_lazy_branch_expression(&consequent),
+            render_lazy_branch_expression(&alternate),
+        )))
+    }
+
+    fn try_render_logical_show(
+        &mut self,
+        expression: &LogicalExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        match expression.operator {
+            LogicalOperator::And => {
+                if !expression_contains_jsx(&expression.right) {
+                    return Ok(None);
+                }
+
+                let left = self.render_nested_expression_span(expression.left.span(), true)?;
+                let right = self.render_nested_expression_span(expression.right.span(), true)?;
+                Ok(Some(self.render_compiler_show(
+                    left,
+                    render_lazy_branch_expression(&right),
+                    render_identity_branch(),
+                )))
+            }
+            LogicalOperator::Or => {
+                if !expression_contains_jsx(&expression.left)
+                    && !expression_contains_jsx(&expression.right)
+                {
+                    return Ok(None);
+                }
+
+                let left = self.render_nested_expression_span(expression.left.span(), true)?;
+                let right = self.render_nested_expression_span(expression.right.span(), true)?;
+                Ok(Some(self.render_compiler_show(
+                    left,
+                    render_identity_branch(),
+                    render_lazy_branch_expression(&right),
+                )))
+            }
+            LogicalOperator::Coalesce => Ok(None),
+        }
+    }
+
+    fn try_render_map_for(&mut self, expression: &CallExpression<'_>) -> Result<Option<String>, String> {
+        let Some(member) = get_static_map_callee(expression) else {
+            return Ok(None);
+        };
+        if expression.arguments.len() != 1 {
+            return Ok(None);
+        }
+
+        let callback = match &expression.arguments[0] {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(callback) if is_direct_jsx_map_callback(callback) => callback,
+            _ => return Ok(None),
+        };
+
+        let arr = self.render_nested_expression_span(member.object.span(), true)?;
+        let compiled_callback = self.render_nested_expression_span(callback.span(), true)?;
+        Ok(Some(self.render_compiler_for(arr, compiled_callback)))
+    }
+
+    fn render_expression_to_ssr_string(
+        &mut self,
+        expression: &Expression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
+        match unwrap_parenthesized_expression(expression) {
+            Expression::JSXElement(element) => {
+                if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
+                    Ok(fast_path)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_root_element(element)?
+                    ))
+                }
+            }
+            Expression::JSXFragment(fragment) => {
+                if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
+                    Ok(fast_path)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_root_fragment(fragment)?
+                    ))
+                }
+            }
+            Expression::CallExpression(call) => {
+                if let Some(map_string) = self.try_render_map_string(call, allow_flow_lowering)? {
+                    Ok(map_string)
+                } else {
+                    Ok(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_nested_expression_span(expression.span(), allow_flow_lowering)?
+                    ))
+                }
+            }
+            _ => Ok(format!(
+                "{SSR_RENDER_VALUE}({})",
+                self.render_nested_expression_span(expression.span(), allow_flow_lowering)?
+            )),
+        }
+    }
+
+    fn try_render_map_string(
+        &mut self,
+        expression: &CallExpression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<Option<String>, String> {
+        let Some(member) = get_static_map_callee(expression) else {
+            return Ok(None);
+        };
+        if expression.arguments.len() != 1 {
+            return Ok(None);
+        }
+
+        let callback = match &expression.arguments[0] {
+            oxc_ast::ast::Argument::ArrowFunctionExpression(callback) if is_direct_jsx_map_callback(callback) => callback,
+            _ => return Ok(None),
+        };
+
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+
+        let arr = self.render_nested_expression_span(member.object.span(), allow_flow_lowering)?;
+        let params = self.slice(callback.params.span).to_string();
+        let body_string =
+            self.render_expression_to_ssr_string(unwrap_parenthesized_expression(body), allow_flow_lowering)?;
+        Ok(Some(format!("{SSR_RENDER_MAP}({arr}, {params} => {body_string})")))
+    }
+
+    fn render_jsx_expression(
+        &mut self,
+        expression: &JSXExpression<'_>,
+        allow_flow_lowering: bool,
+    ) -> Result<String, String> {
         match expression {
             JSXExpression::EmptyExpression(_) => Ok(String::new()),
             JSXExpression::JSXElement(element) => self.render_root_element(element),
             JSXExpression::JSXFragment(fragment) => self.render_root_fragment(fragment),
-            _ => self.render_nested_jsx_expression(expression),
+            _ => self.render_nested_jsx_expression(expression, allow_flow_lowering),
         }
     }
 
     fn render_root_element(&mut self, element: &JSXElement<'_>) -> Result<String, String> {
-        if let Some(fast_path) = self.try_render_fast_path_element(element)? {
-            return Ok(fast_path);
+        if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
+            return Ok(format!("{SSR_RAW}({fast_path})"));
         }
         self.render_generic_element(element)
     }
 
     fn render_root_fragment(&mut self, fragment: &JSXFragment<'_>) -> Result<String, String> {
-        if let Some(fast_path) = self.try_render_fast_path_fragment(fragment)? {
-            return Ok(fast_path);
+        if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
+            return Ok(format!("{SSR_RAW}({fast_path})"));
         }
-        let children = self.render_children_array(&fragment.children)?;
+        let children = self.render_children_array(&fragment.children, true)?;
         Ok(format!(
             "{SSR_JSX_DEV}({}, {{ \"children\": [{}] }}, null, false, {{}})",
             js_string(FRAGMENT_NAME),
@@ -988,7 +1589,7 @@ impl<'s> SsrCompiler<'s> {
                             if let JSXExpression::EmptyExpression(_) = &container.expression {
                                 continue;
                             }
-                            let expression = self.render_jsx_expression(&container.expression)?;
+                            let expression = self.render_jsx_expression(&container.expression, false)?;
                             if is_key {
                                 key = Some(expression.clone());
                             }
@@ -1025,7 +1626,7 @@ impl<'s> SsrCompiler<'s> {
             }
         }
 
-        let children_array = self.render_children_array(children)?;
+        let children_array = self.render_children_array(children, false)?;
         props.push(format!("\"children\": [{}]", children_array.join(", ")));
 
         Ok((format!("{{ {} }}", props.join(", ")), key))
@@ -1034,6 +1635,7 @@ impl<'s> SsrCompiler<'s> {
     fn render_children_array(
         &mut self,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
+        allow_flow_lowering: bool,
     ) -> Result<Vec<String>, String> {
         let mut output = Vec::new();
         for child in children {
@@ -1047,17 +1649,25 @@ impl<'s> SsrCompiler<'s> {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
                         continue;
                     }
-                    output.push(self.render_jsx_expression(&container.expression)?);
+                    output.push(self.render_jsx_expression(
+                        &container.expression,
+                        allow_flow_lowering,
+                    )?);
                 }
                 JSXChild::Element(element) => output.push(self.render_root_element(element)?),
-                JSXChild::Fragment(fragment) => output.extend(self.render_children_array(&fragment.children)?),
+                JSXChild::Fragment(fragment) => {
+                    output.extend(self.render_children_array(&fragment.children, allow_flow_lowering)?)
+                }
                 JSXChild::Spread(_) => {}
             }
         }
         Ok(output)
     }
 
-    fn try_render_fast_path_element(&mut self, element: &JSXElement<'_>) -> Result<Option<String>, String> {
+    fn try_render_fast_path_element_string(
+        &mut self,
+        element: &JSXElement<'_>,
+    ) -> Result<Option<String>, String> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
         if is_component_name(&name) || name == "body" {
             return Ok(None);
@@ -1071,6 +1681,9 @@ impl<'s> SsrCompiler<'s> {
                 return Ok(None);
             };
             let attr_name = get_jsx_attribute_name(&attribute.name)?;
+            if attr_name == "key" {
+                continue;
+            }
             if attr_name == "ref"
                 || attr_name == DANGEROUSLY_SET_INNER_HTML_PROP
                 || event_name_from_prop(&attr_name).is_some()
@@ -1094,7 +1707,7 @@ impl<'s> SsrCompiler<'s> {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
                         continue;
                     }
-                    let expression = self.render_jsx_expression(&container.expression)?;
+                    let expression = self.render_jsx_expression(&container.expression, true)?;
                     if let Some(static_value) = match &container.expression {
                         JSXExpression::BooleanLiteral(value) => {
                             if value.value {
@@ -1113,7 +1726,10 @@ impl<'s> SsrCompiler<'s> {
                     } {
                         strings.last_mut().unwrap().push_str(&static_value);
                     } else {
-                        values.push(format!("{SSR_ATTR}({}, {expression})", js_string(&attr_name)));
+                        values.push(format!(
+                            "{SSR_RENDER_ATTR}({}, {expression})",
+                            js_string(&attr_name)
+                        ));
                         strings.push(String::new());
                     }
                 }
@@ -1131,10 +1747,13 @@ impl<'s> SsrCompiler<'s> {
         }
         strings.last_mut().unwrap().push_str(&format!("</{name}>"));
 
-        Ok(Some(render_ssr_template_call(&strings, &values)))
+        Ok(Some(render_ssr_string_expression(&strings, &values)))
     }
 
-    fn try_render_fast_path_fragment(&mut self, fragment: &JSXFragment<'_>) -> Result<Option<String>, String> {
+    fn try_render_fast_path_fragment_string(
+        &mut self,
+        fragment: &JSXFragment<'_>,
+    ) -> Result<Option<String>, String> {
         let mut strings = vec![String::new()];
         let mut values = Vec::new();
         for child in &fragment.children {
@@ -1142,7 +1761,7 @@ impl<'s> SsrCompiler<'s> {
                 return Ok(None);
             }
         }
-        Ok(Some(render_ssr_template_call(&strings, &values)))
+        Ok(Some(render_ssr_string_expression(&strings, &values)))
     }
 
     fn append_fast_child(
@@ -1162,6 +1781,13 @@ impl<'s> SsrCompiler<'s> {
                 if let JSXExpression::EmptyExpression(_) = &container.expression {
                     return Ok(true);
                 }
+                if let Expression::CallExpression(call) = container.expression.to_expression() {
+                    if let Some(map_string) = self.try_render_map_string(call, true)? {
+                        values.push(map_string);
+                        strings.push(String::new());
+                        return Ok(true);
+                    }
+                }
                 if let Some(static_text) = match &container.expression {
                     JSXExpression::BooleanLiteral(value) => Some(escape_text(&value.value.to_string())),
                     JSXExpression::NullLiteral(_) => Some(String::new()),
@@ -1172,32 +1798,58 @@ impl<'s> SsrCompiler<'s> {
                 } {
                     strings.last_mut().unwrap().push_str(&static_text);
                 } else {
-                    values.push(self.render_jsx_expression(&container.expression)?);
+                    values.push(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_jsx_expression(&container.expression, true)?
+                    ));
                     strings.push(String::new());
                 }
                 Ok(true)
             }
             JSXChild::Element(element) => {
-                if let Some(fast_path) = self.try_render_fast_path_element(element)? {
+                if let Some(fast_path) = self.try_render_fast_path_element_string(element)? {
                     values.push(fast_path);
                 } else {
-                    values.push(self.render_generic_element(element)?);
+                    values.push(format!(
+                        "{SSR_RENDER_VALUE}({})",
+                        self.render_generic_element(element)?
+                    ));
                 }
                 strings.push(String::new());
                 Ok(true)
             }
             JSXChild::Fragment(fragment) => {
-                if let Some(fast_path) = self.try_render_fast_path_fragment(fragment)? {
+                if let Some(fast_path) = self.try_render_fast_path_fragment_string(fragment)? {
                     values.push(fast_path);
                     strings.push(String::new());
                     return Ok(true);
                 }
-                values.push(self.render_root_fragment(fragment)?);
+                values.push(format!(
+                    "{SSR_RENDER_VALUE}({})",
+                    self.render_root_fragment(fragment)?
+                ));
                 strings.push(String::new());
                 Ok(true)
             }
             JSXChild::Spread(_) => Ok(false),
         }
+    }
+}
+
+fn render_ssr_string_expression(strings: &[String], values: &[String]) -> String {
+    let mut parts = Vec::new();
+    for (index, string_part) in strings.iter().enumerate() {
+        if !string_part.is_empty() {
+            parts.push(js_string(string_part));
+        }
+        if let Some(value_part) = values.get(index) {
+            parts.push(value_part.clone());
+        }
+    }
+    if parts.is_empty() {
+        js_string("")
+    } else {
+        parts.join(" + ")
     }
 }
 
@@ -1208,6 +1860,7 @@ struct SsrRootCollector<'c, 's> {
 }
 
 struct SsrExpressionCollector<'c, 's> {
+    allow_flow_lowering: bool,
     compiler: &'c mut SsrCompiler<'s>,
     error: Option<String>,
     jsx_depth: usize,
@@ -1243,6 +1896,48 @@ impl<'a, 'c, 's> Visit<'a> for SsrRootCollector<'c, 's> {
 }
 
 impl<'a, 'c, 's> Visit<'a> for SsrExpressionCollector<'c, 's> {
+    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_map_for(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_conditional_expression(&mut self, expression: &ConditionalExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_conditional_show(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_conditional_expression(self, expression);
+    }
+
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
         if self.error.is_some() {
             return;
@@ -1262,6 +1957,27 @@ impl<'a, 'c, 's> Visit<'a> for SsrExpressionCollector<'c, 's> {
         self.jsx_depth += 1;
         walk::walk_jsx_element(self, element);
         self.jsx_depth -= 1;
+    }
+
+    fn visit_logical_expression(&mut self, expression: &LogicalExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.allow_flow_lowering && self.jsx_depth == 0 {
+            match self.compiler.try_render_logical_show(expression) {
+                Ok(Some(code)) => {
+                    let (start, end) = span_range(expression.span);
+                    self.replacements.push(Replacement { start, end, code });
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        walk::walk_logical_expression(self, expression);
     }
 
     fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
@@ -1286,16 +2002,14 @@ impl<'a, 'c, 's> Visit<'a> for SsrExpressionCollector<'c, 's> {
     }
 }
 
-fn render_ssr_template_call(strings: &[String], values: &[String]) -> String {
-    let strings_array = strings
-        .iter()
-        .map(|entry| js_string(entry))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if values.is_empty() {
-        format!("{SSR_TEMPLATE}([{strings_array}])")
-    } else {
-        format!("{SSR_TEMPLATE}([{strings_array}], {})", values.join(", "))
+fn component_expression_span(expression: &Expression<'_>) -> Option<Span> {
+    match expression {
+        Expression::ArrowFunctionExpression(function) => Some(function.span),
+        Expression::FunctionExpression(function) => Some(function.span),
+        Expression::ParenthesizedExpression(expression) => {
+            component_expression_span(&expression.expression)
+        }
+        _ => None,
     }
 }
 
@@ -1303,7 +2017,6 @@ fn wrap_hot_components(source: &str, id: &str) -> Result<String, String> {
     let allocator = Allocator::default();
     let program = parse_program(&allocator, source, source_type_for(id), id)?;
     let mut collector = HmrCollector {
-        component_local_name: None,
         export_default_depth: 0,
         replacements: Vec::new(),
         source,
@@ -1313,7 +2026,6 @@ fn wrap_hot_components(source: &str, id: &str) -> Result<String, String> {
 }
 
 struct HmrCollector<'s> {
-    component_local_name: Option<String>,
     export_default_depth: usize,
     replacements: Vec<Replacement>,
     source: &'s str,
@@ -1324,50 +2036,59 @@ impl<'s> HmrCollector<'s> {
         let (start, end) = span_range(span);
         &self.source[start..end]
     }
+
+    fn push_component_replacement(&mut self, span: Span, name: String) {
+        let original = self.slice(span);
+        let code = format!(
+            "{HMR_DEFINE_COMPONENT}({original}, {{ registry: {HMR_REGISTRY}, name: {name} }})"
+        );
+        let (start, end) = span_range(span);
+        self.replacements.push(Replacement { start, end, code });
+    }
 }
 
 impl<'a, 's> Visit<'a> for HmrCollector<'s> {
-    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
-        if declaration.source.value.as_str() == "eclipsa" {
-            if let Some(specifiers) = &declaration.specifiers {
-                for specifier in specifiers {
-                    let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier else {
-                        continue;
-                    };
-                    let imported_name = match &specifier.imported {
-                        ModuleExportName::IdentifierName(name) => name.name.as_str(),
-                        ModuleExportName::IdentifierReference(name) => name.name.as_str(),
-                        ModuleExportName::StringLiteral(name) => name.value.as_str(),
-                    };
-                    if imported_name == "component$" {
-                        self.component_local_name = Some(specifier.local.name.as_str().to_string());
-                    }
-                }
-            }
-        }
-        walk::walk_import_declaration(self, declaration);
-    }
-
     fn visit_export_default_declaration(&mut self, declaration: &ExportDefaultDeclaration<'a>) {
         self.export_default_depth += 1;
         walk::walk_export_default_declaration(self, declaration);
         self.export_default_depth -= 1;
+
+        let span = match &declaration.declaration {
+            ExportDefaultDeclarationKind::ArrowFunctionExpression(function) => Some(function.span),
+            ExportDefaultDeclarationKind::FunctionExpression(function)
+            | ExportDefaultDeclarationKind::FunctionDeclaration(function) => Some(function.span),
+            ExportDefaultDeclarationKind::ParenthesizedExpression(expression) => {
+                component_expression_span(&expression.expression)
+            }
+            _ => None,
+        };
+        if let Some(span) = span {
+            self.push_component_replacement(span, js_string("default"));
+        }
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        walk::walk_variable_declarator(self, declarator);
+        let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+            return;
+        };
+        if !is_component_name(identifier.name.as_str()) {
+            return;
+        }
+        let Some(init) = &declarator.init else {
+            return;
+        };
+        let span = component_expression_span(init);
+        if let Some(span) = span {
+            self.push_component_replacement(span, js_string(identifier.name.as_str()));
+        }
     }
 
     fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
         if let Expression::Identifier(identifier) = &expression.callee {
-            if self.component_local_name.as_deref() == Some(identifier.name.as_str()) {
-                let original = self.slice(expression.span);
-                let name = if self.export_default_depth > 0 {
-                    js_string("default")
-                } else {
-                    "null".to_string()
-                };
-                let code = format!(
-                    "{HMR_DEFINE_COMPONENT}({original}, {{ registry: {HMR_REGISTRY}, name: {name} }})"
-                );
-                let (start, end) = span_range(expression.span);
-                self.replacements.push(Replacement { start, end, code });
+            if identifier.name.as_str() == "__eclipsaComponent" {
+                let name = if self.export_default_depth > 0 { js_string("default") } else { "null".to_string() };
+                self.push_component_replacement(expression.span, name);
                 return;
             }
         }

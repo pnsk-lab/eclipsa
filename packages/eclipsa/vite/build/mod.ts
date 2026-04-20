@@ -4,28 +4,55 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { cwd } from 'node:process'
 import { pathToFileURL } from 'node:url'
-import type { RouteManifest, RoutePathSegment } from '../../core/router-shared.ts'
-import { ROUTE_MANIFEST_ELEMENT_ID, ROUTE_PREFLIGHT_ENDPOINT } from '../../core/router-shared.ts'
+import type {
+  GetStaticPaths,
+  RouteManifest,
+  RouteParams,
+  RoutePathSegment,
+  StaticPath,
+} from '../../core/router-shared.ts'
+import {
+  ROUTE_DATA_ENDPOINT,
+  ROUTE_DATA_REQUEST_HEADER,
+  ROUTE_MANIFEST_ELEMENT_ID,
+  ROUTE_PREFLIGHT_ENDPOINT,
+  ROUTE_RPC_URL_HEADER,
+} from '../../core/router-shared.ts'
 import {
   createBuildModuleUrl,
   createBuildServerModuleUrl,
   createRouteManifest,
+  normalizeRoutePath,
   createRoutes,
 } from '../utils/routing.ts'
 import {
   collectAppActions,
   collectAppLoaders,
   collectAppSymbols,
+  collectReachableAnalyzableFiles,
   createBuildServerActionUrl,
   createBuildServerLoaderUrl,
   createBuildSymbolUrl,
 } from '../compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from '../options.ts'
+import { xxHash32 } from '../../utils/xxhash32.ts'
 
 const joinHonoPath = (left: string, right: string) => `${left}/${right}`.replaceAll(/\/+/g, '/')
+const CHUNK_CACHE_NAME_PREFIX = 'eclipsa-chunk-cache'
+const CHUNK_CACHE_SW_URL = '/eclipsa-chunk-cache-sw.js'
+const CHUNK_CACHEABLE_PATH_PREFIXES = ['/chunks/', '/entries/']
 
 const toPublicAssetUrl = (root: string, filePath: string) =>
   `/${path.relative(root, filePath).split(path.sep).join('/')}`
+
+const fileExists = async (filePath: string) => {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const collectFiles = async (directory: string): Promise<string[]> => {
   const entries = await fs.readdir(directory, { withFileTypes: true })
@@ -53,13 +80,173 @@ const collectClientStylesheetUrls = async (clientDir: string) => {
   }
 }
 
+interface ClientChunkCacheAsset {
+  hash: string
+  url: string
+}
+
+const collectClientChunkCacheAssets = async (
+  clientDir: string,
+): Promise<ClientChunkCacheAsset[]> => {
+  try {
+    const files = await collectFiles(clientDir)
+    const assetFiles = files
+      .filter((filePath) => path.extname(filePath) === '.js')
+      .map((filePath) => ({
+        filePath,
+        url: toPublicAssetUrl(clientDir, filePath),
+      }))
+      .filter((entry) =>
+        CHUNK_CACHEABLE_PATH_PREFIXES.some((prefix) => entry.url.startsWith(prefix)),
+      )
+      .sort((left, right) => left.url.localeCompare(right.url))
+
+    return Promise.all(
+      assetFiles.map(async (asset) => ({
+        hash: xxHash32(await fs.readFile(asset.filePath))
+          .toString(16)
+          .padStart(8, '0'),
+        url: asset.url,
+      })),
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
+}
+
+const createClientChunkCacheVersion = (assets: ClientChunkCacheAsset[]) =>
+  xxHash32(assets.map((asset) => `${asset.url}:${asset.hash}`).join('\n'))
+    .toString(16)
+    .padStart(8, '0')
+
+const renderChunkCacheServiceWorker = (
+  version: string,
+) => `const CACHE_NAME = "${CHUNK_CACHE_NAME_PREFIX}-${version}";
+const CACHE_PREFIX = "${CHUNK_CACHE_NAME_PREFIX}-";
+const PATH_PREFIXES = ${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)};
+const PRECACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";
+const pendingPrecacheUrls = new Set();
+
+const isCacheableRequest = (request) => {
+  if (request.method !== "GET") {
+    return false;
+  }
+  const url = new URL(request.url);
+  return url.origin === self.location.origin && PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix));
+};
+
+const fetchAndCache = async (cache, request) => {
+  const response = await fetch(request);
+  if (response.ok && (response.type === "basic" || response.type === "cors")) {
+    await cache.put(request, response.clone());
+  }
+  return response;
+};
+
+const precacheUrl = async (cache, url) => {
+  if (pendingPrecacheUrls.has(url)) {
+    return;
+  }
+  pendingPrecacheUrls.add(url);
+  try {
+    const request = new Request(new URL(url, self.location.origin).href, {
+      credentials: "same-origin",
+    });
+    if (await cache.match(request)) {
+      return;
+    }
+    await fetchAndCache(cache, request);
+  } finally {
+    pendingPrecacheUrls.delete(url);
+  }
+};
+
+const precacheUrls = async (priorityUrls, urls) => {
+  const cache = await caches.open(CACHE_NAME);
+  const queue = [...new Set([...priorityUrls, ...urls])].filter((url) =>
+    PATH_PREFIXES.some((prefix) => {
+      const pathname = new URL(url, self.location.origin).pathname;
+      return pathname.startsWith(prefix);
+    }),
+  );
+  for (const url of queue) {
+    await precacheUrl(cache, url);
+  }
+};
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(
+      names
+        .filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+        .map((name) => caches.delete(name)),
+    );
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener("fetch", (event) => {
+  if (!isCacheableRequest(event.request)) {
+    return;
+  }
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(event.request);
+    if (cached) {
+      event.waitUntil(fetchAndCache(cache, event.request).catch(() => undefined));
+      return cached;
+    }
+
+    try {
+      return await fetchAndCache(cache, event.request);
+    } catch (error) {
+      const fallback = await cache.match(event.request);
+      if (fallback) {
+        return fallback;
+      }
+      throw error;
+    }
+  })());
+});
+
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== PRECACHE_MESSAGE_TYPE) {
+    return;
+  }
+
+  event.waitUntil(
+    precacheUrls(
+      Array.isArray(data.priorityUrls) ? data.priorityUrls : [],
+      Array.isArray(data.urls) ? data.urls : [],
+    ),
+  );
+});
+`
+
+const writeClientChunkCacheServiceWorker = async (
+  clientDir: string,
+  assets: ClientChunkCacheAsset[],
+) => {
+  const version = createClientChunkCacheVersion(assets)
+  const serviceWorkerPath = path.join(clientDir, CHUNK_CACHE_SW_URL.slice(1))
+  await fs.mkdir(path.dirname(serviceWorkerPath), { recursive: true })
+  await fs.writeFile(serviceWorkerPath, renderChunkCacheServiceWorker(version))
+}
+
 const resolveRouteRenderMode = (
   route: Awaited<ReturnType<typeof createRoutes>>[number],
   output: ResolvedEclipsaPluginOptions['output'],
 ) => route.renderMode ?? (output === 'ssg' ? 'static' : 'dynamic')
-
-const isConcreteStaticRoute = (route: Awaited<ReturnType<typeof createRoutes>>[number]) =>
-  route.segments.every((segment) => segment.kind === 'static')
 
 export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
   let paths = ['']
@@ -87,6 +274,223 @@ export const toHonoRoutePaths = (segments: RoutePathSegment[]) => {
   return [...new Set(paths.map((currentPath) => (currentPath === '' ? '/' : currentPath)))]
 }
 
+interface ResolvedStaticPathInfo {
+  concretePath: string
+  honoParams: Record<string, string>
+  honoPatternPath: string
+}
+
+interface ResolvedStaticPrerenderTargets {
+  concretePaths: Set<string>
+  dynamicParamsByPattern: Map<string, Record<string, string>[]>
+}
+
+const createStaticPathsError = (routePath: string, message: string) =>
+  new Error(`Invalid getStaticPaths() for route ${routePath}: ${message}`)
+
+const validatePathSegmentValue = (
+  routePath: string,
+  paramName: string,
+  value: string,
+  kind: 'optional' | 'required' | 'rest',
+) => {
+  if (value.length === 0) {
+    throw createStaticPathsError(routePath, `${kind} param "${paramName}" must not be empty.`)
+  }
+  if (value.includes('/')) {
+    throw createStaticPathsError(routePath, `${kind} param "${paramName}" must not contain "/".`)
+  }
+}
+
+export const resolveStaticPathInfo = (
+  routePath: string,
+  segments: RoutePathSegment[],
+  params: RouteParams,
+): ResolvedStaticPathInfo => {
+  const allowedParams = new Set(
+    segments.filter((segment) => segment.kind !== 'static').map((segment) => segment.value),
+  )
+
+  for (const key of Object.keys(params)) {
+    if (!allowedParams.has(key)) {
+      throw createStaticPathsError(routePath, `unknown param "${key}".`)
+    }
+  }
+
+  const concreteSegments: string[] = []
+  const honoPatternSegments: string[] = []
+  const honoParams: Record<string, string> = {}
+
+  for (const segment of segments) {
+    switch (segment.kind) {
+      case 'static':
+        concreteSegments.push(segment.value)
+        honoPatternSegments.push(segment.value)
+        break
+      case 'required': {
+        const value = params[segment.value]
+        if (typeof value !== 'string') {
+          throw createStaticPathsError(
+            routePath,
+            `required param "${segment.value}" must be a string.`,
+          )
+        }
+        validatePathSegmentValue(routePath, segment.value, value, 'required')
+        concreteSegments.push(value)
+        honoPatternSegments.push(`:${segment.value}`)
+        honoParams[segment.value] = value
+        break
+      }
+      case 'optional': {
+        const value = params[segment.value]
+        if (value === undefined) {
+          break
+        }
+        if (typeof value !== 'string') {
+          throw createStaticPathsError(
+            routePath,
+            `optional param "${segment.value}" must be a string when provided.`,
+          )
+        }
+        validatePathSegmentValue(routePath, segment.value, value, 'optional')
+        concreteSegments.push(value)
+        honoPatternSegments.push(`:${segment.value}`)
+        honoParams[segment.value] = value
+        break
+      }
+      case 'rest': {
+        const value = params[segment.value]
+        if (!Array.isArray(value)) {
+          throw createStaticPathsError(
+            routePath,
+            `rest param "${segment.value}" must be a string array.`,
+          )
+        }
+        if (value.length === 0) {
+          throw createStaticPathsError(
+            routePath,
+            `rest param "${segment.value}" must contain at least one segment.`,
+          )
+        }
+        for (const part of value) {
+          if (typeof part !== 'string') {
+            throw createStaticPathsError(
+              routePath,
+              `rest param "${segment.value}" must only contain strings.`,
+            )
+          }
+          validatePathSegmentValue(routePath, segment.value, part, 'rest')
+        }
+        concreteSegments.push(...value)
+        honoPatternSegments.push(`:${segment.value}{.+}`)
+        honoParams[segment.value] = value.join('/')
+        break
+      }
+    }
+  }
+
+  return {
+    concretePath: normalizeRoutePath(concreteSegments.join('/')),
+    honoParams,
+    honoPatternPath: normalizeRoutePath(honoPatternSegments.join('/')),
+  }
+}
+
+const resolveBuiltPageModulePath = (root: string, entryName: string) =>
+  path.join(root, 'dist', 'ssr', 'entries', `${entryName}.mjs`)
+
+const loadBuiltGetStaticPaths = async (root: string, entryName: string, routePath: string) => {
+  const modulePath = resolveBuiltPageModulePath(root, entryName)
+  const mod = (await import(`${pathToFileURL(modulePath).href}?t=${Date.now()}`)) as Partial<{
+    getStaticPaths: GetStaticPaths
+  }>
+  if (typeof mod.getStaticPaths !== 'function') {
+    throw createStaticPathsError(routePath, 'dynamic static routes must export getStaticPaths().')
+  }
+  return mod.getStaticPaths
+}
+
+const validateStaticPathsResult = (routePath: string, value: unknown): StaticPath[] => {
+  if (!Array.isArray(value)) {
+    throw createStaticPathsError(routePath, 'getStaticPaths() must return an array.')
+  }
+  return value as StaticPath[]
+}
+
+const resolveStaticPrerenderTargets = async (
+  root: string,
+  routes: Array<Awaited<ReturnType<typeof createRoutes>>[number]>,
+): Promise<ResolvedStaticPrerenderTargets> => {
+  const concretePaths = new Set<string>()
+  const dynamicParamsByPattern = new Map<string, Record<string, string>[]>()
+  const ownersByConcretePath = new Map<string, string>()
+
+  const registerConcretePath = (routePath: string, concretePath: string) => {
+    const existingOwner = ownersByConcretePath.get(concretePath)
+    if (existingOwner) {
+      throw createStaticPathsError(
+        routePath,
+        `duplicate concrete path "${concretePath}" conflicts with ${existingOwner}.`,
+      )
+    }
+    ownersByConcretePath.set(concretePath, routePath)
+  }
+
+  for (const route of routes) {
+    if (!route.page) {
+      continue
+    }
+
+    const hasDynamicSegment = route.segments.some((segment) => segment.kind !== 'static')
+    if (!hasDynamicSegment) {
+      registerConcretePath(route.routePath, route.routePath)
+      concretePaths.add(route.routePath)
+      continue
+    }
+
+    const getStaticPaths = await loadBuiltGetStaticPaths(
+      root,
+      route.page.entryName,
+      route.routePath,
+    )
+    const staticPaths = validateStaticPathsResult(route.routePath, await getStaticPaths())
+
+    for (const [index, staticPath] of staticPaths.entries()) {
+      if (!staticPath || typeof staticPath !== 'object') {
+        throw createStaticPathsError(route.routePath, `entry ${index} must be an object.`)
+      }
+      if (
+        !('params' in staticPath) ||
+        !staticPath.params ||
+        typeof staticPath.params !== 'object' ||
+        Array.isArray(staticPath.params)
+      ) {
+        throw createStaticPathsError(
+          route.routePath,
+          `entry ${index} must include a params object.`,
+        )
+      }
+
+      const resolved = resolveStaticPathInfo(route.routePath, route.segments, staticPath.params)
+      registerConcretePath(route.routePath, resolved.concretePath)
+
+      if (resolved.honoPatternPath === resolved.concretePath) {
+        concretePaths.add(resolved.concretePath)
+        continue
+      }
+
+      const params = dynamicParamsByPattern.get(resolved.honoPatternPath) ?? []
+      params.push(resolved.honoParams)
+      dynamicParamsByPattern.set(resolved.honoPatternPath, params)
+    }
+  }
+
+  return {
+    concretePaths,
+    dynamicParamsByPattern,
+  }
+}
+
 const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
   JSON.stringify(
     routes.map((route) => ({
@@ -101,6 +505,49 @@ const createSerializedRoutes = (routes: Awaited<ReturnType<typeof createRoutes>>
       server: route.server ? createBuildServerModuleUrl(route.server) : null,
     })),
   )
+
+const toIdsByFilePath = (entries: ReadonlyArray<{ filePath: string; id: string }>) => {
+  const idsByFilePath = new Map<string, string[]>()
+  for (const entry of entries) {
+    const existing = idsByFilePath.get(entry.filePath)
+    if (existing) {
+      existing.push(entry.id)
+      continue
+    }
+    idsByFilePath.set(entry.filePath, [entry.id])
+  }
+  return idsByFilePath
+}
+
+const getRouteReachableEntryFiles = (route: Awaited<ReturnType<typeof createRoutes>>[number]) =>
+  [
+    route.error?.filePath,
+    ...route.layouts.map((layout) => layout.filePath),
+    route.loading?.filePath,
+    route.notFound?.filePath,
+    route.page?.filePath,
+  ].filter((filePath): filePath is string => typeof filePath === 'string')
+
+const createRouteServerAccessEntries = async (
+  routes: Awaited<ReturnType<typeof createRoutes>>,
+  actions: ReadonlyArray<{ filePath: string; id: string }>,
+  loaders: ReadonlyArray<{ filePath: string; id: string }>,
+) => {
+  const actionIdsByFilePath = toIdsByFilePath(actions)
+  const loaderIdsByFilePath = toIdsByFilePath(loaders)
+
+  return await Promise.all(
+    routes.map(async (route) => {
+      const reachableFiles = await collectReachableAnalyzableFiles(
+        getRouteReachableEntryFiles(route),
+      )
+      return {
+        actionIds: reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? []),
+        loaderIds: reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),
+      }
+    }),
+  )
+}
 
 const createActionTable = (actions: Array<{ filePath: string; id: string }>) =>
   actions
@@ -130,23 +577,35 @@ const createPageRouteEntries = (routes: Awaited<ReturnType<typeof createRoutes>>
 
 const renderAppModule = (
   actions: Array<{ filePath: string; id: string }>,
+  appHooksClientUrl: string | null,
+  appHooksServerUrl: string | null,
   loaders: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
+  routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
   routeManifest: RouteManifest,
+  serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
   stylesheetUrls: string[],
+  chunkCacheUrls: string[],
 ) => {
   const serializedRoutes = createSerializedRoutes(routes)
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
   const actionTable = createActionTable(actions)
   const loaderTable = createLoaderTable(loaders)
+  const serializedAppHooksManifest = JSON.stringify({
+    client: appHooksClientUrl,
+  })
+  const serializedRouteServerAccessEntries = JSON.stringify(routeServerAccessEntries)
+  const serializedAppHooksServerUrl = JSON.stringify(appHooksServerUrl)
   const serializedSymbolUrls = JSON.stringify(symbolUrls)
   const serializedRouteManifest = JSON.stringify(routeManifest)
+  const serializedServerHooksUrl = JSON.stringify(serverHooksUrl)
   const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
+  const serializedChunkCacheUrls = JSON.stringify(chunkCacheUrls)
 
   return `import userApp from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, composeRouteMetadata, deserializeValue, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, primeActionState, renderRouteMetadataHead, renderSSRStream, resolvePendingLoaders, serializeResumePayload } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
 const actions = {
@@ -156,14 +615,30 @@ const loaders = {
 ${loaderTable}
 };
 const routes = ${serializedRoutes};
+const routeServerAccessEntries = ${serializedRouteServerAccessEntries};
 const pageRouteEntries = ${serializedPageRouteEntries};
+const appHooksManifest = ${serializedAppHooksManifest};
+const appHooksServerUrl = ${serializedAppHooksServerUrl};
 const routeManifest = ${serializedRouteManifest};
+const serverHooksUrl = ${serializedServerHooksUrl};
 const symbolUrls = ${serializedSymbolUrls};
 const stylesheetUrls = ${serializedStylesheetUrls};
+const chunkCacheUrls = ${serializedChunkCacheUrls};
 const RESUME_PAYLOAD_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_RESUME_PAYLOAD__')};
+const APP_HOOKS_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_APP_HOOKS__')};
+const CHUNK_CACHE_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_CHUNK_CACHE__')};
 const ROUTE_MANIFEST_PLACEHOLDER = ${JSON.stringify('__ECLIPSA_ROUTE_MANIFEST__')};
 const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
+const ROUTE_ERROR_PROP = "__eclipsa_route_error";
+const ROUTE_DATA_REQUEST_HEADER = ${JSON.stringify(ROUTE_DATA_REQUEST_HEADER)};
 const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
+const CHUNK_CACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";
+const hooksPromise = (async () => {
+  const appHooks = appHooksServerUrl ? await import(appHooksServerUrl) : {};
+  const serverHooks = serverHooksUrl ? await import(serverHooksUrl) : {};
+  await serverHooks.init?.();
+  return { appHooks, serverHooks };
+})();
 
 const normalizeRoutePath = (pathname) => {
   const normalizedPath = pathname.trim() || "/";
@@ -172,6 +647,34 @@ const normalizeRoutePath = (pathname) => {
     ? withLeadingSlash.slice(0, -1)
     : withLeadingSlash;
 };
+
+const decodeRoutePathSegment = (segment) => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+const splitRawRoutePath = (pathname) => normalizeRoutePath(pathname).split("/").filter(Boolean);
+
+const splitRoutePath = (pathname) => splitRawRoutePath(pathname).map(decodeRoutePathSegment);
+
+const getRequestUrl = (request) => {
+  const url = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto");
+  if (host) {
+    url.host = host;
+  }
+  if (proto) {
+    url.protocol = proto + ":";
+  }
+  return url;
+};
+
+const createInternalRouteRequestUrl = (request, targetUrl) =>
+  new URL(targetUrl.pathname + targetUrl.search, request.url).href;
 
 const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0, params = {}) => {
   if (routeIndex >= segments.length) {
@@ -209,16 +712,21 @@ const matchSegments = (segments, pathnameSegments, routeIndex = 0, pathIndex = 0
         [segment.value]: undefined,
       });
     }
-    case "rest":
+    case "rest": {
+      const rest = pathnameSegments.slice(pathIndex);
+      if (rest.length === 0) {
+        return null;
+      }
       return matchSegments(segments, pathnameSegments, segments.length, pathnameSegments.length, {
         ...params,
-        [segment.value]: pathnameSegments.slice(pathIndex),
+        [segment.value]: rest,
       });
+    }
   }
 };
 
 const matchRoute = (pathname) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  const pathnameSegments = splitRoutePath(pathname);
   for (const route of routes) {
     const params = matchSegments(route.segments, pathnameSegments);
     if (params) {
@@ -228,8 +736,64 @@ const matchRoute = (pathname) => {
   return null;
 };
 
+const matchRouteManifestEntry = (pathname) => {
+  const pathnameSegments = splitRoutePath(pathname);
+  for (const entry of routeManifest) {
+    const params = matchSegments(entry.segments, pathnameSegments);
+    if (params) {
+      return { entry, params };
+    }
+  }
+  return null;
+};
+
+const uniqueChunkCacheUrls = (urls) =>
+  [...new Set(urls)].filter(
+    (url) =>
+      typeof url === "string" &&
+      (${JSON.stringify(CHUNK_CACHEABLE_PATH_PREFIXES)}).some((prefix) => url.startsWith(prefix)),
+  );
+
+const getChunkCacheUrlPriority = (url) => {
+  if (url.startsWith("/chunks/")) {
+    return 0;
+  }
+  if (url.startsWith("/entries/")) {
+    return 1;
+  }
+  return 2;
+};
+
+const sortChunkCacheUrls = (urls) =>
+  [...urls].sort(
+    (left, right) =>
+      getChunkCacheUrlPriority(left) - getChunkCacheUrlPriority(right) || left.localeCompare(right),
+  );
+
+const createChunkCacheMessage = (pathname, payload) => {
+  const matched = matchRouteManifestEntry(pathname);
+  const priorityUrls = uniqueChunkCacheUrls([
+    "/entries/client_boot.js",
+    ...(matched
+      ? [...matched.entry.layouts, matched.entry.page, matched.entry.notFound, matched.entry.error]
+      : []),
+    ...Object.values(payload.symbols ?? {}),
+  ]);
+  const priorityUrlSet = new Set(priorityUrls);
+  return {
+    priorityUrls,
+    type: CHUNK_CACHE_MESSAGE_TYPE,
+    urls: sortChunkCacheUrls(chunkCacheUrls.filter((url) => !priorityUrlSet.has(url))),
+  };
+};
+
+const createChunkCacheRegistrationScript = (pathname, payload) => {
+  const message = createChunkCacheMessage(pathname, payload);
+  return \`(()=>{const message=\${JSON.stringify(message)};if(!("serviceWorker" in navigator))return;const key="__eclipsa_chunk_cache";const state=window[key]??={registrationPromise:null,post(nextMessage){const post=(registration)=>{const worker=registration.active??registration.waiting??registration.installing;if(worker){worker.postMessage(nextMessage);}};this.registrationPromise=this.registrationPromise??navigator.serviceWorker.register(${JSON.stringify(CHUNK_CACHE_SW_URL)},{scope:"/",updateViaCache:"none"}).then(()=>navigator.serviceWorker.ready);void this.registrationPromise.then((registration)=>{post(registration);}).catch((error)=>{console.error("Failed to register Eclipsa chunk cache service worker.",error);});}};state.post(message);})();\`;
+};
+
 const scoreSpecialRoute = (route, pathname) => {
-  const pathnameSegments = normalizeRoutePath(pathname).split("/").filter(Boolean);
+  const pathnameSegments = splitRoutePath(pathname);
   let score = 0;
   for (let index = 0; index < route.segments.length && index < pathnameSegments.length; index += 1) {
     const segment = route.segments[index];
@@ -250,9 +814,19 @@ const scoreSpecialRoute = (route, pathname) => {
 };
 
 const findSpecialRoute = (pathname, kind) => {
-  const matched = matchRoute(pathname);
+  const normalizedPath = normalizeRoutePath(pathname);
+  const matched = matchRoute(normalizedPath);
   if (matched?.route[kind]) {
     return matched;
+  }
+
+  const rawPathSegments = splitRawRoutePath(normalizedPath);
+  for (let length = rawPathSegments.length - 1; length >= 0; length -= 1) {
+    const candidatePath = length === 0 ? "/" : "/" + rawPathSegments.slice(0, length).join("/");
+    const candidate = matchRoute(candidatePath);
+    if (candidate?.route[kind]) {
+      return candidate;
+    }
   }
 
   let best = null;
@@ -291,6 +865,106 @@ const isRedirectResponse = (response) =>
   response.status >= 300 &&
   response.status < 400 &&
   !!response.headers.get("location");
+
+const toPublicErrorValue = async (hooks, c, error, event) => {
+  const publicError = await runHandleError(
+    {
+      handleError: hooks.handleError,
+    },
+    {
+      context: c,
+      error,
+      event,
+    },
+  );
+  return markPublicError(error, publicError);
+};
+
+const logServerError = (error) => {
+  if (error && typeof error === "object" && error.__eclipsa_not_found__ === true) {
+    return;
+  }
+  console.error(error);
+};
+
+const prepareRequestContext = (c, hooks) => {
+  attachRequestFetch(c, createRequestFetch(c, hooks.handleFetch));
+  return c;
+};
+
+const reroutePathname = (hooks, request, pathname, baseUrl) =>
+  normalizeRoutePath(resolveReroute(hooks.reroute, request, pathname, baseUrl));
+
+const getRouteServerAccess = (route) => {
+  const routeIndex = routes.indexOf(route);
+  const entry = routeIndex >= 0 ? routeServerAccessEntries[routeIndex] : null;
+  return entry ?? { actionIds: [], loaderIds: [] };
+};
+
+const resolveRouteForCurrentUrl = (hooks, request, currentUrl) => {
+  const resolvedPathname = reroutePathname(hooks, request, normalizeRoutePath(currentUrl.pathname), currentUrl.href);
+  const match = matchRoute(resolvedPathname);
+  if (match?.route?.page) {
+    return match;
+  }
+  const fallback = findSpecialRoute(resolvedPathname, "notFound");
+  return fallback?.route?.notFound ? fallback : null;
+};
+
+const getRpcCurrentRoute = (hooks, c) => {
+  const requestUrl = getRequestUrl(c.req.raw);
+  const routeUrlHeader = c.req.header(${JSON.stringify(ROUTE_RPC_URL_HEADER)});
+  if (!routeUrlHeader) {
+    return null;
+  }
+  let currentUrl;
+  try {
+    currentUrl = new URL(routeUrlHeader, requestUrl);
+  } catch {
+    return null;
+  }
+  if (currentUrl.origin !== requestUrl.origin) {
+    return null;
+  }
+  return resolveRouteForCurrentUrl(hooks, c.req.raw, currentUrl);
+};
+
+const resolveRequest = async (c, handler) => {
+  const { appHooks, serverHooks } = await hooksPromise;
+  const requestContext = prepareRequestContext(c, serverHooks);
+  const execute = (nextContext = requestContext) =>
+    withServerRequestContext(
+      nextContext,
+      {
+        handleError: serverHooks.handleError,
+        transport: appHooks.transport,
+      },
+      () => handler(nextContext, appHooks, serverHooks),
+    );
+
+  if (!serverHooks.handle) {
+    return execute(requestContext);
+  }
+
+  return withServerRequestContext(
+    requestContext,
+    {
+      handleError: serverHooks.handleError,
+      transport: appHooks.transport,
+    },
+    () => serverHooks.handle(requestContext, (nextContext) => execute(nextContext ?? requestContext)),
+  );
+};
+
+const resolveRequestRoute = (hooks, request, url) => {
+  const requestPathname = normalizeRoutePath(new URL(url).pathname);
+  const resolvedPathname = reroutePathname(hooks, request, requestPathname, url);
+  return {
+    match: matchRoute(resolvedPathname),
+    requestPathname,
+    resolvedPathname,
+  };
+};
 
 const loadRouteMiddlewares = async (route) =>
   Promise.all(
@@ -341,7 +1015,47 @@ const resolvePreflightTarget = (pathname) => {
   return null;
 };
 
-const replaceHeadPlaceholder = (html, placeholder, value) => html.replace(placeholder, value);
+const replaceHeadPlaceholder = (html, placeholder, value) => html.replaceAll(placeholder, value);
+const replaceResumePayloadPlaceholderValue = (value, replacements) => {
+  if (typeof value === "string") {
+    return replacements[value] ?? value;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((entry) => {
+      const replaced = replaceResumePayloadPlaceholderValue(entry, replacements);
+      if (replaced !== entry) {
+        changed = true;
+      }
+      return replaced;
+    });
+    return changed ? next : value;
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  let changed = false;
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const replaced = replaceResumePayloadPlaceholderValue(entry, replacements);
+    if (replaced !== entry) {
+      changed = true;
+    }
+    next[key] = replaced;
+  }
+  return changed ? next : value;
+};
+const createResumePayloadPlaceholderReplacements = (pathname, payload) => ({
+  [ROUTE_MANIFEST_PLACEHOLDER]: JSON.stringify(routeManifest),
+  [APP_HOOKS_PLACEHOLDER]: JSON.stringify(appHooksManifest),
+  [CHUNK_CACHE_PLACEHOLDER]: createChunkCacheRegistrationScript(pathname, payload),
+});
+const serializeAppResumePayload = (pathname, payload) => serializeResumePayload(
+  replaceResumePayloadPlaceholderValue(
+    payload,
+    createResumePayloadPlaceholderReplacements(pathname, payload),
+  ),
+);
 const splitHtmlForStreaming = (html) => {
   const bodyCloseIndex = html.lastIndexOf("</body>");
   if (bodyCloseIndex >= 0) {
@@ -391,12 +1105,23 @@ const createRouteProps = (params, props) => {
   return nextProps;
 };
 
-const createRouteElement = (pathname, params, Page, Layouts) => {
+const attachRouteError = (props, error) => {
+  Object.defineProperty(props, ROUTE_ERROR_PROP, {
+    configurable: true,
+    enumerable: false,
+    value: error,
+    writable: true,
+  });
+  return props;
+};
+
+const createRouteElement = (pathname, params, Page, Layouts, error) => {
   if (Layouts.length === 0) {
-    return jsxDEV(Page, createRouteProps(params, {}), null, false, {});
+    return jsxDEV(Page, attachRouteError(createRouteProps(params, {}), error), null, false, {});
   }
 
   const route = {
+    error,
     layouts: Layouts.map((renderer) => ({ renderer })),
     page: { renderer: Page },
     params,
@@ -405,7 +1130,7 @@ const createRouteElement = (pathname, params, Page, Layouts) => {
   let children = null;
   for (let index = Layouts.length - 1; index >= 0; index -= 1) {
     const Layout = Layouts[index];
-    children = jsxDEV(Layout, createRouteProps(params, { children: createRouteSlot(route, index + 1) }), null, false, {});
+    children = jsxDEV(Layout, attachRouteError(createRouteProps(params, { children: createRouteSlot(route, index + 1) }), error), null, false, {});
   }
   return children;
 };
@@ -425,6 +1150,7 @@ const invokeRouteServer = async (moduleUrl, c, params) => {
 };
 
 const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status = 200, options) => {
+  ensureActionCsrfToken(c);
   const [pageModule, ...layoutModules] = await Promise.all([
     import(moduleUrl),
     ...route.layouts.map((layout) => import(layout)),
@@ -435,11 +1161,11 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
     [...layoutModules.map((module) => module.metadata ?? null), pageModule.metadata ?? null],
     {
       params,
-      url: new URL(c.req.url),
+      url: getRequestUrl(c.req.raw),
     },
   );
-  const document = SSRRoot({
-    children: createRouteElement(pathname, params, Page, Layouts),
+  const document = jsxDEV(SSRRoot, {
+    children: createRouteElement(pathname, params, Page, Layouts, options?.routeError),
     head: {
       type: Fragment,
       isStatic: true,
@@ -476,6 +1202,15 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               type: "script",
               isStatic: true,
               props: {
+                children: APP_HOOKS_PLACEHOLDER,
+                id: APP_HOOKS_ELEMENT_ID,
+                type: "application/eclipsa-app-hooks+json",
+              },
+            },
+            {
+              type: "script",
+              isStatic: true,
+              props: {
                 dangerouslySetInnerHTML: getStreamingResumeBootstrapScriptContent(),
               },
             },
@@ -483,29 +1218,47 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
               type: "script",
               isStatic: true,
               props: {
-                type: "module",
-              src: "/entries/client_boot.js",
+                dangerouslySetInnerHTML: CHUNK_CACHE_PLACEHOLDER,
+              },
             },
-          },
-        ],
+            {
+              type: "script",
+              isStatic: true,
+              props: {
+                type: "module",
+                src: "/entries/client_boot.js",
+              },
+            },
+          ],
+        },
       },
-    },
-  });
+  }, null, false, {});
 
   applyRequestParams(c, params);
   const { html, payload, chunks } = await renderSSRStream(() => document, {
-    prepare: options?.prepare,
+    prepare(container) {
+      primeLocationState(container, getRequestUrl(c.req.raw));
+      return options?.prepare?.(container);
+    },
     resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
     symbols: symbolUrls,
   });
   const shellHtml = replaceHeadPlaceholder(
-    replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeResumePayload(payload)),
-    ROUTE_MANIFEST_PLACEHOLDER,
-    escapeJSONScriptText(JSON.stringify(routeManifest)),
+    replaceHeadPlaceholder(
+        replaceHeadPlaceholder(
+          replaceHeadPlaceholder(html, RESUME_PAYLOAD_PLACEHOLDER, serializeAppResumePayload(pathname, payload)),
+          CHUNK_CACHE_PLACEHOLDER,
+          escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, payload)),
+        ),
+      ROUTE_MANIFEST_PLACEHOLDER,
+      escapeJSONScriptText(JSON.stringify(routeManifest)),
+    ),
+    APP_HOOKS_PLACEHOLDER,
+    escapeJSONScriptText(JSON.stringify(appHooksManifest)),
   );
   const { prefix, suffix } = splitHtmlForStreaming(shellHtml);
   const encoder = new TextEncoder();
-  return new Response(
+  return applyActionCsrfCookie(new Response(
     new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode(prefix));
@@ -519,7 +1272,7 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
             controller.enqueue(
               encoder.encode(
                 "<template id=\\"" + templateId + "\\">" + chunk.html + "</template>" +
-                  "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(chunk.payload) + "</script>" +
+                  "<script id=\\"" + payloadId + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeAppResumePayload(pathname, chunk.payload) + "</script>" +
                   "<script>window.__eclipsa_stream.enqueue({boundaryId:" + JSON.stringify(chunk.boundaryId) + ",payloadScriptId:" + JSON.stringify(payloadId) + ",templateId:" + JSON.stringify(templateId) + "})</script>",
               ),
             );
@@ -527,7 +1280,9 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
 
           controller.enqueue(
             encoder.encode(
-              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeResumePayload(latestPayload) + "</script>" + suffix,
+              "<script id=\\"" + RESUME_FINAL_STATE_ELEMENT_ID + "\\" type=\\"application/eclipsa-resume+json\\">" + serializeAppResumePayload(pathname, latestPayload) + "</script>" +
+                "<script>" + escapeInlineScriptText(createChunkCacheRegistrationScript(pathname, latestPayload)) + "</script>" +
+                suffix,
             ),
           );
           controller.close();
@@ -542,53 +1297,137 @@ const renderRouteResponse = async (route, pathname, params, c, moduleUrl, status
       },
       status,
     },
-  );
+  ), c);
 };
 
 const renderMatchedPage = async (match, c, options) => {
-  const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
+  const { appHooks, serverHooks } = await hooksPromise;
+  const requestUrl = getRequestUrl(c.req.raw);
+  const pathname = normalizeRoutePath(requestUrl.pathname);
+  const resolvedPathname = reroutePathname(appHooks, c.req.raw, pathname, requestUrl.href);
   try {
     return await renderRouteResponse(match.route, pathname, match.params, c, match.route.page, 200, options);
   } catch (error) {
-    const fallback = isNotFoundError(error) ? findSpecialRoute(pathname, "notFound") : findSpecialRoute(pathname, "error");
+    logServerError(error);
+    const publicError = await toPublicErrorValue(serverHooks, c, error, "page");
+    const fallback = isNotFoundError(error) ? findSpecialRoute(resolvedPathname, "notFound") : findSpecialRoute(resolvedPathname, "error");
     const kind = isNotFoundError(error) ? "notFound" : "error";
     const moduleUrl = fallback?.route?.[kind];
     if (!fallback || !moduleUrl) {
       return c.text(isNotFoundError(error) ? "Not Found" : "Internal Server Error", isNotFoundError(error) ? 404 : 500);
     }
-    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500, options);
+    return renderRouteResponse(fallback.route, pathname, fallback.params, c, moduleUrl, isNotFoundError(error) ? 404 : 500, {
+      ...options,
+      routeError: publicError,
+    });
   }
 };
 
+const renderRouteDataResponse = async (route, pathname, params, c, moduleUrl, kind) => {
+  const [pageModule, ...layoutModules] = await Promise.all([
+    import(moduleUrl),
+    ...route.layouts.map((layout) => import(layout)),
+  ]);
+  const Page = pageModule.default;
+  const Layouts = layoutModules.map((module) => module.default);
+
+  applyRequestParams(c, params);
+  const { payload } = await renderSSRAsync(() => createRouteElement(pathname, params, Page, Layouts, undefined), {
+    prepare(container) {
+      primeLocationState(container, getRequestUrl(c.req.raw));
+    },
+    resolvePendingLoaders: async (container) => resolvePendingLoaders(container, c),
+    symbols: symbolUrls,
+  });
+
+  return c.json({
+    finalHref: getRequestUrl(c.req.raw).href,
+    finalPathname: pathname,
+    kind,
+    loaders: payload.loaders,
+    ok: true,
+  });
+};
+
+const renderRouteData = async (route, pathname, params, c, moduleUrl, kind) => {
+  const { appHooks } = await hooksPromise;
+  const requestUrl = getRequestUrl(c.req.raw);
+  const requestPathname = normalizeRoutePath(requestUrl.pathname);
+  const resolvedPathname = reroutePathname(appHooks, c.req.raw, requestPathname, requestUrl.href);
+  try {
+    return await renderRouteDataResponse(route, pathname, params, c, moduleUrl, kind);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      return c.json({ document: true, ok: false });
+    }
+    const fallback = findSpecialRoute(resolvedPathname, "notFound");
+    if (!fallback?.route?.notFound) {
+      return c.json({ document: true, ok: false });
+    }
+    try {
+      return await renderRouteDataResponse(
+        fallback.route,
+        requestPathname,
+        fallback.params,
+        c,
+        fallback.route.notFound,
+        "not-found",
+      );
+    } catch {
+      return c.json({ document: true, ok: false });
+    }
+  }
+};
+
+const resolveRouteData = async (href, c) => {
+  const requestUrl = getRequestUrl(c.req.raw);
+  const targetUrl = new URL(href, requestUrl);
+  if (targetUrl.origin !== requestUrl.origin) {
+    return c.json({ document: true, ok: false });
+  }
+  const headers = new Headers(c.req.raw.headers);
+  headers.set(ROUTE_DATA_REQUEST_HEADER, "1");
+  const response = await app.fetch(
+    new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
+      headers,
+      method: "GET",
+      redirect: "manual",
+    }),
+  );
+  if (response.status >= 200 && response.status < 300) {
+    return response;
+  }
+  if (isRedirectResponse(response)) {
+    return c.json({
+      location: new URL(response.headers.get("location"), requestUrl).href,
+      ok: false,
+    });
+  }
+  return c.json({ document: true, ok: false });
+};
+
 const resolveRoutePreflight = async (href, c) => {
-  const requestUrl = new URL(c.req.url);
+  const { appHooks } = await hooksPromise;
+  const requestUrl = getRequestUrl(c.req.raw);
   const targetUrl = new URL(href, requestUrl);
   if (targetUrl.origin !== requestUrl.origin) {
     return c.json({ document: true, ok: false });
   }
 
-  const target = resolvePreflightTarget(normalizeRoutePath(targetUrl.pathname));
+  const target = resolvePreflightTarget(reroutePathname(appHooks, new Request(targetUrl.href), normalizeRoutePath(targetUrl.pathname), targetUrl.href));
   if (!target) {
     return c.json({ ok: true });
   }
 
   const headers = new Headers(c.req.raw.headers);
   headers.set(ROUTE_PREFLIGHT_REQUEST_HEADER, "1");
-  let response;
-  try {
-    response = await fetch(targetUrl.href, {
+  const response = await app.fetch(
+    new Request(createInternalRouteRequestUrl(c.req.raw, targetUrl), {
       headers,
+      method: "GET",
       redirect: "manual",
-    });
-  } catch {
-    response = await app.fetch(
-      new Request(targetUrl.href, {
-        headers,
-        method: "GET",
-        redirect: "manual",
-      }),
-    );
-  }
+    }),
+  );
 
   if (response.status >= 200 && response.status < 300) {
     return c.json({ ok: true });
@@ -603,143 +1442,236 @@ const resolveRoutePreflight = async (href, c) => {
 };
 
 for (const pageRouteEntry of pageRouteEntries) {
-  app.get(pageRouteEntry.path, async (c) => {
-    const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
-    const match = matchRoute(pathname);
-    if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
-      return c.text("Not Found", 404);
-    }
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-    );
-  });
+  app.get(pageRouteEntry.path, async (c) =>
+    resolveRequest(c, async (requestContext) => {
+      const pathname = normalizeRoutePath(getRequestUrl(requestContext.req.raw).pathname);
+      const match = matchRoute(pathname);
+      if (!match || match.route !== routes[pageRouteEntry.routeIndex]) {
+        return requestContext.text("Not Found", 404);
+      }
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
+        async () =>
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(
+                  match.route,
+                  pathname,
+                  match.params,
+                  requestContext,
+                  match.route.page,
+                  "page",
+                )
+              : renderMatchedPage(match, requestContext),
+      );
+    }),
+  );
 }
 
-app.post("/__eclipsa/action/:id", async (c) => {
-  const id = c.req.param("id");
-  const moduleUrl = actions[id];
-  if (!moduleUrl) {
-    return c.text("Not Found", 404);
-  }
-  if (!hasAction(id)) {
-    await import(moduleUrl);
-  }
-  return executeAction(id, c);
-});
+app.post("/__eclipsa/action/:id", async (c) =>
+  resolveRequest(c, async (requestContext, appHooks) => {
+    const id = requestContext.req.param("id");
+    if (!id) {
+      return requestContext.text("Not Found", 404);
+    }
+    const routeMatch = getRpcCurrentRoute(appHooks, requestContext);
+    if (!routeMatch) {
+      return requestContext.text("Bad Request", 400);
+    }
+    const routeAccess = getRouteServerAccess(routeMatch.route);
+    if (!routeAccess.actionIds.includes(id)) {
+      return requestContext.text("Not Found", 404);
+    }
+    const moduleUrl = actions[id];
+    if (!moduleUrl) {
+      return requestContext.text("Not Found", 404);
+    }
+    if (!hasAction(id)) {
+      await import(moduleUrl);
+    }
+    return composeRouteMiddlewares(
+      routeMatch.route,
+      requestContext,
+      routeMatch.params,
+      async () => executeAction(id, requestContext),
+    );
+  }),
+);
 
-app.get("/__eclipsa/loader/:id", async (c) => {
-  const id = c.req.param("id");
-  const moduleUrl = loaders[id];
-  if (!moduleUrl) {
-    return c.text("Not Found", 404);
-  }
-  if (!hasLoader(id)) {
-    await import(moduleUrl);
-  }
-  return executeLoader(id, c);
-});
+app.get("/__eclipsa/loader/:id", async (c) =>
+  resolveRequest(c, async (requestContext, appHooks) => {
+    const id = requestContext.req.param("id");
+    if (!id) {
+      return requestContext.text("Not Found", 404);
+    }
+    const routeMatch = getRpcCurrentRoute(appHooks, requestContext);
+    if (!routeMatch) {
+      return requestContext.text("Bad Request", 400);
+    }
+    const routeAccess = getRouteServerAccess(routeMatch.route);
+    if (!routeAccess.loaderIds.includes(id)) {
+      return requestContext.text("Not Found", 404);
+    }
+    const moduleUrl = loaders[id];
+    if (!moduleUrl) {
+      return requestContext.text("Not Found", 404);
+    }
+    if (!hasLoader(id)) {
+      await import(moduleUrl);
+    }
+    return composeRouteMiddlewares(
+      routeMatch.route,
+      requestContext,
+      routeMatch.params,
+      async () => executeLoader(id, requestContext),
+    );
+  }),
+);
 
-app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) => {
-  const href = c.req.query("href");
-  if (!href) {
-    return c.json({ document: true, ok: false }, 400);
-  }
-  return resolveRoutePreflight(href, c);
-});
+app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const href = requestContext.req.query("href");
+    if (!href) {
+      return requestContext.json({ document: true, ok: false }, 400);
+    }
+    return resolveRoutePreflight(href, requestContext);
+  }),
+);
 
-app.all("*", async (c) => {
-  const pathname = normalizeRoutePath(new URL(c.req.url).pathname);
-  const match = matchRoute(pathname);
+app.get(${JSON.stringify(ROUTE_DATA_ENDPOINT)}, async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const href = requestContext.req.query("href");
+    if (!href) {
+      return requestContext.json({ document: true, ok: false }, 400);
+    }
+    return resolveRouteData(href, requestContext);
+  }),
+);
 
-  if (!match) {
-    const fallback = findSpecialRoute(pathname, "notFound");
-    if (fallback?.route?.notFound) {
+app.all("*", async (c) =>
+  resolveRequest(c, async (requestContext) => {
+    const pathname = normalizeRoutePath(getRequestUrl(requestContext.req.raw).pathname);
+    const match = matchRoute(pathname);
+
+    if (!match) {
+      const fallback = findSpecialRoute(pathname, "notFound");
+      if (fallback?.route?.notFound) {
+        return composeRouteMiddlewares(
+          fallback.route,
+          requestContext,
+          fallback.params,
+          async () =>
+            requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+              ? requestContext.body(null, 204)
+              : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+                ? renderRouteData(
+                    fallback.route,
+                    pathname,
+                    fallback.params,
+                    requestContext,
+                    fallback.route.notFound,
+                    "not-found",
+                  )
+                : renderRouteResponse(
+                    fallback.route,
+                    pathname,
+                    fallback.params,
+                    requestContext,
+                    fallback.route.notFound,
+                    404,
+                  ),
+        );
+      }
+      return requestContext.text("Not Found", 404);
+    }
+
+    if (
+      (requestContext.req.method === "GET" || requestContext.req.method === "HEAD") &&
+      match.route.page
+    ) {
       return composeRouteMiddlewares(
-        fallback.route,
-        c,
-        fallback.params,
+        match.route,
+        requestContext,
+        match.params,
         async () =>
-          c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-            ? c.body(null, 204)
-            : renderRouteResponse(fallback.route, pathname, fallback.params, c, fallback.route.notFound, 404),
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : requestContext.req.header(ROUTE_DATA_REQUEST_HEADER) === "1"
+              ? renderRouteData(
+                  match.route,
+                  pathname,
+                  match.params,
+                  requestContext,
+                  match.route.page,
+                  "page",
+                )
+              : renderMatchedPage(match, requestContext),
       );
     }
-    return c.text("Not Found", 404);
-  }
-
-  if ((c.req.method === "GET" || c.req.method === "HEAD") && match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-    );
-  }
-  if (c.req.method === "POST" && match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () => {
-        const actionId = await getActionFormSubmissionId(c);
-        if (!actionId) {
-          return match.route.server
-            ? invokeRouteServer(match.route.server, c, match.params)
-            : renderMatchedPage(match, c);
-        }
-        const moduleUrl = actions[actionId];
-        if (!moduleUrl) {
-          return c.text("Not Found", 404);
-        }
-        if (!hasAction(actionId)) {
-          await import(moduleUrl);
-        }
-        const input = await getNormalizedActionInput(c);
-        const response = await executeAction(actionId, c);
-        const contentType = response.headers.get("content-type") ?? "";
-        if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
-          return response;
-        }
-        const body = await response.json();
-        return renderMatchedPage(match, c, {
-          prepare(container) {
-            primeActionState(container, actionId, {
-              error: body.ok ? undefined : deserializeValue(body.error),
-              input,
-              result: body.ok ? deserializeValue(body.value) : undefined,
-            });
-          },
-        });
-      },
-    );
-  }
-  if (match.route.server) {
-    return composeRouteMiddlewares(match.route, c, match.params, async () =>
-      invokeRouteServer(match.route.server, c, match.params),
-    );
-  }
-  if (match.route.page) {
-    return composeRouteMiddlewares(
-      match.route,
-      c,
-      match.params,
-      async () =>
-        c.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
-          ? c.body(null, 204)
-          : renderMatchedPage(match, c),
-    );
-  }
-  return c.text("Not Found", 404);
-});
+    if (requestContext.req.method === "POST" && match.route.page) {
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
+        async () => {
+          const actionId = await getActionFormSubmissionId(requestContext);
+          if (!actionId) {
+            return match.route.server
+              ? invokeRouteServer(match.route.server, requestContext, match.params)
+              : renderMatchedPage(match, requestContext);
+          }
+          const routeAccess = getRouteServerAccess(match.route);
+          if (!routeAccess.actionIds.includes(actionId)) {
+            return requestContext.text("Not Found", 404);
+          }
+          const moduleUrl = actions[actionId];
+          if (!moduleUrl) {
+            return requestContext.text("Not Found", 404);
+          }
+          if (!hasAction(actionId)) {
+            await import(moduleUrl);
+          }
+          const input = await getNormalizedActionInput(requestContext);
+          const response = await executeAction(actionId, requestContext);
+          const contentType = response.headers.get("content-type") ?? "";
+          if (!contentType.startsWith(ACTION_CONTENT_TYPE)) {
+            return response;
+          }
+          const body = await response.json();
+          return renderMatchedPage(match, requestContext, {
+            prepare(container) {
+              primeActionState(container, actionId, {
+                error: body.ok ? undefined : deserializeValue(body.error),
+                input,
+                result: body.ok ? deserializeValue(body.value) : undefined,
+              });
+            },
+          });
+        },
+      );
+    }
+    if (match.route.server) {
+      return composeRouteMiddlewares(match.route, requestContext, match.params, async () =>
+        invokeRouteServer(match.route.server, requestContext, match.params),
+      );
+    }
+    if (match.route.page) {
+      return composeRouteMiddlewares(
+        match.route,
+        requestContext,
+        match.params,
+        async () =>
+          requestContext.req.header(ROUTE_PREFLIGHT_REQUEST_HEADER) === "1"
+            ? requestContext.body(null, 204)
+            : renderMatchedPage(match, requestContext),
+      );
+    }
+    return requestContext.text("Not Found", 404);
+  }),
+);
 
 export const pageRoutePatterns = [...new Set(pageRouteEntries.map((entry) => entry.path))];
 export default app;
@@ -847,21 +1779,18 @@ export const build = async (
   options: ResolvedEclipsaPluginOptions,
 ) => {
   const root = userConfig.root ?? cwd()
+  const appHooksPath = path.join(root, 'app/+hooks.ts')
+  const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
   const routes = await createRoutes(root)
+  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
   const staticPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'static',
   )
   const dynamicPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'dynamic',
   )
-  const nonConcreteStaticRoute = staticPageRoutes.find((route) => !isConcreteStaticRoute(route))
-  if (nonConcreteStaticRoute) {
-    throw new Error(
-      `Static rendering currently requires a concrete route path. Remove dynamic segments from ${nonConcreteStaticRoute.routePath} or switch it to render = "dynamic".`,
-    )
-  }
   if (options.output === 'ssg') {
     const dynamicRoute = dynamicPageRoutes[0]
     if (dynamicRoute) {
@@ -885,20 +1814,45 @@ export const build = async (
   await builder.build(builder.environments.client)
   await builder.build(builder.environments.ssr)
 
+  const appHooksClientUrl = (await fileExists(appHooksPath))
+    ? createBuildModuleUrl({ entryName: 'app_hooks', filePath: appHooksPath })
+    : null
+  const appHooksServerUrl = (await fileExists(appHooksPath))
+    ? createBuildServerModuleUrl({ entryName: 'app_hooks', filePath: appHooksPath })
+    : null
   const clientDir = path.join(root, 'dist/client')
+  const serverHooksUrl = (await fileExists(serverHooksPath))
+    ? createBuildServerModuleUrl({ entryName: 'server_hooks', filePath: serverHooksPath })
+    : null
   const stylesheetUrls = await collectClientStylesheetUrls(clientDir)
+  const chunkCacheAssets = await collectClientChunkCacheAssets(clientDir)
+  await writeClientChunkCacheServiceWorker(clientDir, chunkCacheAssets)
   const serverDir = path.join(root, 'dist/server')
   const appModulePath = path.join(root, 'dist/ssr/eclipsa_app.mjs')
   await fs.mkdir(path.dirname(appModulePath), { recursive: true })
   await fs.writeFile(
     appModulePath,
-    renderAppModule(actions, loaders, routes, routeManifest, symbolUrls, stylesheetUrls),
+    renderAppModule(
+      actions,
+      appHooksClientUrl,
+      appHooksServerUrl,
+      loaders,
+      routes,
+      routeServerAccessEntries,
+      routeManifest,
+      serverHooksUrl,
+      symbolUrls,
+      stylesheetUrls,
+      chunkCacheAssets.map((asset) => asset.url),
+    ),
   )
-
-  const staticPageRouteSet = new Set(staticPageRoutes.map((route) => route.routePath))
+  const staticPrerenderTargets = await resolveStaticPrerenderTargets(root, staticPageRoutes)
 
   const prerenderStaticRoutes = async () => {
-    if (staticPageRouteSet.size === 0) {
+    if (
+      staticPrerenderTargets.concretePaths.size === 0 &&
+      staticPrerenderTargets.dynamicParamsByPattern.size === 0
+    ) {
       return
     }
 
@@ -909,8 +1863,20 @@ export const build = async (
     }
     const result = await toSSG(app as any, fs, {
       beforeRequestHook(request: Request) {
-        const routePath = new URL(request.url).pathname
-        return staticPageRouteSet.has(routePath) ? request : false
+        const routePath = normalizeRoutePath(decodeURIComponent(new URL(request.url).pathname))
+        if (
+          routePath === normalizeRoutePath(ROUTE_DATA_ENDPOINT) ||
+          routePath === normalizeRoutePath(ROUTE_PREFLIGHT_ENDPOINT) ||
+          routePath.startsWith('/__eclipsa/loader/')
+        ) {
+          return false
+        }
+        const ssgParams = staticPrerenderTargets.dynamicParamsByPattern.get(routePath)
+        if (ssgParams) {
+          ;(request as Request & { ssgParams?: Record<string, string>[] }).ssgParams = ssgParams
+          return request
+        }
+        return staticPrerenderTargets.concretePaths.has(routePath) ? request : false
       },
       dir: clientDir,
     })

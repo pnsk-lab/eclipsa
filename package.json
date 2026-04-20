@@ -4,27 +4,42 @@
   "workspaces": [
     "packages/*",
     "e2e",
-    "docs"
+    "docs",
+    "examples/*"
   ],
   "type": "module",
   "scripts": {
     "dev": "turbo run dev --filter=./e2e",
     "build": "turbo run build",
-    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/create-eclipsa --filter=./packages/image",
+    "benchmark:build": "bun run --cwd benchmarks build",
+    "benchmark:bun": "bun run --cwd benchmarks bench:bun",
+    "benchmark:node": "bun run --cwd benchmarks bench:node",
+    "benchmark:deno": "bun run --cwd benchmarks bench:deno",
+    "benchmark:test": "bun run --cwd benchmarks test",
+    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/optimizer --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/content --filter=./packages/motion --filter=./packages/markdown --filter=./packages/native --filter=./packages/native-core --filter=./packages/native-swiftui --filter=./packages/native-compose --filter=./packages/native-gtk4",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
     "test:e2e": "turbo run e2e --filter=./e2e",
-    "fmt": "vp fmt"
+    "lint": "vp check",
+    "fmt": "vp check --fix"
   },
   "devDependencies": {
+    "@eclipsa/optimizer": "workspace:^",
     "@types/node": "^24.5.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
     "@voidzero-dev/vite-plus-core": "^0.1.4",
     "@voidzero-dev/vite-plus-test": "^0.1.4",
+    "c8": "^11.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "turbo": "^2.8.16",
     "typescript": "^5.9.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",
     "vite-plus": "^0.1.4",
-    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4"
+    "vitest": "npm:@voidzero-dev/vite-plus-test@^0.1.4",
+    "vue": "^3.5.22"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@^0.1.4",

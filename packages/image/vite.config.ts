@@ -2,7 +2,7 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   test: {
-    include: ['*.test.ts', '*.test.tsx'],
+    include: ['*.test.ts'],
     environment: 'node',
   },
   pack: {

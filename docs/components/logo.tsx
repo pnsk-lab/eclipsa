@@ -1,6 +1,6 @@
-import { component$ } from 'eclipsa'
+import type { JSX } from 'eclipsa'
 
-export const Logo = component$((props: { class?: string }) => {
+export const Logo = (props: { class?: string }): JSX.Element => {
   return (
     <svg
       version="1.0"
@@ -85,4 +85,4 @@ export const Logo = component$((props: { class?: string }) => {
       </g>
     </svg>
   )
-})
+}

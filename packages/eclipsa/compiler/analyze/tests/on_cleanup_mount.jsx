@@ -1,6 +1,6 @@
-import { component$, onCleanup, onMount } from 'eclipsa'
+import { onCleanup, onMount } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const value = 'mounted'
 
   onMount(() => {
@@ -11,4 +11,4 @@ export default component$(() => {
   })
 
   return <button>{value}</button>
-})
+}

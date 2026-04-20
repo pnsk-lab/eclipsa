@@ -1,6 +1,6 @@
-import { component$, Link, useNavigate, useSignal } from 'eclipsa'
+import { Link, useNavigate, useSignal } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const count = useSignal(0)
   const navigate = useNavigate()
 
@@ -11,12 +11,12 @@ export default component$(() => {
       <p>
         <Link href="/">Back home with Link</Link>
       </p>
-      <button type="button" onClick$={() => count.value++}>
+      <button type="button" onClick={() => count.value++}>
         Count: {count.value}
       </button>
       <button
         type="button"
-        onClick$={() => {
+        onClick={() => {
           void navigate('/')
         }}
       >
@@ -24,4 +24,4 @@ export default component$(() => {
       </button>
     </div>
   )
-})
+}

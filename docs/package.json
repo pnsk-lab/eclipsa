@@ -8,16 +8,29 @@
     "deploy": "bun run build && wrangler deploy",
     "deploy:dry-run": "bun run build && wrangler deploy --dry-run",
     "start": "bun ./scripts/serve-static.ts",
-    "test": "bun x vitest run wrangler.test.ts app/landing-scene.test.ts",
+    "test": "bunx vitest run",
+    "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vitest run",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@eclipsa/content": "workspace:*",
+    "@eclipsa/image": "workspace:*",
+    "@eclipsa/motion": "workspace:*",
+    "@eclipsa/optimizer": "workspace:*",
+    "@iconify-json/simple-icons": "^1.2.75",
+    "@iconify-json/tabler": "^1.2.31",
+    "clsx": "^2.1.1",
     "eclipsa": "workspace:*",
+    "hono": "^4.6.4",
+    "monaco-editor": "^0.55.1",
     "shiki": "^4.0.2",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "three": "^0.180.0"
   },
   "devDependencies": {
+    "@egoist/tailwindcss-icons": "^1.9.2",
     "@tailwindcss/vite": "^4.2.1",
+    "@types/three": "^0.180.0",
     "@typescript/native-preview": "^7.0.0-dev.20260310.1",
     "wrangler": "^4.73.0"
   }

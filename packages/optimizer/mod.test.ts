@@ -1,0 +1,346 @@
+import { execFile } from 'node:child_process'
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { describe, expect, it } from 'vitest'
+import { resolveGeneratedArtifactPath } from './mod.ts'
+import {
+  buildPackageManifest,
+  PUBLISH_EXPORTS,
+  PUBLISH_FILES,
+} from './scripts/sync-package-manifest.ts'
+import {
+  GENERATED_BROWSER_WASM_FILE_NAME,
+  resolveBrowserWasmSourcePath,
+  syncGeneratedBrowserWasm,
+} from './browser-artifacts.ts'
+import {
+  prepareDownloadedArtifacts,
+  shouldFlattenArtifact,
+} from './scripts/prepare-downloaded-artifacts.ts'
+import { createNpmDirs, parseTargetTriple } from './scripts/create-npm-dirs.ts'
+
+const execFileAsync = promisify(execFile)
+const packageRoot = path.dirname(fileURLToPath(import.meta.url))
+const packageJsonPath = path.join(packageRoot, 'package.json')
+const publishWorkflowPath = path.resolve(packageRoot, '../../.github/workflows/publish.yml')
+
+const writePlaceholder = async (root: string, relativePath: string, contents = 'export {}\n') => {
+  const filePath = path.join(root, relativePath)
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, contents)
+}
+
+describe('optimizer packaging', () => {
+  it('exposes the browser compiler binding through a public subpath export', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      exports?: Record<string, { import?: string; types?: string }>
+    }
+
+    expect(packageJson.exports?.['./browser']).toEqual({
+      import: './generated/optimizer.wasi-browser.js',
+      types: './generated/index.d.ts',
+    })
+  })
+
+  it('resolves the generated napi binding entry from the optimizer package root', () => {
+    const wasmBindingPath = resolveGeneratedArtifactPath('optimizer.wasi.cjs')
+
+    expect(wasmBindingPath).toBeTruthy()
+    expect(wasmBindingPath).toContain(`${path.sep}generated${path.sep}`)
+    expect(wasmBindingPath).toMatch(/optimizer\.wasi\.cjs$/)
+  })
+
+  it('produces a publish manifest that points at built dist entries', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const publishManifest = buildPackageManifest(packageJson, 'publish')
+
+    expect(publishManifest.exports).toEqual(PUBLISH_EXPORTS)
+    expect(publishManifest.exports).toMatchObject({
+      './browser': {
+        import: './generated/optimizer.wasi-browser.js',
+        types: './generated/index.d.ts',
+      },
+    })
+    expect(publishManifest.files).toEqual(PUBLISH_FILES)
+    expect(publishManifest.main).toBe('./dist/mod.mjs')
+    expect(publishManifest.types).toBe('./dist/mod.d.mts')
+    expect(publishManifest.optionalDependencies).toMatchObject({
+      '@eclipsa/optimizer-darwin-arm64': packageJson.version,
+      '@eclipsa/optimizer-darwin-x64': packageJson.version,
+      '@eclipsa/optimizer-linux-arm64-gnu': packageJson.version,
+      '@eclipsa/optimizer-linux-arm64-musl': packageJson.version,
+      '@eclipsa/optimizer-linux-x64-gnu': packageJson.version,
+      '@eclipsa/optimizer-linux-x64-musl': packageJson.version,
+      '@eclipsa/optimizer-wasm32-wasi': packageJson.version,
+      '@eclipsa/optimizer-win32-arm64-msvc': packageJson.version,
+      '@eclipsa/optimizer-win32-x64-msvc': packageJson.version,
+    })
+  })
+
+  it('keeps direct emnapi dependencies required for wasi napi builds', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const dependencies = packageJson.dependencies as Record<string, string>
+    const devManifest = buildPackageManifest(packageJson, 'dev')
+
+    expect(dependencies).toMatchObject({
+      '@emnapi/core': '^1.9.0',
+      '@emnapi/runtime': '^1.9.0',
+      '@emnapi/wasi-threads': '^1.2.0',
+    })
+    expect(devManifest.dependencies).toMatchObject({
+      '@emnapi/core': '^1.9.0',
+      '@emnapi/runtime': '^1.9.0',
+      '@emnapi/wasi-threads': '^1.2.0',
+    })
+    expect(devManifest.optionalDependencies).toBeUndefined()
+  })
+
+  it('uses the workspace-pinned napi cli for packaging and publish builds', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+    const publishWorkflow = await readFile(publishWorkflowPath, 'utf8')
+
+    for (const scriptName of [
+      'artifacts',
+      'build:native:dev',
+      'build:native',
+      'prepublishOnly',
+      'version:napi',
+    ]) {
+      expect(packageJson.scripts?.[scriptName]).toContain('bun ./scripts/run-napi.ts')
+      expect(packageJson.scripts?.[scriptName]).not.toContain('bunx @napi-rs/cli')
+    }
+
+    expect(packageJson.scripts?.['create:npm-dirs']).toContain('bun ./scripts/create-npm-dirs.ts')
+    expect(packageJson.scripts?.['create:npm-dirs']).not.toContain('bun ./scripts/run-napi.ts')
+
+    expect(publishWorkflow).toContain('bun ./scripts/run-napi.ts build')
+    expect(publishWorkflow).not.toContain('bunx @napi-rs/cli build')
+  })
+
+  it('creates npm package directories for every configured napi target', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-create-npm-dirs-'))
+    const tempPackageJsonPath = path.join(tempRoot, 'package.json')
+
+    await writeFile(
+      tempPackageJsonPath,
+      `${JSON.stringify(
+        {
+          name: '@scope/example',
+          version: '1.2.3',
+          description: 'example package',
+          homepage: 'https://example.test/pkg',
+          license: 'MIT',
+          repository: {
+            type: 'git',
+            url: 'https://example.test/repo.git',
+          },
+          bugs: {
+            url: 'https://example.test/issues',
+          },
+          dependencies: {
+            '@napi-rs/wasm-runtime': '^1.2.3',
+          },
+          napi: {
+            binaryName: 'example',
+            targets: ['x86_64-unknown-linux-gnu', 'aarch64-apple-darwin', 'wasm32-wasip1-threads'],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    await createNpmDirs({
+      cwd: tempRoot,
+      packageJsonPath: './package.json',
+      npmDir: './npm',
+    })
+
+    expect(await readFile(path.join(tempRoot, 'npm/linux-x64-gnu/README.md'), 'utf8')).toContain(
+      'x86_64-unknown-linux-gnu',
+    )
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/linux-x64-gnu/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-linux-x64-gnu',
+      main: 'example.linux-x64-gnu.node',
+      files: ['example.linux-x64-gnu.node'],
+      os: ['linux'],
+      cpu: ['x64'],
+      libc: ['glibc'],
+    })
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/darwin-arm64/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-darwin-arm64',
+      main: 'example.darwin-arm64.node',
+      files: ['example.darwin-arm64.node'],
+      os: ['darwin'],
+      cpu: ['arm64'],
+    })
+    expect(
+      JSON.parse(
+        await readFile(path.join(tempRoot, 'npm/wasm32-wasi/package.json'), 'utf8'),
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      name: '@scope/example-wasm32-wasi',
+      main: 'example.wasi.cjs',
+      browser: 'example.wasi-browser.js',
+      files: [
+        'example.wasm32-wasi.wasm',
+        'example.wasi.cjs',
+        'example.wasi-browser.js',
+        'wasi-worker.mjs',
+        'wasi-worker-browser.mjs',
+      ],
+      cpu: ['wasm32'],
+      dependencies: {
+        '@napi-rs/wasm-runtime': '^1.2.3',
+      },
+      engines: {
+        node: '>=14.0.0',
+      },
+    })
+  })
+
+  it('materializes every target configured in the optimizer package', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-all-npm-dirs-'))
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      napi?: {
+        targets?: string[]
+      }
+    }
+
+    await writeFile(path.join(tempRoot, 'package.json'), await readFile(packageJsonPath, 'utf8'))
+    await createNpmDirs({
+      cwd: tempRoot,
+      packageJsonPath: './package.json',
+      npmDir: './npm',
+    })
+
+    const actualDirs = (await readdir(path.join(tempRoot, 'npm'))).sort()
+    const expectedDirs = (packageJson.napi?.targets ?? []).map(
+      (target) => parseTargetTriple(target).platformArchABI,
+    )
+
+    expect(actualDirs).toEqual(expectedDirs.sort())
+  })
+
+  it('flattens downloaded binding artifacts before npm artifact hydration', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-artifacts-'))
+    const artifactsDir = path.join(tempRoot, 'artifacts')
+    const nestedDir = path.join(artifactsDir, 'bindings-wasm32-wasip1-threads')
+
+    await writePlaceholder(nestedDir, 'optimizer.wasi.cjs', 'module.exports = {}\n')
+    await writePlaceholder(nestedDir, 'optimizer.wasi-browser.js')
+    await writePlaceholder(nestedDir, 'wasi-worker.mjs')
+    await writePlaceholder(nestedDir, 'wasi-worker-browser.mjs')
+    await writeFile(
+      path.join(nestedDir, 'optimizer.wasm32-wasi.wasm'),
+      new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
+    )
+    await writePlaceholder(nestedDir, 'ignored.txt')
+
+    await prepareDownloadedArtifacts(artifactsDir)
+
+    expect(shouldFlattenArtifact('optimizer.wasi.cjs')).toBe(true)
+    expect(shouldFlattenArtifact('ignored.txt')).toBe(false)
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasi.cjs'), 'utf8')).toContain(
+      'module.exports',
+    )
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasi-browser.js'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'wasi-worker.mjs'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'wasi-worker-browser.mjs'), 'utf8')).toContain(
+      'export {}',
+    )
+    expect(await readFile(path.join(artifactsDir, 'optimizer.wasm32-wasi.wasm'))).toEqual(
+      Buffer.from([0x00, 0x61, 0x73, 0x6d]),
+    )
+    await expect(readFile(path.join(artifactsDir, 'ignored.txt'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
+
+  it('runs artifact flattening in publish workflow before npm hydration', async () => {
+    const publishWorkflow = await readFile(publishWorkflowPath, 'utf8')
+
+    expect(publishWorkflow).toContain('name: Flatten downloaded binding artifacts')
+    expect(publishWorkflow).toContain('run: bun ./scripts/prepare-downloaded-artifacts.ts')
+  })
+
+  it('packs only publish artifacts and excludes native binaries', async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const publishManifest = buildPackageManifest(packageJson, 'publish')
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-pack-'))
+
+    await writeFile(
+      path.join(tempRoot, 'package.json'),
+      `${JSON.stringify(publishManifest, null, 2)}\n`,
+    )
+
+    await writePlaceholder(tempRoot, 'dist/mod.mjs')
+    await writePlaceholder(tempRoot, 'dist/mod.d.mts')
+    await writePlaceholder(tempRoot, 'generated/optimizer.wasi.cjs', 'module.exports = {}\n')
+    await writePlaceholder(tempRoot, 'generated/browser.js')
+    await writePlaceholder(tempRoot, 'generated/wasi-worker.mjs')
+    await writePlaceholder(tempRoot, 'generated/index.d.ts')
+    await writeFile(
+      path.join(tempRoot, 'generated/optimizer.linux-x64-gnu.node'),
+      new Uint8Array([0x00]),
+    )
+    await writeFile(
+      path.join(tempRoot, 'generated/optimizer.wasm32-wasi.wasm'),
+      new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
+    )
+
+    const { stdout } = await execFileAsync('bun', ['pm', 'pack', '--dry-run'], {
+      cwd: tempRoot,
+      encoding: 'utf8',
+    })
+
+    expect(stdout).toContain('generated/browser.js')
+    expect(stdout).toContain('generated/optimizer.wasi.cjs')
+    expect(stdout).toContain('generated/optimizer.wasm32-wasi.wasm')
+    expect(stdout).not.toContain('generated/optimizer.linux-x64-gnu.node')
+  }, 15000)
+
+  it('syncs the browser wasm artifact from the compiler release target into generated output', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-browser-wasm-'))
+    const baseUrl = new URL(`file://${path.join(tempRoot, 'browser-artifacts.ts')}`)
+    const releaseWasmPath = path.join(
+      tempRoot,
+      '../eclipsa/compiler/rust/target/wasm32-wasip1-threads/release/eclipsa_compiler.wasm',
+    )
+
+    await mkdir(path.dirname(releaseWasmPath), { recursive: true })
+    await writeFile(releaseWasmPath, new Uint8Array([0x00, 0x61, 0x73, 0x6d]))
+
+    expect(resolveBrowserWasmSourcePath(baseUrl.href)).toBe(path.resolve(releaseWasmPath))
+
+    const syncedPath = syncGeneratedBrowserWasm(baseUrl.href)
+    expect(syncedPath).toBe(path.join(tempRoot, 'generated', GENERATED_BROWSER_WASM_FILE_NAME))
+    expect(await readFile(syncedPath!)).toEqual(Buffer.from([0x00, 0x61, 0x73, 0x6d]))
+  })
+})

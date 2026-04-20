@@ -1,0 +1,40 @@
+{
+  "name": "@eclipsa/vue",
+  "version": "0.0.0",
+  "homepage": "https://github.com/pnsk-lab/eclipsa",
+  "bugs": {
+    "url": "https://github.com/pnsk-lab/eclipsa/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pnsk-lab/eclipsa.git",
+    "directory": "packages/vue"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "import": "./mod.ts"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/mod.d.mts",
+        "import": "./dist/mod.mjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "test": "vp test --run",
+    "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
+    "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "eclipsa": "*",
+    "vue": "*"
+  }
+}

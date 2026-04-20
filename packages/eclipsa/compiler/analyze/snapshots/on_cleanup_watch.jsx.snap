@@ -1,7 +1,7 @@
 // ================= ENTRY (on_cleanup_watch.jsx) ==
-import { component$, onCleanup, useSignal, useWatch } from 'eclipsa'
+import { onCleanup, useSignal, useWatch } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const tracked = useSignal(0)
 
   useWatch(() => {
@@ -12,14 +12,14 @@ export default component$(() => {
   }, [tracked])
 
   return <button>{tracked.value}</button>
-})
+}
 
 
 // ================= analyzed ==
 import { __eclipsaComponent, __eclipsaWatch } from "eclipsa/internal";
-import { component$, onCleanup, useSignal, useWatch } from 'eclipsa'
+import { onCleanup, useSignal, useWatch } from 'eclipsa'
 
-export default component$(__eclipsaComponent(() => {
+export default __eclipsaComponent(() => {
   const tracked = useSignal(0)
 
   useWatch(__eclipsaWatch("n9bfqq", () => {
@@ -30,11 +30,11 @@ export default component$(__eclipsaComponent(() => {
   }, ()=>[tracked]), [tracked])
 
   return <button>{tracked.value}</button>
-}, "124yknm", ()=>[]))
+}, "124yknm", ()=>[], undefined, { optimizedRoot: true })
 
 
 // ================= n9bfqq (watch) ==
-import { component$, onCleanup, useSignal, useWatch } from 'eclipsa'
+import { onCleanup, useSignal, useWatch } from 'eclipsa'
 export default (__scope) => {
     console.log(__scope[0].value)
     onCleanup(() => {
@@ -43,7 +43,7 @@ export default (__scope) => {
   };
 
 // ================= 124yknm (component) ==
-import { component$, onCleanup, useSignal, useWatch } from 'eclipsa'
+import { onCleanup, useSignal, useWatch } from 'eclipsa'
 import { __eclipsaWatch } from "eclipsa/internal";
 export default (__scope) => {
   const tracked = useSignal(0)

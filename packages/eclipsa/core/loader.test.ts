@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
+import type { AppContext } from './hooks.ts'
 import { beginAsyncSSRContainer, toResumePayload } from './runtime.ts'
 import { executeLoader, primeLoaderState, registerLoader, type LoaderMiddleware } from './loader.ts'
 
@@ -20,7 +21,9 @@ describe('loader runtime', () => {
       value: 42,
     }))
 
-    app.get('/__eclipsa/loader/:id', (c) => executeLoader(c.req.param('id'), c))
+    app.get('/__eclipsa/loader/:id', (c) =>
+      executeLoader(c.req.param('id'), c as unknown as AppContext),
+    )
 
     const response = await app.request('http://localhost/__eclipsa/loader/profile')
 
@@ -46,7 +49,7 @@ describe('loader runtime', () => {
         {},
         () => null,
         async (runtimeContainer) => {
-          await primeLoaderState(runtimeContainer, 'preloaded', c)
+          await primeLoaderState(runtimeContainer, 'preloaded', c as unknown as AppContext)
         },
       )
       return c.json(toResumePayload(container))

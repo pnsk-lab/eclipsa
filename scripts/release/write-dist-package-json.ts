@@ -4,7 +4,13 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import process from 'node:process'
 
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue }
 export type JsonObject = { [key: string]: JsonValue }
 type DependencyMap = Record<string, string>
 
@@ -249,26 +255,17 @@ export const createPublishPackageJson = (
   assignJsonField(
     packageJsonFields,
     'dependencies',
-    rewriteDependencyMap(
-      packageJsonFields.dependencies,
-      workspaceVersions,
-    ),
+    rewriteDependencyMap(packageJsonFields.dependencies, workspaceVersions),
   )
   assignJsonField(
     packageJsonFields,
     'peerDependencies',
-    rewriteDependencyMap(
-      packageJsonFields.peerDependencies,
-      workspaceVersions,
-    ),
+    rewriteDependencyMap(packageJsonFields.peerDependencies, workspaceVersions),
   )
   assignJsonField(
     packageJsonFields,
     'optionalDependencies',
-    rewriteDependencyMap(
-      packageJsonFields.optionalDependencies,
-      workspaceVersions,
-    ),
+    rewriteDependencyMap(packageJsonFields.optionalDependencies, workspaceVersions),
   )
 
   packageJsonFields.private = false

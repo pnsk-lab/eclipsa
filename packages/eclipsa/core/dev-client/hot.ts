@@ -1,6 +1,10 @@
 import type { Component } from '../component.ts'
-import { __eclipsaComponent, getComponentMeta } from '../internal.ts'
-import type { JSX } from '../../jsx/jsx-runtime.ts'
+import {
+  __eclipsaComponent,
+  getComponentMeta,
+  getExternalComponentMeta,
+  setExternalComponentMeta,
+} from '../internal.ts'
 
 const HOT_COMPONENT_TARGET_KEY = Symbol.for('eclipsa.hot-component-target')
 
@@ -10,8 +14,9 @@ interface ViteHotContext {
 }
 
 const unwrapHotComponent = (Component: Component): Component =>
-  ((Component as Component & { [HOT_COMPONENT_TARGET_KEY]?: Component })[HOT_COMPONENT_TARGET_KEY] ??
-    Component) as Component
+  ((Component as Component & { [HOT_COMPONENT_TARGET_KEY]?: Component })[
+    HOT_COMPONENT_TARGET_KEY
+  ] ?? Component) as Component
 
 export const initHot = (
   hot: ViteHotContext | undefined,
@@ -57,6 +62,7 @@ interface ComponentMetaInput {
 export const defineHotComponent = (Component: Component, meta: ComponentMetaInput): Component => {
   const current = { value: unwrapHotComponent(Component) }
   const componentMeta = getComponentMeta(Component)
+  const externalMeta = getExternalComponentMeta(Component)
 
   meta.registry.components.set(meta.name, {
     update(newComponent) {
@@ -72,14 +78,19 @@ export const defineHotComponent = (Component: Component, meta: ComponentMetaInpu
   }
   HotComponent[HOT_COMPONENT_TARGET_KEY] = current.value
   if (!componentMeta) {
-    return HotComponent
+    return externalMeta ? setExternalComponentMeta(HotComponent, externalMeta) : HotComponent
   }
-  return __eclipsaComponent(
+  const wrapped = __eclipsaComponent(
     HotComponent,
     componentMeta.symbol,
     componentMeta.captures,
     componentMeta.projectionSlots,
+    {
+      external: componentMeta.external,
+      optimizedRoot: componentMeta.optimizedRoot,
+    },
   )
+  return externalMeta ? setExternalComponentMeta(wrapped, externalMeta) : wrapped
 }
 
 interface HotComponentData {

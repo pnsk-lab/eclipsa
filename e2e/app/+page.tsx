@@ -1,4 +1,4 @@
-import { component$, For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
+import { For, Link, useNavigate, useSignal, useWatch } from 'eclipsa'
 import { ProjectedContent } from './ProjectedContent.tsx'
 import { RenderPropProbe } from './RenderPropProbe.tsx'
 
@@ -9,10 +9,23 @@ export const metadata = {
   title: 'Home | E2E',
 }
 
-export default component$(() => {
+export default () => {
   const todos = useSignal<string[]>(['ToDo1'])
   const inputting = useSignal('')
   const navigate = useNavigate()
+
+  const handleInput = (e: InputEvent) => {
+    inputting.value = (e.currentTarget as HTMLInputElement).value
+  }
+
+  const addTodo = () => {
+    todos.value = [...todos.value, inputting.value]
+    inputting.value = ''
+  }
+
+  function goToCounter() {
+    void navigate('/counter')
+  }
 
   useWatch(() => {
     console.log('todos changed', inputting.value)
@@ -35,26 +48,21 @@ export default component$(() => {
       <p>
         <Link href="/image">Open image route</Link>
       </p>
-      <input
-        onInput$={(e: InputEvent) => {
-          inputting.value = (e.currentTarget as HTMLInputElement).value
-        }}
-        value={inputting.value}
-      />
-      <button
-        onClick$={() => {
-          todos.value = [...todos.value, inputting.value]
-          inputting.value = ''
-        }}
-      >
-        Add
-      </button>
-      <button
-        type="button"
-        onClick$={() => {
-          void navigate('/counter')
-        }}
-      >
+      <p>
+        <Link href="/content">Open content route</Link>
+      </p>
+      <p>
+        <Link href="/atom">Open atom route</Link>
+      </p>
+      <p>
+        <Link href="/react">Open react island route</Link>
+      </p>
+      <p>
+        <Link href="/vue">Open vue island route</Link>
+      </p>
+      <input onInput={handleInput} value={inputting.value} />
+      <button onClick={addTodo}>Add</button>
+      <button type="button" onClick={goToCounter}>
         Go to counter with navigate()
       </button>
       <RenderPropProbe aa={<ProjectedContent label="Prop component content" />}>
@@ -65,4 +73,4 @@ export default component$(() => {
       </ul>
     </div>
   )
-})
+}

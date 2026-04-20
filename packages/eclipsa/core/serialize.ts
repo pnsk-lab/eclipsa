@@ -1,3 +1,6 @@
+import { isNoSerialize } from './no-serialize.ts'
+import { isPlainObject } from './shared.ts'
+
 export interface SerializedUndefined {
   __eclipsa_type: 'undefined'
 }
@@ -53,12 +56,30 @@ const DEFAULT_MAX_ENTRIES = 10_000
 
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (!value || typeof value !== 'object') {
-    return false
+const getSerializedObjectTag = (value: object) => Object.prototype.toString.call(value)
+
+const getSerializedConstructorName = (value: object) => {
+  const constructor = value.constructor
+  if (typeof constructor !== 'function') {
+    return null
   }
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
+  const name = constructor.name
+  return typeof name === 'string' && name.length > 0 ? name : null
+}
+
+const createUnsupportedObjectError = (value: object) => {
+  const tag = getSerializedObjectTag(value)
+  const constructorName = getSerializedConstructorName(value)
+  const constructorLabel =
+    constructorName && constructorName !== 'Object' && constructorName !== 'Array'
+      ? ` (constructor: ${constructorName})`
+      : ''
+
+  return new TypeError(
+    `Unsupported object ${tag}${constructorLabel}. ` +
+      'Only primitives, plain objects, arrays, Map, Set, undefined, and registered references can be serialized. ' +
+      'For runtime-only values, wrap them with noSerialize() or avoid capturing them in resumable props, state, or callbacks.',
+  )
 }
 
 const assertSafeEntryBudget = (count: number, maxEntries: number) => {
@@ -125,6 +146,14 @@ const serializeUnknown = (
 ): SerializedValue => {
   assertSafeDepth(depth, state.maxDepth)
 
+  if (isNoSerialize(value)) {
+    state.entryCount += 1
+    assertSafeEntryBudget(state.entryCount, state.maxEntries)
+    return {
+      __eclipsa_type: 'undefined',
+    }
+  }
+
   const reference = state.serializeReference?.(value) ?? null
   if (reference) {
     state.entryCount += 1
@@ -175,7 +204,7 @@ const serializeUnknown = (
     value instanceof ArrayBuffer ||
     ArrayBuffer.isView(value)
   ) {
-    throw new TypeError(`Unsupported object ${Object.prototype.toString.call(value)}.`)
+    throw createUnsupportedObjectError(value)
   }
   if (stack.has(value)) {
     throw new TypeError('Circular values cannot be serialized.')
@@ -230,7 +259,7 @@ const serializeUnknown = (
       }
     }
 
-    throw new TypeError(`Unsupported object ${Object.prototype.toString.call(value)}.`)
+    throw createUnsupportedObjectError(value)
   } finally {
     stack.delete(value)
   }
@@ -377,6 +406,13 @@ export const escapeJSONScriptText = (json: string) =>
   json
     .replaceAll('<', '\\u003C')
     .replaceAll('>', '\\u003E')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029')
+
+export const escapeInlineScriptText = (script: string) =>
+  script
+    .replaceAll('<', '\\u003C')
     .replaceAll('&', '\\u0026')
     .replaceAll('\u2028', '\\u2028')
     .replaceAll('\u2029', '\\u2029')

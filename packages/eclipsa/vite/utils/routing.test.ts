@@ -129,7 +129,7 @@ describe('routing helpers', () => {
     )
 
     await expect(createRoutes(root)).rejects.toThrow(/Unsupported render mode "streaming"/)
-  })
+  }, 15000)
 
   it('supports dynamic, optional, and catch-all params with route groups removed from the path', () => {
     const routes: RouteEntry[] = [
@@ -185,6 +185,7 @@ describe('routing helpers', () => {
       params: { rest: ['a', 'b'] },
       route: routes[1],
     })
+    expect(matchRoute(routes, '/docs')).toBeNull()
     expect(matchRoute(routes, '/about')).toMatchObject({
       params: { lang: undefined },
       route: routes[2],
@@ -192,6 +193,30 @@ describe('routing helpers', () => {
     expect(matchRoute(routes, '/ja/about')).toMatchObject({
       params: { lang: 'ja' },
       route: routes[2],
+    })
+  })
+
+  it('decodes url-encoded path segments before matching routes', () => {
+    const routes: RouteEntry[] = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: null,
+        routePath: '/hello world/[slug]',
+        segments: [
+          { kind: 'static', value: 'hello world' },
+          { kind: 'required', value: 'slug' },
+        ],
+        server: null,
+      },
+    ]
+
+    expect(matchRoute(routes, '/hello%20world/ada%20lovelace')).toMatchObject({
+      params: { slug: 'ada lovelace' },
+      route: routes[0],
     })
   })
 

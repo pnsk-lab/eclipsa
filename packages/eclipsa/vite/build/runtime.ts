@@ -1,4 +1,31 @@
 export {
+  APP_HOOKS_ELEMENT_ID,
+  attachRequestFetch,
+  createRequestFetch,
+  deserializePublicValue,
+  markPublicError,
+  registerClientHooks,
+  resolveReroute,
+  runHandleError,
+  serializePublicValue,
+  toPublicError,
+  type AppContext,
+  type AppHooksManifest,
+  type AppHooksModule,
+  type BaseAppVariables,
+  type Handle,
+  type HandleError,
+  type HandleFetch,
+  type PublicError,
+  type RequestFetch,
+  type ResolvedHooks,
+  type Reroute,
+  type ServerHooksModule,
+  type Transport,
+  type WithAppEnv,
+  withServerRequestContext,
+} from '../../core/hooks.ts'
+export {
   ACTION_CONTENT_TYPE,
   executeAction,
   getActionFormSubmissionId,
@@ -6,6 +33,7 @@ export {
   hasAction,
   primeActionState,
 } from '../../core/action.ts'
+export { applyActionCsrfCookie, ensureActionCsrfToken } from '../../core/action-csrf.ts'
 export {
   executeLoader,
   hasLoader,
@@ -14,7 +42,7 @@ export {
 } from '../../core/loader.ts'
 export { composeRouteMetadata, renderRouteMetadataHead } from '../../core/metadata.ts'
 export { deserializeValue } from '../../core/serialize.ts'
-export { escapeJSONScriptText } from '../../core/serialize.ts'
+export { escapeInlineScriptText, escapeJSONScriptText } from '../../core/serialize.ts'
 export {
   getStreamingResumeBootstrapScriptContent,
   renderSSR,
@@ -22,5 +50,5 @@ export {
   renderSSRStream,
   serializeResumePayload,
 } from '../../core/ssr.ts'
-export { RESUME_FINAL_STATE_ELEMENT_ID } from '../../core/runtime.ts'
+export { RESUME_FINAL_STATE_ELEMENT_ID, primeLocationState } from '../../core/runtime.ts'
 export { Fragment, jsxDEV } from '../../jsx/jsx-dev-runtime.ts'

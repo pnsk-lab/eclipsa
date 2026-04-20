@@ -1,6 +1,6 @@
-import { component$, onVisible } from 'eclipsa'
+import { onVisible } from 'eclipsa'
 
-export default component$(() => {
+export default () => {
   const value = 'visible'
 
   onVisible(() => {
@@ -8,4 +8,4 @@ export default component$(() => {
   })
 
   return <button>{value}</button>
-})
+}

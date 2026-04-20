@@ -9,9 +9,21 @@ export const DEV_EXPORTS = {
     types: './mod.ts',
     import: './mod.ts',
   },
+  './atom': {
+    types: './atom/mod.ts',
+    import: './atom/mod.ts',
+  },
+  './web-utils': {
+    types: './web-utils/mod.ts',
+    import: './web-utils/mod.ts',
+  },
   './vite': {
     types: './vite/mod.ts',
     import: './vite/mod.ts',
+  },
+  './vite/build/runtime': {
+    types: './vite/build/runtime.ts',
+    import: './vite/build/runtime.ts',
   },
   './jsx-runtime': {
     types: './jsx/jsx-runtime.ts',
@@ -48,9 +60,21 @@ export const PUBLISH_EXPORTS = {
     types: './dist/mod.d.mts',
     import: './dist/mod.mjs',
   },
+  './atom': {
+    types: './dist/atom/mod.d.mts',
+    import: './dist/atom/mod.mjs',
+  },
+  './web-utils': {
+    types: './dist/web-utils/mod.d.mts',
+    import: './dist/web-utils/mod.mjs',
+  },
   './vite': {
     types: './dist/vite/mod.d.mts',
     import: './dist/vite/mod.mjs',
+  },
+  './vite/build/runtime': {
+    types: './dist/vite/build/runtime.d.mts',
+    import: './dist/vite/build/runtime.mjs',
   },
   './jsx-runtime': {
     types: './dist/jsx/jsx-runtime.d.mts',
@@ -82,21 +106,9 @@ export const PUBLISH_EXPORTS = {
   },
 }
 
-export const PUBLISH_FILES = [
-  'dist/**/*.mjs',
-  'dist/**/*.mjs.map',
-  'dist/**/*.d.mts',
-  'compiler/native/generated/**/*.js',
-  'compiler/native/generated/**/*.d.ts',
-  'compiler/native/generated/**/*.cjs',
-  'compiler/native/generated/**/*.mjs',
-  'compiler/native/generated/**/*.wasm',
-]
+export const PUBLISH_FILES = ['dist/**/*.mjs', 'dist/**/*.mjs.map', 'dist/**/*.d.mts']
 
-export const buildPackageManifest = (
-  packageJson: PackageJson,
-  mode: ManifestMode,
-): PackageJson => {
+export const buildPackageManifest = (packageJson: PackageJson, mode: ManifestMode): PackageJson => {
   const nextManifest: PackageJson = {
     ...packageJson,
     exports: mode === 'publish' ? PUBLISH_EXPORTS : DEV_EXPORTS,

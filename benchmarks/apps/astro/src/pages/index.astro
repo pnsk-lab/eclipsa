@@ -1,0 +1,14 @@
+---
+import { createData } from '../../../../data'
+
+const items = createData()
+---
+
+<div>
+  {items.map((item) => (
+    <div>
+      <h3>{item.name}</h3>
+      <p>{item.value}</p>
+    </div>
+  ))}
+</div>

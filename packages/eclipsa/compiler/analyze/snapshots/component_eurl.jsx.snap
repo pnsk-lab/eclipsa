@@ -1,44 +1,38 @@
 // ================= ENTRY (component_eurl.jsx) ==
-import { component$, useSignal, $ } from 'eclipsa'
-export default component$(() => {
+export default () => {
   const a = 0
-  const add = $(() => {
+  const add = async () => {
     console.log(a)
-  })
+  }
 
-  return <button onClick$={() => add()}>Add</button>
-})
+  return <button onClick={add}>Add</button>
+}
 
 
 // ================= analyzed ==
-import { __eclipsaComponent, __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
-import { component$, useSignal, $ } from 'eclipsa'
-export default component$(__eclipsaComponent(() => {
+import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
+export default __eclipsaComponent(() => {
   const a = 0
-  const add = __eclipsaLazy("1eilolu", () => {
+  const add = __eclipsaLazy("wrvk12", async () => {
     console.log(a)
   }, ()=>[a])
 
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", ()=>[add])}>Add</button>
-}, "7zrvvx", ()=>[]))
+  return <button onClick={add}>Add</button>
+}, "jqsdkp", ()=>[], undefined, { optimizedRoot: true })
 
 
-// ================= 1eilolu (lazy) ==
-export default (__scope) => {
+// ================= wrvk12 (lazy) ==
+export default async (__scope) => {
     console.log(__scope[0])
   };
 
-// ================= 1r40ykv (event) ==
-export default (__scope) => __scope[0]();
-
-// ================= 7zrvvx (component) ==
-import { component$, useSignal, $ } from 'eclipsa'
-import { __eclipsaEvent, __eclipsaLazy } from "eclipsa/internal";
+// ================= jqsdkp (component) ==
+import { __eclipsaLazy } from "eclipsa/internal";
 export default (__scope) => {
   const a = 0
-  const add = __eclipsaLazy("1eilolu", () => {
+  const add = __eclipsaLazy("wrvk12", async () => {
     console.log(a)
   }, ()=>[a])
 
-  return <button onClick$={__eclipsaEvent("click", "1r40ykv", ()=>[add])}>Add</button>
+  return <button onClick={add}>Add</button>
 };

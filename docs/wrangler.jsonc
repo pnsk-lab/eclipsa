@@ -1,7 +1,9 @@
 {
-  "name": "eclipsa-docs-alpha",
-  "account_id": "e59c4efd185d9b94549504183100de2e",
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "eclipsa",
   "compatibility_date": "2026-03-14",
+  "workers_dev": true,
+  "preview_urls": true,
   "assets": {
     "directory": "./dist/client",
     "html_handling": "auto-trailing-slash",

@@ -1,0 +1,14 @@
+{
+  "name": "benchmarks-vue",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build --ssr"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.5",
+    "@vue/server-renderer": "^3.5.22",
+    "vite": "^8.0.5",
+    "vue": "^3.5.22"
+  }
+}

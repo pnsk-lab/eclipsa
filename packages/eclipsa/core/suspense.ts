@@ -36,6 +36,4 @@ export const isPendingSignalError = (value: unknown): value is PendingSignalErro
   (value as PendingSignalError)[PENDING_SIGNAL_ERROR_KEY] === true
 
 export const isSuspenseType = (value: unknown): value is typeof Suspense =>
-  !!value &&
-  typeof value === 'function' &&
-  (value as typeof Suspense)[SUSPENSE_TYPE_KEY] === true
+  !!value && typeof value === 'function' && (value as typeof Suspense)[SUSPENSE_TYPE_KEY] === true
