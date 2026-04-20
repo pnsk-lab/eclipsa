@@ -31,8 +31,12 @@ export function getBuildFrameworkCommand() {
   return 'npm run build-prod'
 }
 
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
 export function getBenchCommand(chromeBinary) {
-  return `npm run bench -- --runner playwright --headless true --chromeBinary ${chromeBinary} keyed/eclipsa`
+  return `npm run bench -- --runner playwright --headless true --chromeBinary ${shellQuote(chromeBinary)} keyed/eclipsa`
 }
 
 function run(command, cwd = __dirname) {

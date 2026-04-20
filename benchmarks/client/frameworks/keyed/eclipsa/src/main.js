@@ -1,23 +1,53 @@
-const adjectives = ['pretty', 'large', 'big', 'small', 'tall', 'short', 'long', 'handsome', 'plain', 'quaint']
-const colours = ['red', 'yellow', 'blue', 'green', 'pink', 'brown', 'purple', 'orange', 'white', 'black']
-const nouns = ['table', 'chair', 'house', 'bbq', 'desk', 'car', 'pony', 'cookie', 'sandwich', 'burger']
+const adjectives = [
+  'pretty',
+  'large',
+  'big',
+  'small',
+  'tall',
+  'short',
+  'long',
+  'handsome',
+  'plain',
+  'quaint',
+]
+const colours = [
+  'red',
+  'yellow',
+  'blue',
+  'green',
+  'pink',
+  'brown',
+  'purple',
+  'orange',
+  'white',
+  'black',
+]
+const nouns = [
+  'table',
+  'chair',
+  'house',
+  'bbq',
+  'desk',
+  'car',
+  'pony',
+  'cookie',
+  'sandwich',
+  'burger',
+]
 
 let data = []
 let selectedId = null
 let id = 1
 
 const random = (max) => Math.floor(Math.random() * max)
-const buildLabel = () => `${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`
+const buildLabel = () =>
+  `${adjectives[random(adjectives.length)]} ${colours[random(colours.length)]} ${nouns[random(nouns.length)]}`
 
-const tbody = document.createElement('tbody')
-const mount = document.querySelector('#main')
-mount.innerHTML = `
-<div class="container">
-  <div class="jumbotron"><div class="row"><div class="col-md-6"><h1>Eclipsa (baseline)</h1></div></div></div>
-  <table class="table table-hover table-striped test-data"><tbody id="rows"></tbody></table>
-  <span class="preloadicon glyphicon glyphicon-remove" aria-hidden="true"></span>
-</div>`
-mount.querySelector('#rows').replaceWith(tbody)
+const tbody = document.querySelector('#tbody')
+
+if (!tbody) {
+  throw new Error('Expected benchmark table body #tbody to exist')
+}
 
 function render() {
   tbody.textContent = ''
@@ -81,4 +111,13 @@ class Main {
   }
 }
 
-window.app = new Main()
+const app = new Main()
+
+document.querySelector('#run')?.addEventListener('click', () => app.run())
+document.querySelector('#runlots')?.addEventListener('click', () => app.runLots())
+document.querySelector('#add')?.addEventListener('click', () => app.add())
+document.querySelector('#update')?.addEventListener('click', () => app.update())
+document.querySelector('#clear')?.addEventListener('click', () => app.clear())
+document.querySelector('#swaprows')?.addEventListener('click', () => app.swapRows())
+
+window.app = app
