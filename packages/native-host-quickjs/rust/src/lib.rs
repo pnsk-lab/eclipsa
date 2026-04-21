@@ -24,9 +24,10 @@ impl QuickJsSession {
 }
 
 fn into_c_string(value: String) -> *mut c_char {
-    CString::new(value)
-        .expect("CString::new should not fail for generated strings")
-        .into_raw()
+    match CString::new(value) {
+        Ok(value) => value.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]
@@ -64,18 +65,18 @@ pub unsafe extern "C" fn eclipsa_native_quickjs_eval(
     let code = match CStr::from_ptr(code).to_str() {
         Ok(code) => code,
         Err(error) => {
-            return into_c_string(format!("{{\"ok\":false,\"value\":{}}}", serde_json_string(&error.to_string())));
+            return into_c_string(format!("{{\"ok\":false,\"value\":{}}}", json_string(&error.to_string())));
         }
     };
 
     match session.eval(code) {
         Ok(value) => into_c_string(format!(
             "{{\"ok\":true,\"value\":{}}}",
-            serde_json_string(&value)
+            json_string(&value)
         )),
         Err(error) => into_c_string(format!(
             "{{\"ok\":false,\"value\":{}}}",
-            serde_json_string(&error)
+            json_string(&error)
         )),
     }
 }
@@ -88,7 +89,24 @@ pub unsafe extern "C" fn eclipsa_native_quickjs_string_free(value: *mut c_char) 
     drop(CString::from_raw(value));
 }
 
-fn serde_json_string(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{}\"", escaped)
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"serialization error\"".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn into_c_string_returns_null_for_interior_nul() {
+        assert!(into_c_string("hello\0world".to_string()).is_null());
+    }
+
+    #[test]
+    fn json_string_escapes_control_characters() {
+        assert_eq!(
+            json_string("line1\nline2\t\"\\\u{0000}"),
+            "\"line1\\nline2\\t\\\"\\\\\\u0000\""
+        );
+    }
 }

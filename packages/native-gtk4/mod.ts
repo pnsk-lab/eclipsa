@@ -21,6 +21,8 @@ export const Image: DefinedNativeComponent<GTK.ImageProps> = defineNativeCompone
 )
 export const TextInput: DefinedNativeComponent<GTK.TextInputProps> =
   defineNativeComponent<GTK.TextInputProps>(GTK4_DEFAULT_TAG_MAP.textInput)
+export const TextField: DefinedNativeComponent<GTK.TextInputProps> =
+  defineNativeComponent<GTK.TextInputProps>('gtk4:text-field')
 export const Switch: DefinedNativeComponent<GTK.SwitchProps> =
   defineNativeComponent<GTK.SwitchProps>(GTK4_DEFAULT_TAG_MAP.switch)
 export const ListView: DefinedNativeComponent<GTK.ListProps> = defineNativeComponent<GTK.ListProps>(
@@ -28,3 +30,5 @@ export const ListView: DefinedNativeComponent<GTK.ListProps> = defineNativeCompo
 )
 export const Spacer: DefinedNativeComponent<GTK.WidgetProps> =
   defineNativeComponent<GTK.WidgetProps>(GTK4_DEFAULT_TAG_MAP.spacer)
+export const Window: DefinedNativeComponent<GTK.WindowProps> =
+  defineNativeComponent<GTK.WindowProps>('gtk4:window')
