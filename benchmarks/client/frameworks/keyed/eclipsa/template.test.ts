@@ -11,5 +11,5 @@ test('benchmark template exposes the standard js-framework-benchmark controls', 
 })
 
 test('benchmark template loads the built client entry', () => {
-  expect(indexHtml).toContain('<script src="dist/main.js"></script>')
+  expect(indexHtml).toContain('<script type="module" src="dist/main.js"></script>')
 })

@@ -1,11 +1,14 @@
 import { expect, test } from 'bun:test'
 import {
   getBenchCommand,
+  getBenchmarkUrl,
   getBuildFrameworkCommand,
   getCloneCommand,
   getInstallCommand,
   getInstallFrameworkCommand,
   getInstallWebdriverCommand,
+  getPatchedBenchmarkServerEntry,
+  normalizeListenHost,
 } from './run.js'
 
 test('commands are stable', () => {
@@ -25,4 +28,16 @@ test('bench command quotes chrome paths with spaces', () => {
   expect(getBenchCommand('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')).toBe(
     "npm run bench -- --runner playwright --headless true --chromeBinary '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' keyed/eclipsa",
   )
+})
+
+test('benchmark host helpers handle ipv6 host syntax', () => {
+  expect(normalizeListenHost('[::1]')).toBe('::1')
+  expect(normalizeListenHost('localhost')).toBe('localhost')
+  expect(getBenchmarkUrl('[::1]')).toBe('http://[::1]:8080')
+})
+
+test('patched benchmark server entry binds to env host', () => {
+  const source = getPatchedBenchmarkServerEntry()
+  expect(source).toContain('const HOST = process.env.HOST ?? "localhost";')
+  expect(source).toContain('await server.listen({ host: HOST, port: PORT });')
 })
