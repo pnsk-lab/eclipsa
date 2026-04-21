@@ -4,13 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build-prod": "node ./build.js",
-    "build-dev": "node ./build.js"
+    "dev": "vite",
+    "build-prod": "vite build",
+    "build-dev": "vite build --mode development"
+  },
+  "dependencies": {
+    "eclipsa": "file:../../../../../../../packages/eclipsa"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
   },
   "js-framework-benchmark": {
-    "frameworkVersionFromPackage": "none",
+    "frameworkVersion": "0.0.0",
     "frameworkHomeURL": "https://github.com/pnsk-lab/eclipsa",
     "issues": [],
-    "language": "JavaScript"
+    "language": "TypeScript"
   }
 }

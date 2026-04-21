@@ -18,6 +18,7 @@ import {
   bindRuntimeEvent,
   captureClientInsertOwner,
   createDetachedClientInsertOwner,
+  createDetachedRuntimeContainer,
   getRuntimeSignalId,
   getRuntimeContainer,
   preserveReusableContentInRoots,
@@ -25,6 +26,7 @@ import {
   rememberManagedAttributesForNodes,
   rememberInsertMarkerRange,
   getRememberedInsertMarkerNodeCount,
+  installResumeListeners,
   renderClientInsertable,
   renderClientInsertableForOwner,
   restoreSignalRefs,
@@ -33,6 +35,7 @@ import {
   shouldReconnectDetachedInsertMarkers,
   tryPatchElementShellInPlace,
   tryPatchNodeSequenceInPlace,
+  withRuntimeContainer,
 } from '../runtime.ts'
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
@@ -765,18 +768,31 @@ export const hydrate = (
   target: HTMLElement,
   options?: {
     snapshot?: unknown[]
+    symbols?: Record<string, string>
   },
 ) => {
-  const elem = withSignalSnapshot(options?.snapshot ?? null, () => Component({}))
-    .result as unknown as ClientElementLike
+  const runtimeContainer = createDetachedRuntimeContainer()
+  runtimeContainer.doc = target.ownerDocument
+  runtimeContainer.rootElement = target
+  for (const [symbolId, url] of Object.entries(options?.symbols ?? {})) {
+    runtimeContainer.symbols.set(symbolId, url)
+  }
+  installResumeListeners(runtimeContainer)
+  const nodes = withSignalSnapshot(options?.snapshot ?? null, () =>
+    withRuntimeContainer(runtimeContainer, () =>
+      renderClientInsertable(jsxDEV(Component as any, {}, null, false, {}), runtimeContainer),
+    ),
+  ).result as unknown as Node[]
 
   while (target.childNodes.length > 0) {
     target.lastChild?.remove()
   }
 
-  for (const entry of Array.isArray(elem) ? elem : [elem]) {
-    insert(() => entry, target)
+  for (const node of nodes) {
+    target.appendChild(node)
   }
+  rememberManagedAttributesForNode(target)
+  restoreSignalRefs(runtimeContainer, target)
 }
 
 export const createComponent = (Component: Component, props: unknown) => {

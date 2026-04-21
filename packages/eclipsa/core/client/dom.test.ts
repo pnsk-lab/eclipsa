@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { attr, createComponent } from './dom.ts'
+import { attr, createComponent, hydrate } from './dom.ts'
 import { ACTION_CSRF_COOKIE, ACTION_CSRF_FIELD, ACTION_CSRF_INPUT_ATTR } from '../action-csrf.ts'
 import { __eclipsaComponent } from '../internal.ts'
 import { ACTION_FORM_ATTR } from '../runtime/constants.ts'
 import { createDetachedRuntimeSignal, type RuntimeContainer } from '../runtime.ts'
+import { useSignal } from '../signal.ts'
 import { Suspense } from '../suspense.ts'
 
 const createContainer = () =>
@@ -214,6 +215,140 @@ describe('core/client dom attr', () => {
       },
       type: Child,
     })
+  })
+
+  it('hydrates stateful root components inside a detached runtime frame', () => {
+    class FakeNode {
+      childNodes: FakeNode[] = []
+      ownerDocument: FakeDocument
+      parentNode: FakeNode | null = null
+
+      constructor(ownerDocument: FakeDocument) {
+        this.ownerDocument = ownerDocument
+      }
+
+      remove() {
+        this.parentNode?.removeChild(this)
+      }
+    }
+
+    class FakeTextNode extends FakeNode {
+      data: string
+
+      constructor(ownerDocument: FakeDocument, value: string) {
+        super(ownerDocument)
+        this.data = value
+      }
+
+      get textContent() {
+        return this.data
+      }
+
+      set textContent(value: string) {
+        this.data = value
+      }
+    }
+
+    class FakeComment extends FakeNode {
+      data: string
+
+      constructor(ownerDocument: FakeDocument, value: string) {
+        super(ownerDocument)
+        this.data = value
+      }
+
+      get textContent() {
+        return this.data
+      }
+    }
+
+    class FakeElement extends FakeNode {
+      appendChild(node: FakeNode) {
+        return this.insertBefore(node, null)
+      }
+
+      insertBefore(node: FakeNode, referenceNode: FakeNode | null) {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node)
+        }
+        const referenceIndex = referenceNode == null ? -1 : this.childNodes.indexOf(referenceNode)
+        if (referenceIndex < 0) {
+          this.childNodes.push(node)
+        } else {
+          this.childNodes.splice(referenceIndex, 0, node)
+        }
+        node.parentNode = this
+        return node
+      }
+
+      removeChild(node: FakeNode) {
+        const index = this.childNodes.indexOf(node)
+        if (index >= 0) {
+          this.childNodes.splice(index, 1)
+          node.parentNode = null
+        }
+        return node
+      }
+
+      get lastChild() {
+        return this.childNodes.at(-1) ?? null
+      }
+
+      get textContent() {
+        return this.childNodes.map((child) => child.textContent ?? '').join('')
+      }
+    }
+
+    class FakeDocument {
+      body = new FakeElement(this)
+      defaultView = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }
+      addEventListener = vi.fn()
+      removeEventListener = vi.fn()
+
+      querySelectorAll() {
+        return []
+      }
+
+      createComment(value: string) {
+        return new FakeComment(this, value)
+      }
+
+      createTextNode(value: string) {
+        return new FakeTextNode(this, value)
+      }
+    }
+
+    const doc = new FakeDocument()
+    const target = new FakeElement(doc)
+    const App = __eclipsaComponent(
+      () => {
+        const count = useSignal(1)
+        return String(count.value)
+      },
+      'component:hydrate-root',
+      () => [],
+    )
+
+    const previousComment = (globalThis as Record<string, unknown>).Comment
+    ;(globalThis as Record<string, unknown>).Comment = FakeComment
+
+    try {
+      expect(() => hydrate(App as any, target as any)).not.toThrow()
+      expect(
+        target.childNodes.some((child) => child instanceof FakeTextNode && child.data === '1'),
+      ).toBe(true)
+      expect(doc.addEventListener).toHaveBeenCalledWith('click', expect.any(Function), true)
+      expect(doc.addEventListener).toHaveBeenCalledWith('input', expect.any(Function), true)
+      expect(doc.defaultView.addEventListener).toHaveBeenCalledWith(
+        'popstate',
+        expect.any(Function),
+      )
+    } finally {
+      ;(globalThis as Record<string, unknown>).Comment = previousComment
+    }
   })
 
   it('injects csrf inputs when action forms are bound on the client', () => {

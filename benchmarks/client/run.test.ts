@@ -1,7 +1,11 @@
 import { expect, test } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   getBenchCommand,
   getBenchmarkUrl,
+  getFrameworkListUrl,
   getBuildFrameworkCommand,
   getCloneCommand,
   getInstallCommand,
@@ -9,6 +13,8 @@ import {
   getInstallWebdriverCommand,
   getPatchedBenchmarkServerEntry,
   normalizeListenHost,
+  shouldCopyEclipsaTemplatePath,
+  syncFrameworkTemplate,
 } from './run.js'
 
 test('commands are stable', () => {
@@ -34,10 +40,43 @@ test('benchmark host helpers handle ipv6 host syntax', () => {
   expect(normalizeListenHost('[::1]')).toBe('::1')
   expect(normalizeListenHost('localhost')).toBe('localhost')
   expect(getBenchmarkUrl('[::1]')).toBe('http://[::1]:8080')
+  expect(getFrameworkListUrl('[::1]')).toBe('http://[::1]:8080/ls')
 })
 
 test('patched benchmark server entry binds to env host', () => {
   const source = getPatchedBenchmarkServerEntry()
   expect(source).toContain('const HOST = process.env.HOST ?? "localhost";')
   expect(source).toContain('await server.listen({ host: HOST, port: PORT });')
+})
+
+test('template sync skips generated output and installed dependencies', () => {
+  expect(shouldCopyEclipsaTemplatePath('/tmp/eclipsa/src/main.tsx')).toBe(true)
+  expect(shouldCopyEclipsaTemplatePath('/tmp/eclipsa/dist/assets/main.js')).toBe(false)
+  expect(shouldCopyEclipsaTemplatePath('/tmp/eclipsa/node_modules/eclipsa/mod.ts')).toBe(false)
+})
+
+test('template sync replaces stale files in the destination project', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eclipsa-bench-'))
+  const sourceDir = join(root, 'source')
+  const destinationDir = join(root, 'destination')
+
+  mkdirSync(join(sourceDir, 'src'), { recursive: true })
+  writeFileSync(join(sourceDir, 'index.html'), '<div id="main"></div>')
+  writeFileSync(join(sourceDir, 'src/main.tsx'), 'export default null')
+
+  mkdirSync(destinationDir, { recursive: true })
+  writeFileSync(join(destinationDir, 'vite.config.js'), 'stale')
+
+  try {
+    syncFrameworkTemplate(sourceDir, destinationDir)
+
+    expect(existsSync(join(destinationDir, 'vite.config.js'))).toBe(false)
+    expect(readFileSync(join(destinationDir, 'index.html'), 'utf8')).toBe('<div id="main"></div>')
+    expect(readFileSync(join(destinationDir, 'src/main.tsx'), 'utf8')).toBe('export default null')
+  } finally {
+    rmSync(root, {
+      recursive: true,
+      force: true,
+    })
+  }
 })

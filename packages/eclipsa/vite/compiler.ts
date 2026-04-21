@@ -553,9 +553,9 @@ const resolveImportedModule = (specifier: string, containingFile: string) =>
   ts.resolveModuleName(specifier, containingFile, moduleResolutionOptions, moduleResolutionHost)
     .resolvedModule?.resolvedFileName ?? null
 
-export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
-  const appDir = path.join(root, 'app')
-  const entryFiles = await fg(path.join(appDir, ANALYZABLE_APP_GLOB).replaceAll('\\', '/'))
+export const collectReachableSymbols = async (
+  entryFiles: readonly string[],
+): Promise<ResumeSymbol[]> => {
   const entryFileSet = new Set(entryFiles)
   const pending = [...entryFiles]
   const visited = new Set<string>()
@@ -607,6 +607,12 @@ export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> =
   }
 
   return [...symbols.values()]
+}
+
+export const collectAppSymbols = async (root: string): Promise<ResumeSymbol[]> => {
+  const appDir = path.join(root, 'app')
+  const entryFiles = await fg(path.join(appDir, ANALYZABLE_APP_GLOB).replaceAll('\\', '/'))
+  return collectReachableSymbols(entryFiles)
 }
 
 export const collectReachableAnalyzableFiles = async (

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync, spawn } from 'node:child_process'
@@ -17,6 +17,8 @@ const defaultChromeBinaryCandidates = [
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
 ]
+
+const excludedTemplateEntries = new Set(['dist', 'node_modules'])
 
 export function getCloneCommand() {
   return `git clone --depth 1 https://github.com/krausest/js-framework-benchmark.git ${benchmarkRoot}`
@@ -48,6 +50,10 @@ export function normalizeListenHost(host) {
 
 export function getBenchmarkUrl(host = getBenchmarkHost()) {
   return `http://${host}:8080`
+}
+
+export function getFrameworkListUrl(host = getBenchmarkHost()) {
+  return `${getBenchmarkUrl(host)}/ls`
 }
 
 function shellQuote(value) {
@@ -92,14 +98,16 @@ async function waitForServerReady(host = getBenchmarkHost(), timeoutMs = 30_000)
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(getBenchmarkUrl(host))
+      const response = await fetch(getFrameworkListUrl(host))
       if (response.ok) return
     } catch {
       // retry
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
-  throw new Error(`Timed out waiting for js-framework-benchmark server on ${getBenchmarkUrl(host)}`)
+  throw new Error(
+    `Timed out waiting for js-framework-benchmark server on ${getFrameworkListUrl(host)}`,
+  )
 }
 
 export function ensureBenchmarkRepository() {
@@ -108,11 +116,24 @@ export function ensureBenchmarkRepository() {
   run(getCloneCommand(), cacheDir)
 }
 
-export function syncEclipsaFramework() {
-  cpSync(eclipsaTemplateDir, eclipsaFrameworkRoot, {
+export function shouldCopyEclipsaTemplatePath(sourcePath) {
+  return !sourcePath.split(/[\\/]/).some((segment) => excludedTemplateEntries.has(segment))
+}
+
+export function syncFrameworkTemplate(sourceDir, destinationDir) {
+  rmSync(destinationDir, {
     recursive: true,
     force: true,
   })
+  cpSync(sourceDir, destinationDir, {
+    recursive: true,
+    force: true,
+    filter: shouldCopyEclipsaTemplatePath,
+  })
+}
+
+export function syncEclipsaFramework() {
+  syncFrameworkTemplate(eclipsaTemplateDir, eclipsaFrameworkRoot)
 }
 
 function patchBenchmarkServerEntry() {
