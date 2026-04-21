@@ -17,6 +17,10 @@
       "types": "./mod.ts",
       "import": "./mod.ts"
     },
+    "./common": {
+      "types": "./common.tsx",
+      "import": "./common.tsx"
+    },
     "./vite": {
       "types": "./vite.ts",
       "import": "./vite.ts"
@@ -28,6 +32,10 @@
         "types": "./mod.d.mts",
         "import": "./mod.mjs"
       },
+      "./common": {
+        "types": "./common.d.mts",
+        "import": "./common.mjs"
+      },
       "./vite": {
         "types": "./vite.d.mts",
         "import": "./vite.mjs"
@@ -35,11 +43,11 @@
     }
   },
   "scripts": {
-    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "build": "vp pack && bun ../../scripts/native/prepare-native-dist.ts",
     "host:app": "swift run --package-path ./macos-swiftui EclipsaNativeMacOS",
     "host:build": "swift build --package-path ./macos-swiftui",
     "host:smoke": "swift run --quiet --package-path ./macos-swiftui EclipsaNativeSmoke",
-    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "pack": "vp pack && bun ../../scripts/native/prepare-native-dist.ts",
     "test": "vp test --run",
     "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
     "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
@@ -47,5 +55,36 @@
   "dependencies": {
     "@eclipsa/native": "workspace:^",
     "@eclipsa/native-core": "workspace:^"
+  },
+  "eclipsaNative": {
+    "bundleDir": "host",
+    "targets": [
+      {
+        "id": "darwin-arm64",
+        "os": "darwin",
+        "arch": "arm64",
+        "entrypoint": "binaries/darwin-arm64/EclipsaNativeMacOS",
+        "files": [
+          {
+            "source": "artifacts/darwin-arm64/EclipsaNativeMacOS",
+            "destination": "binaries/darwin-arm64/EclipsaNativeMacOS",
+            "executable": true
+          }
+        ]
+      },
+      {
+        "id": "darwin-x64",
+        "os": "darwin",
+        "arch": "x64",
+        "entrypoint": "binaries/darwin-x64/EclipsaNativeMacOS",
+        "files": [
+          {
+            "source": "artifacts/darwin-x64/EclipsaNativeMacOS",
+            "destination": "binaries/darwin-x64/EclipsaNativeMacOS",
+            "executable": true
+          }
+        ]
+      }
+    ]
   }
 }

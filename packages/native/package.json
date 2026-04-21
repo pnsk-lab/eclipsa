@@ -17,6 +17,10 @@
       "types": "./mod.ts",
       "import": "./mod.ts"
     },
+    "./runtime": {
+      "types": "./runtime-api.ts",
+      "import": "./runtime-api.ts"
+    },
     "./vite": {
       "types": "./vite.ts",
       "import": "./vite.ts"
@@ -35,6 +39,10 @@
       ".": {
         "types": "./mod.d.mts",
         "import": "./mod.mjs"
+      },
+      "./runtime": {
+        "types": "./runtime-api.d.mts",
+        "import": "./runtime-api.mjs"
       },
       "./vite": {
         "types": "./vite.d.mts",

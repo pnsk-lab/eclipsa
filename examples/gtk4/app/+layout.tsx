@@ -1,9 +1,3 @@
-import type { NativeChild } from '@eclipsa/native'
-
-export default function RootLayout(props: { children?: NativeChild }) {
-  return (
-    <window defaultHeight={720} defaultWidth={480} title="Eclipsa Native GTK 4 Example">
-      {props.children}
-    </window>
-  )
+export default function Layout(props: { children?: unknown }) {
+  return <applicationWindow title="Eclipsa GTK4 Example">{props.children}</applicationWindow>
 }

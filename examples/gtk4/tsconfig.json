@@ -3,5 +3,5 @@
   "compilerOptions": {
     "jsxImportSource": "@eclipsa/native"
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts"]
+  "include": ["./app/**/*.ts", "./app/**/*.tsx", "./vite.config.ts", "./scripts/**/*.ts"]
 }

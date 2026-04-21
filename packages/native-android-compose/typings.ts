@@ -7,9 +7,12 @@ export namespace AndroidX {
   export namespace Compose {
     export interface ViewProps {
       enabled?: boolean
+      height?: number
       id?: string
       padding?: boolean | number
+      size?: number
       visible?: boolean
+      width?: number
     }
 
     export interface StackProps extends ViewProps {
@@ -50,6 +53,7 @@ export namespace AndroidX {
 
     export interface LazyColumnProps extends ViewProps {
       selection?: string
+      spacing?: number
     }
   }
 }

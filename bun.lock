@@ -150,8 +150,8 @@
         "vite": "*",
       },
     },
-    "packages/native-compose": {
-      "name": "@eclipsa/native-compose",
+    "packages/native-android-compose": {
+      "name": "@eclipsa/native-android-compose",
       "version": "0.0.0",
       "dependencies": {
         "@eclipsa/native": "workspace:^",
@@ -172,6 +172,10 @@
         "@eclipsa/native": "workspace:^",
         "@eclipsa/native-core": "workspace:^",
       },
+    },
+    "packages/native-host-quickjs": {
+      "name": "@eclipsa/native-host-quickjs",
+      "version": "0.0.0",
     },
     "packages/native-swiftui": {
       "name": "@eclipsa/native-swiftui",
@@ -267,11 +271,13 @@
 
     "@eclipsa/native": ["@eclipsa/native@workspace:packages/native"],
 
-    "@eclipsa/native-compose": ["@eclipsa/native-compose@workspace:packages/native-compose"],
+    "@eclipsa/native-android-compose": ["@eclipsa/native-android-compose@workspace:packages/native-android-compose"],
 
     "@eclipsa/native-core": ["@eclipsa/native-core@workspace:packages/native-core"],
 
     "@eclipsa/native-gtk4": ["@eclipsa/native-gtk4@workspace:packages/native-gtk4"],
+
+    "@eclipsa/native-host-quickjs": ["@eclipsa/native-host-quickjs@workspace:packages/native-host-quickjs"],
 
     "@eclipsa/native-swiftui": ["@eclipsa/native-swiftui@workspace:packages/native-swiftui"],
 

@@ -3,19 +3,18 @@ mod app {
     use anyhow::Result;
     use eclipsa_native_gtk4_host::{
         is_dev_manifest_source, EclipsaGtk4Host, HostUiAction, NativeNode, PumpResult,
-        SnapshotHostWidget,
     };
-    use gtk4::gio;
     use gtk4::gdk::FrameClockPhase;
+    use gtk4::gio;
     use gtk4::prelude::*;
     use gtk4::{
         Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image, Label, ListBox,
         Orientation, Switch, Widget,
     };
     use std::cell::RefCell;
-    use std::collections::VecDeque;
     #[cfg(test)]
     use std::collections::BTreeMap;
+    use std::collections::VecDeque;
     use std::rc::Rc;
 
     const NODE_ID_DATA_KEY: &str = "eclipsa-native-node-id";
@@ -93,14 +92,12 @@ mod app {
     }
 
     fn build_window(app: &Application) -> ApplicationWindow {
-        let window = ApplicationWindow::builder()
+        ApplicationWindow::builder()
             .application(app)
             .default_height(640)
             .default_width(480)
             .title("Eclipsa Native GTK 4")
-            .build();
-        window.set_child(Some(&SnapshotHostWidget::new()));
-        window
+            .build()
     }
 
     fn refresh_window(
@@ -116,7 +113,8 @@ mod app {
         if std::env::var_os("ECLIPSA_NATIVE_DEBUG_HMR").is_some() {
             eprintln!("EclipsaNative GTK refresh: {}", summarize_root(&root));
         }
-        let content_node = if root.tag == "gtk4:window" {
+        let content_node = if matches!(root.tag.as_str(), "gtk4:application-window" | "gtk4:window")
+        {
             if let Some(title) = root.string_prop("title") {
                 window.set_title(Some(title));
             }
@@ -130,42 +128,28 @@ mod app {
         } else {
             Some(&root)
         };
-        let root_widget = if force_rebuild {
-            let replacement = SnapshotHostWidget::new();
-            sync_root_widget(
-                &replacement,
-                content_node,
-                Rc::clone(&pending_actions),
-                true,
-            );
-            window.set_child(Some(&replacement));
-            replacement
-        } else {
-            let existing = snapshot_host(window);
-            sync_root_widget(
-                &existing,
-                content_node,
-                Rc::clone(&pending_actions),
-                false,
-            );
-            existing
-        };
+        sync_window_content(
+            window,
+            content_node,
+            Rc::clone(&pending_actions),
+            force_rebuild,
+        );
         if force_rebuild {
             restore_focus_state(window, focus_state);
         }
         if std::env::var_os("ECLIPSA_NATIVE_DEBUG_HMR").is_some() {
-            if let Some(child) = root_widget.content() {
-                eprintln!("EclipsaNative GTK widget: {}", summarize_widget_tree(&child));
+            if let Some(child) = window.child() {
+                eprintln!(
+                    "EclipsaNative GTK widget: {}",
+                    summarize_widget_tree(&child)
+                );
             }
         }
-        if let Some(child) = root_widget.content() {
+        if let Some(child) = window.child() {
             child.queue_allocate();
             child.queue_resize();
             child.queue_draw();
         }
-        root_widget.queue_allocate();
-        root_widget.queue_resize();
-        root_widget.queue_draw();
         window.queue_allocate();
         window.queue_resize();
         window.queue_draw();
@@ -173,26 +157,14 @@ mod app {
         if let Some(surface) = window.surface() {
             surface.request_layout();
             surface.queue_render();
-            surface
-                .frame_clock()
-                .request_phase(FrameClockPhase::UPDATE | FrameClockPhase::LAYOUT | FrameClockPhase::PAINT);
+            surface.frame_clock().request_phase(
+                FrameClockPhase::UPDATE | FrameClockPhase::LAYOUT | FrameClockPhase::PAINT,
+            );
         }
         if let Some(display) = gtk4::gdk::Display::default() {
             display.flush();
             display.sync();
         }
-    }
-
-    fn snapshot_host(window: &ApplicationWindow) -> SnapshotHostWidget {
-        if let Some(root_widget) = window
-            .child()
-            .and_then(|child| child.downcast::<SnapshotHostWidget>().ok())
-        {
-            return root_widget;
-        }
-        let root_widget = SnapshotHostWidget::new();
-        window.set_child(Some(&root_widget));
-        root_widget
     }
 
     fn capture_focus_state(window: &ApplicationWindow) -> Option<FocusState> {
@@ -256,9 +228,14 @@ mod app {
                 }
             }
             "gtk4:button" => {
-                parts.push(format!("{}#{} title={}", node.tag, node.id, button_label(node)));
+                parts.push(format!(
+                    "{}#{} title={}",
+                    node.tag,
+                    node.id,
+                    button_label(node)
+                ));
             }
-            "gtk4:text-field" => {
+            "gtk4:text-field" | "gtk4:text-input" => {
                 parts.push(format!(
                     "{}#{} value={}",
                     node.tag,
@@ -281,24 +258,24 @@ mod app {
         }
     }
 
-    fn sync_root_widget(
-        root_widget: &SnapshotHostWidget,
+    fn sync_window_content(
+        window: &ApplicationWindow,
         node: Option<&NativeNode>,
         pending_actions: Rc<RefCell<VecDeque<HostUiAction>>>,
         force_rebuild: bool,
     ) {
         let Some(node) = node else {
-            root_widget.set_content(None);
+            window.set_child(Option::<&Widget>::None);
             return;
         };
 
         if force_rebuild {
             let child = build_widget(node, pending_actions);
-            root_widget.set_content(Some(&child));
+            window.set_child(Some(&child));
             return;
         }
 
-        if let Some(existing_child) = root_widget.content() {
+        if let Some(existing_child) = window.child() {
             if widget_matches_node(&existing_child, node) {
                 update_widget(&existing_child, node, pending_actions);
                 return;
@@ -306,7 +283,7 @@ mod app {
         }
 
         let child = build_widget(node, pending_actions);
-        root_widget.set_content(Some(&child));
+        window.set_child(Some(&child));
     }
 
     fn build_widget(
@@ -317,12 +294,14 @@ mod app {
             "gtk4:box" => build_box(node, pending_actions).upcast(),
             "gtk4:button" => build_button(node, pending_actions).upcast(),
             "gtk4:image" => build_image(node).upcast(),
-            "gtk4:list-box" => build_list_box(node, pending_actions).upcast(),
+            "gtk4:list-box" | "gtk4:list-view" => build_list_box(node, pending_actions).upcast(),
             "gtk4:spacer" => build_spacer(node).upcast(),
             "gtk4:switch" => build_switch(node, pending_actions).upcast(),
             "gtk4:text" => build_label(node).upcast(),
-            "gtk4:text-field" => build_text_field(node, pending_actions).upcast(),
-            "gtk4:window" => {
+            "gtk4:text-field" | "gtk4:text-input" => {
+                build_text_field(node, pending_actions).upcast()
+            }
+            "gtk4:application-window" | "gtk4:window" => {
                 if let Some(child) = node.children.first() {
                     build_widget(child, pending_actions)
                 } else {
@@ -342,9 +321,15 @@ mod app {
         widget
     }
 
-    fn build_box(node: &NativeNode, pending_actions: Rc<RefCell<VecDeque<HostUiAction>>>) -> GtkBox {
-        let orientation = match node.string_prop("orientation") {
-            Some("horizontal") => Orientation::Horizontal,
+    fn build_box(
+        node: &NativeNode,
+        pending_actions: Rc<RefCell<VecDeque<HostUiAction>>>,
+    ) -> GtkBox {
+        let orientation = match node
+            .string_prop("direction")
+            .or(node.string_prop("orientation"))
+        {
+            Some("row" | "horizontal") => Orientation::Horizontal,
             _ => Orientation::Vertical,
         };
         let spacing = node.double_prop("spacing").unwrap_or(12.0) as i32;
@@ -369,9 +354,9 @@ mod app {
             if std::env::var_os("ECLIPSA_NATIVE_DEBUG_HMR").is_some() {
                 eprintln!("EclipsaNative GTK action: click {}", node_id);
             }
-            pending_actions
-                .borrow_mut()
-                .push_back(HostUiAction::Click { node_id: node_id.clone() });
+            pending_actions.borrow_mut().push_back(HostUiAction::Click {
+                node_id: node_id.clone(),
+            });
         });
         widget
     }
@@ -435,10 +420,12 @@ mod app {
             if std::env::var_os("ECLIPSA_NATIVE_DEBUG_HMR").is_some() {
                 eprintln!("EclipsaNative GTK action: toggle {}={value}", node_id);
             }
-            pending_actions.borrow_mut().push_back(HostUiAction::Toggle {
-                node_id: node_id.clone(),
-                value,
-            });
+            pending_actions
+                .borrow_mut()
+                .push_back(HostUiAction::Toggle {
+                    node_id: node_id.clone(),
+                    value,
+                });
         });
         row.append(&switch);
         row
@@ -488,7 +475,7 @@ mod app {
                     update_image(image, node);
                 }
             }
-            "gtk4:list-box" => {
+            "gtk4:list-box" | "gtk4:list-view" => {
                 if let Some(list_box) = widget.downcast_ref::<ListBox>() {
                     update_list_box(list_box, node, pending_actions);
                 }
@@ -508,7 +495,7 @@ mod app {
                     update_label(label, node);
                 }
             }
-            "gtk4:text-field" => {
+            "gtk4:text-field" | "gtk4:text-input" => {
                 if let Some(entry) = widget.downcast_ref::<Entry>() {
                     update_text_field(entry, node);
                 }
@@ -527,8 +514,11 @@ mod app {
         node: &NativeNode,
         pending_actions: Rc<RefCell<VecDeque<HostUiAction>>>,
     ) {
-        let orientation = match node.string_prop("orientation") {
-            Some("horizontal") => Orientation::Horizontal,
+        let orientation = match node
+            .string_prop("direction")
+            .or(node.string_prop("orientation"))
+        {
+            Some("row" | "horizontal") => Orientation::Horizontal,
             _ => Orientation::Vertical,
         };
         widget.set_orientation(orientation);
@@ -583,11 +573,17 @@ mod app {
         apply_widget_props(row.upcast_ref(), node);
 
         let children = collect_children(row.upcast_ref());
-        let Some(label_widget) = children.first().and_then(|child| child.downcast_ref::<Label>()) else {
+        let Some(label_widget) = children
+            .first()
+            .and_then(|child| child.downcast_ref::<Label>())
+        else {
             repopulate_switch_row(row, node, pending_actions);
             return;
         };
-        let Some(switch_widget) = children.get(1).and_then(|child| child.downcast_ref::<Switch>()) else {
+        let Some(switch_widget) = children
+            .get(1)
+            .and_then(|child| child.downcast_ref::<Switch>())
+        else {
             repopulate_switch_row(row, node, pending_actions);
             return;
         };
@@ -676,10 +672,12 @@ mod app {
             if std::env::var_os("ECLIPSA_NATIVE_DEBUG_HMR").is_some() {
                 eprintln!("EclipsaNative GTK action: toggle {}={value}", node_id);
             }
-            pending_actions.borrow_mut().push_back(HostUiAction::Toggle {
-                node_id: node_id.clone(),
-                value,
-            });
+            pending_actions
+                .borrow_mut()
+                .push_back(HostUiAction::Toggle {
+                    node_id: node_id.clone(),
+                    value,
+                });
         });
         row.append(&switch);
     }
@@ -731,7 +729,11 @@ mod app {
     }
 
     fn widget_data(widget: &Widget, key: &str) -> Option<String> {
-        unsafe { widget.data::<String>(key).map(|value| value.as_ref().clone()) }
+        unsafe {
+            widget
+                .data::<String>(key)
+                .map(|value| value.as_ref().clone())
+        }
     }
 
     fn summarize_widget_tree(widget: &Widget) -> String {
@@ -741,6 +743,7 @@ mod app {
     }
 
     fn collect_widget_summaries(widget: &Widget, parts: &mut Vec<String>) {
+        let children = collect_children(widget);
         let tag = widget_data(widget, NODE_TAG_DATA_KEY);
         let id = widget_data(widget, NODE_ID_DATA_KEY);
         match tag.as_deref() {
@@ -762,10 +765,11 @@ mod app {
                     ));
                 }
             }
-            Some("gtk4:text-field") => {
+            Some("gtk4:text-field" | "gtk4:text-input") => {
                 if let Some(entry) = widget.downcast_ref::<Entry>() {
                     parts.push(format!(
-                        "gtk4:text-field#{} value={}",
+                        "{}#{} value={}",
+                        tag.as_deref().unwrap_or("gtk4:text-input"),
                         id.as_deref().unwrap_or("?"),
                         entry.text()
                     ));
@@ -774,7 +778,10 @@ mod app {
             Some("gtk4:switch") => {
                 if let Some(box_widget) = widget.downcast_ref::<GtkBox>() {
                     let children = collect_children(box_widget.upcast_ref());
-                    if let Some(switch) = children.get(1).and_then(|child| child.downcast_ref::<Switch>()) {
+                    if let Some(switch) = children
+                        .get(1)
+                        .and_then(|child| child.downcast_ref::<Switch>())
+                    {
                         parts.push(format!(
                             "gtk4:switch#{} value={}",
                             id.as_deref().unwrap_or("?"),
@@ -783,10 +790,18 @@ mod app {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                parts.push(format!(
+                    "{}#{} type={} children={}",
+                    tag.as_deref().unwrap_or("widget"),
+                    id.as_deref().unwrap_or("?"),
+                    widget.type_().name(),
+                    children.len(),
+                ));
+            }
         }
 
-        for child in collect_children(widget) {
+        for child in children {
             collect_widget_summaries(&child, parts);
         }
     }
@@ -808,6 +823,29 @@ mod app {
             widget.set_margin_bottom(margin);
             widget.set_margin_start(margin);
             widget.set_margin_end(margin);
+        }
+        if let Some(padding) = node.double_prop("padding") {
+            let padding = padding as i32;
+            widget.set_margin_top(padding);
+            widget.set_margin_bottom(padding);
+            widget.set_margin_start(padding);
+            widget.set_margin_end(padding);
+        }
+        if let Some(size) = node.double_prop("size") {
+            let size = size as i32;
+            widget.set_size_request(size, size);
+        } else {
+            let width = node
+                .double_prop("width")
+                .map(|value| value as i32)
+                .unwrap_or(-1);
+            let height = node
+                .double_prop("height")
+                .map(|value| value as i32)
+                .unwrap_or(-1);
+            if width >= 0 || height >= 0 {
+                widget.set_size_request(width, height);
+            }
         }
         let css_classes = parse_css_classes(node.string_prop("cssClasses"));
         let css_class_refs = css_classes.iter().map(String::as_str).collect::<Vec<_>>();
@@ -860,7 +898,10 @@ mod app {
         fn apply_widget_props_replaces_stale_css_classes() {
             let widget = Label::new(None);
 
-            apply_widget_props(widget.upcast_ref(), &test_node(&[("cssClasses", r#"["first","second"]"#)]));
+            apply_widget_props(
+                widget.upcast_ref(),
+                &test_node(&[("cssClasses", r#"["first","second"]"#)]),
+            );
             assert_eq!(
                 widget
                     .css_classes()
@@ -870,7 +911,10 @@ mod app {
                 vec!["first".to_owned(), "second".to_owned()],
             );
 
-            apply_widget_props(widget.upcast_ref(), &test_node(&[("cssClasses", r#"["second","third"]"#)]));
+            apply_widget_props(
+                widget.upcast_ref(),
+                &test_node(&[("cssClasses", r#"["second","third"]"#)]),
+            );
             assert_eq!(
                 widget
                     .css_classes()

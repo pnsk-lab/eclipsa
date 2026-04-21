@@ -1,5 +1,5 @@
 {
-  "name": "@eclipsa/native-compose",
+  "name": "@eclipsa/native-android-compose",
   "version": "0.0.0",
   "homepage": "https://github.com/pnsk-lab/eclipsa",
   "bugs": {
@@ -9,13 +9,17 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pnsk-lab/eclipsa.git",
-    "directory": "packages/native-compose"
+    "directory": "packages/native-android-compose"
   },
   "type": "module",
   "exports": {
     ".": {
       "types": "./mod.ts",
       "import": "./mod.ts"
+    },
+    "./common": {
+      "types": "./common.tsx",
+      "import": "./common.tsx"
     },
     "./vite": {
       "types": "./vite.ts",
@@ -28,6 +32,10 @@
         "types": "./mod.d.mts",
         "import": "./mod.mjs"
       },
+      "./common": {
+        "types": "./common.d.mts",
+        "import": "./common.mjs"
+      },
       "./vite": {
         "types": "./vite.d.mts",
         "import": "./vite.mjs"
@@ -35,12 +43,12 @@
     }
   },
   "scripts": {
-    "build": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "build": "vp pack && bun ../../scripts/native/prepare-native-dist.ts",
     "host:app": "bun ./host.ts",
     "host:app:emulator": "bun ./host.ts --emulator",
     "host:build": "./android-compose/gradlew --project-dir ./android-compose :app:assembleDebug",
     "host:install-debug": "./android-compose/gradlew --project-dir ./android-compose :app:installDebug",
-    "pack": "vp pack && bun ../../scripts/release/write-dist-package-json.ts",
+    "pack": "vp pack && bun ../../scripts/native/prepare-native-dist.ts",
     "test": "vp test --run",
     "test:coverage": "c8 --reporter=lcov --reporter=json-summary --reporter=text bunx vp test --run",
     "typecheck": "bun x tsc -p ../../tsconfig.json --noEmit"
@@ -48,5 +56,22 @@
   "dependencies": {
     "@eclipsa/native": "workspace:^",
     "@eclipsa/native-core": "workspace:^"
+  },
+  "eclipsaNative": {
+    "bundleDir": "host",
+    "targets": [
+      {
+        "id": "android-universal",
+        "os": "android",
+        "arch": "universal",
+        "entrypoint": "binaries/android-universal/app-debug.apk",
+        "files": [
+          {
+            "source": "artifacts/android-universal/app-debug.apk",
+            "destination": "binaries/android-universal/app-debug.apk"
+          }
+        ]
+      }
+    ]
   }
 }

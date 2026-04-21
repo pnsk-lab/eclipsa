@@ -1,5 +1,5 @@
 import { useSignal } from 'eclipsa'
-import { Button, Column, Switch, Text, TextField } from '@eclipsa/native-compose'
+import { Button, Column, Switch, Text, TextField } from '@eclipsa/native-android-compose'
 
 export default function Page() {
   const count = useSignal(0)

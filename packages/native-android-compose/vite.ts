@@ -11,7 +11,7 @@ import { parseComposeCliOptionsFromEnv } from './host.ts'
 import { parseComposeCliOptions } from './host.ts'
 import { COMPOSE_DEFAULT_COMPONENT_MAP } from './platform.ts'
 
-export const NATIVE_COMPOSE_ENVIRONMENT_NAME = 'nativeCompose'
+export const NATIVE_ANDROID_COMPOSE_ENVIRONMENT_NAME = 'nativeAndroidCompose'
 const DEFAULT_HOST_STARTUP_TIMEOUT_MS = 30_000
 const DEFAULT_ANDROID_APPLICATION_ID = 'dev.eclipsa.nativecompose'
 const DEFAULT_ANDROID_ACTIVITY_NAME = '.MainActivity'
@@ -124,8 +124,11 @@ const createNativeComposeDevEnvironment = (
   })
 }
 
-export const compose = (options: ComposeTargetOptions = {}): NativeTargetAdapter => ({
-  bindingPackage: '@eclipsa/native-compose',
+export const androidCompose = (options: ComposeTargetOptions = {}): NativeTargetAdapter => ({
+  bindingPackage: '@eclipsa/native-android-compose',
+  bundledHostDir: 'host',
+  bundledHostFallbackDir: 'dist/host',
+  commonEntry: '@eclipsa/native-android-compose/common',
   createEnvironmentOptions({ manifestPath }) {
     return {
       consumer: 'server',
@@ -143,8 +146,11 @@ export const compose = (options: ComposeTargetOptions = {}): NativeTargetAdapter
     }
   },
   defaultMap: COMPOSE_DEFAULT_COMPONENT_MAP,
-  environmentName: NATIVE_COMPOSE_ENVIRONMENT_NAME,
-  name: 'compose',
+  environmentName: NATIVE_ANDROID_COMPOSE_ENVIRONMENT_NAME,
+  name: 'android-compose',
   platform: 'android',
+  commonEntryFallback: fileURLToPath(new URL('./common.tsx', import.meta.url)),
   workspaceFallback: fileURLToPath(new URL('./mod.ts', import.meta.url)),
 })
+
+export const compose = androidCompose

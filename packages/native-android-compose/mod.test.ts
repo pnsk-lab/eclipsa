@@ -3,7 +3,7 @@ import { resolveNativeElementType } from '@eclipsa/native'
 import { Activity, Column, COMPOSE_DEFAULT_TAG_MAP, Text } from './mod.ts'
 import { describe, expect, it } from 'vitest'
 
-describe('@eclipsa/native-compose', () => {
+describe('@eclipsa/native-android-compose', () => {
   it('exports the default Compose tag map', () => {
     expect(COMPOSE_DEFAULT_TAG_MAP.activity).toBe('compose:activity')
     expect(COMPOSE_DEFAULT_TAG_MAP.column).toBe('compose:column')

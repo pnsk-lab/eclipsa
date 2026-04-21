@@ -1,23 +1,19 @@
-# GTK 4 Example
+# GTK4 Example
 
-This example uses `@eclipsa/native` with the GTK 4 target. Lowercase JSX tags are resolved
-through `app/+native-map.ts`, so the route files can stay close to web-style authoring while the
-map file imports the actual GTK 4 binding components.
+This example uses `@eclipsa/native` with the GTK4 target. Lowercase JSX tags are resolved through
+`app/+native-map.ts`, so the route files can stay close to web-style authoring while the map file
+imports the actual GTK4 binding components.
 
 Commands:
 
 ```sh
-bun run --cwd examples/gtk4 dev
-bun run --cwd examples/gtk4 build
-bun run --cwd examples/gtk4 test
+cd examples/gtk4
+bun run dev
+bun run build
+bun run test
 ```
 
-`dev` auto-launches the Rust GTK 4 host on Linux by default. That host is compiled from
-`packages/native-gtk4/gtk4-rust`, so you need `cargo` plus local GTK 4 development libraries
-installed for the real windowed host.
+`bun run dev` launches the GTK4 host automatically when a bundled host binary is available, or
+when you pass an explicit `gtk4({ command: [...] })` host command in `vite.config.ts`.
 
-`test` still works without GTK system libraries because it builds the manifest and then drives the
-Rust smoke host (`eclipsa-native-gtk4-smoke`), which verifies the bootstrap bundle, event bridge,
-and state updates without opening a native window.
-
-The GTK 4 target package lives at `packages/native-gtk4`.
+The GTK4 binding package lives at `packages/native-gtk4`.

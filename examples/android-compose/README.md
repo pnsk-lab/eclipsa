@@ -24,4 +24,4 @@ configured through environment variables instead:
 With those set, the native host launcher will start an Android emulator if needed and then open the
 Compose host activity once the native dev manifest is ready.
 
-The Android host project lives at `packages/native-compose/android-compose`.
+The Android host project lives at `packages/native-android-compose/android-compose`.

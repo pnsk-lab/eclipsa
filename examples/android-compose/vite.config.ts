@@ -1,13 +1,13 @@
 import path from 'node:path'
 import { defineConfig } from 'vite-plus'
 import { native } from '../../packages/native/vite.ts'
-import { compose } from '../../packages/native-compose/vite.ts'
+import { androidCompose } from '../../packages/native-android-compose/vite.ts'
 
 const root = path.resolve(import.meta.dirname)
 
 export default defineConfig({
   appType: 'custom',
-  plugins: [native({ target: compose() })],
+  plugins: [native({ target: androidCompose() })],
   resolve: {
     alias: [
       {
@@ -35,8 +35,8 @@ export default defineConfig({
         replacement: path.resolve(root, '../../packages/native-core/mod.ts'),
       },
       {
-        find: /^@eclipsa\/native-compose$/,
-        replacement: path.resolve(root, '../../packages/native-compose/mod.ts'),
+        find: /^@eclipsa\/native-android-compose$/,
+        replacement: path.resolve(root, '../../packages/native-android-compose/mod.ts'),
       },
     ],
   },

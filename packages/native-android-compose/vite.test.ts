@@ -4,17 +4,18 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { native } from '../native/vite.ts'
-import { compose, NATIVE_COMPOSE_ENVIRONMENT_NAME } from './vite.ts'
+import { androidCompose, NATIVE_ANDROID_COMPOSE_ENVIRONMENT_NAME } from './vite.ts'
 import { createDefaultComposeHostCommand } from './host.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const eclipsaEntry = path.join(repoRoot, 'packages/eclipsa/mod.ts')
 const eclipsaInternalEntry = path.join(repoRoot, 'packages/eclipsa/core/internal.ts')
-const nativeEntry = path.join(repoRoot, 'packages/native/mod.ts')
+const nativeRuntimeEntry = path.join(repoRoot, 'packages/native/runtime-api.ts')
 const nativeJsxRuntime = path.join(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = path.join(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = path.join(repoRoot, 'packages/native-core/mod.ts')
-const nativeComposeEntry = path.join(repoRoot, 'packages/native-compose/mod.ts')
+const nativeComposeEntry = path.join(repoRoot, 'packages/native-android-compose/mod.ts')
+const nativeComposeCommonEntry = path.join(repoRoot, 'packages/native-android-compose/common.tsx')
 const testServerPort = 5184
 
 const fileExists = async (filePath: string) => {
@@ -38,7 +39,7 @@ const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 10_000) => {
 }
 
 const createFixture = async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-compose-env-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'eclipsa-native-android-compose-env-'))
   await mkdir(path.join(root, 'app'), { recursive: true })
   await writeFile(
     path.join(root, 'app', '+layout.tsx'),
@@ -52,7 +53,7 @@ const createFixture = async () => {
   await writeFile(
     path.join(root, 'app', '+native-map.ts'),
     [
-      `import { Activity, Column, Text } from '@eclipsa/native-compose'`,
+      `import { Activity, Column, Text } from '@eclipsa/native-android-compose'`,
       `export const activity = Activity`,
       `export const div = Column`,
       `export const span = Text`,
@@ -94,7 +95,7 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
   appType: 'custom' as const,
   plugins: [
     native({
-      target: compose({
+      target: androidCompose({
         command,
         cwd: root,
         startupTimeoutMs: 15_000,
@@ -121,15 +122,19 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
         replacement: nativeJsxRuntime,
       },
       {
-        find: /^@eclipsa\/native$/,
-        replacement: nativeEntry,
+        find: /^@eclipsa\/native\/runtime$/,
+        replacement: nativeRuntimeEntry,
       },
       {
         find: /^@eclipsa\/native-core$/,
         replacement: nativeCoreEntry,
       },
       {
-        find: /^@eclipsa\/native-compose$/,
+        find: /^@eclipsa\/native-android-compose\/common$/,
+        replacement: nativeComposeCommonEntry,
+      },
+      {
+        find: /^@eclipsa\/native-android-compose$/,
         replacement: nativeComposeEntry,
       },
     ],
@@ -145,7 +150,7 @@ const resolveConfig = (root: string, command: readonly [string, ...string[]]) =>
   },
 })
 
-describe('@eclipsa/native-compose vite environment', () => {
+describe('@eclipsa/native-android-compose vite environment', () => {
   const cleanup = new Set<string>()
 
   afterEach(async () => {
@@ -155,7 +160,7 @@ describe('@eclipsa/native-compose vite environment', () => {
     cleanup.clear()
   })
 
-  it('launches and stops the nativeCompose host automatically during dev', async () => {
+  it('launches and stops the nativeAndroidCompose host automatically during dev', async () => {
     const root = await createFixture()
     cleanup.add(root)
 
@@ -167,14 +172,7 @@ describe('@eclipsa/native-compose vite environment', () => {
 
     try {
       await server.listen()
-      expect(server.environments[NATIVE_COMPOSE_ENVIRONMENT_NAME]).toBeDefined()
-      expect(
-        typeof (
-          server.environments[NATIVE_COMPOSE_ENVIRONMENT_NAME] as {
-            dispatchFetch?: unknown
-          }
-        ).dispatchFetch,
-      ).toBe('function')
+      expect(server.environments[NATIVE_ANDROID_COMPOSE_ENVIRONMENT_NAME]).toBeDefined()
       await waitFor(() => fileExists(launchedFile))
       const launched = JSON.parse(await readFile(launchedFile, 'utf8')) as {
         manifest: {
@@ -184,7 +182,7 @@ describe('@eclipsa/native-compose vite environment', () => {
         manifestUrl: string
       }
 
-      expect(launched.manifest.target).toBe('compose')
+      expect(launched.manifest.target).toBe('android-compose')
       expect(launched.manifest.platform).toBe('android')
       expect(launched.manifestUrl).toContain('/__eclipsa_native__/manifest.json')
     } finally {

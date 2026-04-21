@@ -29,11 +29,12 @@ const repoRoot = resolve(currentDir, '../..')
 const execFileAsync = promisify(execFile)
 const eclipsaEntry = resolve(repoRoot, 'packages/eclipsa/mod.ts')
 const eclipsaInternalEntry = resolve(repoRoot, 'packages/eclipsa/core/internal.ts')
-const nativeEntry = resolve(repoRoot, 'packages/native/mod.ts')
+const nativeRuntimeEntry = resolve(repoRoot, 'packages/native/runtime-api.ts')
 const nativeJsxRuntime = resolve(repoRoot, 'packages/native/jsx-runtime.ts')
 const nativeJsxDevRuntime = resolve(repoRoot, 'packages/native/jsx-dev-runtime.ts')
 const nativeCoreEntry = resolve(repoRoot, 'packages/native-core/mod.ts')
 const nativeSwiftUIEntry = resolve(repoRoot, 'packages/native-swiftui/mod.ts')
+const nativeSwiftUICommonEntry = resolve(repoRoot, 'packages/native-swiftui/common.tsx')
 
 const flatten = (node: NativeNodeSnapshot): NativeNodeSnapshot[] => [
   node,
@@ -214,12 +215,16 @@ const resolveConfig = (root: string, port: number) => ({
         replacement: nativeJsxRuntime,
       },
       {
-        find: /^@eclipsa\/native$/,
-        replacement: nativeEntry,
+        find: /^@eclipsa\/native\/runtime$/,
+        replacement: nativeRuntimeEntry,
       },
       {
         find: /^@eclipsa\/native-core$/,
         replacement: nativeCoreEntry,
+      },
+      {
+        find: /^@eclipsa\/native-swiftui\/common$/,
+        replacement: nativeSwiftUICommonEntry,
       },
       {
         find: /^@eclipsa\/native-swiftui$/,

@@ -12,7 +12,7 @@ import {
 } from './host.ts'
 import { describe, expect, it } from 'vitest'
 
-describe('@eclipsa/native-compose host launcher', () => {
+describe('@eclipsa/native-android-compose host launcher', () => {
   it('parses emulator launch flags including the legacy typo alias', () => {
     expect(parseComposeHostLaunchArgs(['--emulator']).emulator).toBe(true)
     expect(parseComposeHostLaunchArgs(['--enurator']).emulator).toBe(true)
