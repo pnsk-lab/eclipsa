@@ -7,10 +7,10 @@ import {
 import type { Component } from '../component.ts'
 import { getComponentMeta } from '../internal.ts'
 import {
+  hasRememberedManagedAttributesForSubtree,
   markManagedAttributesForSubtreeRemembered,
-  replaceManagedAttributeSnapshot,
 } from '../runtime/dom.ts'
-import { ACTION_FORM_ATTR } from '../runtime/constants.ts'
+import { ACTION_FORM_ATTR, DOM_TEXT_NODE } from '../runtime/constants.ts'
 import {
   INSERT_MARKER_PREFIX,
   createInsertMarker,
@@ -20,18 +20,23 @@ import {
 import {
   assignRuntimeRef,
   bindLiveClientListener,
+  bindPackedRuntimeEvent,
   bindRuntimeEvent,
   captureClientInsertOwner,
   createDetachedClientInsertOwner,
   createDetachedRuntimeContainer,
+  createFixedSignalEffect,
   getRuntimeSignalId,
   getRuntimeContainer,
+  getRuntimeComponentId,
+  markComponentMayChangeNodeCount,
   preserveReusableContentInRoots,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberManagedAttributesForSubtree,
   rememberInsertMarkerRange,
   getRememberedInsertMarkerNodeCount,
+  installClientMountListeners,
   installResumeListeners,
   reconcileClientKeyedForInPlace,
   renderClientInsertable,
@@ -175,6 +180,12 @@ const removeNodeFromParent = (node: Node, parent: Node) => {
   }
 }
 
+const isTextNode = (node: Node | null | undefined): node is Text =>
+  !!node && node.nodeType === DOM_TEXT_NODE
+
+const getSingleTextChild = (parent: Node): Text | null =>
+  parent.childNodes.length === 1 && isTextNode(parent.firstChild) ? parent.firstChild : null
+
 const hasUsableInsertParent = (
   node: Node | null | undefined,
   stableParents: Array<Node | null | undefined>,
@@ -275,7 +286,7 @@ const resolveFastInsertValue = (value: unknown) => {
   return null
 }
 
-const isManagedEmptyInsertComment = (node: Node | null | undefined) =>
+const isManagedEmptyInsertComment = (node: Node | null | undefined): node is Comment =>
   node instanceof Comment && node.data === EMPTY_INSERT_COMMENT
 
 const getElementStyleDeclaration = (elem: Element) => {
@@ -306,65 +317,38 @@ const serializeStyleValue = (resolved: unknown) =>
         .join('; ')
     : String(resolved ?? '')
 
-interface ManagedTemplateAttributeSnapshot {
-  names: string[]
-}
+type TemplateNodeLookupEntry = readonly [
+  parentRefIndex: number,
+  previousSiblingRefIndex: number,
+  childIndex: number,
+]
 
-const captureManagedTemplateAttributeSnapshots = (
+export const materializeTemplateRefs = (
   root: Node,
-): ManagedTemplateAttributeSnapshot[] => {
-  const snapshots: ManagedTemplateAttributeSnapshot[] = []
-  const stack: Node[] = [root]
-  while (stack.length > 0) {
-    const current = stack.pop()!
-    if (current instanceof Element) {
-      snapshots.push({
-        names: current.getAttributeNames(),
-      })
-    }
-    const childNodes = current.childNodes
-    for (let index = childNodes.length - 1; index >= 0; index -= 1) {
-      const child = childNodes[index]
-      if (!child) {
-        continue
-      }
-      stack.push(child)
-    }
-  }
-  return snapshots
-}
-
-const applyManagedTemplateAttributeSnapshots = (
-  root: Node,
-  snapshots: readonly ManagedTemplateAttributeSnapshot[],
+  lookupEntries: readonly TemplateNodeLookupEntry[],
 ) => {
-  if (snapshots.length === 0) {
-    return
-  }
-
-  let snapshotIndex = 0
-  const stack: Node[] = [root]
-  while (stack.length > 0 && snapshotIndex < snapshots.length) {
-    const current = stack.pop()!
-    if (current instanceof Element) {
-      replaceManagedAttributeSnapshot(current, snapshots[snapshotIndex]!.names)
-      snapshotIndex += 1
+  const refs = Array<Node>(lookupEntries.length)
+  for (let index = 0; index < lookupEntries.length; index += 1) {
+    const [parentRefIndex, previousSiblingRefIndex, childIndex] = lookupEntries[index]!
+    const parent = parentRefIndex >= 0 ? refs[parentRefIndex]! : root
+    const ref =
+      previousSiblingRefIndex >= 0
+        ? refs[previousSiblingRefIndex]!.nextSibling
+        : childIndex === 0
+          ? parent.firstChild
+          : (parent.childNodes[childIndex] ?? null)
+    if (!ref) {
+      throw new Error('Client template ref materialization failed.')
     }
-    const childNodes = current.childNodes
-    for (let index = childNodes.length - 1; index >= 0; index -= 1) {
-      const child = childNodes[index]
-      if (child) {
-        stack.push(child)
-      }
-    }
+    refs[index] = ref
   }
+  return refs
 }
 
 export const createTemplate = (html: string): (() => Node) => {
   let template: HTMLTemplateElement | null = null
   let templateRoot: Node | null = null
   let hasActionForms = false
-  let managedAttributeSnapshots: ManagedTemplateAttributeSnapshot[] | null = null
 
   return () => {
     if (!template) {
@@ -377,9 +361,6 @@ export const createTemplate = (html: string): (() => Node) => {
           : templateRoot instanceof Element
             ? templateRoot.querySelector(`form[${ACTION_FORM_ATTR}]`) instanceof HTMLFormElement
             : false
-      managedAttributeSnapshots = templateRoot
-        ? captureManagedTemplateAttributeSnapshots(templateRoot)
-        : []
     }
     if (!templateRoot) {
       throw new Error('Client templates require a root node.')
@@ -387,11 +368,6 @@ export const createTemplate = (html: string): (() => Node) => {
     const node = templateRoot.cloneNode(true)
     if (hasActionForms) {
       ensureActionCsrfInputsInNode(node)
-    }
-    if (managedAttributeSnapshots) {
-      applyManagedTemplateAttributeSnapshots(node, managedAttributeSnapshots)
-    } else {
-      rememberManagedAttributesForSubtree(node)
     }
     markManagedAttributesForSubtreeRemembered(node)
     return node
@@ -430,6 +406,7 @@ type InsertBindingState = {
   marker: Node | undefined
   markerKey: string | null | undefined
   owner: ReturnType<typeof captureClientInsertOwner>
+  ownerComponentId: string | null
   ownerSiteKey: string | null
   parent: Node
   runtimeContainer: NonNullable<ReturnType<typeof getRuntimeContainer>>
@@ -449,10 +426,19 @@ const createInsertBindingState = (
     marker,
     markerKey: undefined,
     owner: null,
+    ownerComponentId: getRuntimeComponentId(),
     ownerSiteKey,
     parent,
     runtimeContainer,
   }
+}
+
+const markInsertBindingVariableNodeCount = (state: InsertBindingState) => {
+  const componentId = state.ownerComponentId
+  if (!componentId) {
+    return
+  }
+  markComponentMayChangeNodeCount(state.runtimeContainer, componentId)
 }
 
 const ensureInsertBindingOwner = (state: InsertBindingState) =>
@@ -564,7 +550,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
 
   if (primitiveValue && state.lastNodeLength === 1 && state.lastFirstNode?.parentNode) {
     if (primitiveValue.kind === 'text') {
-      if (state.lastFirstNode instanceof Text) {
+      if (isTextNode(state.lastFirstNode)) {
         if (state.lastFirstNode.data !== primitiveValue.value) {
           state.lastFirstNode.data = primitiveValue.value
         }
@@ -595,7 +581,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
         return
       }
 
-      if (state.lastFirstNode instanceof Text) {
+      if (isTextNode(state.lastFirstNode)) {
         const doc =
           state.runtimeContainer.doc ??
           (state.lastFirstNode.ownerDocument as Document | null) ??
@@ -631,7 +617,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
     }
 
     if (primitiveValue.kind === 'text') {
-      if (currentNodes.length === 1 && currentNodes[0] instanceof Text) {
+      if (currentNodes.length === 1 && isTextNode(currentNodes[0])) {
         if (currentNodes[0].data !== primitiveValue.value) {
           currentNodes[0].data = primitiveValue.value
         }
@@ -811,7 +797,7 @@ const runSimpleTextBindingEffect = (state: InsertBindingState, value: Insertable
   }
 
   if (primitiveValue.kind === 'text') {
-    if (currentNode instanceof Text) {
+    if (isTextNode(currentNode)) {
       if (currentNode.data !== primitiveValue.value) {
         currentNode.data = primitiveValue.value
       }
@@ -873,7 +859,7 @@ export const insertElementStatic = (value: Insertable, parent: Element) => {
     if (
       resolved.kind === 'text' &&
       parent.childNodes.length === 1 &&
-      parent.firstChild instanceof Text
+      isTextNode(parent.firstChild)
     ) {
       parent.firstChild.data = resolved.value
       return
@@ -915,6 +901,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
     throw new Error('Client insertions require an active runtime container.')
   }
   const state = createInsertBindingState(parent, marker, runtimeContainer)
+  markInsertBindingVariableNodeCount(state)
 
   effect(
     () => {
@@ -939,10 +926,665 @@ export const text = (value: Insertable, parent: Node, marker?: Node) => {
         return
       }
 
-      delegated = true
+      if (!delegated) {
+        markInsertBindingVariableNodeCount(state)
+        delegated = true
+      }
       runInsertEffect(state, value)
     },
     { runInContainer: false },
+  )
+}
+
+export const textSignal = <T>(
+  signal: { value: T },
+  project: (value: T) => Insertable,
+  parent: Node,
+  marker?: Node,
+) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+
+  const state = createInsertBindingState(parent, marker, runtimeContainer)
+  let delegated = false
+
+  createFixedSignalEffect(
+    signal,
+    (signalValue) => {
+      const value = project(signalValue)
+      if (!delegated && runSimpleTextBindingEffect(state, value)) {
+        return
+      }
+
+      if (!delegated) {
+        markInsertBindingVariableNodeCount(state)
+        delegated = true
+      }
+      runInsertEffect(state, value)
+    },
+    { runInContainer: false },
+  )
+}
+
+export const textNodeSignal = <T>(
+  signal: { value: T },
+  project: (value: T) => Insertable,
+  target: Node,
+) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+
+  if (isTextNode(target)) {
+    let textNode: Text | null = target
+    let emptyNode: Comment | null = null
+    let delegated = false
+    let state: InsertBindingState | null = null
+
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => {
+        const value = project(signalValue)
+        if (!delegated) {
+          const currentTextNode = textNode?.parentNode ? textNode : null
+          const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
+          const primitiveValue = resolveFastInsertValue(value)
+          if (primitiveValue?.kind === 'text') {
+            if (currentTextNode) {
+              if (currentTextNode.data !== primitiveValue.value) {
+                currentTextNode.data = primitiveValue.value
+              }
+              textNode = currentTextNode
+              return
+            }
+
+            const parent = currentEmptyNode?.parentNode as ParentNode | null
+            const doc =
+              runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
+            if (currentEmptyNode && parent && doc) {
+              const nextNode = doc.createTextNode(primitiveValue.value)
+              parent.insertBefore(nextNode, currentEmptyNode)
+              removeNodeFromParent(currentEmptyNode, parent)
+              textNode = nextNode
+              emptyNode = null
+              return
+            }
+          }
+
+          if (primitiveValue?.kind === 'empty') {
+            if (currentEmptyNode) {
+              emptyNode = currentEmptyNode
+              textNode = null
+              return
+            }
+
+            const parent = currentTextNode?.parentNode as ParentNode | null
+            const doc =
+              runtimeContainer.doc ?? currentTextNode?.ownerDocument ?? parent?.ownerDocument
+            if (currentTextNode && parent && doc) {
+              const nextNode = doc.createComment(EMPTY_INSERT_COMMENT)
+              parent.insertBefore(nextNode, currentTextNode)
+              removeNodeFromParent(currentTextNode, parent)
+              emptyNode = nextNode
+              textNode = null
+            }
+            return
+          }
+        }
+
+        if (!state) {
+          const currentNode = textNode ?? emptyNode
+          const parent = currentNode?.parentNode
+          if (!parent) {
+            return
+          }
+          state = createInsertBindingState(
+            parent,
+            currentNode.nextSibling ?? undefined,
+            runtimeContainer,
+          )
+          state.lastFirstNode = currentNode
+          state.lastNodeLength = 1
+        }
+
+        if (!delegated) {
+          markInsertBindingVariableNodeCount(state)
+          delegated = true
+        }
+        runInsertEffect(state, value)
+        textNode = isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+        emptyNode =
+          state.lastFirstNode && isManagedEmptyInsertComment(state.lastFirstNode)
+            ? state.lastFirstNode
+            : null
+      },
+      { runInContainer: false },
+    )
+    return
+  }
+
+  if (target.nodeType === 1) {
+    const parent = target as Element
+    let delegated = false
+    let state: InsertBindingState | null = null
+    let textNode = getSingleTextChild(parent)
+
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => {
+        const value = project(signalValue)
+        if (!delegated) {
+          const primitiveValue = resolveFastInsertValue(value)
+          if (primitiveValue?.kind === 'text') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              if (currentTextNode.data !== primitiveValue.value) {
+                currentTextNode.data = primitiveValue.value
+              }
+              textNode = currentTextNode
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
+                primitiveValue.value,
+              )
+              if (!nextNode) {
+                throw new Error('Client insertions require an active runtime document.')
+              }
+              parent.appendChild(nextNode)
+              textNode = nextNode
+              return
+            }
+          }
+          if (primitiveValue?.kind === 'empty') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              removeNodeFromParent(currentTextNode, parent)
+              textNode = null
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              textNode = null
+              return
+            }
+          }
+        }
+
+        if (!state) {
+          state = createInsertBindingState(parent, undefined, runtimeContainer)
+          state.lastFirstNode = parent.firstChild ?? undefined
+          state.lastNodeLength = parent.childNodes.length
+        }
+
+        if (!delegated) {
+          markInsertBindingVariableNodeCount(state)
+          delegated = true
+        }
+        runInsertEffect(state, value)
+        textNode =
+          state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+      },
+      { runInContainer: false },
+    )
+    return
+  }
+
+  textSignal(signal, project, target)
+}
+
+export const textNodeSignalMember = <T extends Record<string, unknown>>(
+  signal: { value: T },
+  member: string,
+  target: Node,
+) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+
+  if (isTextNode(target)) {
+    let textNode: Text | null = target
+    let emptyNode: Comment | null = null
+    let delegated = false
+    let state: InsertBindingState | null = null
+    const update = (value: Insertable) => {
+      if (!delegated) {
+        const currentTextNode = textNode?.parentNode ? textNode : null
+        const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
+        const primitiveValue = resolveFastInsertValue(value)
+        if (primitiveValue?.kind === 'text') {
+          if (currentTextNode) {
+            if (currentTextNode.data !== primitiveValue.value) {
+              currentTextNode.data = primitiveValue.value
+            }
+            textNode = currentTextNode
+            return
+          }
+
+          const parent = currentEmptyNode?.parentNode as ParentNode | null
+          const doc =
+            runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
+          if (currentEmptyNode && parent && doc) {
+            const nextNode = doc.createTextNode(primitiveValue.value)
+            parent.insertBefore(nextNode, currentEmptyNode)
+            removeNodeFromParent(currentEmptyNode, parent)
+            textNode = nextNode
+            emptyNode = null
+            return
+          }
+        }
+
+        if (primitiveValue?.kind === 'empty') {
+          if (currentEmptyNode) {
+            emptyNode = currentEmptyNode
+            textNode = null
+            return
+          }
+
+          const parent = currentTextNode?.parentNode as ParentNode | null
+          const doc =
+            runtimeContainer.doc ?? currentTextNode?.ownerDocument ?? parent?.ownerDocument
+          if (currentTextNode && parent && doc) {
+            const nextNode = doc.createComment(EMPTY_INSERT_COMMENT)
+            parent.insertBefore(nextNode, currentTextNode)
+            removeNodeFromParent(currentTextNode, parent)
+            emptyNode = nextNode
+            textNode = null
+          }
+          return
+        }
+      }
+
+      if (!state) {
+        const currentNode = textNode ?? emptyNode
+        const parent = currentNode?.parentNode
+        if (!parent) {
+          return
+        }
+        state = createInsertBindingState(
+          parent,
+          currentNode.nextSibling ?? undefined,
+          runtimeContainer,
+        )
+        state.lastFirstNode = currentNode
+        state.lastNodeLength = 1
+      }
+
+      if (!delegated) {
+        markInsertBindingVariableNodeCount(state)
+        delegated = true
+      }
+      runInsertEffect(state, value)
+      textNode = isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+      emptyNode =
+        state.lastFirstNode && isManagedEmptyInsertComment(state.lastFirstNode)
+          ? state.lastFirstNode
+          : null
+    }
+
+    update(signal.value[member as keyof T] as Insertable)
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => update(signalValue[member as keyof T] as Insertable),
+      {
+        runInContainer: false,
+        skipInitialRun: true,
+      },
+    )
+    return
+  }
+
+  if (target.nodeType === 1) {
+    const parent = target as Element
+    let delegated = false
+    let state: InsertBindingState | null = null
+    let textNode = getSingleTextChild(parent)
+
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => {
+        const value = signalValue[member as keyof T] as Insertable
+        if (!delegated) {
+          const primitiveValue = resolveFastInsertValue(value)
+          if (primitiveValue?.kind === 'text') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              if (currentTextNode.data !== primitiveValue.value) {
+                currentTextNode.data = primitiveValue.value
+              }
+              textNode = currentTextNode
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
+                primitiveValue.value,
+              )
+              if (!nextNode) {
+                throw new Error('Client insertions require an active runtime document.')
+              }
+              parent.appendChild(nextNode)
+              textNode = nextNode
+              return
+            }
+          }
+          if (primitiveValue?.kind === 'empty') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              removeNodeFromParent(currentTextNode, parent)
+              textNode = null
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              textNode = null
+              return
+            }
+          }
+        }
+
+        if (!state) {
+          state = createInsertBindingState(parent, undefined, runtimeContainer)
+          state.lastFirstNode = parent.firstChild ?? undefined
+          state.lastNodeLength = parent.childNodes.length
+        }
+
+        if (!delegated) {
+          markInsertBindingVariableNodeCount(state)
+          delegated = true
+        }
+        runInsertEffect(state, value)
+        textNode =
+          state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+      },
+      { runInContainer: false },
+    )
+    return
+  }
+
+  textSignal(signal, (value) => value[member as keyof T] as Insertable, target)
+}
+
+export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+
+  if (isTextNode(target)) {
+    let textNode: Text | null = target
+    let emptyNode: Comment | null = null
+    let delegated = false
+    let state: InsertBindingState | null = null
+    const update = (value: Insertable) => {
+      if (!delegated) {
+        const currentTextNode = textNode?.parentNode ? textNode : null
+        const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
+        const primitiveValue = resolveFastInsertValue(value)
+        if (primitiveValue?.kind === 'text') {
+          if (currentTextNode) {
+            if (currentTextNode.data !== primitiveValue.value) {
+              currentTextNode.data = primitiveValue.value
+            }
+            textNode = currentTextNode
+            return
+          }
+
+          const parent = currentEmptyNode?.parentNode as ParentNode | null
+          const doc =
+            runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
+          if (currentEmptyNode && parent && doc) {
+            const nextNode = doc.createTextNode(primitiveValue.value)
+            parent.insertBefore(nextNode, currentEmptyNode)
+            removeNodeFromParent(currentEmptyNode, parent)
+            textNode = nextNode
+            emptyNode = null
+            return
+          }
+        }
+
+        if (primitiveValue?.kind === 'empty') {
+          if (currentEmptyNode) {
+            emptyNode = currentEmptyNode
+            textNode = null
+            return
+          }
+
+          const parent = currentTextNode?.parentNode as ParentNode | null
+          const doc =
+            runtimeContainer.doc ?? currentTextNode?.ownerDocument ?? parent?.ownerDocument
+          if (currentTextNode && parent && doc) {
+            const nextNode = doc.createComment(EMPTY_INSERT_COMMENT)
+            parent.insertBefore(nextNode, currentTextNode)
+            removeNodeFromParent(currentTextNode, parent)
+            emptyNode = nextNode
+            textNode = null
+          }
+          return
+        }
+      }
+
+      if (!state) {
+        const currentNode = textNode ?? emptyNode
+        const parent = currentNode?.parentNode
+        if (!parent) {
+          return
+        }
+        state = createInsertBindingState(
+          parent,
+          currentNode.nextSibling ?? undefined,
+          runtimeContainer,
+        )
+        state.lastFirstNode = currentNode
+        state.lastNodeLength = 1
+      }
+
+      if (!delegated) {
+        markInsertBindingVariableNodeCount(state)
+        delegated = true
+      }
+      runInsertEffect(state, value)
+      textNode = isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+      emptyNode =
+        state.lastFirstNode && isManagedEmptyInsertComment(state.lastFirstNode)
+          ? state.lastFirstNode
+          : null
+    }
+
+    update(signal.value as Insertable)
+    createFixedSignalEffect(signal, (signalValue) => update(signalValue as Insertable), {
+      runInContainer: false,
+      skipInitialRun: true,
+    })
+    return
+  }
+
+  if (target.nodeType === 1) {
+    const parent = target as Element
+    let delegated = false
+    let state: InsertBindingState | null = null
+    let textNode = getSingleTextChild(parent)
+
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => {
+        const value = signalValue as Insertable
+        if (!delegated) {
+          const primitiveValue = resolveFastInsertValue(value)
+          if (primitiveValue?.kind === 'text') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              if (currentTextNode.data !== primitiveValue.value) {
+                currentTextNode.data = primitiveValue.value
+              }
+              textNode = currentTextNode
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
+                primitiveValue.value,
+              )
+              if (!nextNode) {
+                throw new Error('Client insertions require an active runtime document.')
+              }
+              parent.appendChild(nextNode)
+              textNode = nextNode
+              return
+            }
+          }
+          if (primitiveValue?.kind === 'empty') {
+            const currentTextNode =
+              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+            if (currentTextNode) {
+              removeNodeFromParent(currentTextNode, parent)
+              textNode = null
+              return
+            }
+            if (parent.childNodes.length === 0) {
+              textNode = null
+              return
+            }
+          }
+        }
+
+        if (!state) {
+          state = createInsertBindingState(parent, undefined, runtimeContainer)
+          state.lastFirstNode = parent.firstChild ?? undefined
+          state.lastNodeLength = parent.childNodes.length
+        }
+
+        if (!delegated) {
+          markInsertBindingVariableNodeCount(state)
+          delegated = true
+        }
+        runInsertEffect(state, value)
+        textNode =
+          state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+      },
+      { runInContainer: false },
+    )
+    return
+  }
+
+  textSignal(signal, (value) => value as Insertable, target)
+}
+
+export const classSignal = <T>(
+  elem: Element,
+  signal: { value: T },
+  project: (value: T) => unknown,
+) => {
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+  let lastClassValue = readCurrentClassValue(elem, isSVG)
+  const initialClassValue = String(project(signal.value))
+  if (lastClassValue !== initialClassValue) {
+    applyClassValue(elem, initialClassValue, isSVG)
+    lastClassValue = initialClassValue
+  }
+
+  createFixedSignalEffect(
+    signal,
+    (signalValue) => {
+      const nextClassValue = String(project(signalValue))
+      if (lastClassValue !== nextClassValue) {
+        applyClassValue(elem, nextClassValue, isSVG)
+        lastClassValue = nextClassValue
+      }
+    },
+    { runInContainer: false, skipInitialRun: true },
+  )
+}
+
+export const classSignalValue = <T>(elem: Element, signal: { value: T }) => {
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+  let lastClassValue = readCurrentClassValue(elem, isSVG)
+  const initialClassValue = String(signal.value)
+  if (lastClassValue !== initialClassValue) {
+    applyClassValue(elem, initialClassValue, isSVG)
+    lastClassValue = initialClassValue
+  }
+
+  createFixedSignalEffect(
+    signal,
+    (signalValue) => {
+      const nextClassValue = String(signalValue)
+      if (lastClassValue !== nextClassValue) {
+        applyClassValue(elem, nextClassValue, isSVG)
+        lastClassValue = nextClassValue
+      }
+    },
+    { runInContainer: false, skipInitialRun: true },
+  )
+}
+
+export const classSignalMember = <T extends Record<string, unknown>>(
+  elem: Element,
+  signal: { value: T },
+  member: string,
+) => {
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+  let lastClassValue = readCurrentClassValue(elem, isSVG)
+  const initialClassValue = String(signal.value[member as keyof T])
+  if (lastClassValue !== initialClassValue) {
+    applyClassValue(elem, initialClassValue, isSVG)
+    lastClassValue = initialClassValue
+  }
+
+  createFixedSignalEffect(
+    signal,
+    (signalValue) => {
+      const nextClassValue = String(signalValue[member as keyof T])
+      if (lastClassValue !== nextClassValue) {
+        applyClassValue(elem, nextClassValue, isSVG)
+        lastClassValue = nextClassValue
+      }
+    },
+    { runInContainer: false, skipInitialRun: true },
+  )
+}
+
+export const classSignalEquals = <T>(
+  elem: Element,
+  signal: { value: T },
+  expected: unknown,
+  truthyValue: unknown,
+  falsyValue: unknown,
+) => {
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+  const truthyClassValue = String(truthyValue)
+  const falsyClassValue = String(falsyValue)
+  const initialClassValue = readCurrentClassValue(elem, isSVG)
+  let lastMatch =
+    truthyClassValue !== falsyClassValue
+      ? initialClassValue === truthyClassValue
+        ? true
+        : initialClassValue === falsyClassValue
+          ? false
+          : (ATTR_UNSET as boolean | symbol)
+      : (ATTR_UNSET as boolean | symbol)
+  const initialMatch = signal.value === expected
+  if (lastMatch !== initialMatch) {
+    applyClassValue(elem, initialMatch ? truthyClassValue : falsyClassValue, isSVG)
+    lastMatch = initialMatch
+  }
+
+  createFixedSignalEffect(
+    signal,
+    (signalValue) => {
+      const nextMatch = signalValue === expected
+      if (lastMatch !== nextMatch) {
+        const nextClassValue = nextMatch ? truthyClassValue : falsyClassValue
+        applyClassValue(elem, nextClassValue, isSVG)
+        lastMatch = nextMatch
+      }
+    },
+    { runInContainer: false, skipInitialRun: true },
   )
 }
 
@@ -960,7 +1602,39 @@ const bindStaticEventValue = (elem: Element, eventName: string, resolved: unknow
   if (typeof resolved !== 'function') {
     throw new Error('Resumable event bindings require an active runtime container.')
   }
+  const runtimeContainer = getRuntimeContainer()
+  if (runtimeContainer) {
+    bindLiveClientListener(runtimeContainer, elem, eventName, resolved as (event: Event) => unknown)
+    return
+  }
   elem.addEventListener(eventName, resolved as () => void)
+}
+
+const bindPackedStaticEventValue = (
+  elem: Element,
+  eventName: string,
+  symbol: string,
+  captureCount: 0 | 1 | 2 | 3 | 4,
+  capture0?: unknown,
+  capture1?: unknown,
+  capture2?: unknown,
+  capture3?: unknown,
+) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Resumable event bindings require an active runtime container.')
+  }
+  bindPackedRuntimeEvent(
+    runtimeContainer,
+    elem,
+    eventName,
+    symbol,
+    captureCount,
+    capture0,
+    capture1,
+    capture2,
+    capture3,
+  )
 }
 
 const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
@@ -970,6 +1644,21 @@ const hasClassAttribute = (elem: Element) =>
   typeof elem.hasAttribute === 'function'
     ? elem.hasAttribute('class')
     : elem.getAttribute('class') !== null
+
+const readCurrentClassValue = (elem: Element, isSVG: boolean) => {
+  if (!isSVG) {
+    const className = (elem as Element & { className?: unknown }).className
+    if (typeof className === 'string') {
+      return className
+    }
+  }
+
+  if (typeof elem.getAttribute === 'function') {
+    return elem.getAttribute('class') ?? ''
+  }
+
+  return ''
+}
 
 const applyClassValue = (elem: Element, nextClassValue: string, isSVG: boolean) => {
   if (nextClassValue === '') {
@@ -1108,9 +1797,46 @@ export const attrStatic = (elem: Element, name: string, value: unknown) => {
   applyStaticAttributeValue(elem, name, value, elem.namespaceURI === 'http://www.w3.org/2000/svg')
 }
 
-export const eventStatic = (elem: Element, eventName: string, value: unknown) => {
-  bindStaticEventValue(elem, eventName, value)
-}
+export const eventStatic = Object.assign(
+  (elem: Element, eventName: string, value: unknown) => {
+    bindStaticEventValue(elem, eventName, value)
+  },
+  {
+    __0: (elem: Element, eventName: string, symbol: string) =>
+      bindPackedStaticEventValue(elem, eventName, symbol, 0),
+    __1: (elem: Element, eventName: string, symbol: string, capture0: unknown) =>
+      bindPackedStaticEventValue(elem, eventName, symbol, 1, capture0),
+    __2: (elem: Element, eventName: string, symbol: string, capture0: unknown, capture1: unknown) =>
+      bindPackedStaticEventValue(elem, eventName, symbol, 2, capture0, capture1),
+    __3: (
+      elem: Element,
+      eventName: string,
+      symbol: string,
+      capture0: unknown,
+      capture1: unknown,
+      capture2: unknown,
+    ) => bindPackedStaticEventValue(elem, eventName, symbol, 3, capture0, capture1, capture2),
+    __4: (
+      elem: Element,
+      eventName: string,
+      symbol: string,
+      capture0: unknown,
+      capture1: unknown,
+      capture2: unknown,
+      capture3: unknown,
+    ) =>
+      bindPackedStaticEventValue(
+        elem,
+        eventName,
+        symbol,
+        4,
+        capture0,
+        capture1,
+        capture2,
+        capture3,
+      ),
+  },
+)
 
 export const listenerStatic = (elem: Element, eventName: string, value: unknown) => {
   if (typeof value !== 'function') {
@@ -1389,17 +2115,24 @@ export const hydrate = (
   },
 ) => {
   const runtimeContainer = createDetachedRuntimeContainer()
+  const targetWasEmpty = target.childNodes.length === 0
+  const hasSnapshot = options?.snapshot != null
+  const canUseClientMountFastPath = targetWasEmpty && !hasSnapshot
   runtimeContainer.doc = target.ownerDocument
   runtimeContainer.rootElement = target
   for (const [symbolId, url] of Object.entries(options?.symbols ?? {})) {
     runtimeContainer.symbols.set(symbolId, url)
   }
-  installResumeListeners(runtimeContainer)
-  const nodes = withSignalSnapshot(options?.snapshot ?? null, () =>
+  if (!canUseClientMountFastPath) {
+    installResumeListeners(runtimeContainer)
+  }
+  const render = () =>
     withRuntimeContainer(runtimeContainer, () =>
       renderClientInsertable(jsxDEV(Component as any, {}, null, false, {}), runtimeContainer),
-    ),
-  ).result as unknown as Node[]
+    )
+  const nodes = (canUseClientMountFastPath
+    ? render()
+    : withSignalSnapshot(options?.snapshot ?? null, render).result) as unknown as Node[]
 
   while (target.childNodes.length > 0) {
     target.lastChild?.remove()
@@ -1408,8 +2141,20 @@ export const hydrate = (
   for (const node of nodes) {
     target.appendChild(node)
   }
-  rememberManagedAttributesForSubtree(target)
-  restoreSignalRefs(runtimeContainer, target)
+  const canSkipDeepManagedAttributeRemember =
+    targetWasEmpty && nodes.every((node) => hasRememberedManagedAttributesForSubtree(node))
+  if (canSkipDeepManagedAttributeRemember) {
+    rememberManagedAttributesForNode(target)
+    markManagedAttributesForSubtreeRemembered(target)
+  } else {
+    rememberManagedAttributesForSubtree(target)
+  }
+  if (runtimeContainer.hasRuntimeRefMarkers) {
+    restoreSignalRefs(runtimeContainer, target)
+  }
+  if (canUseClientMountFastPath) {
+    installClientMountListeners(runtimeContainer, target)
+  }
 }
 
 export const createComponent = (Component: Component, props: unknown) => {

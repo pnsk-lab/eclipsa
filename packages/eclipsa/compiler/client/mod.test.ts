@@ -106,9 +106,10 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.firstChild;/)
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[2\];/)
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = __eclipsaNode\d+\.nextSibling;/)
+    expect(resultCode).toContain('_materializeTemplateRefs(_cloned,')
+    expect(resultCode).toMatch(/\[\s*-1,\s*-1,\s*0\s*\]/)
+    expect(resultCode).toMatch(/\[\s*-1,\s*-1,\s*2\s*\]/)
+    expect(resultCode).toMatch(/\[\s*-?\d+,\s*-?\d+,\s*3\s*\]/)
     expect(resultCode).not.toContain(
       '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
     )
@@ -172,9 +173,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain(
-      '_className(_cloned, () => selected.value === rowId ? "danger" : "");',
-    )
+    expect(resultCode).toContain('_classSignalEquals(_cloned, selected, rowId, "danger", "");')
+    expect(resultCode).not.toContain('_className(_cloned')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
   })
 
@@ -189,6 +189,67 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toContain('_eventStatic(_cloned, "click", handleClick);')
     expect(resultCode).not.toContain('_attrStatic(_cloned, "onClick", handleClick);')
+  })
+
+  it('routes packed resumable event bindings through the specialized direct event helper', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const rowId = 1;
+        const selected = { value: null };
+        return <button onClick={() => [selected, rowId]}>Run</button>;
+      };
+    `)
+
+    const resultCode = await compileClientModule(analyzed.code, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", __eclipsaEvent.__2(')
+  })
+
+  it('routes parenthesized packed resumable event bindings through the specialized direct event helper', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <button onClick={(__eclipsaEvent.__2("click", "symbol-click", selected, rowId))}>
+          Run
+        </button>
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).not.toContain(
+      '_eventStatic(_cloned, "click", (__eclipsaEvent.__2("click", "symbol-click", selected, rowId)));',
+    )
+  })
+
+  it('routes aliased packed resumable event bindings inside reactive row callbacks through the specialized direct event helper', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows.value}
+          fn={(row) => {
+            const rowId = row.value.id
+            const handleSelect = __eclipsaEvent.__2("click", "symbol-click", selected, rowId)
+            return <button onClick={handleSelect}>{row.value.label}</button>
+          }}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).toContain('"symbol-click", selected, rowId')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", handleSelect);')
+    expect(resultCode).not.toContain('const handleSelect = __eclipsaEvent.__2(')
   })
 
   it('routes direct-mode static event bindings through the plain listener helper', async () => {
@@ -263,7 +324,8 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('=> <li')
     expect(resultCode).toContain('_createComponent(For')
     expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li></li>");')
-    expect(resultCode).toContain('_insertElementStatic(todo, _cloned);')
+    expect(resultCode).toContain('"reactiveRows": true')
+    expect(resultCode).toContain('_textNodeSignalValue(todo, _cloned);')
   })
 
   it('emits one-shot inserts for expressions that do not read signals directly', async () => {
@@ -285,12 +347,12 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('<!-- 0 -->')
   })
 
-  it('keeps signal-backed text expressions on the tracked insert path', async () => {
+  it('keeps signal-backed text expressions on the fixed-signal text path', async () => {
     const resultCode = await compileClientModule(`<div>{count.value}</div>`, 'mod.test.tsx', {
       hmr: false,
     })
 
-    expect(resultCode).toContain('_text(() => count.value, _cloned);')
+    expect(resultCode).toContain('_textNodeSignalValue(count, _cloned);')
     expect(resultCode).not.toContain('<!-- 0 -->')
   })
 
@@ -342,7 +404,7 @@ describe('compileClientModule', () => {
     ).toHaveLength(1)
   })
 
-  it('keeps explicit For callbacks on raw rows unless the user opts into reactive row handles', async () => {
+  it('lowers eligible explicit For callbacks onto reactive row signals without changing row syntax', async () => {
     const resultCode = await compileClientModule(
       `
         <For
@@ -368,17 +430,58 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).not.toContain('"reactiveRows": true')
-    expect(resultCode).not.toContain('"reactiveIndex": false')
-    expect(resultCode).toContain('const rowId = row.id;')
-    expect(resultCode).toContain('const label = row.label;')
+    expect(resultCode).toContain('"reactiveRows": true')
+    expect(resultCode).toContain('"reactiveIndex": false')
+    expect(resultCode).toContain('const rowId = row.value.id;')
     expect(resultCode).toContain('_insertElementStatic(rowId')
-    expect(resultCode).toContain('_insertElementStatic(label')
-    expect(resultCode).toContain('_className(')
-    expect(resultCode).toContain('selected.value === rowId')
+    expect(resultCode).toContain('_textNodeSignalMember(row, "label"')
+    expect(resultCode).not.toContain('<!-- 1,0,0 -->')
+    expect(resultCode).toContain('_classSignalEquals(')
     expect(resultCode).toContain('_eventStatic(')
     expect(resultCode).toContain('"click", handleClick')
     expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
+  })
+
+  it('preserves explicit reactive row handle usage in For callbacks', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          reactiveRows={true}
+          fn={(row, i) => <li data-id={row.value.id}>{i.value}:{row.value.label}</li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('"reactiveRows": true')
+    expect(resultCode).toContain('row.value.id')
+    expect(resultCode).toContain('row.value.label')
+    expect(resultCode).toContain('i.value')
+    expect(resultCode).not.toContain('row.value.value')
+    expect(resultCode).not.toContain('i.value.value')
+  })
+
+  it('omits comment markers for tracked single-child text insertions inside nested elements', async () => {
+    const resultCode = await compileClientModule(
+      `<tr><td>{label.value}</td><td><a>{label.value}</a></td></tr>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain(
+      'const __eclipsaTemplate0 = _createTemplate("<tr><td></td><td><a></a></td></tr>");',
+    )
+    expect(resultCode).toContain('_textNodeSignalValue(label, _refs[0]);')
+    expect(resultCode).toContain('_textNodeSignalValue(label, _refs[2]);')
+    expect(resultCode).not.toContain('<!-- 0,0 -->')
+    expect(resultCode).not.toContain('<!-- 1,0,0 -->')
   })
 
   it('passes function props to components as stable values', async () => {
@@ -422,7 +525,7 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).not.toContain('reactiveRows: true')
-    expect(resultCode).toContain('item.value')
+    expect(resultCode).toContain('_textNodeSignalValue(item, _cloned);')
     expect(resultCode).not.toContain('item.value.value')
   })
 

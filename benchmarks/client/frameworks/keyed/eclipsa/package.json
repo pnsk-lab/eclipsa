@@ -9,7 +9,7 @@
     "build-dev": "vite build --mode development"
   },
   "dependencies": {
-    "eclipsa": "file:../../../../../../../packages/eclipsa"
+    "eclipsa": "file:../../../../../packages/eclipsa"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

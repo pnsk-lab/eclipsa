@@ -30,7 +30,7 @@ export default __eclipsaComponent(() => {
   })
 
   return <button>{value}</button>
-}, "1tn7zho", ()=>[], undefined, { optimizedRoot: true })
+}, "1tn7zho", [], undefined, { optimizedRoot: true })
 
 
 // ================= 1tn7zho (component) ==

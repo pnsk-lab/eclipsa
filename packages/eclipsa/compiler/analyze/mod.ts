@@ -218,6 +218,84 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
   return nextSource
 }
 
+const inlineStaticEventCaptureArrays = (source: string, id: string) => {
+  const sourceFile = ts.createSourceFile(
+    id,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const replacements: Array<{ end: number; start: number; text: string }> = []
+
+  const unwrapArrayExpression = (expression: ts.Expression): ts.ArrayLiteralExpression | null => {
+    let current = expression
+    while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)) {
+      current = current.expression
+    }
+    return ts.isArrayLiteralExpression(current) ? current : null
+  }
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === '__eclipsaEvent' &&
+      node.arguments.length >= 3
+    ) {
+      const eventName = node.arguments[0]
+      const symbol = node.arguments[1]
+      const captures = node.arguments[2]!
+      const inlineArray =
+        unwrapArrayExpression(captures) ??
+        ((ts.isArrowFunction(captures) || ts.isFunctionExpression(captures)) &&
+        captures.parameters.length === 0 &&
+        !ts.isBlock(captures.body)
+          ? unwrapArrayExpression(captures.body)
+          : null)
+      if (inlineArray) {
+        const inlineElements = inlineArray.elements.filter(
+          (element): element is ts.Expression =>
+            !!element && !ts.isOmittedExpression(element) && !ts.isSpreadElement(element),
+        )
+        if (inlineElements.length === inlineArray.elements.length && inlineElements.length <= 4) {
+          replacements.push({
+            end: node.end,
+            start: node.getStart(sourceFile),
+            text: `__eclipsaEvent.__${inlineElements.length}(${[
+              eventName?.getText(sourceFile),
+              symbol?.getText(sourceFile),
+              ...inlineElements.map((element) => element.getText(sourceFile)),
+            ].join(', ')})`,
+          })
+          ts.forEachChild(node, visit)
+          return
+        }
+        replacements.push({
+          end: captures.end,
+          start: captures.getStart(sourceFile),
+          text: inlineArray.getText(sourceFile),
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+
+  if (replacements.length === 0) {
+    return source
+  }
+
+  let nextSource = source
+  for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+    nextSource =
+      nextSource.slice(0, replacement.start) + replacement.text + nextSource.slice(replacement.end)
+  }
+
+  return nextSource
+}
+
 export const analyzeModule = async (
   source: string,
   id = 'analyze-input.tsx',
@@ -227,7 +305,19 @@ export const analyzeModule = async (
 ): Promise<AnalyzedModule> => {
   validateSingleReturnComponents(source, id)
   const analyzed = await runRustAnalyzeCompiler(id, source, options?.eventMode)
-  const code = annotateOptimizedRootComponents(analyzed.code, id)
+  const code = inlineStaticEventCaptureArrays(
+    annotateOptimizedRootComponents(analyzed.code, id),
+    id,
+  )
+  const symbols = new Map(
+    [...analyzed.symbols].map(([symbolId, symbol]) => [
+      symbolId,
+      {
+        ...symbol,
+        code: inlineStaticEventCaptureArrays(symbol.code, symbol.filePath || id),
+      },
+    ]),
+  )
   return {
     actions: new Map(analyzed.actions),
     code,
@@ -236,6 +326,6 @@ export const analyzeModule = async (
       symbols: new Map(analyzed.hmrManifest.symbols),
     },
     loaders: new Map(analyzed.loaders),
-    symbols: new Map(analyzed.symbols),
+    symbols,
   }
 }

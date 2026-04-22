@@ -1483,8 +1483,8 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         ));
     }
 
-    fn build_capture_getter(captures: &[String]) -> String {
-        format!("()=>[{}]", captures.join(", "))
+    fn build_capture_values(captures: &[String]) -> String {
+        format!("[{}]", captures.join(", "))
     }
 
     fn plain_event_handler_error(attribute_name: &str, handler_name: Option<&str>) -> String {
@@ -1587,7 +1587,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             "{HELPER_LAZY}({}, {}, {})",
             js_string(&symbol_id),
             render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-            Self::build_capture_getter(&captures),
+            Self::build_capture_values(&captures),
         )
     }
 
@@ -1610,7 +1610,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             "{HELPER_EVENT}({}, {}, {})",
             js_string(event_name),
             js_string(&symbol_id),
-            Self::build_capture_getter(&captures),
+            Self::build_capture_values(&captures),
         )
     }
 
@@ -2066,7 +2066,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 "{HELPER_COMPONENT}({}, {}, {}{})",
                 render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
                 js_string(&symbol_id),
-                Self::build_capture_getter(&captures),
+                Self::build_capture_values(&captures),
                 projection_literal,
             ),
         );
@@ -2168,7 +2168,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.push_replacement(
                         captures_argument.span().start as usize,
                         captures_argument.span().end as usize,
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     );
                     self.emit_prewrapped_component_symbol(
                         symbol_literal.value.as_str().to_string(),
@@ -2503,7 +2503,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 "{HELPER_COMPONENT}({}, {}, {}{}, {})",
                 render_span_with_replacements(self.source, expression.span, &self.replacements).unwrap(),
                 js_string(&symbol_id),
-                Self::build_capture_getter(&dependencies.captures),
+                Self::build_capture_values(&dependencies.captures),
                 projection_literal,
                 options_literal,
             ),
@@ -2874,7 +2874,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                 "{HELPER_WATCH}({}, {}, {})",
                 js_string(&symbol_id),
                 render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-                Self::build_capture_getter(&dependencies.captures),
+                Self::build_capture_values(&dependencies.captures),
             );
             self.push_replacement(function_span.start as usize, function_span.end as usize, replacement_code);
             return;
@@ -3236,7 +3236,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                         "{{{HELPER_EVENT}({}, {}, {})}}",
                         js_string(&event_name),
                         js_string(&symbol_id),
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     ),
                 );
             }
@@ -3288,7 +3288,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                         "{{{HELPER_EVENT}({}, {}, {})}}",
                         js_string(&event_name),
                         js_string(&symbol_id),
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     ),
                 );
             }

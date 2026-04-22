@@ -80,3 +80,33 @@ test('template sync replaces stale files in the destination project', () => {
     })
   }
 })
+
+test('template sync can rewrite the local framework dependency for the cached benchmark copy', () => {
+  const root = mkdtempSync(join(tmpdir(), 'eclipsa-bench-deps-'))
+  const sourceDir = join(root, 'source')
+  const destinationDir = join(root, 'destination')
+
+  mkdirSync(sourceDir, { recursive: true })
+  writeFileSync(
+    join(sourceDir, 'package.json'),
+    JSON.stringify({
+      dependencies: {
+        eclipsa: 'file:../../../../../packages/eclipsa',
+      },
+    }),
+  )
+
+  try {
+    syncFrameworkTemplate(sourceDir, destinationDir, {
+      frameworkDependency: 'file:../../../../../../../packages/eclipsa',
+    })
+
+    const packageJson = JSON.parse(readFileSync(join(destinationDir, 'package.json'), 'utf8'))
+    expect(packageJson.dependencies.eclipsa).toBe('file:../../../../../../../packages/eclipsa')
+  } finally {
+    rmSync(root, {
+      recursive: true,
+      force: true,
+    })
+  }
+})

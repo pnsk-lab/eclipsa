@@ -638,9 +638,10 @@ describe('createResumeHmrUpdate', () => {
       '/tmp/reactive-for-event.tsx',
     )
 
-    expect(compiled).toContain('const handleClick = __eclipsaEvent("click",')
-    expect(compiled).toContain('_eventStatic(')
-    expect(compiled).toContain('"click", handleClick')
+    expect(compiled).toContain('_eventStatic.__')
+    expect(compiled).toContain('"click"')
+    expect(compiled).toContain('"ka2v86"')
+    expect(compiled).toContain('rowId')
     expect(compiled).not.toContain('"onClick", () => __eclipsaLazy')
   })
 
@@ -677,8 +678,8 @@ describe('createResumeHmrUpdate', () => {
     expect(direct).toContain('_listenerStatic(')
     expect(direct).toContain('"click", handleClick')
     expect(direct).not.toContain('_eventStatic(')
-    expect(direct).not.toContain('__eclipsaEvent("click"')
-    expect(resumable).toContain('__eclipsaEvent("click"')
+    expect(direct).not.toContain('__eclipsaEvent')
+    expect(resumable).toContain('_eventStatic.__')
   })
 
   it('keeps resumable diff updates after an SSR inspection pass', async () => {

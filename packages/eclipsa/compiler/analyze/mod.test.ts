@@ -134,8 +134,8 @@ describe('analyzeModule()', () => {
       );
     `)
 
-    expect(analyzed.code).toContain('()=>[], undefined, { optimizedRoot: true }')
-    expect(analyzed.code).not.toContain('() => [],\n, { optimizedRoot: true }')
+    expect(analyzed.code).toContain('[], undefined, { optimizedRoot: true }')
+    expect(analyzed.code).not.toContain('[],\n, { optimizedRoot: true }')
   })
 
   it('appends optimized root options after projection slot metadata', async () => {
@@ -212,8 +212,8 @@ describe('analyzeModule()', () => {
     `)
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
-    expect(analyzed?.code).toContain('()=>[]')
-    expect(analyzed?.code).not.toContain('()=>[Props]')
+    expect(analyzed?.code).toContain('[]')
+    expect(analyzed?.code).not.toContain('[Props]')
   })
 
   it('analyzes the built-in Link component without capturing top-level helpers', async () => {
@@ -224,7 +224,7 @@ describe('analyzeModule()', () => {
     const analyzed = await analyzeModule(tsx)
 
     expect(analyzed?.code).toContain('__eclipsaComponent')
-    expect(analyzed?.code).not.toContain('()=>[LinkProps]')
+    expect(analyzed?.code).not.toContain('[LinkProps]')
     expect([...(analyzed?.hmrManifest.components.keys() ?? [])]).toContain('component:Link')
   })
 
@@ -330,7 +330,7 @@ describe('analyzeModule()', () => {
     `)
 
     expect(analyzed.code).toContain('__eclipsaEvent')
-    expect(analyzed.code).toContain('const handler = __eclipsaEvent("click",')
+    expect(analyzed.code).toMatch(/const handler = __eclipsaEvent(?:\.__\d)?\("click",/)
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
       0,
@@ -353,7 +353,7 @@ describe('analyzeModule()', () => {
     `)
 
     expect(analyzed.code).toContain('__eclipsaEvent')
-    expect(analyzed.code).toContain('const handler = __eclipsaEvent("click",')
+    expect(analyzed.code).toMatch(/const handler = __eclipsaEvent(?:\.__\d)?\("click",/)
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
       0,
@@ -377,7 +377,7 @@ describe('analyzeModule()', () => {
     `)
 
     expect(analyzed.code).toContain('__eclipsaEvent')
-    expect(analyzed.code).toContain('return <button onClick={__eclipsaEvent("click",')
+    expect(analyzed.code).toMatch(/return <button onClick=\{__eclipsaEvent(?:\.__\d)?\("click",/)
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
       0,
     )
@@ -537,7 +537,7 @@ describe('analyzeModule()', () => {
     expect(analyzed.symbols.has('@pkg:motion')).toBe(true)
     expect(analyzed.symbols.get('@pkg:motion')?.kind).toBe('component')
     expect(analyzed.symbols.get('@pkg:motion')?.captures).toEqual(['theme'])
-    expect(analyzed.code).toContain('()=>[theme]')
+    expect(analyzed.code).toContain('[theme]')
   })
 
   it('treats top-level eclipsifyReact() bindings as resumable components', async () => {

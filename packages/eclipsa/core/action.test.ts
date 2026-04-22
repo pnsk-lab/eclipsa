@@ -77,6 +77,7 @@ const createRuntimeContainer = (): RuntimeContainer =>
     eventDispatchPromise: null,
     eventBindingScopeCache: new Map(),
     externalRenderCache: new Map(),
+    hasRuntimeRefMarkers: false,
     id: 'rt-test',
     imports: new Map(),
     insertMarkerLookup: new Map(),

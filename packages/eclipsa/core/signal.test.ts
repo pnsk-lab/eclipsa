@@ -68,6 +68,7 @@ const createContainer = () =>
     interactivePrefetchCheckQueued: false,
     loaderStates: new Map(),
     loaders: new Map(),
+    hasRuntimeRefMarkers: false,
     id: 'rt-test',
     nextAtomId: 0,
     nextComponentId: 0,
@@ -163,6 +164,29 @@ describe('signal', () => {
     count.value = 2
 
     expect(values).toEqual([0, 1, 2])
+  })
+
+  it('supports explicit dependencies with untracked callback reads', () => {
+    const tracked = signal(0)
+    const untracked = signal('a')
+    const values: string[] = []
+
+    effect(
+      () => {
+        values.push(`${tracked.value}:${untracked.value}`)
+      },
+      {
+        dependencies: [tracked],
+        runInContainer: false,
+        untracked: true,
+      },
+    )
+
+    untracked.value = 'b'
+    tracked.value = 1
+    tracked.value = 2
+
+    expect(values).toEqual(['0:a', '1:b', '2:b'])
   })
 })
 

@@ -8,8 +8,8 @@ use napi::Error;
 use napi_derive::napi;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrowFunctionExpression, CallExpression, ComputedMemberExpression, ConditionalExpression, ExportDefaultDeclaration,
-    ExportDefaultDeclarationKind, Expression,
+    ArrowFunctionExpression, BinaryOperator, CallExpression, ComputedMemberExpression, ConditionalExpression,
+    ExportDefaultDeclaration, ExportDefaultDeclarationKind, Expression,
     IdentifierReference,
     VariableDeclarationKind,
     JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
@@ -26,13 +26,22 @@ use oxc_transformer::{JsxOptions, TransformOptions, Transformer};
 use crate::analyze::AnalyzeResponse;
 
 const CLIENT_CREATE_TEMPLATE: &str = "_createTemplate";
+const CLIENT_MATERIALIZE_TEMPLATE_REFS: &str = "_materializeTemplateRefs";
 const CLIENT_INSERT: &str = "_insert";
 const CLIENT_INSERT_STATIC: &str = "_insertStatic";
 const CLIENT_INSERT_ELEMENT_STATIC: &str = "_insertElementStatic";
 const CLIENT_TEXT: &str = "_text";
+const CLIENT_TEXT_SIGNAL: &str = "_textSignal";
+const CLIENT_TEXT_NODE_SIGNAL: &str = "_textNodeSignal";
+const CLIENT_TEXT_NODE_SIGNAL_MEMBER: &str = "_textNodeSignalMember";
+const CLIENT_TEXT_NODE_SIGNAL_VALUE: &str = "_textNodeSignalValue";
 const CLIENT_ATTR: &str = "_attr";
 const CLIENT_ATTR_STATIC: &str = "_attrStatic";
 const CLIENT_CLASS_NAME: &str = "_className";
+const CLIENT_CLASS_SIGNAL: &str = "_classSignal";
+const CLIENT_CLASS_SIGNAL_EQUALS: &str = "_classSignalEquals";
+const CLIENT_CLASS_SIGNAL_MEMBER: &str = "_classSignalMember";
+const CLIENT_CLASS_SIGNAL_VALUE: &str = "_classSignalValue";
 const CLIENT_EVENT_STATIC: &str = "_eventStatic";
 const CLIENT_LISTENER_STATIC: &str = "_listenerStatic";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
@@ -52,6 +61,7 @@ const FRAGMENT_NAME: &str = "__ECLIPSA_FRAGMENT";
 const DANGEROUSLY_SET_INNER_HTML_PROP: &str = "dangerouslySetInnerHTML";
 const ACTION_FORM_ATTR: &str = "data-e-action-form";
 const SHOW_VALUE_PARAM: &str = "__e_showValue";
+const SIGNAL_VALUE_PARAM: &str = "__e_signalValue";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Replacement {
@@ -63,6 +73,8 @@ pub(crate) struct Replacement {
 #[derive(Debug)]
 enum ClientInsertOp {
     Apply { expr: String, path: Vec<usize>, tracked: bool },
+    ApplyElementTracked { expr: String, path: Vec<usize> },
+    ApplyElementTrackedSignal { binding: SignalProjectionBinding, path: Vec<usize> },
     ApplyElementStatic { expr: String, path: Vec<usize> },
     Component {
         component: String,
@@ -74,10 +86,34 @@ enum ClientInsertOp {
 
 #[derive(Debug)]
 struct ClientAttrOp {
+    class_equals_binding: Option<SignalClassEqualsBinding>,
+    binding: Option<SignalProjectionBinding>,
     name: String,
     path: Vec<usize>,
     tracked: bool,
     value: String,
+}
+
+#[derive(Debug, Clone)]
+enum SignalProjectionKind {
+    General,
+    Identity,
+    Member(String),
+}
+
+#[derive(Debug, Clone)]
+struct SignalProjectionBinding {
+    kind: SignalProjectionKind,
+    projector: String,
+    rewritten: String,
+    source: String,
+}
+
+#[derive(Debug, Clone)]
+struct SignalClassEqualsBinding {
+    compare: String,
+    falsy: String,
+    truthy: String,
 }
 
 struct JsxPresenceCollector {
@@ -125,6 +161,12 @@ impl<'a> Visit<'a> for SignalValueReadCollector {
     }
 }
 
+fn expression_reads_signal_value<'a>(expression: &Expression<'a>) -> bool {
+    let mut collector = SignalValueReadCollector { found: false };
+    collector.visit_expression(expression);
+    collector.found
+}
+
 fn jsx_expression_reads_signal_value<'a>(expression: &JSXExpression<'a>) -> bool {
     let mut collector = SignalValueReadCollector { found: false };
     collector.visit_jsx_expression(expression);
@@ -137,6 +179,285 @@ fn render_lazy_branch_expression(expression: &str) -> String {
 
 fn render_identity_branch() -> String {
     format!("({SHOW_VALUE_PARAM}) => ({SHOW_VALUE_PARAM})")
+}
+
+fn trim_wrapping_parens(expression: &str) -> &str {
+    let mut trimmed = expression.trim();
+    loop {
+        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+            return trimmed;
+        }
+        let mut depth = 0isize;
+        let mut wraps = true;
+        for (index, ch) in trimmed.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 && index + ch.len_utf8() != trimmed.len() {
+                        wraps = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            if depth < 0 {
+                wraps = false;
+                break;
+            }
+        }
+        if !wraps || depth != 0 {
+            return trimmed;
+        }
+        trimmed = &trimmed[1..trimmed.len() - 1];
+        trimmed = trimmed.trim();
+    }
+}
+
+fn is_signal_value_identifier(expression: &Expression<'_>) -> bool {
+    matches!(expression, Expression::Identifier(identifier) if identifier.name.as_str() == SIGNAL_VALUE_PARAM)
+}
+
+fn classify_signal_projection_kind(expression: &Expression<'_>) -> SignalProjectionKind {
+    let expression = unwrap_parenthesized_expression(expression);
+    if is_signal_value_identifier(expression) {
+        return SignalProjectionKind::Identity;
+    }
+
+    match expression {
+        Expression::StaticMemberExpression(member)
+            if !member.optional && is_signal_value_identifier(&member.object) =>
+        {
+            SignalProjectionKind::Member(member.property.name.as_str().to_string())
+        }
+        Expression::ComputedMemberExpression(member)
+            if !member.optional && is_signal_value_identifier(&member.object) =>
+        {
+            if let Expression::StringLiteral(literal) = &member.expression {
+                SignalProjectionKind::Member(literal.value.as_str().to_string())
+            } else {
+                SignalProjectionKind::General
+            }
+        }
+        _ => SignalProjectionKind::General,
+    }
+}
+
+fn render_signal_class_equals_binding(rewritten: &str) -> Option<SignalClassEqualsBinding> {
+    let is_static_class_value = |expression: &Expression<'_>| match unwrap_parenthesized_expression(expression) {
+        Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        Expression::TemplateLiteral(template) => template.expressions.is_empty(),
+        _ => false,
+    };
+
+    let allocator = Allocator::default();
+    let parsed =
+        parse_expression(&allocator, rewritten, SourceType::tsx(), "<signal-class-binding>").ok()?;
+    let expression = unwrap_parenthesized_expression(&parsed);
+    let Expression::ConditionalExpression(conditional) = expression else {
+        return None;
+    };
+    let test = unwrap_parenthesized_expression(&conditional.test);
+    let Expression::BinaryExpression(binary) = test else {
+        return None;
+    };
+
+    let (compare, invert) = match binary.operator {
+        BinaryOperator::Equality | BinaryOperator::StrictEquality => {
+            if is_signal_value_identifier(&binary.left) {
+                (
+                    trim_wrapping_parens(
+                        &rewritten[span_range(binary.right.span()).0..span_range(binary.right.span()).1],
+                    )
+                    .to_string(),
+                    false,
+                )
+            } else if is_signal_value_identifier(&binary.right) {
+                (
+                    trim_wrapping_parens(
+                        &rewritten[span_range(binary.left.span()).0..span_range(binary.left.span()).1],
+                    )
+                    .to_string(),
+                    false,
+                )
+            } else {
+                return None;
+            }
+        }
+        BinaryOperator::Inequality | BinaryOperator::StrictInequality => {
+            if is_signal_value_identifier(&binary.left) {
+                (
+                    trim_wrapping_parens(
+                        &rewritten[span_range(binary.right.span()).0..span_range(binary.right.span()).1],
+                    )
+                    .to_string(),
+                    true,
+                )
+            } else if is_signal_value_identifier(&binary.right) {
+                (
+                    trim_wrapping_parens(
+                        &rewritten[span_range(binary.left.span()).0..span_range(binary.left.span()).1],
+                    )
+                    .to_string(),
+                    true,
+                )
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    if compare.is_empty() {
+        return None;
+    }
+    if !is_static_class_value(&conditional.consequent) || !is_static_class_value(&conditional.alternate) {
+        return None;
+    }
+
+    let truthy =
+        trim_wrapping_parens(&rewritten[span_range(conditional.consequent.span()).0..span_range(conditional.consequent.span()).1])
+            .to_string();
+    let falsy =
+        trim_wrapping_parens(&rewritten[span_range(conditional.alternate.span()).0..span_range(conditional.alternate.span()).1])
+            .to_string();
+    if truthy.is_empty() || falsy.is_empty() {
+        return None;
+    }
+
+    Some(if invert {
+        SignalClassEqualsBinding {
+            compare,
+            falsy: truthy,
+            truthy: falsy,
+        }
+    } else {
+        SignalClassEqualsBinding {
+            compare,
+            falsy,
+            truthy,
+        }
+    })
+}
+
+fn render_signal_value_projection_binding(expression: &str) -> Option<SignalProjectionBinding> {
+    struct SignalValueBindingCollector<'s> {
+        invalid: bool,
+        replacements: Vec<Replacement>,
+        source: Option<String>,
+        source_text: &'s str,
+    }
+
+    impl<'a> Visit<'a> for SignalValueBindingCollector<'_> {
+        fn visit_computed_member_expression(&mut self, expression: &ComputedMemberExpression<'a>) {
+            if matches!(
+                &expression.expression,
+                Expression::StringLiteral(literal) if literal.value.as_str() == "value"
+            ) {
+                if expression.optional || expression_reads_signal_value(&expression.object) {
+                    self.invalid = true;
+                    return;
+                }
+                if !expression_is_side_effect_free(&expression.object) {
+                    self.invalid = true;
+                    return;
+                }
+                let source = trim_wrapping_parens(
+                    &self.source_text[span_range(expression.object.span()).0..span_range(expression.object.span()).1],
+                )
+                .to_string();
+                if source.is_empty() {
+                    self.invalid = true;
+                    return;
+                }
+                if let Some(existing_source) = &self.source {
+                    if existing_source != &source {
+                        self.invalid = true;
+                        return;
+                    }
+                } else {
+                    self.source = Some(source);
+                }
+                let (start, end) = span_range(expression.span);
+                self.replacements.push(Replacement {
+                    start,
+                    end,
+                    code: SIGNAL_VALUE_PARAM.to_string(),
+                });
+                return;
+            }
+            walk::walk_computed_member_expression(self, expression);
+        }
+
+        fn visit_static_member_expression(&mut self, expression: &StaticMemberExpression<'a>) {
+            if expression.property.name.as_str() == "value" {
+                if expression.optional || expression_reads_signal_value(&expression.object) {
+                    self.invalid = true;
+                    return;
+                }
+                if !expression_is_side_effect_free(&expression.object) {
+                    self.invalid = true;
+                    return;
+                }
+                let source = trim_wrapping_parens(
+                    &self.source_text[span_range(expression.object.span()).0..span_range(expression.object.span()).1],
+                )
+                .to_string();
+                if source.is_empty() {
+                    self.invalid = true;
+                    return;
+                }
+                if let Some(existing_source) = &self.source {
+                    if existing_source != &source {
+                        self.invalid = true;
+                        return;
+                    }
+                } else {
+                    self.source = Some(source);
+                }
+                let (start, end) = span_range(expression.span);
+                self.replacements.push(Replacement {
+                    start,
+                    end,
+                    code: SIGNAL_VALUE_PARAM.to_string(),
+                });
+                return;
+            }
+            walk::walk_static_member_expression(self, expression);
+        }
+    }
+
+    let allocator = Allocator::default();
+    let parsed = parse_expression(&allocator, expression, SourceType::tsx(), "<signal-binding>").ok()?;
+    let mut collector = SignalValueBindingCollector {
+        invalid: false,
+        replacements: Vec::new(),
+        source: None,
+        source_text: expression,
+    };
+    collector.visit_expression(&parsed);
+
+    if collector.invalid || collector.replacements.is_empty() {
+        return None;
+    }
+
+    let source = collector.source?;
+    let rewritten = apply_replacements(expression, &mut collector.replacements).ok()?;
+    let allocator = Allocator::default();
+    let parsed =
+        parse_expression(&allocator, &rewritten, SourceType::tsx(), "<signal-binding>").ok()?;
+    let projector = format!("({SIGNAL_VALUE_PARAM}) => ({rewritten})");
+    let kind = classify_signal_projection_kind(&parsed);
+
+    Some(SignalProjectionBinding {
+        kind,
+        projector,
+        rewritten,
+        source,
+    })
 }
 
 fn get_arrow_expression_body<'a>(expression: &'a ArrowFunctionExpression<'a>) -> Option<&'a Expression<'a>> {
@@ -186,6 +507,13 @@ fn collect_simple_arrow_param_names<'a>(callback: &'a ArrowFunctionExpression<'a
         names.push(identifier.name.as_str().to_string());
     }
     Some(names)
+}
+
+fn build_reactive_row_base_aliases(param_names: &[String]) -> BTreeMap<String, String> {
+    param_names
+        .iter()
+        .map(|name| (name.clone(), format!("{name}.value")))
+        .collect::<BTreeMap<_, _>>()
 }
 
 struct ParamValuePropertyCollector {
@@ -268,6 +596,21 @@ fn jsx_expression_reads_identifier_name(
         names: names.to_vec(),
     };
     collector.visit_jsx_expression(expression);
+    collector.found
+}
+
+fn expression_reads_identifier_name(
+    expression: &Expression<'_>,
+    names: &[String],
+) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let mut collector = IdentifierReadCollector {
+        found: false,
+        names: names.to_vec(),
+    };
+    collector.visit_expression(expression);
     collector.found
 }
 
@@ -481,7 +824,9 @@ fn prune_unused_reactive_row_alias_statements(
         let Some(init) = &declarator.init else {
             continue;
         };
-        if !expression_is_side_effect_free(init) {
+        if !expression_is_side_effect_free(init)
+            && !is_packed_event_alias_initializer_safe(init)
+        {
             continue;
         }
         let (start, end) = span_range(statement.span());
@@ -536,7 +881,10 @@ fn collect_reactive_row_aliases<'a>(
             }
             let original = &source[span_range(init.span()).0..span_range(init.span()).1];
             let rewritten = rewrite_identifier_references(original, source_type, &active_rewrites)?;
-            if rewritten.contains("__eclipsaLazy(") || rewritten.contains("__eclipsaEvent(") {
+            if rewritten.contains("__eclipsaLazy(")
+                || rewritten.contains("__eclipsaEvent(")
+                || rewritten.contains("__eclipsaEvent.__")
+            {
                 continue;
             }
             if rewritten == original {
@@ -550,6 +898,84 @@ fn collect_reactive_row_aliases<'a>(
     }
 
     Ok(aliases)
+}
+
+fn collect_packed_event_aliases<'a>(
+    callback: &'a ArrowFunctionExpression<'a>,
+    source: &str,
+    source_type: SourceType,
+) -> Result<BTreeMap<String, String>, String> {
+    if callback.expression {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut aliases = BTreeMap::new();
+    let mut active_aliases = BTreeMap::new();
+
+    for statement in &callback.body.statements {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind != VariableDeclarationKind::Const {
+            continue;
+        }
+
+        for declarator in &declaration.declarations {
+            let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+                continue;
+            };
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+
+            let original = &source[span_range(init.span()).0..span_range(init.span()).1];
+            let rewritten = rewrite_identifier_references(original, source_type, &active_aliases)?;
+            if get_packed_static_event_call(&rewritten).is_none() {
+                continue;
+            }
+            if !is_packed_event_alias_initializer_safe(init) && !expression_is_side_effect_free(init) {
+                continue;
+            }
+
+            let alias = identifier.name.as_str().to_string();
+            aliases.insert(alias.clone(), rewritten.clone());
+            active_aliases.insert(alias, format!("({rewritten})"));
+        }
+    }
+
+    Ok(aliases)
+}
+
+fn is_packed_event_alias_initializer_safe(expression: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = unwrap_parenthesized_expression(expression) else {
+        return false;
+    };
+    if call.optional {
+        return false;
+    }
+    let Expression::StaticMemberExpression(member) = unwrap_parenthesized_expression(&call.callee) else {
+        return false;
+    };
+    if member.optional {
+        return false;
+    }
+    let Expression::Identifier(object) = unwrap_parenthesized_expression(&member.object) else {
+        return false;
+    };
+    if object.name.as_str() != "__eclipsaEvent" {
+        return false;
+    }
+    if !matches!(member.property.name.as_str(), "__0" | "__1" | "__2" | "__3" | "__4") {
+        return false;
+    }
+
+    call.arguments.iter().all(|argument| match argument {
+        oxc_ast::ast::Argument::SpreadElement(_) => false,
+        _ => argument
+            .as_expression()
+            .map(expression_is_side_effect_free)
+            .unwrap_or(false),
+    })
 }
 
 fn expression_matches_stable_key(expression: &str, stable_key_expression: &str) -> bool {
@@ -722,7 +1148,7 @@ fn transform_client(
 
     let mut prefix = String::new();
     prefix.push_str(&format!(
-        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, insert as {CLIENT_INSERT}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
+        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, materializeTemplateRefs as {CLIENT_MATERIALIZE_TEMPLATE_REFS}, insert as {CLIENT_INSERT}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, textSignal as {CLIENT_TEXT_SIGNAL}, textNodeSignal as {CLIENT_TEXT_NODE_SIGNAL}, textNodeSignalMember as {CLIENT_TEXT_NODE_SIGNAL_MEMBER}, textNodeSignalValue as {CLIENT_TEXT_NODE_SIGNAL_VALUE}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, classSignal as {CLIENT_CLASS_SIGNAL}, classSignalEquals as {CLIENT_CLASS_SIGNAL_EQUALS}, classSignalMember as {CLIENT_CLASS_SIGNAL_MEMBER}, classSignalValue as {CLIENT_CLASS_SIGNAL_VALUE}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
     ));
     if compiler.uses_for {
         prefix.push_str(&format!(
@@ -862,6 +1288,31 @@ fn get_static_event_name(name: &str) -> Option<String> {
     let mut event_name = first.to_ascii_lowercase().to_string();
     event_name.push_str(chars.as_str());
     Some(event_name)
+}
+
+fn strip_wrapping_parens(value: &str) -> &str {
+    let mut current = value.trim();
+    loop {
+        if !(current.starts_with('(') && current.ends_with(')')) {
+            return current;
+        }
+        current = current[1..current.len() - 1].trim();
+    }
+}
+
+fn get_packed_static_event_call(value: &str) -> Option<(&str, &str)> {
+    let trimmed = strip_wrapping_parens(value);
+    let rest = trimmed.strip_prefix("__eclipsaEvent.__")?;
+    let open_paren = rest.find('(')?;
+    if !rest.ends_with(')') {
+        return None;
+    }
+    let arity = &rest[..open_paren];
+    if !matches!(arity, "0" | "1" | "2" | "3" | "4") {
+        return None;
+    }
+    let args = &rest[open_paren + 1..rest.len() - 1];
+    Some((arity, args))
 }
 
 fn normalize_jsx_text(value: &str) -> Option<String> {
@@ -1004,7 +1455,8 @@ fn collect_node_lookup_paths(path: &[usize]) -> Vec<Vec<usize>> {
 fn build_node_lookup(
     base: &str,
     path: &[usize],
-    cached_nodes: &BTreeMap<Vec<usize>, String>,
+    refs: &str,
+    cached_nodes: &BTreeMap<Vec<usize>, usize>,
 ) -> (String, String) {
     if path.is_empty() {
         return (base.to_string(), base.to_string());
@@ -1012,12 +1464,12 @@ fn build_node_lookup(
 
     let marker = cached_nodes
         .get(path)
-        .cloned()
+        .map(|index| format!("{refs}[{index}]"))
         .unwrap_or_else(|| base.to_string());
     let parent = if path.len() > 1 {
         cached_nodes
             .get(&path[..path.len() - 1])
-            .cloned()
+            .map(|index| format!("{refs}[{index}]"))
             .unwrap_or_else(|| base.to_string())
     } else {
         base.to_string()
@@ -1026,6 +1478,7 @@ fn build_node_lookup(
 }
 
 struct ClientCompiler<'s> {
+    active_packed_event_aliases: BTreeMap<String, String>,
     active_row_signal_aliases: BTreeMap<String, String>,
     active_row_signal_params: Vec<String>,
     event_mode: ClientEventMode,
@@ -1041,6 +1494,7 @@ struct ClientCompiler<'s> {
 impl<'s> ClientCompiler<'s> {
     fn new(source: &'s str, source_type: SourceType, event_mode: ClientEventMode) -> Self {
         Self {
+            active_packed_event_aliases: BTreeMap::new(),
             active_row_signal_aliases: BTreeMap::new(),
             active_row_signal_params: Vec::new(),
             event_mode,
@@ -1100,6 +1554,7 @@ impl<'s> ClientCompiler<'s> {
         let allocator = Allocator::default();
         let parsed = parse_expression(&allocator, &nested_source, self.source_type, "<expression>")?;
         let mut nested_compiler = ClientCompiler {
+            active_packed_event_aliases: self.active_packed_event_aliases.clone(),
             active_row_signal_aliases: self.active_row_signal_aliases.clone(),
             active_row_signal_params: self.active_row_signal_params.clone(),
             event_mode: self.event_mode,
@@ -1159,19 +1614,22 @@ impl<'s> ClientCompiler<'s> {
             return Ok(None);
         }
 
-        let base_aliases = param_names
-            .iter()
-            .map(|name| (name.clone(), format!("{name}.value")))
-            .collect::<BTreeMap<_, _>>();
+        let base_aliases = build_reactive_row_base_aliases(&param_names);
         let callback_source = self.slice(callback.span).to_string();
         let mut row_aliases =
             collect_reactive_row_aliases(callback, self.source, self.source_type, &base_aliases)?;
+        let packed_event_aliases =
+            collect_packed_event_aliases(callback, self.source, self.source_type)?;
         if let Some(stable_key_expression) = stable_key_expression {
             row_aliases.retain(|_, expression| {
                 !expression_matches_stable_key(expression, stable_key_expression)
             });
         }
-        let alias_names = row_aliases.keys().cloned().collect::<BTreeSet<_>>();
+        let alias_names = row_aliases
+            .keys()
+            .chain(packed_event_aliases.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let rewritten_callback_source = rewrite_identifier_references_with_options(
             &callback_source,
             self.source_type,
@@ -1182,10 +1640,13 @@ impl<'s> ClientCompiler<'s> {
             std::mem::replace(&mut self.active_row_signal_params, Vec::new());
         let previous_row_aliases =
             std::mem::replace(&mut self.active_row_signal_aliases, row_aliases);
+        let previous_packed_event_aliases =
+            std::mem::replace(&mut self.active_packed_event_aliases, packed_event_aliases);
         let compiled_callback =
             self.render_nested_expression_source(rewritten_callback_source, true, false)?;
         self.active_row_signal_params = previous_row_params;
         self.active_row_signal_aliases = previous_row_aliases;
+        self.active_packed_event_aliases = previous_packed_event_aliases;
         let pruned_compiled_callback = prune_unused_reactive_row_alias_statements(
             &compiled_callback,
             self.source_type,
@@ -1294,7 +1755,9 @@ impl<'s> ClientCompiler<'s> {
         };
 
         let arr = self.render_nested_expression_span(member.object.span(), true)?;
-        let reactive_callback = self.render_reactive_row_callback(callback, None)?;
+        let stable_key_expression = self.extract_map_callback_stable_key_expression(callback)?;
+        let reactive_callback =
+            self.render_reactive_row_callback(callback, stable_key_expression.as_deref())?;
         let reactive_rows_enabled = reactive_callback.is_some();
         let reactive_index_enabled = reactive_callback
             .as_ref()
@@ -1346,6 +1809,7 @@ impl<'s> ClientCompiler<'s> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
         if is_component_name(&name) {
             let (props, key, _) = self.render_component_props(
+                Some(&name),
                 &element.opening_element.attributes,
                 &element.children,
             )?;
@@ -1379,6 +1843,8 @@ impl<'s> ClientCompiler<'s> {
         for insert in &inserts {
             let path = match insert {
                 ClientInsertOp::Apply { path, .. } => path,
+                ClientInsertOp::ApplyElementTracked { path, .. } => path,
+                ClientInsertOp::ApplyElementTrackedSignal { path, .. } => path,
                 ClientInsertOp::ApplyElementStatic { path, .. } => path,
                 ClientInsertOp::Component { path, .. } => path,
             };
@@ -1400,60 +1866,98 @@ impl<'s> ClientCompiler<'s> {
         lookup_paths.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
 
         let mut cached_nodes = BTreeMap::new();
-        for (index, path) in lookup_paths.iter().enumerate() {
-            let variable = format!("__eclipsaNode{index}");
-            let parent = if path.len() > 1 {
-                Some(
-                    cached_nodes
+        if !lookup_paths.is_empty() {
+            let mut lookup_entries = Vec::new();
+            for (index, path) in lookup_paths.iter().enumerate() {
+                let parent_index = if path.len() > 1 {
+                    *cached_nodes
                         .get(&path[..path.len() - 1])
-                        .expect("parent lookup should be cached before children"),
-                )
-            } else {
-                None
-            };
-            let previous_sibling = if path[path.len() - 1] > 0 {
-                cached_nodes.get(
-                    &path[..path.len() - 1]
-                        .iter()
-                        .copied()
-                        .chain([path[path.len() - 1] - 1])
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                None
-            };
-            let lookup = if let Some(previous_sibling) = previous_sibling {
-                format!("{previous_sibling}.nextSibling")
-            } else if path[path.len() - 1] == 0 {
-                match parent {
-                    Some(parent) => format!("{parent}.firstChild"),
-                    None => "_cloned.firstChild".to_string(),
-                }
-            } else if let Some(parent) = parent {
-                format!("{parent}.childNodes[{}]", path[path.len() - 1])
-            } else {
-                format!("_cloned.childNodes[{}]", path[0])
-            };
-            body.push_str(&format!("var {variable} = {lookup};"));
-            cached_nodes.insert(path.clone(), variable);
+                        .expect("parent lookup should be cached before children") as isize
+                } else {
+                    -1
+                };
+                let previous_sibling_index = if path[path.len() - 1] > 0 {
+                    cached_nodes
+                        .get(
+                            &path[..path.len() - 1]
+                                .iter()
+                                .copied()
+                                .chain([path[path.len() - 1] - 1])
+                                .collect::<Vec<_>>(),
+                        )
+                        .map(|value| *value as isize)
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                };
+                lookup_entries.push(format!(
+                    "[{parent_index},{previous_sibling_index},{}]",
+                    path[path.len() - 1]
+                ));
+                cached_nodes.insert(path.clone(), index);
+            }
+            body.push_str(&format!(
+                "var _refs = {CLIENT_MATERIALIZE_TEMPLATE_REFS}(_cloned, [{}]);",
+                lookup_entries.join(",")
+            ));
         }
 
         for insert in inserts {
             match insert {
                 ClientInsertOp::Apply { expr, path, tracked } => {
                     if tracked && path.is_empty() {
-                        body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, _cloned);"));
+                        if let Some(binding) = render_signal_value_projection_binding(&expr) {
+                            match &binding.kind {
+                                SignalProjectionKind::Identity => body.push_str(&format!(
+                                    "{CLIENT_TEXT_NODE_SIGNAL_VALUE}({}, _cloned);",
+                                    binding.source
+                                )),
+                                SignalProjectionKind::Member(member) => body.push_str(&format!(
+                                    "{CLIENT_TEXT_NODE_SIGNAL_MEMBER}({}, {}, _cloned);",
+                                    binding.source,
+                                    js_string(member)
+                                )),
+                                SignalProjectionKind::General => body.push_str(&format!(
+                                    "{CLIENT_TEXT_NODE_SIGNAL}({}, {}, _cloned);",
+                                    binding.source, binding.projector
+                                )),
+                            }
+                        } else {
+                            body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, _cloned);"));
+                        }
                         continue;
                     }
-                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
+                    let (parent, marker) = build_node_lookup("_cloned", &path, "_refs", &cached_nodes);
                     if tracked {
                         body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, {parent}, {marker});"));
                     } else {
                         body.push_str(&format!("{CLIENT_INSERT_STATIC}({expr}, {parent}, {marker});"));
                     }
                 }
+                ClientInsertOp::ApplyElementTracked { expr, path } => {
+                    let (_, marker) = build_node_lookup("_cloned", &path, "_refs", &cached_nodes);
+                    body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, {marker});"));
+                }
+                ClientInsertOp::ApplyElementTrackedSignal { binding, path } => {
+                    let (_, marker) = build_node_lookup("_cloned", &path, "_refs", &cached_nodes);
+                    match &binding.kind {
+                        SignalProjectionKind::Identity => body.push_str(&format!(
+                            "{CLIENT_TEXT_NODE_SIGNAL_VALUE}({}, {marker});",
+                            binding.source
+                        )),
+                        SignalProjectionKind::Member(member) => body.push_str(&format!(
+                            "{CLIENT_TEXT_NODE_SIGNAL_MEMBER}({}, {}, {marker});",
+                            binding.source,
+                            js_string(member)
+                        )),
+                        SignalProjectionKind::General => body.push_str(&format!(
+                            "{CLIENT_TEXT_NODE_SIGNAL}({}, {}, {marker});",
+                            binding.source, binding.projector
+                        )),
+                    }
+                }
                 ClientInsertOp::ApplyElementStatic { expr, path } => {
-                    let (_, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
+                    let (_, marker) = build_node_lookup("_cloned", &path, "_refs", &cached_nodes);
                     body.push_str(&format!("{CLIENT_INSERT_ELEMENT_STATIC}({expr}, {marker});"));
                 }
                 ClientInsertOp::Component {
@@ -1462,7 +1966,8 @@ impl<'s> ClientCompiler<'s> {
                     props,
                     tracked,
                 } => {
-                    let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
+                    let (parent, marker) =
+                        build_node_lookup("_cloned", &path, "_refs", &cached_nodes);
                     if tracked {
                         body.push_str(&format!(
                             "{CLIENT_INSERT}(() => {CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
@@ -1477,13 +1982,39 @@ impl<'s> ClientCompiler<'s> {
         }
 
         for attr in attrs {
-            let (_, marker) = build_node_lookup("_cloned", &attr.path, &cached_nodes);
+            let (_, marker) = build_node_lookup("_cloned", &attr.path, "_refs", &cached_nodes);
             if attr.tracked {
                 if attr.name == "class" {
-                    body.push_str(&format!(
-                        "{CLIENT_CLASS_NAME}({marker}, () => {});",
-                        attr.value
-                    ));
+                    if let Some(class_equals_binding) = attr.class_equals_binding.as_ref() {
+                        let source = &attr.binding.as_ref().expect("class equality binding requires signal binding").source;
+                        body.push_str(&format!(
+                            "{CLIENT_CLASS_SIGNAL_EQUALS}({marker}, {source}, {}, {}, {});",
+                            class_equals_binding.compare,
+                            class_equals_binding.truthy,
+                            class_equals_binding.falsy,
+                        ));
+                    } else if let Some(binding) = attr.binding.as_ref() {
+                        match &binding.kind {
+                            SignalProjectionKind::Identity => body.push_str(&format!(
+                                "{CLIENT_CLASS_SIGNAL_VALUE}({marker}, {});",
+                                binding.source
+                            )),
+                            SignalProjectionKind::Member(member) => body.push_str(&format!(
+                                "{CLIENT_CLASS_SIGNAL_MEMBER}({marker}, {}, {});",
+                                binding.source,
+                                js_string(member)
+                            )),
+                            SignalProjectionKind::General => body.push_str(&format!(
+                                "{CLIENT_CLASS_SIGNAL}({marker}, {}, {});",
+                                binding.source, binding.projector
+                            )),
+                        }
+                    } else {
+                        body.push_str(&format!(
+                            "{CLIENT_CLASS_NAME}({marker}, () => {});",
+                            attr.value
+                        ));
+                    }
                 } else {
                     body.push_str(&format!(
                         "{CLIENT_ATTR}({marker}, {}, () => {});",
@@ -1498,11 +2029,28 @@ impl<'s> ClientCompiler<'s> {
                     } else {
                         CLIENT_EVENT_STATIC
                     };
-                    body.push_str(&format!(
-                        "{event_helper}({marker}, {}, {});",
-                        js_string(&event_name),
-                        attr.value
-                    ));
+                    if event_helper == CLIENT_EVENT_STATIC {
+                        let packed_event_value =
+                            self.resolve_active_packed_event_alias(&attr.value);
+                        if let Some((arity, args)) = get_packed_static_event_call(packed_event_value)
+                        {
+                            body.push_str(&format!(
+                                "{event_helper}.__{arity}({marker}, {args});"
+                            ));
+                        } else {
+                            body.push_str(&format!(
+                                "{event_helper}({marker}, {}, {});",
+                                js_string(&event_name),
+                                attr.value
+                            ));
+                        }
+                    } else {
+                        body.push_str(&format!(
+                            "{event_helper}({marker}, {}, {});",
+                            js_string(&event_name),
+                            attr.value
+                        ));
+                    }
                 } else {
                     body.push_str(&format!(
                         "{CLIENT_ATTR_STATIC}({marker}, {}, {});",
@@ -1560,8 +2108,112 @@ impl<'s> ClientCompiler<'s> {
         }
     }
 
+    fn rewrite_reactive_row_stable_key_expression(
+        &self,
+        expression_source: String,
+        param_names: &[String],
+    ) -> Result<String, String> {
+        rewrite_identifier_references(
+            &expression_source,
+            self.source_type,
+            &build_reactive_row_base_aliases(param_names),
+        )
+    }
+
+    fn extract_map_callback_stable_key_expression(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+        let Expression::JSXElement(element) = unwrap_parenthesized_expression(body) else {
+            return Ok(None);
+        };
+        let Some(param_names) = collect_simple_arrow_param_names(callback) else {
+            return Ok(None);
+        };
+
+        for attribute in &element.opening_element.attributes {
+            let JSXAttributeItem::Attribute(attribute) = attribute else {
+                continue;
+            };
+            if get_jsx_attribute_name(&attribute.name)? != "key" {
+                continue;
+            }
+            let Some(value) = &attribute.value else {
+                return Ok(None);
+            };
+            let JSXAttributeValue::ExpressionContainer(container) = value else {
+                return Ok(None);
+            };
+            let JSXExpression::EmptyExpression(_) = &container.expression else {
+                if param_names.len() > 1
+                    && jsx_expression_reads_identifier_name(&container.expression, &param_names[1..])
+                {
+                    return Ok(None);
+                }
+                return Ok(Some(self.rewrite_reactive_row_stable_key_expression(
+                    self.slice(container.expression.span()).to_string(),
+                    &param_names,
+                )?));
+            };
+        }
+
+        Ok(None)
+    }
+
+    fn extract_for_callback_stable_key_expression(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+        attributes: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>,
+    ) -> Result<Option<String>, String> {
+        let Some(param_names) = collect_simple_arrow_param_names(callback) else {
+            return Ok(None);
+        };
+
+        for attribute in attributes {
+            let JSXAttributeItem::Attribute(attribute) = attribute else {
+                continue;
+            };
+            if get_jsx_attribute_name(&attribute.name)? != "key" {
+                continue;
+            }
+            let Some(value) = &attribute.value else {
+                return Ok(None);
+            };
+            let JSXAttributeValue::ExpressionContainer(container) = value else {
+                return Ok(None);
+            };
+            let JSXExpression::ArrowFunctionExpression(key_callback) = &container.expression else {
+                return Ok(None);
+            };
+            let Some(key_param_names) = collect_simple_arrow_param_names(key_callback) else {
+                return Ok(None);
+            };
+            if key_param_names != param_names {
+                return Ok(None);
+            }
+            let Some(body) = get_arrow_expression_body(key_callback) else {
+                return Ok(None);
+            };
+            if key_param_names.len() > 1
+                && expression_reads_identifier_name(body, &key_param_names[1..])
+            {
+                return Ok(None);
+            }
+            return Ok(Some(self.rewrite_reactive_row_stable_key_expression(
+                self.slice(body.span()).to_string(),
+                &param_names,
+            )?));
+        }
+
+        Ok(None)
+    }
+
     fn render_component_props(
         &mut self,
+        component_name: Option<&str>,
         attributes: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
     ) -> Result<(String, Option<String>, bool), String> {
@@ -1570,6 +2222,16 @@ impl<'s> ClientCompiler<'s> {
         let mut reactive_rows_enabled = false;
         let mut reactive_index_enabled = true;
         let mut tracked = false;
+        let can_auto_lower_for_callback = component_name == Some("For")
+            && !attributes.iter().any(|attribute| {
+                matches!(
+                    attribute,
+                    JSXAttributeItem::Attribute(attribute)
+                        if get_jsx_attribute_name(&attribute.name)
+                            .map(|name| name == "reactiveRows")
+                            .unwrap_or(false)
+                )
+            });
         for attribute in attributes {
             match attribute {
                 JSXAttributeItem::SpreadAttribute(attribute) => {
@@ -1596,7 +2258,32 @@ impl<'s> ClientCompiler<'s> {
                         }
                         JSXAttributeValue::ExpressionContainer(container) => {
                             let JSXExpression::EmptyExpression(_) = &container.expression else {
-                                let reactive_callback = None::<(String, bool)>;
+                                let stable_key_expression = if can_auto_lower_for_callback && name == "fn" {
+                                    match &container.expression {
+                                        JSXExpression::ArrowFunctionExpression(callback) => {
+                                            self.extract_for_callback_stable_key_expression(
+                                                callback,
+                                                attributes,
+                                            )?
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                let reactive_callback = if can_auto_lower_for_callback && name == "fn" {
+                                    match &container.expression {
+                                        JSXExpression::ArrowFunctionExpression(callback) => {
+                                            self.render_reactive_row_callback(
+                                                callback,
+                                                stable_key_expression.as_deref(),
+                                            )?
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
                                 if let Some((_, reactive_index)) = reactive_callback.as_ref() {
                                     reactive_rows_enabled = true;
                                     reactive_index_enabled = *reactive_index;
@@ -1777,6 +2464,13 @@ impl<'s> ClientCompiler<'s> {
         )
     }
 
+    fn resolve_active_packed_event_alias<'a>(&'a self, value: &'a str) -> &'a str {
+        self.active_packed_event_aliases
+            .get(strip_wrapping_parens(value))
+            .map(String::as_str)
+            .unwrap_or(value)
+    }
+
     fn render_fragment_children(
         &mut self,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
@@ -1813,6 +2507,7 @@ impl<'s> ClientCompiler<'s> {
                     let name = get_jsx_element_name(&element.opening_element.name)?;
                     if is_component_name(&name) {
                         let (props, _, tracked) = self.render_component_props(
+                            Some(&name),
                             &element.opening_element.attributes,
                             &element.children,
                         )?;
@@ -1902,19 +2597,47 @@ impl<'s> ClientCompiler<'s> {
                         }
                         _ => false,
                     };
-                    attrs.push(ClientAttrOp { name: attr_name, path: path.to_vec(), tracked, value });
+                    let (source, projector) = if tracked {
+                        render_signal_value_projection_binding(&value)
+                            .map(|binding| {
+                                let class_equals_binding = if attr_name == "class" {
+                                    render_signal_class_equals_binding(&binding.rewritten)
+                                } else {
+                                    None
+                                };
+                                (Some(binding), class_equals_binding)
+                            })
+                            .unwrap_or((None, None))
+                    } else {
+                        (None, None)
+                    };
+                    attrs.push(ClientAttrOp {
+                        binding: source,
+                        class_equals_binding: projector,
+                        name: attr_name,
+                        path: path.to_vec(),
+                        tracked,
+                        value,
+                    });
                 }
             }
         }
 
         html.push('>');
-        if let Some((expr, tracked)) = self.render_single_element_child(&element.children)? {
+        let single_child = self.render_single_element_child(&element.children)?;
+        if let Some((expr, tracked)) = single_child {
             if tracked {
-                inserts.push(ClientInsertOp::Apply {
-                    expr,
-                    path: path.to_vec(),
-                    tracked: true,
-                });
+                if let Some(binding) = render_signal_value_projection_binding(&expr) {
+                    inserts.push(ClientInsertOp::ApplyElementTrackedSignal {
+                        binding,
+                        path: path.to_vec(),
+                    });
+                } else {
+                    inserts.push(ClientInsertOp::ApplyElementTracked {
+                        expr,
+                        path: path.to_vec(),
+                    });
+                }
             } else {
                 inserts.push(ClientInsertOp::ApplyElementStatic {
                     expr,

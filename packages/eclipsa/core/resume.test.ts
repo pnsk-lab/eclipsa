@@ -46,6 +46,7 @@ const createContainer = (overrides?: Partial<RuntimeContainer>) =>
     pendingSuspensePromises: new Set(),
     resumeReadyPromise: null,
     router: null,
+    hasRuntimeRefMarkers: false,
     rootChildComponentIds: new Set(),
     rootChildCursor: 0,
     rootElement: undefined,

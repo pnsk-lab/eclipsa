@@ -28,6 +28,7 @@ export type EffectOptions = {
   dependencies?: WatchDependency[]
   errorLabel?: string
   runInContainer?: boolean
+  skipInitialRun?: boolean
   untracked?: boolean
 }
 
@@ -107,6 +108,8 @@ export interface StreamState {
 export interface ReactiveEffect {
   collecting: boolean
   container?: RuntimeContainer | null
+  fixed: boolean
+  fixedCallback: ((value: unknown) => void) | null
   fn: () => void
   nextSignal: SignalRecord | null
   nextSignals: Set<SignalRecord> | null
@@ -116,20 +119,39 @@ export interface ReactiveEffect {
   signals: Set<SignalRecord> | null
 }
 
+export interface FixedSignalEffect {
+  callback: (value: unknown) => void
+  container?: RuntimeContainer | null
+  fixedIndex: number
+  kind: 'fixed'
+  queued: boolean
+  runInContainer?: boolean
+  signal: SignalRecord
+}
+
+export type RenderEffect = ReactiveEffect | FixedSignalEffect
+
 export interface SignalRecord<T = unknown> {
   effect: ReactiveEffect | null
   effects: Set<ReactiveEffect> | null
+  fixedEffect: FixedSignalEffect | null
+  secondFixedEffect: FixedSignalEffect | null
+  fixedEffects: FixedSignalEffect[] | null
   handle: {
     value: T
   }
   id: string
+  skipComponentSubscription?: boolean
   subscribers: Set<string> | null
   value: T
 }
 
 export interface CleanupSlot {
+  callback?: CleanupCallback | null
   callbacks: CleanupCallback[] | null
-  effects: ReactiveEffect[] | null
+  effect?: RenderEffect | null
+  secondEffect?: RenderEffect | null
+  effects: RenderEffect[] | null
 }
 
 export interface ComponentState {
@@ -145,12 +167,14 @@ export interface ComponentState {
   externalMeta?: ExternalComponentMeta | null
   id: string
   mountCleanupSlots: CleanupSlot[] | null
+  mayChangeNodeCount?: boolean
   optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
   props: unknown
   projectionSlots: Record<string, number> | null
   rawProps?: Record<string, unknown> | null
+  registered?: boolean
   renderEffectCleanupSlot: CleanupSlot | null
   reuseExistingDomOnActivate?: boolean
   reuseProjectionSlotDomOnActivate?: boolean
@@ -170,12 +194,13 @@ export interface RenderFrame {
   container: RuntimeContainer
   effectCursor: number
   effectCleanupSlot: CleanupSlot | null
-  existingRenderEffects: ReactiveEffect[] | null
+  existingRenderEffects: RenderEffect[] | null
   insertCursor: number
   keyedRangeCursor: number
   keyedRangeScopeStack: string[] | null
   mountCallbacks: Array<() => void> | null
-  nextRenderEffects: ReactiveEffect[] | null
+  nextEffectCursor: number
+  nextRenderEffects: RenderEffect[] | null
   projectionState: {
     counters: Map<string, number> | null
     reuseExistingDom: boolean
@@ -194,7 +219,10 @@ export interface ClientInsertOwner {
   childIndex: number
   componentId: string
   keyedRangeCursor: number
+  lazy?: boolean
+  parentComponentId: string | null
   projectionCounters: Array<[string, number]>
+  state?: ComponentState | null
 }
 
 export interface ScopedStyleEntry {
@@ -383,6 +411,9 @@ export interface RuntimeContainer {
   components: Map<string, ComponentState>
   dirty: Set<string>
   dirtyFlushQueued: boolean
+  delegatedEventName: string | null
+  delegatedEventListener: ((event: Event) => void) | null
+  delegatedEventNames: Set<string> | null
   doc?: Document
   eventDispatchPromise: Promise<void> | null
   eventBindingScopeCache: Map<string, string>
@@ -399,6 +430,7 @@ export interface RuntimeContainer {
   imports: Map<string, Promise<RuntimeSymbolModule>>
   insertMarkerLookup: Map<string, Comment | null>
   interactivePrefetchCheckQueued: boolean
+  hasRuntimeRefMarkers: boolean
   loaderStates: Map<
     string,
     {
@@ -420,7 +452,7 @@ export interface RuntimeContainer {
   nextScopeId: number
   nextSignalId: number
   pendingSuspensePromises: Set<Promise<unknown>>
-  pendingSignalEffects: ReactiveEffect[]
+  pendingSignalEffects: RenderEffect[]
   resumeReadyPromise: Promise<void> | null
   rootChildComponentIds: Set<string>
   rootChildCursor: number
@@ -439,4 +471,5 @@ export interface RuntimeContainer {
   visibilityCheckQueued: boolean
   visibles: Map<string, VisibleState>
   watches: Map<string, WatchState>
+  warmedRuntimeSymbols: Set<string>
 }

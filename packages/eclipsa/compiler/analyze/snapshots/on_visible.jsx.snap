@@ -21,10 +21,10 @@ export default __eclipsaComponent(() => {
 
   onVisible(__eclipsaLazy("1s0b9ti", () => {
     console.log(value)
-  }, ()=>[value]))
+  }, [value]))
 
   return <button>{value}</button>
-}, "11f179", ()=>[], undefined, { optimizedRoot: true })
+}, "11f179", [], undefined, { optimizedRoot: true })
 
 
 // ================= 1s0b9ti (lazy) ==
@@ -40,7 +40,7 @@ export default (__scope) => {
 
   onVisible(__eclipsaLazy("1s0b9ti", () => {
     console.log(value)
-  }, ()=>[value]))
+  }, [value]))
 
   return <button>{value}</button>
 };

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { motion } from '../../motion/mod.ts'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
-import { attr, insert, insertStatic, listenerStatic, text } from './client/dom.ts'
+import { attr, eventStatic, insert, insertStatic, listenerStatic, text } from './client/dom.ts'
 import {
   createContext,
   getRuntimeContextReference,
@@ -19,7 +19,11 @@ import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
 import { Link, useLocation, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
+import { CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constants.ts'
 import {
+  bindPackedRuntimeEvent,
+  bindRuntimeEvent,
+  createFixedSignalEffect,
   createResumeContainer,
   createDelegatedEvent,
   createDetachedRuntimeComponent,
@@ -33,6 +37,7 @@ import {
   preserveReusableContentInRoots,
   rememberInsertMarkerRange,
   renderClientInsertable,
+  restoreSignalRefs,
   runDetachedRuntimeComponent,
   restoreResumedLocalSignalEffects,
   serializeContainerValue,
@@ -581,12 +586,16 @@ const createContainer = () =>
     asyncSignalStates: new Map(),
     atoms: new WeakMap(),
     components: new Map(),
+    delegatedEventName: null,
+    delegatedEventListener: null,
+    delegatedEventNames: null,
     dirty: new Set(),
     dirtyFlushQueued: false,
     doc: new FakeDocument() as unknown as Document,
     eventDispatchPromise: null,
     eventBindingScopeCache: new Map(),
     externalRenderCache: new Map(),
+    hasRuntimeRefMarkers: false,
     imports: new Map(),
     insertMarkerLookup: new Map(),
     interactivePrefetchCheckQueued: false,
@@ -615,6 +624,7 @@ const createContainer = () =>
     visibilityListenersCleanup: null,
     visibles: new Map(),
     watches: new Map(),
+    warmedRuntimeSymbols: new Set(),
   }) as RuntimeContainer
 
 const createCleanupSlot = () => ({ callbacks: [] })
@@ -765,6 +775,22 @@ describe('core/runtime dom snapshots', () => {
     })
   })
 
+  it('falls back to current DOM attributes when syncing without a remembered snapshot', () => {
+    withFakeNodeGlobal(() => {
+      const current = new FakeElement('div')
+      const next = new FakeElement('div')
+
+      current.setAttribute('class', 'before')
+      current.setAttribute('data-stale', '1')
+      next.setAttribute('class', 'after')
+
+      syncManagedElementAttributes(current as unknown as Element, next as unknown as Element)
+
+      expect(current.getAttribute('class')).toBe('after')
+      expect(current.getAttribute('data-stale')).toBeNull()
+    })
+  })
+
   it('patches single-binding live client anchors in place', () => {
     withFakeNodeGlobal(() => {
       const container = createContainer()
@@ -909,6 +935,31 @@ describe('renderClientInsertable', () => {
       expect(element).toBeInstanceOf(FakeElement)
       expect(ref.value).toBe(element as unknown as HTMLElement)
       expect(element?.tagName).toBe('div')
+    })
+  })
+
+  it('skips ref restoration walks when the container cannot contain runtime refs', () => {
+    withFakeNodeGlobal(() => {
+      class ThrowingElement extends FakeElement {
+        override getAttribute(name: string) {
+          if (name === 'data-e-ref') {
+            throw new Error('unexpected ref scan')
+          }
+          return super.getAttribute(name)
+        }
+      }
+
+      const container = createContainer()
+      const root = new FakeElement('div')
+      const child = new ThrowingElement('button')
+      root.appendChild(child)
+
+      expect(() => restoreSignalRefs(container, root as unknown as ParentNode)).not.toThrow()
+
+      container.hasRuntimeRefMarkers = true
+      expect(() => restoreSignalRefs(container, root as unknown as ParentNode)).toThrow(
+        'unexpected ref scan',
+      )
     })
   })
 
@@ -2551,6 +2602,173 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('dispatches live client event bindings when captures are inlined as arrays', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      const seenScopes: unknown[][] = []
+      host.appendChild(marker)
+
+      container.imports.set(
+        'live-click-symbol',
+        Promise.resolve({
+          default: (scope: unknown[]) => {
+            seenScopes.push(scope)
+          },
+        }),
+      )
+
+      withRuntimeContainer(container, () => {
+        insert(
+          jsxDEV(
+            'button',
+            {
+              children: 'Click me',
+              onClick: __eclipsaEvent('click', 'live-click-symbol', [42]),
+            },
+            null,
+            false,
+            {},
+          ),
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const button = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
+      )
+      expect(button).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(seenScopes).toEqual([[42]])
+    })
+  })
+
+  it('warms live resumable event symbols when binding client event descriptors', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const button = (container.doc as unknown as FakeDocument).createElement(
+        'button',
+      ) as unknown as Element
+      container.symbols.set(
+        'warm-live-click-symbol',
+        'data:text/javascript,export default () => {}',
+      )
+
+      withRuntimeContainer(container, () => {
+        expect(
+          bindRuntimeEvent(
+            button,
+            'click',
+            __eclipsaEvent('click', 'warm-live-click-symbol', () => []),
+          ),
+        ).toBe(true)
+      })
+
+      const imported = container.imports.get('warm-live-click-symbol')
+      expect(imported).toBeTruthy()
+      await imported
+    })
+  })
+
+  it('warms packed resumable event symbols when binding packed client events', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const button = (container.doc as unknown as FakeDocument).createElement(
+        'button',
+      ) as unknown as Element
+      container.symbols.set(
+        'warm-packed-click-symbol',
+        'data:text/javascript,export default () => {}',
+      )
+
+      withRuntimeContainer(container, () => {
+        bindPackedRuntimeEvent(container, button, 'click', 'warm-packed-click-symbol', 2, 1, 2)
+      })
+
+      const imported = container.imports.get('warm-packed-click-symbol')
+      expect(imported).toBeTruthy()
+      await imported
+    })
+  })
+
+  it('skips the initial fixed-signal callback run when requested', () => {
+    const container = createContainer()
+    const value = createDetachedRuntimeSignal(container, 's0', 1)
+    const seen: number[] = []
+
+    withRuntimeContainer(container, () => {
+      createFixedSignalEffect(
+        value,
+        (nextValue) => {
+          seen.push(nextValue)
+        },
+        { skipInitialRun: true },
+      )
+    })
+
+    expect(seen).toEqual([])
+
+    value.value = 2
+
+    expect(seen).toEqual([2])
+  })
+
+  it('keeps two fixed-signal bindings in the inline record slots before spilling to an array', () => {
+    const container = createContainer()
+    const value = createDetachedRuntimeSignal(container, 's0', 1)
+    const seenA: number[] = []
+    const seenB: number[] = []
+    const seenC: number[] = []
+
+    withRuntimeContainer(container, () => {
+      createFixedSignalEffect(value, (nextValue) => {
+        seenA.push(nextValue)
+      })
+      createFixedSignalEffect(value, (nextValue) => {
+        seenB.push(nextValue)
+      })
+    })
+
+    const recordAfterTwo = container.signals.get('s0')
+    expect(recordAfterTwo?.fixedEffect).toBeTruthy()
+    expect(recordAfterTwo?.secondFixedEffect).toBeTruthy()
+    expect(recordAfterTwo?.fixedEffects).toBeNull()
+
+    withRuntimeContainer(container, () => {
+      createFixedSignalEffect(value, (nextValue) => {
+        seenC.push(nextValue)
+      })
+    })
+
+    const recordAfterThree = container.signals.get('s0')
+    expect(recordAfterThree?.fixedEffects).toHaveLength(3)
+    expect(recordAfterThree?.fixedEffect).toBeNull()
+    expect(recordAfterThree?.secondFixedEffect).toBeNull()
+
+    value.value = 2
+
+    expect(seenA.at(-1)).toBe(2)
+    expect(seenB.at(-1)).toBe(2)
+    expect(seenC.at(-1)).toBe(2)
+  })
+
   it('dispatches direct-mode live function bindings through document delegation', async () => {
     await withFakeNodeGlobal(async () => {
       class TargetedClickEvent extends Event {
@@ -2592,6 +2810,46 @@ describe('renderClientInsertable', () => {
 
       expect(clicks.value).toBe(1)
       expect(seenCurrentTarget).toBe(button)
+    })
+  })
+
+  it('dispatches static event helpers through document delegation when a runtime container is active', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$clicks', 0)
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        const button = container.doc.createElement('button')
+        eventStatic(button, 'click', () => {
+          clicks.value += 1
+        })
+        insertStatic(button as unknown as Node, host as unknown as Node, marker as unknown as Node)
+      })
+
+      const button = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
+      )
+      expect(button).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(clicks.value).toBe(1)
     })
   })
 
@@ -2782,6 +3040,53 @@ describe('renderClientInsertable', () => {
       doc.dispatchEvent(new TargetedEvent('click', button as unknown as EventTarget))
 
       expect(doc.activeElement).toBe(input as unknown as Element)
+      cleanup()
+    })
+  })
+
+  it('promotes prefetched seeded symbol imports into immediate click execution', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedEvent extends Event {
+        constructor(
+          type: string,
+          private readonly eventTarget: EventTarget | null,
+        ) {
+          super(type)
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument
+      const button = doc.createElement('button') as unknown as FakeElement
+
+      button.setAttribute('data-e-onclick', 'prefetch-cache-symbol:sc0')
+      ;(doc.body as unknown as FakeElement).appendChild(button)
+      container.scopes.set('sc0', [])
+
+      let resolveImport!: (module: { default: () => void }) => void
+      const imported = new Promise<{ default: () => void }>((resolve) => {
+        resolveImport = resolve
+      })
+      container.imports.set('prefetch-cache-symbol', imported)
+
+      let callCount = 0
+      const cleanup = installResumeListeners(container)
+
+      doc.dispatchEvent(new TargetedEvent('pointerdown', button as unknown as EventTarget))
+      resolveImport({
+        default: () => {
+          callCount += 1
+        },
+      })
+      await flushAsync()
+
+      doc.dispatchEvent(new TargetedEvent('click', button as unknown as EventTarget))
+
+      expect(callCount).toBe(1)
       cleanup()
     })
   })
@@ -10507,6 +10812,79 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('keeps DOM-only keyed For row owners out of the component registry', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal(container, 'rows', [
+        { id: 1, label: 'Row 1' },
+        { id: 2, label: 'Row 2' },
+        { id: 3, label: 'Row 3' },
+      ])
+      const selected = createDetachedRuntimeSignal<number | null>(container, 'selected', null)
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: rows.value,
+                fn: (row: { id: number; label: string }) => {
+                  const rowId = row.id
+                  return jsxDEV(
+                    'tr',
+                    {
+                      class: (() => (selected.value === rowId ? 'danger' : '')) as () => string,
+                      children: [
+                        jsxDEV('td', { children: row.id }, null, false, {}),
+                        jsxDEV(
+                          'td',
+                          {
+                            children: jsxDEV('a', { children: row.label }, null, false, {}),
+                          },
+                          null,
+                          false,
+                          {},
+                        ),
+                      ],
+                    },
+                    null,
+                    true,
+                    {},
+                  )
+                },
+                key: (row: { id: number; label: string }) => row.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const registeredRowOwners = [...container.components.values()].filter(
+        (component) =>
+          component.symbol === CLIENT_INSERT_OWNER_SYMBOL && component.id.includes('.'),
+      )
+      expect(registeredRowOwners).toHaveLength(0)
+
+      selected.value = 2
+      await flushAsync()
+
+      expect(
+        [...container.components.values()].filter(
+          (component) =>
+            component.symbol === CLIENT_INSERT_OWNER_SYMBOL && component.id.includes('.'),
+        ),
+      ).toHaveLength(0)
+    })
+  })
+
   it('does not recompute keyed For row keys for untouched stable rows', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
@@ -10635,6 +11013,110 @@ describe('renderClientInsertable', () => {
         ]),
       )
       expect(getRowTexts()).toEqual(['0:C', '1:A', '2:B2'])
+    })
+  })
+
+  it('refreshes keyed row node counts when text bindings later promote into element inserts', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A', decorated: false }
+      const second = { id: 'b', label: 'B', decorated: false }
+      const third = { id: 'c', label: 'C', decorated: false }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      const getRows = () =>
+        host.childNodes.filter(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+        )
+
+      const getVisibleText = (node: FakeNode): string => {
+        if (node instanceof FakeComment) {
+          return ''
+        }
+        if (node instanceof FakeText) {
+          return node.data
+        }
+        return node.childNodes.map(getVisibleText).join('')
+      }
+
+      const getRowSummaries = () =>
+        getRows().map((row) => ({
+          id: row.attributes.get('data-row-id') ?? '',
+          hasSpan: row.childNodes.some(
+            (node) => node instanceof FakeElement && node.tagName === 'span',
+          ),
+          text: getVisibleText(row),
+        }))
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (
+                  item: { value: { id: string; label: string; decorated: boolean } },
+                  i: { value: number },
+                ) => {
+                  const li = new FakeElement('li')
+                  li.setAttribute('data-row-id', item.value.id)
+                  const rowMarker = new FakeComment('marker')
+                  li.appendChild(rowMarker)
+                  text(
+                    () =>
+                      item.value.decorated
+                        ? jsxDEV(
+                            'span',
+                            { children: `${i.value}:${item.value.label}` },
+                            null,
+                            false,
+                            {},
+                          )
+                        : `${i.value}:${item.value.label}`,
+                    li as unknown as Node,
+                    rowMarker as unknown as Node,
+                  )
+                  return li as unknown as JSX.Element
+                },
+                key: (item: { id: string }) => item.id,
+                reactiveRows: true,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(getRowSummaries()).toEqual([
+        { id: 'a', text: '0:A', hasSpan: false },
+        { id: 'b', text: '1:B', hasSpan: false },
+        { id: 'c', text: '2:C', hasSpan: false },
+      ])
+
+      items.value = [first, { id: 'b', label: 'B2', decorated: true }, third]
+      await flushAsync()
+
+      expect(getRowSummaries()).toEqual([
+        { id: 'a', text: '0:A', hasSpan: false },
+        { id: 'b', text: '1:B2', hasSpan: true },
+        { id: 'c', text: '2:C', hasSpan: false },
+      ])
+
+      items.value = [third, first, { id: 'b', label: 'B2', decorated: true }]
+      await flushAsync()
+
+      expect(getRowSummaries()).toEqual([
+        { id: 'c', text: '0:C', hasSpan: false },
+        { id: 'a', text: '1:A', hasSpan: false },
+        { id: 'b', text: '2:B2', hasSpan: true },
+      ])
     })
   })
 
