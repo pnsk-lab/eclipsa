@@ -168,16 +168,20 @@ export interface RenderFrame {
   childCursor: number
   component: ComponentState
   container: RuntimeContainer
+  effectCursor: number
   effectCleanupSlot: CleanupSlot | null
+  existingRenderEffects: ReactiveEffect[] | null
   insertCursor: number
   keyedRangeCursor: number
   keyedRangeScopeStack: string[] | null
   mountCallbacks: Array<() => void> | null
+  nextRenderEffects: ReactiveEffect[] | null
   projectionState: {
     counters: Map<string, number> | null
     reuseExistingDom: boolean
     reuseProjectionSlotDom: boolean
   }
+  reuseRenderEffects: boolean
   visitedDescendants: Set<string> | null
   mode: 'client' | 'ssr'
   scopedStyles: ScopedStyleEntry[] | null

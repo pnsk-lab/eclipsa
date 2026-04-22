@@ -40,6 +40,7 @@ import {
   syncManagedElementAttributes,
   tryPatchBoundaryContentsInPlace,
   tryPatchElementShellInPlace,
+  tryPatchNodeSequenceInPlace,
   type RuntimeContainer,
   withRuntimeContainer,
 } from './runtime.ts'
@@ -761,6 +762,29 @@ describe('core/runtime dom snapshots', () => {
 
       expect(current.getAttribute('data-eid')).toBe('e1')
       expect(current.getAttribute('data-e-onclick')).toBe('click-symbol:sc1')
+    })
+  })
+
+  it('patches single-binding live client anchors in place', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const current = new FakeElement('a')
+      const next = new FakeElement('a')
+      current.appendChild(new FakeText('Overview'))
+      next.appendChild(new FakeText('Quick Start'))
+
+      withRuntimeContainer(container, () => {
+        listenerStatic(current as unknown as Element, 'click', () => {})
+        listenerStatic(next as unknown as Element, 'click', () => {})
+      })
+
+      rememberManagedAttributesForNode(current as unknown as Node)
+
+      expect(
+        tryPatchNodeSequenceInPlace([current as unknown as Node], [next as unknown as Node]),
+      ).toBe(true)
+      expect(current.textContent).toBe('Quick Start')
+      expect(current.getAttribute('data-e-onclick')).toBe(next.getAttribute('data-e-onclick'))
     })
   })
 })
@@ -2568,6 +2592,58 @@ describe('renderClientInsertable', () => {
 
       expect(clicks.value).toBe(1)
       expect(seenCurrentTarget).toBe(button)
+    })
+  })
+
+  it('dispatches multiple delegated live function bindings from the same element', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedEvent extends Event {
+        constructor(
+          type: string,
+          private readonly eventTarget: EventTarget | null,
+        ) {
+          super(type)
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$clicks', 0)
+      const keydowns = createDetachedRuntimeSignal(container, '$keydowns', 0)
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        const button = container.doc.createElement('button')
+        listenerStatic(button, 'click', () => {
+          clicks.value += 1
+        })
+        listenerStatic(button, 'keydown', () => {
+          keydowns.value += 1
+        })
+        insertStatic(button as unknown as Node, host as unknown as Node, marker as unknown as Node)
+      })
+
+      const button = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
+      )
+      expect(button).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedEvent('click', button as unknown as EventTarget),
+      )
+      await dispatchDocumentEvent(
+        container,
+        new TargetedEvent('keydown', button as unknown as EventTarget),
+      )
+
+      expect(clicks.value).toBe(1)
+      expect(keydowns.value).toBe(1)
     })
   })
 
@@ -10321,6 +10397,113 @@ describe('renderClientInsertable', () => {
       await flushAsync()
 
       expect(insertBeforeCount).toBe(0)
+    })
+  })
+
+  it('updates benchmark-style keyed For rows across repeated every-10th-row patches', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal(
+        container,
+        'rows',
+        Array.from({ length: 1000 }, (_, index) => ({
+          id: index + 1,
+          label: `Row ${index + 1}`,
+        })),
+      )
+      const selected = createDetachedRuntimeSignal<number | null>(container, 'selected', null)
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      const getRenderedLabels = () =>
+        host.childNodes
+          .filter(
+            (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+          )
+          .map((row) => {
+            const labelCell = row.childNodes[1]
+            if (!(labelCell instanceof FakeElement)) {
+              return ''
+            }
+            const anchor = labelCell.childNodes[0]
+            return anchor instanceof FakeElement ? anchor.textContent : ''
+          })
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: rows.value,
+                fn: (row: { id: number; label: string }) => {
+                  const rowId = row.id
+                  const label = row.label
+                  const handleSelect = () => {
+                    selected.value = rowId
+                  }
+
+                  return jsxDEV(
+                    'tr',
+                    {
+                      class: (() => (selected.value === rowId ? 'danger' : '')) as () => string,
+                      children: [
+                        jsxDEV('td', { class: 'col-md-1', children: rowId }, null, false, {}),
+                        jsxDEV(
+                          'td',
+                          {
+                            class: 'col-md-4',
+                            children: jsxDEV(
+                              'a',
+                              { onClick: handleSelect, children: label },
+                              null,
+                              false,
+                              {},
+                            ),
+                          },
+                          null,
+                          false,
+                          {},
+                        ),
+                        jsxDEV('td', { class: 'col-md-1' }, null, false, {}),
+                        jsxDEV('td', { class: 'col-md-6' }, null, false, {}),
+                      ],
+                    },
+                    null,
+                    true,
+                    {},
+                  )
+                },
+                key: (row: { id: number; label: string }) => row.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      for (let iteration = 0; iteration < 16; iteration += 1) {
+        rows.value = rows.value.map((row, index) =>
+          index % 10 === 0
+            ? {
+                ...row,
+                label: `${row.label} !!!`,
+              }
+            : row,
+        )
+        await flushAsync()
+      }
+
+      const labels = getRenderedLabels()
+      expect(labels).toHaveLength(1000)
+      expect(labels[990]).toBe(
+        'Row 991 !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!',
+      )
+      expect(labels[991]).toBe('Row 992')
     })
   })
 

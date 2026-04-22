@@ -630,6 +630,27 @@ const resetComponentRenderEffects = (component: ComponentState) => {
   component.renderEffectCleanupSlot = null
 }
 
+const commitFrameRenderEffects = (frame: RenderFrame) => {
+  if (!frame.reuseRenderEffects) {
+    return
+  }
+
+  const staleEffects = frame.existingRenderEffects
+  if (staleEffects) {
+    for (let index = frame.effectCursor; index < staleEffects.length; index += 1) {
+      const effect = staleEffects[index]
+      if (!effect) {
+        continue
+      }
+      clearEffectSignals(effect)
+    }
+  }
+
+  if (frame.effectCleanupSlot) {
+    frame.effectCleanupSlot.effects = frame.nextRenderEffects
+  }
+}
+
 const syncEffectOnlyLocalSignalPreference = (component: ComponentState) => {
   component.prefersEffectOnlyLocalSignalWrites = component.optimizedRoot === true
 }
@@ -1775,10 +1796,26 @@ const allocateScopeId = (container: RuntimeContainer) => `sc${container.nextScop
 
 interface LiveClientEventBinding {
   containerId: string
+  eventName: string
   handler: EventDescriptor | LazyMeta | ((event: Event) => unknown)
 }
 
-const liveClientEventBindings = new WeakMap<Element, Map<string, LiveClientEventBinding>>()
+type LiveClientEventBindingStore = LiveClientEventBinding | Map<string, LiveClientEventBinding>
+
+const liveClientEventBindings = new WeakMap<Element, LiveClientEventBindingStore>()
+
+const cloneLiveClientEventBinding = (binding: LiveClientEventBinding): LiveClientEventBinding => ({
+  containerId: binding.containerId,
+  eventName: binding.eventName,
+  handler: binding.handler,
+})
+
+const getLiveClientEventBindingNames = (bindings: LiveClientEventBindingStore | null) => {
+  if (!bindings) {
+    return [] as string[]
+  }
+  return bindings instanceof Map ? [...bindings.keys()] : [bindings.eventName]
+}
 
 const getLiveClientEventBindings = (element: Element) =>
   liveClientEventBindings.get(element) ?? null
@@ -1788,7 +1825,16 @@ const getLiveClientEventBinding = (
   element: Element,
   eventName: string,
 ): (EventDescriptor | LazyMeta | ((event: Event) => unknown)) | null => {
-  const binding = liveClientEventBindings.get(element)?.get(eventName)
+  const bindings = getLiveClientEventBindings(element)
+  if (!bindings) {
+    return null
+  }
+  const binding =
+    bindings instanceof Map
+      ? bindings.get(eventName)
+      : bindings.eventName === eventName
+        ? bindings
+        : null
   if (!binding || binding.containerId !== container.id) {
     return null
   }
@@ -1801,12 +1847,31 @@ const setLiveClientEventBinding = (
   eventName: string,
   handler: EventDescriptor | LazyMeta | ((event: Event) => unknown),
 ) => {
-  const bindings = getLiveClientEventBindings(element) ?? new Map<string, LiveClientEventBinding>()
-  bindings.set(eventName, {
+  const nextBinding: LiveClientEventBinding = {
     containerId: container.id,
+    eventName,
     handler,
-  })
-  liveClientEventBindings.set(element, bindings)
+  }
+  const existing = getLiveClientEventBindings(element)
+  if (!existing) {
+    liveClientEventBindings.set(element, nextBinding)
+    return
+  }
+  if (existing instanceof Map) {
+    existing.set(eventName, nextBinding)
+    return
+  }
+  if (existing.eventName === eventName) {
+    liveClientEventBindings.set(element, nextBinding)
+    return
+  }
+  liveClientEventBindings.set(
+    element,
+    new Map<string, LiveClientEventBinding>([
+      [existing.eventName, existing],
+      [eventName, nextBinding],
+    ]),
+  )
 }
 
 export const bindLiveClientListener = (
@@ -1820,11 +1885,15 @@ export const bindLiveClientListener = (
 
 const syncLiveClientEventBindings = (current: Element, next: Element) => {
   const nextBindings = getLiveClientEventBindings(next)
-  if (!nextBindings || nextBindings.size === 0) {
+  if (!nextBindings || (nextBindings instanceof Map && nextBindings.size === 0)) {
     liveClientEventBindings.delete(current)
     return
   }
-  liveClientEventBindings.set(current, new Map(nextBindings))
+  if (nextBindings instanceof Map) {
+    liveClientEventBindings.set(current, new Map(nextBindings))
+    return
+  }
+  liveClientEventBindings.set(current, cloneLiveClientEventBinding(nextBindings))
 }
 
 export const ensureRuntimeElementId = (container: RuntimeContainer, element: Element) => {
@@ -1919,30 +1988,40 @@ const createFrame = (
   mode: RenderFrame['mode'],
   options?: {
     effectCleanupSlot?: CleanupSlot | null
+    reuseRenderEffects?: boolean
     reuseExistingDom?: boolean
     reuseProjectionSlotDom?: boolean
   },
-): RenderFrame => ({
-  childCursor: 0,
-  component,
-  container,
-  effectCleanupSlot: options?.effectCleanupSlot ?? component.renderEffectCleanupSlot,
-  insertCursor: 0,
-  keyedRangeCursor: 0,
-  keyedRangeScopeStack: null,
-  mountCallbacks: null,
-  mode,
-  projectionState: {
-    counters: null,
-    reuseExistingDom: options?.reuseExistingDom ?? false,
-    reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
-  },
-  scopedStyles: null,
-  signalCursor: 0,
-  visibleCursor: 0,
-  visitedDescendants: null,
-  watchCursor: 0,
-})
+): RenderFrame => {
+  const effectCleanupSlot = options?.effectCleanupSlot ?? component.renderEffectCleanupSlot
+  const reuseRenderEffects = options?.reuseRenderEffects === true
+
+  return {
+    childCursor: 0,
+    component,
+    container,
+    effectCleanupSlot,
+    effectCursor: 0,
+    existingRenderEffects: reuseRenderEffects ? (effectCleanupSlot?.effects ?? null) : null,
+    insertCursor: 0,
+    keyedRangeCursor: 0,
+    keyedRangeScopeStack: null,
+    mountCallbacks: null,
+    mode,
+    nextRenderEffects: null,
+    projectionState: {
+      counters: null,
+      reuseExistingDom: options?.reuseExistingDom ?? false,
+      reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
+    },
+    reuseRenderEffects,
+    scopedStyles: null,
+    signalCursor: 0,
+    visibleCursor: 0,
+    visitedDescendants: null,
+    watchCursor: 0,
+  }
+}
 
 const createComponentId = (
   container: RuntimeContainer,
@@ -3251,11 +3330,14 @@ export const syncManagedElementAttributes = (current: Element, next: Element) =>
   const nextNames = new Set(next.getAttributeNames())
   const nextLiveBindings = getLiveClientEventBindings(next)
   const currentElementId = current.getAttribute('data-eid')
-  if (currentElementId !== null && (nextNames.has('data-eid') || nextLiveBindings?.size)) {
+  if (
+    currentElementId !== null &&
+    (nextNames.has('data-eid') || getLiveClientEventBindingNames(nextLiveBindings).length > 0)
+  ) {
     nextNames.add('data-eid')
   }
   if (nextLiveBindings) {
-    for (const eventName of nextLiveBindings.keys()) {
+    for (const eventName of getLiveClientEventBindingNames(nextLiveBindings)) {
       const bindingAttr = `data-e-on${eventName}`
       if (current.getAttribute(bindingAttr) !== null) {
         nextNames.add(bindingAttr)
@@ -5624,15 +5706,8 @@ export const renderClientInsertableForOwner = (
     return renderClientInsertable(value, container)
   }
 
-  const parentId = inferClientInsertOwnerParentId(owner.componentId)
   const existing = container.components.get(owner.componentId)
-  const component = existing
-    ? (() => {
-        syncComponentParent(container, existing, parentId)
-        existing.symbol = CLIENT_INSERT_OWNER_SYMBOL
-        return existing
-      })()
-    : getOrCreateComponentState(container, owner.componentId, CLIENT_INSERT_OWNER_SYMBOL, parentId)
+  const component = getOrCreateClientInsertOwnerComponent(container, owner)
   const isFreshOwner = !existing
 
   const parentFrame = getCurrentFrame()
@@ -5642,9 +5717,9 @@ export const renderClientInsertableForOwner = (
     oldDescendants = !component.childComponentIds?.size
       ? null
       : collectDescendantIds(container, owner.componentId)
-    resetComponentRenderEffects(component)
   }
   const frame = createFrame(container, component, 'client', {
+    reuseRenderEffects: !isFreshOwner,
     reuseExistingDom: false,
     reuseProjectionSlotDom: false,
   })
@@ -5656,6 +5731,7 @@ export const renderClientInsertableForOwner = (
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => renderClientInsertable(value, container)),
   )
+  commitFrameRenderEffects(frame)
   const visitedDescendants = getFrameVisitedDescendants(frame)
   if (isFreshOwner) {
     if (parentFrame && parentFrame !== frame) {
@@ -9099,29 +9175,67 @@ export const createEffect = (fn: () => void, options?: EffectOptions) => {
   const container = getCurrentContainer()
   const frame = getCurrentFrame()
   const runInContainer = options?.runInContainer !== false
+  const createEffectRunner = (effect: ReactiveEffect) => () => {
+    runReactiveEffectInContainer(effect, () => {
+      const dependencies = options?.dependencies
+      if (!dependencies) {
+        collectTrackedDependencies(effect, fn)
+        return
+      }
+
+      collectTrackedDependencies(effect, () => {
+        trackWatchDependencies(dependencies, options?.errorLabel)
+      })
+
+      if (options?.untracked) {
+        runWithoutDependencyTracking(fn)
+        return
+      }
+
+      fn()
+    })
+  }
+
+  if (
+    frame &&
+    frame.mode === 'client' &&
+    frame.component.id !== ROOT_COMPONENT_ID &&
+    frame.reuseRenderEffects
+  ) {
+    const effect = frame.existingRenderEffects?.[frame.effectCursor++] ?? {
+      collecting: false,
+      container,
+      fn() {},
+      nextSignal: null,
+      nextSignals: null,
+      queued: false,
+      runInContainer,
+      signal: null,
+      signals: null,
+    }
+
+    effect.collecting = false
+    effect.container = container
+    effect.fn = createEffectRunner(effect)
+    effect.queued = false
+    effect.runInContainer = runInContainer
+    effect.fn()
+
+    if (effectHasTrackedSignals(effect)) {
+      ;(frame.nextRenderEffects ??= []).push(effect)
+    } else {
+      clearEffectSignals(effect)
+    }
+
+    return () => {
+      clearEffectSignals(effect)
+    }
+  }
+
   const effect: ReactiveEffect = {
     collecting: false,
     container,
-    fn() {
-      runReactiveEffectInContainer(effect, () => {
-        const dependencies = options?.dependencies
-        if (!dependencies) {
-          collectTrackedDependencies(effect, fn)
-          return
-        }
-
-        collectTrackedDependencies(effect, () => {
-          trackWatchDependencies(dependencies, options?.errorLabel)
-        })
-
-        if (options?.untracked) {
-          runWithoutDependencyTracking(fn)
-          return
-        }
-
-        fn()
-      })
-    },
+    fn() {},
     nextSignal: null,
     nextSignals: null,
     queued: false,
@@ -9129,7 +9243,7 @@ export const createEffect = (fn: () => void, options?: EffectOptions) => {
     signal: null,
     signals: null,
   }
-
+  effect.fn = createEffectRunner(effect)
   effect.fn()
 
   if (
