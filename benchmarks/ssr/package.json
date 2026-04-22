@@ -6,7 +6,7 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "vite-plus run build:all",
+    "build": "vp run build:all",
     "bench": "bun run ./benchmark.js",
     "bench:bun": "bun run ./benchmark.js",
     "bench:node": "node ./benchmark.js",

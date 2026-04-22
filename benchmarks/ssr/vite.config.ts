@@ -20,7 +20,7 @@ export default defineConfig({
       },
       'build:framework': {
         command: 'bun run build',
-        cwd: '../packages/eclipsa',
+        cwd: '../../packages/eclipsa',
       },
       'build:astro': {
         command: 'bun run build',
