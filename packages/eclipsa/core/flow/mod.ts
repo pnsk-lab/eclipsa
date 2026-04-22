@@ -9,6 +9,8 @@ interface ForValue<T> {
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => Key
+  reactiveIndex?: boolean
+  reactiveRows?: boolean
 }
 
 interface ShowValue<T> {
@@ -23,6 +25,8 @@ export const For = <T>(props: {
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => Key
+  reactiveIndex?: boolean
+  reactiveRows?: boolean
 }) =>
   ({
     __e_for: true,
@@ -30,6 +34,8 @@ export const For = <T>(props: {
     fallback: props.fallback,
     fn: props.fn,
     key: props.key,
+    reactiveIndex: props.reactiveIndex,
+    reactiveRows: props.reactiveRows,
   }) as ForValue<T> as unknown as JSX.Element
 
 export const Show = <T>(props: { children: ShowBranch<T>; fallback?: ShowBranch<T>; when: T }) =>

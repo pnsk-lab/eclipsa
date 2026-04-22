@@ -8,13 +8,15 @@ import {
 test('benchmark Vite build compiles TSX through the Eclipsa client compiler', async () => {
   const plugin = createEclipsaBenchmarkPlugin()
   const result = await plugin.transform?.(
-    `import { useSignal } from "eclipsa"; const App = () => { const count = useSignal(0); return <button>{count.value}</button> }; export default App;`,
+    `import { useSignal } from "eclipsa"; const App = () => { const count = useSignal(0); return <button onClick={() => count.value++}>{count.value}</button> }; export default App;`,
     '/virtual/benchmark.tsx',
   )
 
   expect(result).toBeObject()
   expect(result?.code).toContain('from "eclipsa/client"')
   expect(result?.code).toContain('createTemplate')
+  expect(result?.code).toContain('"onClick"')
+  expect(result?.code).not.toContain('__eclipsaEvent(')
 })
 
 test('benchmark Vite build exposes standalone symbol urls for resumable handlers', async () => {

@@ -35,6 +35,7 @@ import {
   getLazyMeta,
   getSignalMeta,
   getWatchMeta,
+  setLazySignalMeta,
   setNavigateMeta,
   setSignalMeta,
   type ComponentMeta,
@@ -99,8 +100,9 @@ import {
   captureBoundaryFocus,
   captureDocumentFocus,
   getBoundaryChildren,
-  getManagedAttributeSnapshot,
+  getManagedAttributeSnapshotValues,
   getRememberedInsertMarkerNodeCount,
+  hasRememberedManagedAttributesForSubtree,
   hasOwnerDocument,
   isElementNode,
   isHTMLElementNode,
@@ -113,6 +115,7 @@ import {
   rememberInsertMarkerRange,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
+  rememberManagedAttributesForSubtree,
   replaceManagedAttributeSnapshot,
   restoreBoundaryFocus,
   restorePendingFocus as restorePendingFocusInDocument,
@@ -228,6 +231,8 @@ export {
   rememberInsertMarkerRange,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
+  rememberManagedAttributesForSubtree,
+  setRememberedInsertMarkerNodeCount,
   syncManagedAttributeSnapshot,
 } from './runtime/dom.ts'
 export type {
@@ -391,7 +396,8 @@ export const shouldReconnectDetachedInsertMarkers = (container: RuntimeContainer
   return frame.projectionState.reuseExistingDom
 }
 
-const hasScopedStyles = (frame: RenderFrame | null) => !!frame && frame.scopedStyles.length > 0
+const hasScopedStyles = (frame: RenderFrame | null) =>
+  !!frame && getFrameScopedStyles(frame).length > 0
 
 const getScopedStyleRootSelector = (scopeId: string) =>
   `[${SCOPED_STYLE_ATTR}="${escapeAttr(scopeId)}"]`
@@ -428,13 +434,15 @@ const renderScopedStyleNode = (
 }
 
 const renderFrameScopedStylesToString = (frame: RenderFrame) =>
-  frame.scopedStyles
-    .map((style) => renderScopedStyleString(frame.component.scopeId, style))
+  getFrameScopedStyles(frame)
+    .map((style) =>
+      renderScopedStyleString(ensureComponentScopeId(frame.container, frame.component), style),
+    )
     .join('')
 
 const renderFrameScopedStylesToNodes = (frame: RenderFrame, container: RuntimeContainer) =>
-  frame.scopedStyles.map((style) =>
-    renderScopedStyleNode(container, frame.component.scopeId, style),
+  getFrameScopedStyles(frame).map((style) =>
+    renderScopedStyleNode(container, ensureComponentScopeId(container, frame.component), style),
   )
 
 const createActionCsrfInputString = (token: string) =>
@@ -467,7 +475,8 @@ export const registerRuntimeScopedStyle = (
     return
   }
 
-  const existing = frame.scopedStyles.find(
+  const scopedStyles = ensureFrameScopedStyles(frame)
+  const existing = scopedStyles.find(
     (entry) =>
       entry.cssText === cssText && JSON.stringify(entry.attributes) === JSON.stringify(attributes),
   )
@@ -475,7 +484,7 @@ export const registerRuntimeScopedStyle = (
     return
   }
 
-  frame.scopedStyles.push({
+  scopedStyles.push({
     attributes: { ...attributes },
     cssText,
   })
@@ -483,6 +492,7 @@ export const registerRuntimeScopedStyle = (
 
 let currentEffect: ReactiveEffect | null = null
 let currentCleanupSlot: CleanupSlot | null = null
+const suppressedComponentSignalSubscriptionIds: string[] = []
 
 const withoutTrackedEffect = <T>(fn: () => T): T => {
   const previous = currentEffect
@@ -494,9 +504,57 @@ const withoutTrackedEffect = <T>(fn: () => T): T => {
   }
 }
 
+const withSuppressedComponentSignalSubscriptions = <T>(componentId: string, fn: () => T): T => {
+  suppressedComponentSignalSubscriptionIds.push(componentId)
+  try {
+    return fn()
+  } finally {
+    suppressedComponentSignalSubscriptionIds.pop()
+  }
+}
+
+const EMPTY_FRAME_MOUNT_CALLBACKS: Array<() => void> = []
+const EMPTY_FRAME_SCOPED_STYLES: ScopedStyleEntry[] = []
+const EMPTY_FRAME_KEYED_RANGE_SCOPE_STACK: string[] = []
+const EMPTY_FRAME_VISITED_DESCENDANTS = new Set<string>()
+const EMPTY_FRAME_PROJECTION_COUNTERS = new Map<string, number>()
+
 const createCleanupSlot = (): CleanupSlot => ({
-  callbacks: [],
+  callbacks: null,
+  effects: null,
 })
+
+const ensureComponentRenderEffectCleanupSlot = (component: ComponentState) =>
+  (component.renderEffectCleanupSlot ??= createCleanupSlot())
+
+const ensureFrameEffectCleanupSlot = (frame: RenderFrame) =>
+  (frame.effectCleanupSlot ??= ensureComponentRenderEffectCleanupSlot(frame.component))
+
+const ensureComponentScopeId = (container: RuntimeContainer, component: ComponentState) =>
+  (component.scopeId ??= registerScope(container, []))
+
+const getFrameMountCallbacks = (frame: RenderFrame) =>
+  frame.mountCallbacks ?? EMPTY_FRAME_MOUNT_CALLBACKS
+
+const ensureFrameMountCallbacks = (frame: RenderFrame) => (frame.mountCallbacks ??= [])
+
+const getFrameScopedStyles = (frame: RenderFrame) => frame.scopedStyles ?? EMPTY_FRAME_SCOPED_STYLES
+
+const ensureFrameScopedStyles = (frame: RenderFrame) => (frame.scopedStyles ??= [])
+
+const getFrameKeyedRangeScopeStack = (frame: RenderFrame) =>
+  frame.keyedRangeScopeStack ?? EMPTY_FRAME_KEYED_RANGE_SCOPE_STACK
+
+const ensureFrameKeyedRangeScopeStack = (frame: RenderFrame) => (frame.keyedRangeScopeStack ??= [])
+
+const getFrameVisitedDescendants = (frame: RenderFrame) =>
+  frame.visitedDescendants ?? EMPTY_FRAME_VISITED_DESCENDANTS
+
+const ensureFrameVisitedDescendants = (frame: RenderFrame) =>
+  (frame.visitedDescendants ??= new Set())
+
+const getFrameProjectionCounters = (frame: RenderFrame) =>
+  frame.projectionState.counters ?? EMPTY_FRAME_PROJECTION_COUNTERS
 
 const withCleanupSlot = <T>(slot: CleanupSlot, fn: () => T): T => {
   const previous = currentCleanupSlot
@@ -509,22 +567,47 @@ const withCleanupSlot = <T>(slot: CleanupSlot, fn: () => T): T => {
 }
 
 const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
-  if (!slot || slot.callbacks.length === 0) {
+  if (!slot) {
     return
   }
 
-  const callbacks = [...slot.callbacks].reverse()
-  slot.callbacks.length = 0
+  const callbacks = slot.callbacks
+  const effects = slot.effects
+  if ((!callbacks || callbacks.length === 0) && (!effects || effects.length === 0)) {
+    return
+  }
+
+  slot.callbacks = null
+  slot.effects = null
   let firstError: unknown = null
   const previous = currentCleanupSlot
   currentCleanupSlot = null
 
   try {
-    for (const callback of callbacks) {
-      try {
-        withoutTrackedEffect(callback)
-      } catch (error) {
-        firstError ??= error
+    if (callbacks) {
+      for (let index = callbacks.length - 1; index >= 0; index -= 1) {
+        const callback = callbacks[index]
+        if (!callback) {
+          continue
+        }
+        try {
+          withoutTrackedEffect(callback)
+        } catch (error) {
+          firstError ??= error
+        }
+      }
+    }
+    if (effects) {
+      for (let index = effects.length - 1; index >= 0; index -= 1) {
+        const effect = effects[index]
+        if (!effect) {
+          continue
+        }
+        try {
+          clearEffectSignals(effect)
+        } catch (error) {
+          firstError ??= error
+        }
       }
     }
   } finally {
@@ -537,28 +620,208 @@ const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
 }
 
 const resetComponentRenderEffects = (component: ComponentState) => {
+  if (
+    !component.renderEffectCleanupSlot?.callbacks?.length &&
+    !component.renderEffectCleanupSlot?.effects?.length
+  ) {
+    return
+  }
   disposeCleanupSlot(component.renderEffectCleanupSlot)
-  component.renderEffectCleanupSlot = createCleanupSlot()
+  component.renderEffectCleanupSlot = null
 }
 
 const syncEffectOnlyLocalSignalPreference = (component: ComponentState) => {
   component.prefersEffectOnlyLocalSignalWrites = component.optimizedRoot === true
 }
 
-const clearEffectSignals = (effect: ReactiveEffect) => {
-  for (const signal of effect.signals) {
-    signal.effects.delete(effect)
+const collapseSignalEffectSet = (record: SignalRecord) => {
+  if (!record.effects) {
+    return
   }
-  effect.signals.clear()
+  if (record.effects.size === 0) {
+    record.effects = null
+    return
+  }
+  if (record.effects.size === 1) {
+    record.effect = record.effects.values().next().value ?? null
+    record.effects = null
+  }
+}
+
+const addSignalEffect = (record: SignalRecord, effect: ReactiveEffect) => {
+  if (record.effect === effect || record.effects?.has(effect)) {
+    return
+  }
+  if (!record.effect && !record.effects) {
+    record.effect = effect
+    return
+  }
+  if (record.effect) {
+    record.effects = new Set([record.effect, effect])
+    record.effect = null
+    return
+  }
+  record.effects?.add(effect)
+}
+
+const removeSignalEffect = (record: SignalRecord, effect: ReactiveEffect) => {
+  if (record.effect === effect) {
+    record.effect = null
+    return
+  }
+  if (!record.effects) {
+    return
+  }
+  record.effects.delete(effect)
+  collapseSignalEffectSet(record)
+}
+
+const addEffectSignal = (effect: ReactiveEffect, record: SignalRecord) => {
+  if (effect.signal === record || effect.signals?.has(record)) {
+    return
+  }
+  if (!effect.signal && !effect.signals) {
+    effect.signal = record
+    return
+  }
+  if (effect.signal) {
+    effect.signals = new Set([effect.signal, record])
+    effect.signal = null
+    return
+  }
+  effect.signals?.add(record)
+}
+
+const addNextEffectSignal = (effect: ReactiveEffect, record: SignalRecord) => {
+  if (effect.nextSignal === record || effect.nextSignals?.has(record)) {
+    return
+  }
+  if (!effect.nextSignal && !effect.nextSignals) {
+    effect.nextSignal = record
+    return
+  }
+  if (effect.nextSignal) {
+    effect.nextSignals = new Set([effect.nextSignal, record])
+    effect.nextSignal = null
+    return
+  }
+  effect.nextSignals?.add(record)
+}
+
+const forEachSignalEffect = (record: SignalRecord, visit: (effect: ReactiveEffect) => void) => {
+  if (record.effect) {
+    visit(record.effect)
+  }
+  if (!record.effects) {
+    return
+  }
+  for (const effect of record.effects) {
+    visit(effect)
+  }
+}
+
+const forEachEffectSignal = (effect: ReactiveEffect, visit: (record: SignalRecord) => void) => {
+  if (effect.signal) {
+    visit(effect.signal)
+  }
+  if (!effect.signals) {
+    return
+  }
+  for (const record of effect.signals) {
+    visit(record)
+  }
+}
+
+const listEffectSignalIds = (effect: ReactiveEffect) => {
+  const ids: string[] = []
+  forEachEffectSignal(effect, (record) => {
+    ids.push(record.id)
+  })
+  return ids
+}
+
+const effectDependsOnSignal = (effect: ReactiveEffect, record: SignalRecord) =>
+  effect.signal === record || effect.signals?.has(record) === true
+
+const dependencySetDependsOnSignal = (
+  signal: SignalRecord | null,
+  signals: Set<SignalRecord> | null,
+  record: SignalRecord,
+) => signal === record || signals?.has(record) === true
+
+const commitTrackedDependencies = (effect: ReactiveEffect) => {
+  const previousSignal = effect.signal
+  const previousSignals = effect.signals
+  const nextSignal = effect.nextSignal
+  const nextSignals = effect.nextSignals
+
+  if (previousSignal === nextSignal && previousSignals === null && nextSignals === null) {
+    effect.nextSignal = null
+    effect.nextSignals = null
+    return
+  }
+
+  if (previousSignal && !dependencySetDependsOnSignal(nextSignal, nextSignals, previousSignal)) {
+    removeSignalEffect(previousSignal, effect)
+  }
+  if (previousSignals) {
+    for (const record of previousSignals) {
+      if (!dependencySetDependsOnSignal(nextSignal, nextSignals, record)) {
+        removeSignalEffect(record, effect)
+      }
+    }
+  }
+
+  if (nextSignal && !effectDependsOnSignal(effect, nextSignal)) {
+    addSignalEffect(nextSignal, effect)
+  }
+  if (nextSignals) {
+    for (const record of nextSignals) {
+      if (!effectDependsOnSignal(effect, record)) {
+        addSignalEffect(record, effect)
+      }
+    }
+  }
+
+  effect.signal = nextSignal
+  effect.signals = nextSignals
+  effect.nextSignal = null
+  effect.nextSignals = null
+}
+
+const hasSignalEffects = (record: SignalRecord) => !!record.effect || !!record.effects?.size
+
+const effectHasTrackedSignals = (effect: ReactiveEffect) =>
+  !!effect.signal || !!effect.signals?.size
+
+const clearEffectSignals = (effect: ReactiveEffect) => {
+  const singleSignal = effect.signal
+  if (singleSignal) {
+    effect.signal = null
+    removeSignalEffect(singleSignal, effect)
+  }
+  if (!effect.signals) {
+    return
+  }
+  const signals = effect.signals
+  effect.signals = null
+  for (const signal of signals) {
+    removeSignalEffect(signal, effect)
+  }
 }
 
 const collectTrackedDependencies = (effect: ReactiveEffect, fn: () => void) => {
-  clearEffectSignals(effect)
+  const previousEffect = currentEffect
+  effect.nextSignal = null
+  effect.nextSignals = null
+  effect.collecting = true
   currentEffect = effect
   try {
     fn()
   } finally {
-    currentEffect = null
+    currentEffect = previousEffect
+    commitTrackedDependencies(effect)
+    effect.collecting = false
   }
 }
 
@@ -569,6 +832,45 @@ const runWithoutDependencyTracking = <T>(fn: () => T): T => {
     return fn()
   } finally {
     currentEffect = previousEffect
+  }
+}
+
+const flushPendingSignalEffects = (container: RuntimeContainer) => {
+  if (container.signalEffectsFlushing || container.pendingSignalEffects.length === 0) {
+    return
+  }
+
+  container.signalEffectsFlushing = true
+  try {
+    while (container.pendingSignalEffects.length > 0) {
+      const batch = container.pendingSignalEffects
+      container.pendingSignalEffects = []
+      for (const effect of batch) {
+        effect.queued = false
+        effect.fn()
+      }
+    }
+  } finally {
+    container.signalEffectsFlushing = false
+  }
+}
+
+const withBatchedSignalWrites = <T>(
+  container: RuntimeContainer | null | undefined,
+  fn: () => T,
+): T => {
+  if (!container) {
+    return fn()
+  }
+
+  container.signalEffectBatchDepth += 1
+  try {
+    return fn()
+  } finally {
+    container.signalEffectBatchDepth -= 1
+    if (container.signalEffectBatchDepth === 0) {
+      flushPendingSignalEffects(container)
+    }
   }
 }
 
@@ -768,6 +1070,47 @@ export const restoreSignalRefs = (container: RuntimeContainer, root: ParentNode)
   visitDescendants(root)
 }
 
+const nodeContainsSignalRefMarker = (node: Node): boolean => {
+  if (
+    node.nodeType === 1 &&
+    'getAttribute' in node &&
+    typeof (node as Element & { getAttribute?: unknown }).getAttribute === 'function' &&
+    !!(node as Element).getAttribute(REF_SIGNAL_ATTR)
+  ) {
+    return true
+  }
+
+  const childNodes = (
+    node as Node & {
+      childNodes?: Iterable<Node> | ArrayLike<Node>
+    }
+  ).childNodes
+  if (!childNodes) {
+    return false
+  }
+
+  if (typeof (childNodes as ArrayLike<Node>).length === 'number') {
+    for (let index = 0; index < (childNodes as ArrayLike<Node>).length; index += 1) {
+      const child = (childNodes as ArrayLike<Node>)[index]
+      if (child && nodeContainsSignalRefMarker(child)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  for (const child of childNodes as Iterable<Node>) {
+    if (nodeContainsSignalRefMarker(child)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const nodesContainSignalRefMarkers = (nodes: readonly Node[]) =>
+  nodes.some((node) => nodeContainsSignalRefMarker(node))
+
 const evaluateProps = (props: Record<string, unknown>): Record<string, unknown> => {
   const result: Record<string, unknown> = {}
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(props))) {
@@ -919,26 +1262,33 @@ const createContainer = (
   dirtyFlushQueued: false,
   doc,
   eventDispatchPromise: null,
+  eventBindingScopeCache: new Map(),
   externalRenderCache: externalRenderCache ?? new Map(),
   id: `rt${((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] =
     (((globalThis as Record<PropertyKey, unknown>)[CONTAINER_ID_KEY] as number | undefined) ?? 0) +
     1)}`,
   imports: new Map(),
+  insertMarkerLookup: new Map(),
   interactivePrefetchCheckQueued: false,
   loaderStates: new Map(),
   loaders: new Map(),
+  materializedScopes: new Map(),
   nextAtomId: 0,
   nextComponentId: 0,
   nextElementId: 0,
   nextScopeId: 0,
   nextSignalId: 0,
+  pendingSignalEffects: [],
   pendingSuspensePromises: new Set(),
   resumeReadyPromise: null,
+  rootChildComponentIds: new Set(),
   rootChildCursor: 0,
   rootElement: doc?.body,
   router: null,
   scopes: new Map(),
   signals: new Map(),
+  signalEffectBatchDepth: 0,
+  signalEffectsFlushing: false,
   symbols: new Map(Object.entries(symbols)),
   visibilityCheckQueued: false,
   visibilityListenersCleanup: null,
@@ -954,28 +1304,43 @@ export const registerResumeContainer = (container: RuntimeContainer) => {
   }
 }
 
+class RuntimeSignalHandle<T> {
+  constructor(
+    readonly __record: SignalRecord<T>,
+    readonly __container: RuntimeContainer | null,
+  ) {}
+
+  get value(): T {
+    recordSignalRead(this.__record)
+    return this.__record.value
+  }
+
+  set value(value: T) {
+    writeSignalValue(this.__container, this.__record, value)
+  }
+}
+
+class RuntimeSignalMeta<T> implements SignalMeta<T> {
+  readonly kind = 'signal' as const
+
+  constructor(
+    public readonly id: string,
+    private readonly record: SignalRecord<T>,
+    private readonly container: RuntimeContainer | null,
+  ) {}
+
+  get(): T {
+    return this.record.value
+  }
+
+  set(value: T): void {
+    writeSignalValue(this.container, this.record, value)
+  }
+}
+
 const createSignalHandle = <T>(record: SignalRecord<T>, container: RuntimeContainer | null) => {
-  const handle = {} as { value: T }
-  Object.defineProperty(handle, 'value', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      recordSignalRead(record)
-      return record.value
-    },
-    set(value: T) {
-      writeSignalValue(container, record, value)
-    },
-  })
-  setSignalMeta(handle, {
-    get: () => record.value,
-    id: record.id,
-    kind: 'signal',
-    set: (value) => {
-      writeSignalValue(container, record, value)
-    },
-  } satisfies SignalMeta<T>)
-  return handle
+  const handle = new RuntimeSignalHandle(record, container) as { value: T }
+  return setLazySignalMeta(handle, () => new RuntimeSignalMeta(record.id, record, container))
 }
 
 interface ComputedSignalSnapshot<T> {
@@ -988,17 +1353,38 @@ interface ComputedSignalSnapshot<T> {
 
 type KeyedForRowState<T = unknown> = {
   index: number
+  indexSignal?: { value: number }
+  indexSignalId?: string
   item: T
+  itemSignal?: { value: T }
+  itemSignalId?: string
   key: string | number | symbol
+  nodeCount: number
   owner: ClientInsertOwner
   start: Comment
   end: Comment
 }
 
+type KeyedForDirtyRowState<T = unknown> = {
+  index: number
+  item: T
+  row: KeyedForRowState<T>
+}
+
 type KeyedForOwnerState<T = unknown> = {
+  dirtyRows: KeyedForDirtyRowState<T>[]
   nextRowOwnerIndex: number
   order: Array<string | number | symbol>
+  orderedRows: KeyedForRowState<T>[]
   rows: Map<string | number | symbol, KeyedForRowState<T>>
+  scope: string
+  totalNodeCount: number
+}
+
+type KeyedForReconcileResult = {
+  firstNode: Node | null
+  needsRefRestore: boolean
+  nodeCount: number
 }
 
 const keyedForOwnerStates = new WeakMap<ComponentState, KeyedForOwnerState>()
@@ -1023,27 +1409,37 @@ const readComputedSignalValue = <T>(record: SignalRecord<unknown>) => {
   return snapshot.value as T
 }
 
+class RuntimeComputedSignalHandle<T> {
+  constructor(readonly __record: SignalRecord<unknown>) {}
+
+  get value(): T {
+    return readComputedSignalValue<T>(this.__record)
+  }
+}
+
+class RuntimeComputedSignalMeta<T> implements SignalMeta<T> {
+  readonly kind = 'computed-signal' as const
+
+  constructor(
+    public readonly id: string,
+    private readonly record: SignalRecord<unknown>,
+  ) {}
+
+  get(): T {
+    return readComputedSignalValue<T>(this.record)
+  }
+
+  set(): void {
+    throw new TypeError('Computed signals are read-only.')
+  }
+}
+
 const createComputedSignalHandle = <T>(
   record: SignalRecord<unknown>,
   _container: RuntimeContainer | null,
 ) => {
-  const handle = {} as { value: T }
-  Object.defineProperty(handle, 'value', {
-    configurable: true,
-    enumerable: true,
-    get() {
-      return readComputedSignalValue<T>(record)
-    },
-  })
-  setSignalMeta(handle, {
-    get: () => readComputedSignalValue<T>(record),
-    id: record.id,
-    kind: 'computed-signal',
-    set: () => {
-      throw new TypeError('Computed signals are read-only.')
-    },
-  } satisfies SignalMeta<T>)
-  return handle
+  const handle = new RuntimeComputedSignalHandle(record) as { value: T }
+  return setSignalMeta(handle, new RuntimeComputedSignalMeta<T>(record.id, record))
 }
 
 const isPrimitiveSignalValue = (value: unknown) =>
@@ -1078,10 +1474,11 @@ const ensureSignalRecord = <T>(
 ): SignalRecord<T> => {
   if (!container) {
     const record = {
-      effects: new Set<ReactiveEffect>(),
+      effect: null,
+      effects: null,
       handle: undefined as unknown as { value: T },
       id,
-      subscribers: new Set<string>(),
+      subscribers: null,
       value: initialValue,
     } satisfies SignalRecord<T>
     record.handle = createSignalHandle(record, null)
@@ -1092,10 +1489,11 @@ const ensureSignalRecord = <T>(
     return existing as SignalRecord<T>
   }
   const record: SignalRecord<T> = {
-    effects: new Set(),
+    effect: null,
+    effects: null,
     handle: undefined as unknown as { value: T },
     id,
-    subscribers: new Set(),
+    subscribers: null,
     value: initialValue,
   }
   record.handle = createSignalHandle(record, container)
@@ -1140,25 +1538,53 @@ export const primeLocationState = (container: RuntimeContainer, href: string | U
 
 const recordSignalRead = (record: SignalRecord) => {
   if (currentEffect) {
-    currentEffect.signals.add(record)
-    record.effects.add(currentEffect)
+    addNextEffectSignal(currentEffect, record)
     return
   }
   const frame = getCurrentFrame()
   if (!frame) {
     return
   }
-  record.subscribers.add(frame.component.id)
+  const suppressedComponentId =
+    suppressedComponentSignalSubscriptionIds[suppressedComponentSignalSubscriptionIds.length - 1]
+  if (
+    suppressedComponentId === frame.component.id &&
+    record.id.startsWith(`${frame.component.id}:for:`)
+  ) {
+    return
+  }
+  ;(record.subscribers ??= new Set()).add(frame.component.id)
+  frame.component.subscribedSignalIds ??= new Set()
+  frame.component.subscribedSignalIds.add(record.id)
 }
 
 const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRecord) => {
-  for (const effect of Array.from(record.effects)) {
-    effect.fn()
+  if (container && (container.signalEffectBatchDepth > 0 || container.signalEffectsFlushing)) {
+    forEachSignalEffect(record, (effect) => {
+      if (effect.collecting || effect.queued) {
+        return
+      }
+      effect.queued = true
+      container.pendingSignalEffects.push(effect)
+    })
+  } else {
+    const singleEffect = record.effect
+    if (singleEffect && !singleEffect.collecting) {
+      singleEffect.fn()
+    }
+    if (record.effects) {
+      for (const effect of Array.from(record.effects)) {
+        if (effect.collecting) {
+          continue
+        }
+        effect.fn()
+      }
+    }
   }
   if (!container) {
     return
   }
-  for (const componentId of record.subscribers) {
+  for (const componentId of record.subscribers ?? []) {
     const component = container.components.get(componentId)
     if (!component?.start || !component.end) {
       continue
@@ -1166,8 +1592,8 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     if (
       component.prefersEffectOnlyLocalSignalWrites &&
       component.signalIds.includes(record.id) &&
-      record.effects.size > 0 &&
-      !record.subscribers.has(component.id)
+      hasSignalEffects(record) &&
+      !record.subscribers?.has(component.id)
     ) {
       continue
     }
@@ -1316,7 +1742,7 @@ const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
 export const withRuntimeContainer = pushContainer
 
 const runReactiveEffectInContainer = <T>(effect: ReactiveEffect, fn: () => T): T => {
-  if (!effect.container) {
+  if (effect.runInContainer === false || !effect.container) {
     return fn()
   }
   return pushContainer(effect.container, fn)
@@ -1346,6 +1772,60 @@ const pushFrame = <T>(frame: RenderFrame, fn: () => T): T => {
 }
 
 const allocateScopeId = (container: RuntimeContainer) => `sc${container.nextScopeId++}`
+
+interface LiveClientEventBinding {
+  containerId: string
+  handler: EventDescriptor | LazyMeta | ((event: Event) => unknown)
+}
+
+const liveClientEventBindings = new WeakMap<Element, Map<string, LiveClientEventBinding>>()
+
+const getLiveClientEventBindings = (element: Element) =>
+  liveClientEventBindings.get(element) ?? null
+
+const getLiveClientEventBinding = (
+  container: RuntimeContainer,
+  element: Element,
+  eventName: string,
+): (EventDescriptor | LazyMeta | ((event: Event) => unknown)) | null => {
+  const binding = liveClientEventBindings.get(element)?.get(eventName)
+  if (!binding || binding.containerId !== container.id) {
+    return null
+  }
+  return binding.handler
+}
+
+const setLiveClientEventBinding = (
+  container: RuntimeContainer,
+  element: Element,
+  eventName: string,
+  handler: EventDescriptor | LazyMeta | ((event: Event) => unknown),
+) => {
+  const bindings = getLiveClientEventBindings(element) ?? new Map<string, LiveClientEventBinding>()
+  bindings.set(eventName, {
+    containerId: container.id,
+    handler,
+  })
+  liveClientEventBindings.set(element, bindings)
+}
+
+export const bindLiveClientListener = (
+  container: RuntimeContainer,
+  element: Element,
+  eventName: string,
+  listener: (event: Event) => unknown,
+) => {
+  setLiveClientEventBinding(container, element, eventName, listener)
+}
+
+const syncLiveClientEventBindings = (current: Element, next: Element) => {
+  const nextBindings = getLiveClientEventBindings(next)
+  if (!nextBindings || nextBindings.size === 0) {
+    liveClientEventBindings.delete(current)
+    return
+  }
+  liveClientEventBindings.set(current, new Map(nextBindings))
+}
 
 export const ensureRuntimeElementId = (container: RuntimeContainer, element: Element) => {
   const existingId = element.getAttribute('data-eid')
@@ -1386,6 +1866,9 @@ const registerSerializedScope = (container: RuntimeContainer, values: Serialized
   return id
 }
 
+const createSerializedScopeCacheKey = (symbolId: string, values: SerializedValue[]) =>
+  `${symbolId}:${JSON.stringify(values)}`
+
 const materializeSymbolReference = (
   container: RuntimeContainer,
   symbolId: string,
@@ -1416,7 +1899,18 @@ const materializeScope = (container: RuntimeContainer, scopeId: string): unknown
   if (!slots) {
     throw new Error(`Missing scope ${scopeId}.`)
   }
-  return slots.map((slot) => deserializeRuntimeValue(container, slot))
+  const materializedScopes =
+    container.materializedScopes ?? (container.materializedScopes = new Map())
+  const cached = materializedScopes.get(scopeId)
+  if (cached?.slots === slots) {
+    return cached.values
+  }
+  const values = slots.map((slot) => deserializeRuntimeValue(container, slot))
+  materializedScopes.set(scopeId, {
+    slots,
+    values,
+  })
+  return values
 }
 
 const createFrame = (
@@ -1424,7 +1918,7 @@ const createFrame = (
   component: ComponentState,
   mode: RenderFrame['mode'],
   options?: {
-    effectCleanupSlot?: CleanupSlot
+    effectCleanupSlot?: CleanupSlot | null
     reuseExistingDom?: boolean
     reuseProjectionSlotDom?: boolean
   },
@@ -1435,18 +1929,18 @@ const createFrame = (
   effectCleanupSlot: options?.effectCleanupSlot ?? component.renderEffectCleanupSlot,
   insertCursor: 0,
   keyedRangeCursor: 0,
-  keyedRangeScopeStack: [],
-  mountCallbacks: [],
+  keyedRangeScopeStack: null,
+  mountCallbacks: null,
   mode,
   projectionState: {
-    counters: new Map(),
+    counters: null,
     reuseExistingDom: options?.reuseExistingDom ?? false,
     reuseProjectionSlotDom: options?.reuseProjectionSlotDom ?? false,
   },
-  scopedStyles: [],
+  scopedStyles: null,
   signalCursor: 0,
   visibleCursor: 0,
-  visitedDescendants: new Set(),
+  visitedDescendants: null,
   watchCursor: 0,
 })
 
@@ -1461,6 +1955,62 @@ const createComponentId = (
   return `${parentId}.${childIndex}`
 }
 
+const getParentChildComponentIds = (
+  container: RuntimeContainer,
+  parentId: string | null,
+): Set<string> | null => {
+  if (!parentId || parentId === ROOT_COMPONENT_ID) {
+    container.rootChildComponentIds ??= new Set()
+    return container.rootChildComponentIds
+  }
+  const parent = container.components.get(parentId)
+  if (!parent) {
+    return null
+  }
+  parent.childComponentIds ??= new Set()
+  return parent.childComponentIds
+}
+
+const detachComponentFromParent = (
+  container: RuntimeContainer,
+  componentId: string,
+  parentId: string | null,
+) => {
+  getParentChildComponentIds(container, parentId)?.delete(componentId)
+}
+
+const attachComponentToParent = (
+  container: RuntimeContainer,
+  componentId: string,
+  parentId: string | null,
+) => {
+  getParentChildComponentIds(container, parentId)?.add(componentId)
+}
+
+const syncComponentParent = (
+  container: RuntimeContainer,
+  component: ComponentState,
+  parentId: string | null,
+) => {
+  if (component.parentId === parentId) {
+    return
+  }
+  detachComponentFromParent(container, component.id, component.parentId)
+  component.parentId = parentId
+  attachComponentToParent(container, component.id, parentId)
+}
+
+const rebuildComponentTopology = (container: RuntimeContainer) => {
+  container.rootChildComponentIds ??= new Set()
+  container.rootChildComponentIds.clear()
+  for (const component of container.components.values()) {
+    component.childComponentIds?.clear()
+  }
+  for (const component of container.components.values()) {
+    attachComponentToParent(container, component.id, component.parentId)
+  }
+}
+
 const getOrCreateComponentState = (
   container: RuntimeContainer,
   id: string,
@@ -1469,12 +2019,13 @@ const getOrCreateComponentState = (
 ): ComponentState => {
   const existing = container.components.get(id)
   if (existing) {
-    existing.parentId = parentId
+    syncComponentParent(container, existing, parentId)
     existing.symbol = symbol
     return existing
   }
   const component: ComponentState = {
     active: false,
+    childComponentIds: null,
     didMount: false,
     external: undefined,
     externalSlotHtml: null,
@@ -1482,24 +2033,26 @@ const getOrCreateComponentState = (
     externalInstance: undefined,
     externalMeta: null,
     id,
-    mountCleanupSlots: [],
+    mountCleanupSlots: null,
     optimizedRoot: false,
     parentId,
     prefersEffectOnlyLocalSignalWrites: false,
     props: {},
     projectionSlots: null,
     rawProps: null,
-    renderEffectCleanupSlot: createCleanupSlot(),
+    renderEffectCleanupSlot: null,
     reuseExistingDomOnActivate: true,
     reuseProjectionSlotDomOnActivate: false,
-    scopeId: registerScope(container, []),
+    scopeId: null,
     signalIds: [],
     symbol,
+    subscribedSignalIds: null,
     suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
   }
   container.components.set(id, component)
+  attachComponentToParent(container, id, parentId)
   return component
 }
 
@@ -1510,7 +2063,7 @@ const resetComponentForSymbolChange = (
 ) => {
   disposeComponentMountCleanups(component)
   disposeCleanupSlot(component.renderEffectCleanupSlot)
-  component.renderEffectCleanupSlot = createCleanupSlot()
+  component.renderEffectCleanupSlot = null
   component.didMount = false
   component.external = meta.external
   component.externalSlotHtml = null
@@ -1521,7 +2074,8 @@ const resetComponentForSymbolChange = (
   component.rawProps = null
   component.externalInstance = undefined
   component.externalMeta = null
-  component.scopeId = registerScope(container, meta.captures())
+  const captures = meta.captures()
+  component.scopeId = captures.length > 0 ? registerScope(container, captures) : null
   component.signalIds = []
   component.suspensePromise = null
   pruneComponentVisibles(container, component, 0)
@@ -1543,9 +2097,14 @@ const getOrCreateWatchState = (
     return existing
   }
   const effect: ReactiveEffect = {
+    collecting: false,
     container,
     fn() {},
-    signals: new Set(),
+    nextSignal: null,
+    nextSignals: null,
+    queued: false,
+    signal: null,
+    signals: null,
   }
   const watch: WatchState = {
     cleanupSlot: createCleanupSlot(),
@@ -1626,10 +2185,26 @@ const getOrCreateVisibleState = (
   return visible
 }
 
-const clearComponentSubscriptions = (container: RuntimeContainer, componentId: string) => {
-  for (const record of container.signals.values()) {
-    record.subscribers.delete(componentId)
+const clearSignalSubscribers = (container: RuntimeContainer, record: SignalRecord) => {
+  if (!record.subscribers?.size) {
+    return
   }
+  for (const componentId of record.subscribers) {
+    container.components.get(componentId)?.subscribedSignalIds?.delete(record.id)
+  }
+  record.subscribers.clear()
+}
+
+const clearComponentSubscriptions = (container: RuntimeContainer, componentId: string) => {
+  const component = container.components.get(componentId)
+  if (!component || !component.subscribedSignalIds?.size) {
+    return
+  }
+
+  for (const signalId of component.subscribedSignalIds) {
+    container.signals.get(signalId)?.subscribers?.delete(componentId)
+  }
+  component.subscribedSignalIds.clear()
 }
 
 const disposeExternalComponentInstance = (component: ComponentState) => {
@@ -1647,9 +2222,9 @@ const disposeExternalComponentInstance = (component: ComponentState) => {
 const disposeComponentMountCleanups = (component: ComponentState) => {
   disposeExternalComponentInstance(component)
   disposeCleanupSlot(component.renderEffectCleanupSlot)
-  component.renderEffectCleanupSlot = createCleanupSlot()
-  const cleanupSlots = [...component.mountCleanupSlots].reverse()
-  component.mountCleanupSlots = []
+  component.renderEffectCleanupSlot = null
+  const cleanupSlots = component.mountCleanupSlots ? [...component.mountCleanupSlots].reverse() : []
+  component.mountCleanupSlots = null
   for (const cleanupSlot of cleanupSlots) {
     disposeCleanupSlot(cleanupSlot)
   }
@@ -1716,8 +2291,28 @@ const pruneComponentVisibles = (
 const isDescendantOf = (parentId: string, candidateId: string) =>
   candidateId.startsWith(`${parentId}.`)
 
-const collectDescendantIds = (container: RuntimeContainer, componentId: string) =>
-  [...container.components.keys()].filter((candidate) => isDescendantOf(componentId, candidate))
+const collectDescendantIds = (container: RuntimeContainer, componentId: string) => {
+  const descendants: string[] = []
+  const component = container.components.get(componentId)
+  const stack = [...(component?.childComponentIds ?? [])].reverse()
+
+  while (stack.length > 0) {
+    const descendantId = stack.pop()!
+    descendants.push(descendantId)
+    const descendant = container.components.get(descendantId)
+    if (!descendant) {
+      continue
+    }
+    if (!descendant.childComponentIds?.size) {
+      continue
+    }
+    for (const childId of [...descendant.childComponentIds].reverse()) {
+      stack.push(childId)
+    }
+  }
+
+  return descendants
+}
 
 const expandComponentIdsToDescendants = (
   container: RuntimeContainer,
@@ -1753,7 +2348,9 @@ const pruneRemovedComponents = (
       disposeComponentMountCleanups(descendant)
       pruneComponentVisibles(container, descendant, 0)
       pruneComponentWatches(container, descendant, 0)
+      descendant.childComponentIds?.clear()
     }
+    detachComponentFromParent(container, descendantId, descendant?.parentId ?? null)
     container.components.delete(descendantId)
   }
 }
@@ -1769,8 +2366,12 @@ const disposeComponentState = (container: RuntimeContainer, component: Component
     container.asyncSignalStates.delete(signalId)
     container.asyncSignalSnapshotCache.delete(signalId)
   }
-  container.scopes.delete(component.scopeId)
+  if (component.scopeId) {
+    container.scopes.delete(component.scopeId)
+  }
   container.dirty.delete(component.id)
+  component.childComponentIds?.clear()
+  detachComponentFromParent(container, component.id, component.parentId)
   container.components.delete(component.id)
 }
 
@@ -1970,7 +2571,7 @@ const scheduleMountCallbacks = (
     void withClientContainer(container, () => {
       for (const callback of callbacks) {
         const cleanupSlot = createCleanupSlot()
-        component.mountCleanupSlots.push(cleanupSlot)
+        ;(component.mountCleanupSlots ??= []).push(cleanupSlot)
         withCleanupSlot(cleanupSlot, callback)
       }
     })
@@ -2648,7 +3249,20 @@ const replaceBoundaryContents = (
 
 export const syncManagedElementAttributes = (current: Element, next: Element) => {
   const nextNames = new Set(next.getAttributeNames())
-  const previousNames = getManagedAttributeSnapshot(current) ?? new Set<string>()
+  const nextLiveBindings = getLiveClientEventBindings(next)
+  const currentElementId = current.getAttribute('data-eid')
+  if (currentElementId !== null && (nextNames.has('data-eid') || nextLiveBindings?.size)) {
+    nextNames.add('data-eid')
+  }
+  if (nextLiveBindings) {
+    for (const eventName of nextLiveBindings.keys()) {
+      const bindingAttr = `data-e-on${eventName}`
+      if (current.getAttribute(bindingAttr) !== null) {
+        nextNames.add(bindingAttr)
+      }
+    }
+  }
+  const previousNames = getManagedAttributeSnapshotValues(current) ?? []
 
   for (const name of previousNames) {
     if (!nextNames.has(name)) {
@@ -2658,12 +3272,16 @@ export const syncManagedElementAttributes = (current: Element, next: Element) =>
 
   for (const name of nextNames) {
     const nextValue = next.getAttribute(name)
+    if (name === 'data-eid' && nextValue !== null && current.getAttribute(name) !== null) {
+      continue
+    }
     if (nextValue !== null && current.getAttribute(name) !== nextValue) {
       current.setAttribute(name, nextValue)
     }
   }
 
   replaceManagedAttributeSnapshot(current, nextNames)
+  syncLiveClientEventBindings(current, next)
 
   if (isHTMLInputElementNode(current) && isHTMLInputElementNode(next)) {
     if (current.checked !== next.checked) {
@@ -2977,7 +3595,27 @@ const patchNodeInPlace = (current: Node, next: Node): boolean => {
     return false
   }
 
-  if (tryPatchNodeSequenceInPlace(Array.from(current.childNodes), Array.from(next.childNodes))) {
+  const currentChildNodes = current.childNodes as ArrayLike<Node>
+  const nextChildNodes = next.childNodes as ArrayLike<Node>
+  const currentChildCount = currentChildNodes.length ?? 0
+  const nextChildCount = nextChildNodes.length ?? 0
+
+  if (currentChildCount === nextChildCount) {
+    if (currentChildCount === 0) {
+      syncManagedElementAttributes(current, next)
+      return true
+    }
+    if (currentChildCount === 1) {
+      const currentChild = currentChildNodes[0]
+      const nextChild = nextChildNodes[0]
+      if (currentChild && nextChild && patchNodeInPlace(currentChild, nextChild)) {
+        syncManagedElementAttributes(current, next)
+        return true
+      }
+    }
+  }
+
+  if (tryPatchNodeSequenceInPlace(Array.from(currentChildNodes), Array.from(nextChildNodes))) {
     syncManagedElementAttributes(current, next)
     return true
   }
@@ -2990,6 +3628,15 @@ export const tryPatchBoundaryContentsInPlace = (
   end: Comment,
   nextNodes: Node[],
 ) => {
+  const currentFirst = start.nextSibling
+  if (
+    currentFirst &&
+    currentFirst === end.previousSibling &&
+    nextNodes.length === 1 &&
+    patchNodeInPlace(currentFirst, nextNodes[0]!)
+  ) {
+    return true
+  }
   const currentNodes = getBoundaryChildren(start, end)
   return tryPatchNodeSequenceInPlace(currentNodes, nextNodes)
 }
@@ -3118,7 +3765,18 @@ const registerEventBinding = (
   container: RuntimeContainer,
   descriptor: EventDescriptor | LazyMeta,
 ): string => {
-  const scopeId = registerScope(container, descriptor.captures())
+  const serializedCaptures = descriptor
+    .captures()
+    .map((value) => serializeRuntimeValue(container, value))
+  const cacheKey = createSerializedScopeCacheKey(descriptor.symbol, serializedCaptures)
+  const cachedScopeId = container.eventBindingScopeCache.get(cacheKey)
+  const scopeId =
+    cachedScopeId && container.scopes.has(cachedScopeId)
+      ? cachedScopeId
+      : registerSerializedScope(container, serializedCaptures)
+  if (!cachedScopeId || cachedScopeId !== scopeId) {
+    container.eventBindingScopeCache.set(cacheKey, scopeId)
+  }
   return `${descriptor.symbol}:${scopeId}`
 }
 
@@ -3142,10 +3800,7 @@ export const bindRuntimeEvent = (element: Element, eventName: string, value: unk
     return false
   }
 
-  element.setAttribute('data-eid', `e${container.nextElementId++}`)
-  element.setAttribute(`data-e-on${eventName}`, registerEventBinding(container, descriptor))
-  syncManagedAttributeSnapshot(element, 'data-eid')
-  syncManagedAttributeSnapshot(element, `data-e-on${eventName}`)
+  setLiveClientEventBinding(container, element, eventName, descriptor)
   return true
 }
 
@@ -3174,20 +3829,19 @@ const withActiveKeyedRangeScope = <T>(scope: string, render: () => T): T => {
   if (!frame) {
     return render()
   }
-  frame.keyedRangeScopeStack.push(scope)
+  const scopeStack = ensureFrameKeyedRangeScopeStack(frame)
+  scopeStack.push(scope)
   try {
     return render()
   } finally {
-    frame.keyedRangeScopeStack.pop()
+    scopeStack.pop()
   }
 }
 
 const resolveKeyedRangeScope = () => {
   const frame = getCurrentFrame()
-  const activeScope =
-    frame && frame.keyedRangeScopeStack.length > 0
-      ? frame.keyedRangeScopeStack[frame.keyedRangeScopeStack.length - 1]
-      : null
+  const scopeStack = frame ? getFrameKeyedRangeScopeStack(frame) : null
+  const activeScope = scopeStack && scopeStack.length > 0 ? scopeStack[scopeStack.length - 1] : null
   return activeScope ?? allocateKeyedRangeScope()
 }
 
@@ -3207,6 +3861,60 @@ const resolveForItemKey = <T>(
     : typeof item === 'string' || typeof item === 'number' || typeof item === 'symbol'
       ? item
       : index
+
+const createStaticRowSignalHandle = <T>(value: T): { value: T } => ({ value })
+
+const createForCallbackArgs = <T>(value: ForValue<T>, item: T, index: number): [T, number] =>
+  value.reactiveRows
+    ? [
+        createStaticRowSignalHandle(item) as unknown as T,
+        createStaticRowSignalHandle(index) as unknown as number,
+      ]
+    : [item, index]
+
+const disposeKeyedForRowSignals = (container: RuntimeContainer, row: KeyedForRowState<unknown>) => {
+  for (const signalId of [row.itemSignalId, row.indexSignalId]) {
+    if (!signalId) {
+      continue
+    }
+    container.signals.delete(signalId)
+    container.asyncSignalStates.delete(signalId)
+    container.asyncSignalSnapshotCache.delete(signalId)
+  }
+}
+
+const getKeyedForOwnerRange = <T>(state: KeyedForOwnerState<T>) => {
+  const firstKey = state.order[0]
+  const lastKey = state.order[state.order.length - 1]
+  if (firstKey === undefined || lastKey === undefined) {
+    return {
+      end: null,
+      start: null,
+    }
+  }
+  const firstRow = state.rows.get(firstKey)
+  const lastRow = state.rows.get(lastKey)
+  return {
+    end: lastRow?.end ?? null,
+    start: firstRow?.start ?? null,
+  }
+}
+
+const countNodesBetween = (start: Node | null, end: Node | null) => {
+  if (!start || !end) {
+    return 0
+  }
+  let count = 0
+  let cursor: Node | null = start
+  while (cursor) {
+    count += 1
+    if (cursor === end) {
+      return count
+    }
+    cursor = cursor.nextSibling
+  }
+  return count
+}
 
 const stripForChildRootKey = (value: JSX.Element): JSX.Element => {
   const resolved = resolveRenderable(value)
@@ -3235,8 +3943,9 @@ const renderForValueToString = <T>(value: ForValue<T>): string => {
   let output = ''
   for (let index = 0; index < value.arr.length; index += 1) {
     const item = value.arr[index]!
+    const [callbackItem, callbackIndex] = createForCallbackArgs(value, item, index)
     output += wrapStringWithKeyedRange(
-      renderStringNode(stripForChildRootKey(value.fn(item, index))),
+      renderStringNode(stripForChildRootKey(value.fn(callbackItem, callbackIndex))),
       scope,
       resolveForItemKey(value, item, index),
     )
@@ -3716,7 +4425,8 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
       meta.symbol,
       position.parentId,
     )
-    component.scopeId = registerScope(container, meta.captures())
+    const captures = meta.captures()
+    component.scopeId = captures.length > 0 ? registerScope(container, captures) : null
     component.external = meta.external
     component.optimizedRoot = meta.optimizedRoot === true
     component.props = evaluatedProps
@@ -3760,7 +4470,9 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   let isActionForm = false
 
   if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
-    attrParts.push(`${SCOPED_STYLE_ATTR}="${escapeAttr(frame.component.scopeId)}"`)
+    attrParts.push(
+      `${SCOPED_STYLE_ATTR}="${escapeAttr(ensureComponentScopeId(frame.container, frame.component))}"`,
+    )
   }
 
   for (const name in resolved.props) {
@@ -3943,7 +4655,7 @@ const renderComponentToNodes = (
 
     if (parentFrame) {
       for (const descendantId of expandComponentIdsToDescendants(container, [componentId])) {
-        parentFrame.visitedDescendants.add(descendantId)
+        ensureFrameVisitedDescendants(parentFrame).add(descendantId)
       }
     }
 
@@ -3954,7 +4666,7 @@ const renderComponentToNodes = (
 
     if (parentFrame) {
       for (const descendantId of expandComponentIdsToDescendants(container, [componentId])) {
-        parentFrame.visitedDescendants.add(descendantId)
+        ensureFrameVisitedDescendants(parentFrame).add(descendantId)
       }
     }
 
@@ -3972,7 +4684,7 @@ const renderComponentToNodes = (
 
     const host = createExternalRootNode(container, componentId, externalMeta.kind)
     if (parentFrame) {
-      parentFrame.visitedDescendants.add(componentId)
+      ensureFrameVisitedDescendants(parentFrame).add(componentId)
     }
     if (mode === 'client') {
       scheduleExternalComponentMount(container, component, externalMeta, props)
@@ -4006,9 +4718,10 @@ const renderComponentToNodes = (
   } catch (error) {
     disposeCleanupSlot(speculativeEffectCleanupSlot)
     if (isPendingSignalError(error) && parentFrame) {
-      parentFrame.visitedDescendants.add(componentId)
-      for (const descendantId of frame.visitedDescendants) {
-        parentFrame.visitedDescendants.add(descendantId)
+      const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
+      parentVisitedDescendants.add(componentId)
+      for (const descendantId of getFrameVisitedDescendants(frame)) {
+        parentVisitedDescendants.add(descendantId)
       }
     }
     throw error
@@ -4021,7 +4734,7 @@ const renderComponentToNodes = (
       ? collectPreservedProjectionSlotComponentIds(container, previousStart, previousEnd)
       : new Set<string>()
   const keptDescendants = new Set([
-    ...frame.visitedDescendants,
+    ...getFrameVisitedDescendants(frame),
     ...preservedDescendants,
     ...collectMountedDescendantComponentIds(container, component),
   ])
@@ -4035,13 +4748,14 @@ const renderComponentToNodes = (
   }
 
   if (parentFrame) {
-    parentFrame.visitedDescendants.add(componentId)
+    const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
+    parentVisitedDescendants.add(componentId)
     for (const descendantId of keptDescendants) {
-      parentFrame.visitedDescendants.add(descendantId)
+      parentVisitedDescendants.add(descendantId)
     }
   }
 
-  scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleMountCallbacks(container, component, getFrameMountCallbacks(frame))
   scheduleVisibleCallbacksCheck(container)
   syncEffectOnlyLocalSignalPreference(component)
 
@@ -4059,6 +4773,11 @@ const wrapNodesWithKeyedRange = (
   doc.createComment(createKeyedRangeMarker(scope, key, 'end')),
 ]
 
+const createKeyedRangeBoundary = (doc: Document, scope: string, key: string | number | symbol) => ({
+  end: doc.createComment(createKeyedRangeMarker(scope, key, 'end')),
+  start: doc.createComment(createKeyedRangeMarker(scope, key, 'start')),
+})
+
 const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContainer): Node[] => {
   if (value.arr.length === 0) {
     return renderClientNodes((value.fallback ?? null) as JSX.Element, container)
@@ -4068,10 +4787,11 @@ const renderForValueToNodes = <T>(value: ForValue<T>, container: RuntimeContaine
   const nodes: Node[] = []
   for (let index = 0; index < value.arr.length; index += 1) {
     const item = value.arr[index]!
+    const [callbackItem, callbackIndex] = createForCallbackArgs(value, item, index)
     nodes.push(
       ...wrapNodesWithKeyedRange(
         container.doc!,
-        renderClientNodes(stripForChildRootKey(value.fn(item, index)), container),
+        renderClientNodes(stripForChildRootKey(value.fn(callbackItem, callbackIndex)), container),
         scope,
         resolveForItemKey(value, item, index),
       ),
@@ -4116,8 +4836,7 @@ const applyElementProp = (
     if (!eventMeta) {
       return
     }
-    element.setAttribute('data-eid', `e${container.nextElementId++}`)
-    element.setAttribute(`data-e-on${eventName}`, registerEventBinding(container, eventMeta))
+    setLiveClientEventBinding(container, element, eventName, eventMeta)
     return
   }
 
@@ -4203,7 +4922,9 @@ export const renderClientNodes = (
     return renderForValueToNodes(resolved, container)
   }
   if (typeof Node !== 'undefined' && resolved instanceof Node) {
-    rememberManagedAttributesForNode(resolved)
+    if (!hasRememberedManagedAttributesForSubtree(resolved)) {
+      rememberManagedAttributesForSubtree(resolved)
+    }
     return [resolved]
   }
   if (isProjectionSlot(resolved)) {
@@ -4257,7 +4978,7 @@ export const renderClientNodes = (
     const element = createElementNode(container.doc, resolved.type)
     const frame = getCurrentFrame()
     if (frame && hasScopedStyles(frame) && resolved.type !== 'style') {
-      element.setAttribute(SCOPED_STYLE_ATTR, frame.component.scopeId)
+      element.setAttribute(SCOPED_STYLE_ATTR, ensureComponentScopeId(container, frame.component))
     }
     let hasInnerHTML = false
     for (const [name, descriptor] of Object.entries(
@@ -4393,7 +5114,7 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
   return renderClientNodes(resolved as JSX.Element | JSX.Element[], container)
 }
 
-export const getRuntimeContainer = () => getCurrentContainer()
+export const getRuntimeContainer = () => getCurrentContainer() ?? currentEffect?.container ?? null
 
 export const captureClientInsertOwner = (
   container: RuntimeContainer | null,
@@ -4408,24 +5129,16 @@ export const captureClientInsertOwner = (
     typeof siteKey === 'string' && siteKey !== ''
       ? `${frame.component.id}.$i${siteKey}`
       : `${frame.component.id}.$i${frame.insertCursor++}`
-  getOrCreateComponentState(
-    container,
-    ownerComponentId,
-    CLIENT_INSERT_OWNER_SYMBOL,
-    frame.component.id,
-  )
-  frame.visitedDescendants.add(ownerComponentId)
   return {
     childIndex: 0,
     componentId: ownerComponentId,
     keyedRangeCursor: frame.keyedRangeCursor,
-    projectionCounters: [...frame.projectionState.counters.entries()],
+    projectionCounters: [...getFrameProjectionCounters(frame).entries()],
   }
 }
 
 export const createDetachedClientInsertOwner = (container: RuntimeContainer): ClientInsertOwner => {
   const componentId = `${CLIENT_INSERT_OWNER_ID_PREFIX}${container.nextComponentId++}`
-  getOrCreateComponentState(container, componentId, CLIENT_INSERT_OWNER_SYMBOL, ROOT_COMPONENT_ID)
   return {
     childIndex: 0,
     componentId,
@@ -4459,24 +5172,14 @@ const getOrCreateClientInsertOwnerComponent = (
   )
 
 const createKeyedForRowOwner = (
-  container: RuntimeContainer,
   ownerComponentId: string,
   rowOwnerIndex: number,
-): ClientInsertOwner => {
-  const componentId = `${ownerComponentId}.${rowOwnerIndex}`
-  getOrCreateComponentState(
-    container,
-    componentId,
-    CLIENT_INSERT_OWNER_SYMBOL,
-    inferClientInsertOwnerParentId(componentId),
-  )
-  return {
-    childIndex: 0,
-    componentId,
-    keyedRangeCursor: 0,
-    projectionCounters: [],
-  }
-}
+): ClientInsertOwner => ({
+  childIndex: 0,
+  componentId: `${ownerComponentId}.${rowOwnerIndex}`,
+  keyedRangeCursor: 0,
+  projectionCounters: [],
+})
 
 const removeNodesFromParent = (nodes: Node[], parent: ParentNode) => {
   for (const node of nodes) {
@@ -4496,6 +5199,45 @@ const insertNodesBeforeMarker = (nodes: Node[], parent: ParentNode, marker: Node
   }
 }
 
+const insertKeyedRangeBeforeMarker = (
+  parent: ParentNode,
+  marker: Node | undefined,
+  start: Comment,
+  bodyNodes: readonly Node[],
+  end: Comment,
+) => {
+  parent.insertBefore(start, marker ?? null)
+  for (const node of bodyNodes) {
+    parent.insertBefore(node, marker ?? null)
+  }
+  parent.insertBefore(end, marker ?? null)
+}
+
+const moveBoundaryRangeBeforeMarker = (
+  start: Comment,
+  end: Comment,
+  parent: ParentNode,
+  marker: Node | undefined,
+) => {
+  const doc = parent.ownerDocument ?? start.ownerDocument
+  if (!doc || typeof doc.createDocumentFragment !== 'function') {
+    insertNodesBeforeMarker(collectBoundaryRangeNodes(start, end), parent, marker)
+    return
+  }
+
+  const fragment = doc.createDocumentFragment()
+  let cursor: Node | null = start
+  while (cursor) {
+    const next: Node | null = cursor === end ? null : cursor.nextSibling
+    fragment.appendChild(cursor)
+    if (cursor === end) {
+      break
+    }
+    cursor = next
+  }
+  parent.insertBefore(fragment, marker ?? null)
+}
+
 const teardownKeyedForOwnerState = (
   container: RuntimeContainer,
   ownerComponent: ComponentState,
@@ -4506,6 +5248,7 @@ const teardownKeyedForOwnerState = (
   if (state) {
     for (const row of state.rows.values()) {
       removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
+      disposeKeyedForRowSignals(container, row as KeyedForRowState<unknown>)
       disposeComponentTree(container, row.owner.componentId)
     }
     keyedForOwnerStates.delete(ownerComponent)
@@ -4525,10 +5268,18 @@ export const reconcileClientKeyedForInPlace = (
   owner: ClientInsertOwner | null,
   parent: ParentNode,
   marker: Node | undefined,
-  currentNodes: Node[],
-): Node[] | null => {
+  getCurrentNodes: () => Node[],
+): KeyedForReconcileResult | null => {
   if (!owner) {
     return null
+  }
+
+  let cachedCurrentNodes: Node[] | null = null
+  const currentNodes = () => {
+    if (!cachedCurrentNodes) {
+      cachedCurrentNodes = getCurrentNodes()
+    }
+    return cachedCurrentNodes
   }
 
   let resolved: unknown = value
@@ -4558,21 +5309,201 @@ export const reconcileClientKeyedForInPlace = (
   const ownerComponent = getOrCreateClientInsertOwnerComponent(container, owner)
   if (!isForValue(resolved) || resolved.arr.length === 0) {
     if (keyedForOwnerStates.has(ownerComponent)) {
-      teardownKeyedForOwnerState(container, ownerComponent, parent, currentNodes)
+      teardownKeyedForOwnerState(container, ownerComponent, parent, currentNodes())
     }
     return null
   }
 
-  const state = (keyedForOwnerStates.get(ownerComponent) as
-    | KeyedForOwnerState<(typeof resolved.arr)[number]>
-    | undefined) ?? {
+  const state: KeyedForOwnerState<(typeof resolved.arr)[number]> = (keyedForOwnerStates.get(
+    ownerComponent,
+  ) as KeyedForOwnerState<(typeof resolved.arr)[number]> | undefined) ?? {
+    dirtyRows: [],
     nextRowOwnerIndex: 0,
     order: [],
+    orderedRows: [],
     rows: new Map(),
+    scope: allocateKeyedRangeScope(),
+    totalNodeCount: 0,
   }
   if (!keyedForOwnerStates.has(ownerComponent)) {
     keyedForOwnerStates.set(ownerComponent, state)
-    removeNodesFromParent(currentNodes, parent)
+    removeNodesFromParent(currentNodes(), parent)
+  }
+
+  const usesReactiveItem = resolved.reactiveRows
+  const usesReactiveIndex = resolved.reactiveRows && resolved.reactiveIndex !== false
+  const renderRowNodes = (
+    rowOwner: ClientInsertOwner,
+    callbackItem: (typeof resolved.arr)[number] | { value: (typeof resolved.arr)[number] },
+    callbackIndex: number | { value: number },
+  ) => {
+    const renderValue = (
+      resolved.reactiveRows
+        ? () =>
+            withSuppressedComponentSignalSubscriptions(rowOwner.componentId, () =>
+              stripForChildRootKey(
+                resolved.fn(callbackItem as (typeof resolved.arr)[number], callbackIndex as number),
+              ),
+            )
+        : () =>
+            stripForChildRootKey(
+              resolved.fn(callbackItem as (typeof resolved.arr)[number], callbackIndex as number),
+            )
+    ) as Insertable
+
+    return renderClientInsertableForOwner(renderValue, container, rowOwner)
+  }
+
+  if (state.rows.size === 0) {
+    const nextRows = new Map<
+      string | number | symbol,
+      KeyedForRowState<(typeof resolved.arr)[number]>
+    >()
+    const nextOrder: Array<string | number | symbol> = []
+    const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+    let needsRefRestore = false
+    let totalNodeCount = 0
+    const fragment =
+      container.doc && 'createDocumentFragment' in container.doc
+        ? container.doc.createDocumentFragment()
+        : null
+
+    withBatchedSignalWrites(container, () => {
+      for (let index = 0; index < resolved.arr.length; index += 1) {
+        const item = resolved.arr[index]!
+        const key = resolveForItemKey(resolved, item, index)
+        const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
+        const itemSignalId = `${rowOwner.componentId}:for:item`
+        const indexSignalId = `${rowOwner.componentId}:for:index`
+        const callbackItem = usesReactiveItem
+          ? createDetachedRuntimeSignal(container, itemSignalId, item)
+          : item
+        const callbackIndex = usesReactiveIndex
+          ? createDetachedRuntimeSignal(container, indexSignalId, index)
+          : index
+        const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
+        const { end, start } = createKeyedRangeBoundary(container.doc!, state.scope, key)
+        if (fragment) {
+          fragment.appendChild(start)
+          for (const node of bodyNodes) {
+            fragment.appendChild(node)
+          }
+          fragment.appendChild(end)
+        } else {
+          insertKeyedRangeBeforeMarker(parent, marker ?? undefined, start, bodyNodes, end)
+        }
+        needsRefRestore ||= nodesContainSignalRefMarkers(bodyNodes)
+
+        const row = {
+          end,
+          index,
+          indexSignal: usesReactiveIndex ? (callbackIndex as { value: number }) : undefined,
+          indexSignalId: usesReactiveIndex ? indexSignalId : undefined,
+          item,
+          itemSignal: usesReactiveItem
+            ? (callbackItem as { value: (typeof resolved.arr)[number] })
+            : undefined,
+          itemSignalId: usesReactiveItem ? itemSignalId : undefined,
+          key,
+          nodeCount: bodyNodes.length + 2,
+          owner: rowOwner,
+          start,
+        } satisfies KeyedForRowState<(typeof resolved.arr)[number]>
+
+        totalNodeCount += row.nodeCount
+        nextRows.set(key, row)
+        nextOrder[index] = key
+        nextOrderedRows[index] = row
+      }
+    })
+
+    if (fragment) {
+      parent.insertBefore(fragment, marker ?? null)
+    }
+
+    state.rows = nextRows
+    state.order = nextOrder
+    state.orderedRows = nextOrderedRows
+    state.totalNodeCount = totalNodeCount
+    keyedForOwnerStates.set(ownerComponent, state)
+
+    return {
+      firstNode: nextOrderedRows[0]?.start ?? marker,
+      needsRefRestore,
+      nodeCount: totalNodeCount,
+    }
+  }
+
+  let canUseStableOrderFastPath = state.orderedRows.length === resolved.arr.length
+  state.dirtyRows.length = 0
+  if (canUseStableOrderFastPath) {
+    for (let index = 0; index < resolved.arr.length; index += 1) {
+      const item = resolved.arr[index]!
+      const row = state.orderedRows[index]
+      if (!row) {
+        canUseStableOrderFastPath = false
+        break
+      }
+      if (
+        (row.item !== item || row.index !== index) &&
+        resolveForItemKey(resolved, item, index) !== row.key
+      ) {
+        canUseStableOrderFastPath = false
+        break
+      }
+      if (row.item !== item || row.index !== index) {
+        state.dirtyRows.push({ index, item, row })
+      }
+    }
+  }
+
+  if (canUseStableOrderFastPath) {
+    let totalNodeCountDelta = 0
+    const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] =
+      []
+    withBatchedSignalWrites(container, () => {
+      for (const { index, item, row } of state.dirtyRows) {
+        if (resolved.reactiveRows && (row.itemSignal || row.indexSignal)) {
+          if (row.itemSignal && row.item !== item) {
+            row.itemSignal.value = item
+          }
+          if (row.indexSignal && row.index !== index) {
+            row.indexSignal.value = index
+          }
+          reactiveRowsNeedingNodeCountRefresh.push(row)
+        } else {
+          const nextBodyNodes = renderClientInsertableForOwner(
+            stripForChildRootKey(resolved.fn(item, index)) as Insertable,
+            container,
+            row.owner,
+          )
+          if (!tryPatchBoundaryContentsInPlace(row.start, row.end, nextBodyNodes)) {
+            replaceBoundaryContents(row.start, row.end, nextBodyNodes)
+          }
+          const nextNodeCount = nextBodyNodes.length + 2
+          totalNodeCountDelta += nextNodeCount - row.nodeCount
+          row.nodeCount = nextNodeCount
+        }
+
+        row.item = item
+        row.index = index
+      }
+    })
+    for (const row of reactiveRowsNeedingNodeCountRefresh) {
+      const nextNodeCount = countNodesBetween(row.start, row.end)
+      totalNodeCountDelta += nextNodeCount - row.nodeCount
+      row.nodeCount = nextNodeCount
+    }
+    state.totalNodeCount += totalNodeCountDelta
+  }
+
+  if (canUseStableOrderFastPath) {
+    const { end, start } = getKeyedForOwnerRange(state)
+    return {
+      firstNode: start,
+      needsRefRestore: false,
+      nodeCount: state.totalNodeCount || countNodesBetween(start, end),
+    }
   }
 
   const nextRows = new Map<
@@ -4580,58 +5511,84 @@ export const reconcileClientKeyedForInPlace = (
     KeyedForRowState<(typeof resolved.arr)[number]>
   >()
   const nextOrder: Array<string | number | symbol> = []
+  const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+  let needsRefRestore = false
+  const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
 
-  for (let index = 0; index < resolved.arr.length; index += 1) {
-    const item = resolved.arr[index]!
-    const key = resolveForItemKey(resolved, item, index)
-    let row = state.rows.get(key)
+  let insertionReference = marker ?? null
 
-    if (!row) {
-      const rowOwner = createKeyedForRowOwner(
-        container,
-        owner.componentId,
-        state.nextRowOwnerIndex++,
-      )
-      const rowNodes = wrapNodesWithKeyedRange(
-        container.doc!,
-        renderClientInsertableForOwner(
-          stripForChildRootKey(resolved.fn(item, index)) as Insertable,
-          container,
-          rowOwner,
-        ),
-        allocateKeyedRangeScope(),
-        key,
-      )
-      insertNodesBeforeMarker(rowNodes, parent, marker)
-      row = {
-        end: rowNodes[rowNodes.length - 1]! as Comment,
-        index,
-        item,
-        key,
-        owner: rowOwner,
-        start: rowNodes[0]! as Comment,
-      }
-    } else {
-      const shouldRerender = row.item !== item || row.index !== index
-      if (shouldRerender) {
-        const nextBodyNodes = renderClientInsertableForOwner(
-          stripForChildRootKey(resolved.fn(item, index)) as Insertable,
-          container,
-          row.owner,
-        )
-        if (!tryPatchBoundaryContentsInPlace(row.start, row.end, nextBodyNodes)) {
-          replaceBoundaryContents(row.start, row.end, nextBodyNodes)
+  withBatchedSignalWrites(container, () => {
+    for (let index = resolved.arr.length - 1; index >= 0; index -= 1) {
+      const item = resolved.arr[index]!
+      const key = resolveForItemKey(resolved, item, index)
+      let row = state.rows.get(key)
+
+      if (!row) {
+        const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
+        const itemSignalId = `${rowOwner.componentId}:for:item`
+        const indexSignalId = `${rowOwner.componentId}:for:index`
+        const callbackItem = usesReactiveItem
+          ? createDetachedRuntimeSignal(container, itemSignalId, item)
+          : item
+        const callbackIndex = usesReactiveIndex
+          ? createDetachedRuntimeSignal(container, indexSignalId, index)
+          : index
+        const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
+        const { end, start } = createKeyedRangeBoundary(container.doc!, state.scope, key)
+        insertKeyedRangeBeforeMarker(parent, insertionReference ?? undefined, start, bodyNodes, end)
+        needsRefRestore ||= nodesContainSignalRefMarkers(bodyNodes)
+        row = {
+          end,
+          index,
+          indexSignal: usesReactiveIndex ? (callbackIndex as { value: number }) : undefined,
+          indexSignalId: usesReactiveIndex ? indexSignalId : undefined,
+          item,
+          itemSignal: usesReactiveItem
+            ? (callbackItem as { value: (typeof resolved.arr)[number] })
+            : undefined,
+          itemSignalId: usesReactiveItem ? itemSignalId : undefined,
+          key,
+          nodeCount: bodyNodes.length + 2,
+          owner: rowOwner,
+          start,
         }
+      } else {
+        const shouldRerender = row.item !== item || row.index !== index
+        if (shouldRerender) {
+          if (resolved.reactiveRows && (row.itemSignal || row.indexSignal)) {
+            if (row.itemSignal && row.item !== item) {
+              row.itemSignal.value = item
+            }
+            if (row.indexSignal && row.index !== index) {
+              row.indexSignal.value = index
+            }
+            reactiveRowsNeedingNodeCountRefresh.push(row)
+          } else {
+            const nextBodyNodes = renderRowNodes(row.owner, item, index)
+            if (!tryPatchBoundaryContentsInPlace(row.start, row.end, nextBodyNodes)) {
+              replaceBoundaryContents(row.start, row.end, nextBodyNodes)
+            }
+            row.nodeCount = nextBodyNodes.length + 2
+            needsRefRestore ||= nodesContainSignalRefMarkers(nextBodyNodes)
+          }
+        }
+
+        if (row.start.parentNode !== parent || row.end.nextSibling !== insertionReference) {
+          moveBoundaryRangeBeforeMarker(row.start, row.end, parent, insertionReference ?? undefined)
+        }
+        row.item = item
+        row.index = index
       }
 
-      const rowNodes = collectBoundaryRangeNodes(row.start, row.end)
-      insertNodesBeforeMarker(rowNodes, parent, marker)
-      row.item = item
-      row.index = index
+      nextRows.set(key, row)
+      nextOrder[index] = key
+      nextOrderedRows[index] = row
+      insertionReference = row.start
     }
+  })
 
-    nextRows.set(key, row)
-    nextOrder.push(key)
+  for (const row of reactiveRowsNeedingNodeCountRefresh) {
+    row.nodeCount = countNodesBetween(row.start, row.end)
   }
 
   for (const [key, row] of state.rows.entries()) {
@@ -4639,17 +5596,23 @@ export const reconcileClientKeyedForInPlace = (
       continue
     }
     removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
+    disposeKeyedForRowSignals(container, row as KeyedForRowState<unknown>)
     disposeComponentTree(container, row.owner.componentId)
   }
 
   state.rows = nextRows
   state.order = nextOrder
+  state.orderedRows = nextOrderedRows
+  state.totalNodeCount = [...nextRows.values()].reduce((total, row) => total + row.nodeCount, 0)
   keyedForOwnerStates.set(ownerComponent, state)
 
-  return nextOrder.flatMap((key) => {
-    const row = nextRows.get(key)
-    return row ? collectBoundaryRangeNodes(row.start, row.end) : []
-  })
+  const { start } = getKeyedForOwnerRange(state)
+
+  return {
+    firstNode: start,
+    needsRefRestore,
+    nodeCount: state.totalNodeCount,
+  }
 }
 
 export const renderClientInsertableForOwner = (
@@ -4661,37 +5624,73 @@ export const renderClientInsertableForOwner = (
     return renderClientInsertable(value, container)
   }
 
-  const component = getOrCreateClientInsertOwnerComponent(container, owner)
+  const parentId = inferClientInsertOwnerParentId(owner.componentId)
+  const existing = container.components.get(owner.componentId)
+  const component = existing
+    ? (() => {
+        syncComponentParent(container, existing, parentId)
+        existing.symbol = CLIENT_INSERT_OWNER_SYMBOL
+        return existing
+      })()
+    : getOrCreateComponentState(container, owner.componentId, CLIENT_INSERT_OWNER_SYMBOL, parentId)
+  const isFreshOwner = !existing
 
   const parentFrame = getCurrentFrame()
-  clearComponentSubscriptions(container, owner.componentId)
-  const oldDescendants = collectDescendantIds(container, owner.componentId)
-  resetComponentRenderEffects(component)
+  let oldDescendants: string[] | null = null
+  if (!isFreshOwner) {
+    clearComponentSubscriptions(container, owner.componentId)
+    oldDescendants = !component.childComponentIds?.size
+      ? null
+      : collectDescendantIds(container, owner.componentId)
+    resetComponentRenderEffects(component)
+  }
   const frame = createFrame(container, component, 'client', {
     reuseExistingDom: false,
     reuseProjectionSlotDom: false,
   })
   frame.childCursor = owner.childIndex
   frame.keyedRangeCursor = owner.keyedRangeCursor
-  frame.projectionState.counters = new Map(owner.projectionCounters)
+  if (owner.projectionCounters.length > 0) {
+    frame.projectionState.counters = new Map(owner.projectionCounters)
+  }
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => renderClientInsertable(value, container)),
   )
+  const visitedDescendants = getFrameVisitedDescendants(frame)
+  if (isFreshOwner) {
+    if (parentFrame && parentFrame !== frame) {
+      const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
+      parentVisitedDescendants.add(owner.componentId)
+      for (const descendantId of visitedDescendants) {
+        parentVisitedDescendants.add(descendantId)
+      }
+    }
+    return nodes
+  }
+  if (!oldDescendants && visitedDescendants.size === 0) {
+    if (parentFrame && parentFrame !== frame) {
+      ensureFrameVisitedDescendants(parentFrame).add(owner.componentId)
+    }
+    return nodes
+  }
   const keptDescendants = expandComponentIdsToDescendants(container, [
-    ...frame.visitedDescendants,
+    ...visitedDescendants,
     ...collectComponentBoundaryIds(nodes),
   ])
   pruneRemovedComponents(container, owner.componentId, keptDescendants)
-  for (const descendantId of oldDescendants) {
-    if (keptDescendants.has(descendantId)) {
-      continue
+  if (oldDescendants) {
+    for (const descendantId of oldDescendants) {
+      if (keptDescendants.has(descendantId)) {
+        continue
+      }
+      clearComponentSubscriptions(container, descendantId)
     }
-    clearComponentSubscriptions(container, descendantId)
   }
   if (parentFrame && parentFrame !== frame) {
-    parentFrame.visitedDescendants.add(owner.componentId)
+    const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
+    parentVisitedDescendants.add(owner.componentId)
     for (const descendantId of keptDescendants) {
-      parentFrame.visitedDescendants.add(descendantId)
+      parentVisitedDescendants.add(descendantId)
     }
   }
   return nodes
@@ -4732,7 +5731,9 @@ export const renderClientInsertable = (
     return [doc.createComment('eclipsa-empty')]
   }
   if (typeof Node !== 'undefined' && resolved instanceof Node) {
-    rememberManagedAttributesForNode(resolved)
+    if (!hasRememberedManagedAttributesForSubtree(resolved)) {
+      rememberManagedAttributesForSubtree(resolved)
+    }
     return [resolved]
   }
   if (
@@ -4770,6 +5771,7 @@ export const renderClientInsertable = (
 }
 
 const resetContainerForRouteRender = (container: RuntimeContainer) => {
+  container.rootChildComponentIds ??= new Set()
   for (const component of container.components.values()) {
     disposeComponentMountCleanups(component)
     pruneComponentVisibles(container, component, 0)
@@ -4791,15 +5793,24 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
   container.watches.clear()
 
   for (const [id, record] of Array.from(container.signals.entries())) {
-    for (const effect of Array.from(record.effects)) {
-      clearEffectSignals(effect)
+    const singleEffect = record.effect
+    if (singleEffect) {
+      clearEffectSignals(singleEffect)
     }
-    record.effects.clear()
-    record.subscribers.clear()
+    if (record.effects) {
+      for (const effect of Array.from(record.effects)) {
+        clearEffectSignals(effect)
+      }
+      record.effects = null
+    }
+    record.effect = null
+    clearSignalSubscribers(container, record)
     if (!isRouterSignalId(id) && !isAtomSignalId(id)) {
       container.signals.delete(id)
     }
   }
+
+  container.rootChildComponentIds.clear()
 }
 
 const trackSuspenseBoundaryPromise = (
@@ -4959,11 +5970,12 @@ const renderSuspenseComponentToNodes = (
   )
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
-  parentFrame.visitedDescendants.add(componentId)
-  for (const descendantId of frame.visitedDescendants) {
-    parentFrame.visitedDescendants.add(descendantId)
+  const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
+  parentVisitedDescendants.add(componentId)
+  for (const descendantId of getFrameVisitedDescendants(frame)) {
+    parentVisitedDescendants.add(descendantId)
   }
-  scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleMountCallbacks(container, component, getFrameMountCallbacks(frame))
   scheduleVisibleCallbacksCheck(container)
 
   if (!container.doc) {
@@ -5297,7 +6309,7 @@ const renderRouteSubtreeForProjectionSlot = (
   )
   return {
     nodes,
-    visitedDescendants: frame.visitedDescendants,
+    visitedDescendants: frame.visitedDescendants ?? new Set<string>(),
   }
 }
 
@@ -5706,11 +6718,18 @@ const resetRouteLoaderState = (container: RuntimeContainer) => {
     if (!isLoaderSignalId(id)) {
       continue
     }
-    for (const effect of Array.from(record.effects)) {
-      clearEffectSignals(effect)
+    const singleEffect = record.effect
+    if (singleEffect) {
+      clearEffectSignals(singleEffect)
     }
-    record.effects.clear()
-    record.subscribers.clear()
+    if (record.effects) {
+      for (const effect of Array.from(record.effects)) {
+        clearEffectSignals(effect)
+      }
+      record.effects = null
+    }
+    record.effect = null
+    clearSignalSubscribers(container, record)
     container.signals.delete(id)
   }
 }
@@ -6216,7 +7235,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     }
     component.active = true
     const keptDescendants = new Set([
-      ...frame.visitedDescendants,
+      ...getFrameVisitedDescendants(frame),
       ...preservedDescendants,
       ...collectMountedDescendantComponentIds(container, component),
     ])
@@ -6233,7 +7252,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
 
   clearComponentSubscriptions(container, componentId)
   const oldDescendants = collectDescendantIds(container, componentId)
-  const scope = materializeScope(container, component.scopeId)
+  const scope = materializeScope(container, ensureComponentScopeId(container, component))
   await preloadResumableValue(container, scope)
   const module = await loadSymbol(container, activateSymbol)
   const rawProps =
@@ -6389,7 +7408,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   component.active = true
 
   const keptDescendants = new Set([
-    ...frame.visitedDescendants,
+    ...getFrameVisitedDescendants(frame),
     ...preservedDescendants,
     ...collectMountedDescendantComponentIds(container, component),
   ])
@@ -6401,7 +7420,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     }
     clearComponentSubscriptions(container, descendantId)
   }
-  scheduleMountCallbacks(container, component, frame.mountCallbacks)
+  scheduleMountCallbacks(container, component, getFrameMountCallbacks(frame))
   scheduleVisibleCallbacksCheck(container)
   syncEffectOnlyLocalSignalPreference(component)
   return patched
@@ -6745,6 +7764,7 @@ export const beginSSRContainer = <T>(
   const container = createContainer(symbols)
   const rootComponent: ComponentState = {
     active: false,
+    childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
     mountCleanupSlots: [],
@@ -6756,6 +7776,7 @@ export const beginSSRContainer = <T>(
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    subscribedSignalIds: new Set(),
     suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
@@ -6789,6 +7810,7 @@ export const beginAsyncSSRContainer = async <T>(
   )
   const rootComponent: ComponentState = {
     active: false,
+    childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
     mountCleanupSlots: [],
@@ -6800,6 +7822,7 @@ export const beginAsyncSSRContainer = async <T>(
     scopeId: registerScope(container, []),
     signalIds: [],
     symbol: ROOT_COMPONENT_ID,
+    subscribedSignalIds: new Set(),
     suspensePromise: null,
     visibleCount: 0,
     watchCount: 0,
@@ -6844,8 +7867,12 @@ export const disposeDetachedRuntimeComponent = (
     container.asyncSignalStates.delete(signalId)
     container.asyncSignalSnapshotCache.delete(signalId)
   }
-  container.scopes.delete(component.scopeId)
+  if (component.scopeId) {
+    container.scopes.delete(component.scopeId)
+  }
   container.dirty.delete(component.id)
+  component.childComponentIds?.clear()
+  detachComponentFromParent(container, component.id, component.parentId)
   container.components.delete(component.id)
 }
 
@@ -6860,7 +7887,7 @@ const createResumePayload = (
   const keepSignals = new Set(componentEntries.flatMap(([, component]) => component.signalIds))
   if (keepComponents) {
     for (const [id, record] of container.signals.entries()) {
-      if ([...record.subscribers].some((componentId) => keepComponents.has(componentId))) {
+      if ([...(record.subscribers ?? [])].some((componentId) => keepComponents.has(componentId))) {
         keepSignals.add(id)
       }
     }
@@ -6894,7 +7921,7 @@ const createResumePayload = (
           ...(component.projectionSlots
             ? { projectionSlots: { ...component.projectionSlots } }
             : {}),
-          scope: component.scopeId,
+          scope: ensureComponentScopeId(container, component),
           signalIds: [...component.signalIds],
           symbol: component.symbol,
           visibleCount: component.visibleCount,
@@ -6923,7 +7950,7 @@ const createResumePayload = (
         .filter(([id]) => !keepComponents || keepSignals.has(id))
         .map(([id, record]) => [
           id,
-          [...record.subscribers].filter(
+          [...(record.subscribers ?? [])].filter(
             (componentId) => !keepComponents || keepComponents.has(componentId),
           ),
         ]),
@@ -6950,7 +7977,7 @@ const createResumePayload = (
             componentId: watch.componentId,
             mode: watch.mode,
             scope: watch.scopeId,
-            signals: [...watch.effect.signals].map((signal) => signal.id),
+            signals: listEffectSignalIds(watch.effect),
             symbol: watch.symbol,
           } satisfies ResumeWatchPayload,
         ]),
@@ -7011,6 +8038,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
   for (const [id, componentPayload] of Object.entries(payload.components)) {
     container.components.set(id, {
       active: false,
+      childComponentIds: new Set(),
       didMount: false,
       external: componentPayload.external
         ? {
@@ -7021,7 +8049,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       externalInstance: undefined,
       externalMeta: null,
       id,
-      mountCleanupSlots: [],
+      mountCleanupSlots: null,
       optimizedRoot: componentPayload.optimizedRoot === true,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
       prefersEffectOnlyLocalSignalWrites: false,
@@ -7034,18 +8062,28 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       scopeId: componentPayload.scope,
       signalIds: [...componentPayload.signalIds],
       symbol: componentPayload.symbol,
+      subscribedSignalIds: null,
       suspensePromise: null,
       visibleCount: componentPayload.visibleCount ?? 0,
       watchCount: componentPayload.watchCount,
     })
   }
 
+  rebuildComponentTopology(container)
+
   for (const [signalId, subscribers] of Object.entries(payload.subscriptions)) {
     const record = container.signals.get(signalId)
     if (!record) {
       continue
     }
+    clearSignalSubscribers(container, record)
     record.subscribers = new Set(subscribers)
+    for (const componentId of subscribers) {
+      const component = container.components.get(componentId)
+      if (component) {
+        ;(component.subscribedSignalIds ??= new Set()).add(signalId)
+      }
+    }
   }
   container.nextSignalId = findNextNumericId(container.signals.keys(), 's')
   container.nextAtomId = findNextNumericId(container.signals.keys(), 'a')
@@ -7064,8 +8102,8 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       if (!record) {
         continue
       }
-      watch.effect.signals.add(record)
-      record.effects.add(watch.effect)
+      addEffectSignal(watch.effect, record)
+      addSignalEffect(record, watch.effect)
     }
   }
 
@@ -7211,7 +8249,7 @@ export const createResumeContainer = (
   ensureRouterState(container, options?.routeManifest)
 
   mergeResumePayload(container, payload)
-  rememberManagedAttributesForNode(root as HTMLElement)
+  rememberManagedAttributesForSubtree(root as HTMLElement)
   bindComponentBoundaries(container, root as HTMLElement)
   for (const component of container.components.values()) {
     component.externalSlotHtml = captureExternalSlotHtml(component)
@@ -7385,14 +8423,21 @@ const getRouterEventState = (event: Event): RouterEventState => {
   return state
 }
 
-const findInteractiveTarget = (target: EventTarget | null, eventName: string): Element | null => {
+const findInteractiveTarget = (
+  container: RuntimeContainer,
+  target: EventTarget | null,
+  eventName: string,
+): Element | null => {
   let element = isElementNode(target)
     ? target
     : target instanceof Node
       ? target.parentElement
       : null
   while (element) {
-    if (element.hasAttribute(`data-e-on${eventName}`)) {
+    if (
+      getLiveClientEventBinding(container, element, eventName) ||
+      element.hasAttribute(`data-e-on${eventName}`)
+    ) {
       return element
     }
     element = element.parentElement
@@ -7440,7 +8485,30 @@ const prefetchInteractiveTargetSymbols = (
       : null
 
   while (element) {
-    prefetchElementSymbols(container, element, eventNames)
+    let sawInteractiveBinding = false
+    for (const eventName of eventNames) {
+      const liveBinding = getLiveClientEventBinding(container, element, eventName)
+      if (liveBinding) {
+        sawInteractiveBinding = true
+        if (typeof liveBinding !== 'function') {
+          void loadSymbol(container, liveBinding.symbol).catch(() => {})
+        }
+        continue
+      }
+      if (!element.hasAttribute(`data-e-on${eventName}`)) {
+        continue
+      }
+      sawInteractiveBinding = true
+      const binding = element.getAttribute(`data-e-on${eventName}`)
+      if (!binding) {
+        continue
+      }
+      const { symbolId } = parseBinding(binding)
+      void loadSymbol(container, symbolId).catch(() => {})
+    }
+    if (sawInteractiveBinding) {
+      return
+    }
     element = element.parentElement
   }
 }
@@ -7618,15 +8686,23 @@ export const installResumeLinkListeners = (container: RuntimeContainer) => {
   }
 }
 
+const parsedBindingCache = new Map<string, { scopeId: string; symbolId: string }>()
+
 const parseBinding = (value: string): { scopeId: string; symbolId: string } => {
+  const cached = parsedBindingCache.get(value)
+  if (cached) {
+    return cached
+  }
   const separatorIndex = value.indexOf(':')
   if (separatorIndex < 0) {
     throw new Error(`Invalid binding ${value}.`)
   }
-  return {
+  const parsed = {
     symbolId: value.slice(0, separatorIndex),
     scopeId: value.slice(separatorIndex + 1),
   }
+  parsedBindingCache.set(value, parsed)
+  return parsed
 }
 
 const withClientContainer = async <T>(container: RuntimeContainer, fn: () => Promise<T> | T) =>
@@ -7694,34 +8770,46 @@ export const syncBoundElementSignal = (container: RuntimeContainer, target: Even
   return didSync
 }
 
-export const createClientLazyListener = (
-  descriptor: EventDescriptor | LazyMeta,
+const dispatchLiveClientEvent = async (
+  container: RuntimeContainer,
+  handler: EventDescriptor | LazyMeta | ((event: Event) => unknown),
   currentTarget: Element,
+  event: Event,
 ) => {
-  const container = getCurrentContainer()
-  if (!container) {
-    return null
+  const delegatedEvent = createDelegatedEvent(event, currentTarget)
+
+  if (typeof handler === 'function') {
+    await withClientContainer(container, async () => {
+      await handler.call(currentTarget, delegatedEvent)
+    })
+    await flushDirtyComponents(container)
+    return
   }
 
-  return async (event: Event) => {
-    const module = await loadSymbol(container, descriptor.symbol)
-    try {
-      await withClientContainer(container, async () => {
-        await module.default(descriptor.captures(), createDelegatedEvent(event, currentTarget))
-      })
-    } catch (error) {
-      throw wrapGeneratedScopeReferenceError(error, {
-        phase: 'running a lazy event handler for',
-        symbolId: descriptor.symbol,
-      })
-    }
-    await flushDirtyComponents(container)
+  const module = await loadSymbol(container, handler.symbol)
+  try {
+    await withClientContainer(container, async () => {
+      await module.default(handler.captures(), delegatedEvent)
+    })
+  } catch (error) {
+    throw wrapGeneratedScopeReferenceError(error, {
+      phase: 'running a live client event handler for',
+      symbolId: handler.symbol,
+    })
   }
+  await flushDirtyComponents(container)
 }
 
 export const dispatchResumeEvent = async (container: RuntimeContainer, event: Event) => {
-  const interactiveTarget = findInteractiveTarget(event.target, event.type)
+  const interactiveTarget = findInteractiveTarget(container, event.target, event.type)
   if (!interactiveTarget) {
+    return
+  }
+  const liveBinding = getLiveClientEventBinding(container, interactiveTarget, event.type)
+  if (liveBinding) {
+    const pendingFocus = capturePendingFocusRestore(container, event.target)
+    await dispatchLiveClientEvent(container, liveBinding, interactiveTarget, event)
+    restorePendingFocus(container, pendingFocus)
     return
   }
 
@@ -8010,7 +9098,9 @@ export const isRouteNotFoundError = (error: unknown) =>
 export const createEffect = (fn: () => void, options?: EffectOptions) => {
   const container = getCurrentContainer()
   const frame = getCurrentFrame()
+  const runInContainer = options?.runInContainer !== false
   const effect: ReactiveEffect = {
+    collecting: false,
     container,
     fn() {
       runReactiveEffectInContainer(effect, () => {
@@ -8032,16 +9122,24 @@ export const createEffect = (fn: () => void, options?: EffectOptions) => {
         fn()
       })
     },
-    signals: new Set(),
-  }
-
-  if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
-    frame.effectCleanupSlot.callbacks.push(() => {
-      clearEffectSignals(effect)
-    })
+    nextSignal: null,
+    nextSignals: null,
+    queued: false,
+    runInContainer,
+    signal: null,
+    signals: null,
   }
 
   effect.fn()
+
+  if (
+    frame &&
+    frame.mode === 'client' &&
+    frame.component.id !== ROOT_COMPONENT_ID &&
+    effectHasTrackedSignals(effect)
+  ) {
+    ;(ensureFrameEffectCleanupSlot(frame).effects ??= []).push(effect)
+  }
 
   return () => {
     clearEffectSignals(effect)
@@ -8054,7 +9152,7 @@ export const createOnCleanup = (fn: () => void) => {
       'onCleanup() can only be used while running onMount(), onVisible(), or useWatch() callbacks.',
     )
   }
-  currentCleanupSlot.callbacks.push(fn)
+  ;(currentCleanupSlot.callbacks ??= []).push(fn)
 }
 
 export const createOnMount = (fn: () => void) => {
@@ -8062,7 +9160,7 @@ export const createOnMount = (fn: () => void) => {
   if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
     return
   }
-  frame.mountCallbacks.push(fn)
+  ensureFrameMountCallbacks(frame).push(fn)
 }
 
 export const createOnVisible = (fn: () => void) => {
@@ -8098,13 +9196,18 @@ export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) =>
   if (!container || !frame || frame.component.id === ROOT_COMPONENT_ID || !watchMeta) {
     const cleanupSlot = createCleanupSlot()
     const effect: ReactiveEffect = {
+      collecting: false,
       container,
       fn() {
         runReactiveEffectInContainer(effect, () => {
           createLocalWatchRunner(effect, cleanupSlot, fn, dependencies)()
         })
       },
-      signals: new Set(),
+      nextSignal: null,
+      nextSignals: null,
+      queued: false,
+      signal: null,
+      signals: null,
     }
     effect.fn()
     return

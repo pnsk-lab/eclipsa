@@ -69,6 +69,7 @@ const createContainer = () => ({
   nextScopeId: 0,
   nextSignalId: 0,
   pendingSuspensePromises: /* @__PURE__ */ new Set(),
+  rootChildComponentIds: /* @__PURE__ */ new Set(),
   rootChildCursor: 0,
   rootElement: void 0,
   router: null,

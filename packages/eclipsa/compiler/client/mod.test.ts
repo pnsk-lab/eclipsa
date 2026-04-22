@@ -90,8 +90,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    const headerInsertIndex = resultCode.indexOf('_insert(_createComponent(Header')
-    const childrenInsertIndex = resultCode.indexOf('_insert(() => props.children')
+    const headerInsertIndex = resultCode.indexOf('_insertStatic(_createComponent(Header')
+    const childrenInsertIndex = resultCode.indexOf('_insertElementStatic(props.children')
     expect(headerInsertIndex).toBeGreaterThanOrEqual(0)
     expect(childrenInsertIndex).toBeGreaterThanOrEqual(0)
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
@@ -106,9 +106,9 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[0\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.firstChild;/)
     expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[2\];/)
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[3\];/)
+    expect(resultCode).toMatch(/var __eclipsaNode\d+ = __eclipsaNode\d+\.nextSibling;/)
     expect(resultCode).not.toContain(
       '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
     )
@@ -157,10 +157,52 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toContain('<div class=\\"card\\"></div>')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
-    expect(resultCode).toContain('_attr(_cloned, "data-id", () => id);')
+    expect(resultCode).toContain('_attrStatic(_cloned, "data-id", id);')
     expect(resultCode).toContain(
-      '_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");',
+      '_attrStatic(_cloned, "dangerouslySetInnerHTML", "<span>raw</span>");',
     )
+  })
+
+  it('routes tracked class bindings through the specialized class helper', async () => {
+    const resultCode = await compileClientModule(
+      `<div class={selected.value === rowId ? 'danger' : ''} />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain(
+      '_className(_cloned, () => selected.value === rowId ? "danger" : "");',
+    )
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+  })
+
+  it('routes static event bindings through the specialized event helper', async () => {
+    const resultCode = await compileClientModule(
+      `<button onClick={handleClick}>Run</button>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic(_cloned, "click", handleClick);')
+    expect(resultCode).not.toContain('_attrStatic(_cloned, "onClick", handleClick);')
+  })
+
+  it('routes direct-mode static event bindings through the plain listener helper', async () => {
+    const resultCode = await compileClientModule(
+      `<button onClick={handleClick}>Run</button>`,
+      'mod.test.tsx',
+      {
+        eventMode: 'direct',
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_listenerStatic(_cloned, "click", handleClick);')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", handleClick);')
   })
 
   it('emits dangerouslySetInnerHTML through runtime attr application', async () => {
@@ -172,7 +214,7 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('_attr(')
+    expect(resultCode).toContain('_attrStatic(')
     expect(resultCode).toContain('"dangerouslySetInnerHTML"')
     expect(resultCode).not.toContain('dangerouslySetInnerHTML="&lt;span&gt;raw&lt;/span&gt;"')
   })
@@ -220,7 +262,168 @@ describe('compileClientModule', () => {
 
     expect(resultCode).not.toContain('=> <li')
     expect(resultCode).toContain('_createComponent(For')
-    expect(resultCode).toContain('<li><!-- 0 --></li>')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li></li>");')
+    expect(resultCode).toContain('_insertElementStatic(todo, _cloned);')
+  })
+
+  it('emits one-shot inserts for expressions that do not read signals directly', async () => {
+    const resultCode = await compileClientModule(`<div>{row.label}</div>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('_insertElementStatic(row.label, _cloned);')
+    expect(resultCode).not.toContain('_insert(() => row.label')
+  })
+
+  it('omits comment markers for intrinsic elements that only contain one static runtime child', async () => {
+    const resultCode = await compileClientModule(`<a>{label}</a>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<a></a>");')
+    expect(resultCode).toContain('_insertElementStatic(label, _cloned);')
+    expect(resultCode).not.toContain('<!-- 0 -->')
+  })
+
+  it('keeps signal-backed text expressions on the tracked insert path', async () => {
+    const resultCode = await compileClientModule(`<div>{count.value}</div>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('_text(() => count.value, _cloned);')
+    expect(resultCode).not.toContain('<!-- 0 -->')
+  })
+
+  it('keeps signal-backed component props on the tracked insert path', async () => {
+    const resultCode = await compileClientModule(
+      `<div><Layout value={count.value} flag={enabled.value} /></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_insert(() => _createComponent(Layout, {')
+    expect(resultCode).toMatch(/get "value"\(\)\s*\{\s*return count\.value;\s*\}/)
+    expect(resultCode).toMatch(/get "flag"\(\)\s*\{\s*return enabled\.value;\s*\}/)
+    expect(resultCode).not.toContain('_insertStatic(_createComponent(Layout')
+  })
+
+  it('keeps dynamic For props on the tracked insert path', async () => {
+    const resultCode = await compileClientModule(
+      `<div><For arr={rows.value} fn={(row) => <li>{row.label}</li>} key={(row) => row.id} /></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_insert(() => _createComponent(For, {')
+    expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
+    expect(resultCode).not.toContain('_insertStatic(_createComponent(For')
+  })
+
+  it('reuses identical intrinsic templates across multiple lowered JSX roots', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <div>
+          {left.map((item) => <span>{item.label}</span>)}
+          {right.map((item) => <span>{item.label}</span>)}
+        </div>
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(
+      resultCode.match(/const __eclipsaTemplate\d+ = _createTemplate\("<span><\/span>"\);/g),
+    ).toHaveLength(1)
+  })
+
+  it('keeps explicit For callbacks on raw rows unless the user opts into reactive row handles', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          fn={(row) => {
+            const rowId = row.id
+            const label = row.label
+            const handleClick = () => select(rowId)
+
+            return (
+              <tr class={selected.value === rowId ? 'danger' : ''}>
+                <td>{rowId}</td>
+                <td><a onClick={handleClick}>{label}</a></td>
+              </tr>
+            )
+          }}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('"reactiveRows": true')
+    expect(resultCode).not.toContain('"reactiveIndex": false')
+    expect(resultCode).toContain('const rowId = row.id;')
+    expect(resultCode).toContain('const label = row.label;')
+    expect(resultCode).toContain('_insertElementStatic(rowId')
+    expect(resultCode).toContain('_insertElementStatic(label')
+    expect(resultCode).toContain('_className(')
+    expect(resultCode).toContain('selected.value === rowId')
+    expect(resultCode).toContain('_eventStatic(')
+    expect(resultCode).toContain('"click", handleClick')
+    expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
+  })
+
+  it('passes function props to components as stable values', async () => {
+    const resultCode = await compileClientModule(
+      `<For fn={(todo, i) => <li key={i}>{todo.label}</li>} key={(todo) => todo.id} />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('"fn": (todo, i) => (() => {')
+    expect(resultCode).toContain('"key": (todo) => todo.id')
+    expect(resultCode).not.toContain('get "fn"()')
+    expect(resultCode).not.toContain('get "key"()')
+  })
+
+  it('lowers direct JSX map callbacks onto reactive row signals when callback params are simple identifiers', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item, i) => <li data-id={item.id}>{i}:{item.label}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('reactiveRows: true')
+    expect(resultCode).toContain('_text(() => i.value')
+    expect(resultCode).toContain('item.value.label')
+    expect(resultCode).toContain('item.value.id')
+    expect(resultCode).not.toContain('reactiveIndex: false')
+  })
+
+  it('skips reactive row lowering when callback params already access a raw value property', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item) => <li>{item.value}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('reactiveRows: true')
+    expect(resultCode).toContain('item.value')
+    expect(resultCode).not.toContain('item.value.value')
   })
 
   it('lowers ternaries with JSX branches to Show components', async () => {
@@ -250,7 +453,8 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
     expect(resultCode).toContain('_createComponent(__eclipsaShow')
     expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
-    expect(resultCode).toContain('<span><!-- 0 --></span>')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<span></span>");')
+    expect(resultCode).toContain('_insertElementStatic(count, _cloned);')
   })
 
   it('lowers || expressions with JSX branches to Show components', async () => {

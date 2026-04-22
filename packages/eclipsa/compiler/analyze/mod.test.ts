@@ -329,14 +329,14 @@ describe('analyzeModule()', () => {
       };
     `)
 
-    expect(analyzed.code).toContain('__eclipsaLazy')
-    expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
+    expect(analyzed.code).toContain('__eclipsaEvent')
+    expect(analyzed.code).toContain('const handler = __eclipsaEvent("click",')
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
-      1,
+      0,
     )
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
-      0,
+      1,
     )
   })
 
@@ -352,14 +352,14 @@ describe('analyzeModule()', () => {
       };
     `)
 
-    expect(analyzed.code).toContain('__eclipsaLazy')
-    expect(analyzed.code).toContain('const handler = __eclipsaLazy(')
+    expect(analyzed.code).toContain('__eclipsaEvent')
+    expect(analyzed.code).toContain('const handler = __eclipsaEvent("click",')
     expect(analyzed.code).toContain('return <button onClick={handler}>{ready}</button>;')
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
-      1,
+      0,
     )
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
-      0,
+      1,
     )
   })
 
@@ -376,13 +376,13 @@ describe('analyzeModule()', () => {
       };
     `)
 
-    expect(analyzed.code).toContain('__eclipsaLazy')
-    expect(analyzed.code).toContain('return <button onClick={__eclipsaLazy(')
+    expect(analyzed.code).toContain('__eclipsaEvent')
+    expect(analyzed.code).toContain('return <button onClick={__eclipsaEvent("click",')
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
-      1,
+      0,
     )
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
-      0,
+      1,
     )
   })
 

@@ -417,11 +417,27 @@ export const getEventMeta = (value: unknown): EventDescriptor | LazyMeta | null 
 }
 
 export const setSignalMeta = <T>(target: { value: T }, meta: SignalMeta<T>): { value: T } => {
+  ;(target as Record<PropertyKey, unknown>)[SIGNAL_META_KEY] = meta
+  return target
+}
+
+export const setLazySignalMeta = <T>(
+  target: { value: T },
+  createMeta: () => SignalMeta<T>,
+): { value: T } => {
   Object.defineProperty(target, SIGNAL_META_KEY, {
     configurable: true,
     enumerable: false,
-    value: meta,
-    writable: true,
+    get() {
+      const meta = createMeta()
+      Object.defineProperty(target, SIGNAL_META_KEY, {
+        configurable: true,
+        enumerable: false,
+        value: meta,
+        writable: true,
+      })
+      return meta
+    },
   })
   return target
 }

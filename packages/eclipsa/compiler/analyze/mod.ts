@@ -2,6 +2,7 @@ import ts from 'typescript'
 import { runRustAnalyzeCompiler } from '@eclipsa/optimizer'
 
 type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
+export type AnalyzeEventMode = 'resumable' | 'direct'
 
 export interface ResumeSymbol {
   captures: string[]
@@ -220,9 +221,12 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
 export const analyzeModule = async (
   source: string,
   id = 'analyze-input.tsx',
+  options?: {
+    eventMode?: AnalyzeEventMode
+  },
 ): Promise<AnalyzedModule> => {
   validateSingleReturnComponents(source, id)
-  const analyzed = await runRustAnalyzeCompiler(id, source)
+  const analyzed = await runRustAnalyzeCompiler(id, source, options?.eventMode)
   const code = annotateOptimizedRootComponents(analyzed.code, id)
   return {
     actions: new Map(analyzed.actions),

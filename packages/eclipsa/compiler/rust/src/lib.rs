@@ -1,6 +1,6 @@
 mod analyze;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::panic::{self, AssertUnwindSafe};
 
@@ -8,8 +8,10 @@ use napi::Error;
 use napi_derive::napi;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrowFunctionExpression, CallExpression, ConditionalExpression, ExportDefaultDeclaration,
+    ArrowFunctionExpression, CallExpression, ComputedMemberExpression, ConditionalExpression, ExportDefaultDeclaration,
     ExportDefaultDeclarationKind, Expression,
+    IdentifierReference,
+    VariableDeclarationKind,
     JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
     JSXExpression, JSXFragment, JSXMemberExpressionObject, LogicalExpression, LogicalOperator, Program,
     Statement, StaticMemberExpression, VariableDeclarator,
@@ -25,7 +27,14 @@ use crate::analyze::AnalyzeResponse;
 
 const CLIENT_CREATE_TEMPLATE: &str = "_createTemplate";
 const CLIENT_INSERT: &str = "_insert";
+const CLIENT_INSERT_STATIC: &str = "_insertStatic";
+const CLIENT_INSERT_ELEMENT_STATIC: &str = "_insertElementStatic";
+const CLIENT_TEXT: &str = "_text";
 const CLIENT_ATTR: &str = "_attr";
+const CLIENT_ATTR_STATIC: &str = "_attrStatic";
+const CLIENT_CLASS_NAME: &str = "_className";
+const CLIENT_EVENT_STATIC: &str = "_eventStatic";
+const CLIENT_LISTENER_STATIC: &str = "_listenerStatic";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
 const SSR_JSX_DEV: &str = "_jsxDEV";
 const SSR_RAW: &str = "_ssrRaw";
@@ -53,14 +62,21 @@ pub(crate) struct Replacement {
 
 #[derive(Debug)]
 enum ClientInsertOp {
-    Apply { expr: String, path: Vec<usize> },
-    Component { component: String, path: Vec<usize>, props: String },
+    Apply { expr: String, path: Vec<usize>, tracked: bool },
+    ApplyElementStatic { expr: String, path: Vec<usize> },
+    Component {
+        component: String,
+        path: Vec<usize>,
+        props: String,
+        tracked: bool,
+    },
 }
 
 #[derive(Debug)]
 struct ClientAttrOp {
     name: String,
     path: Vec<usize>,
+    tracked: bool,
     value: String,
 }
 
@@ -81,6 +97,37 @@ impl<'a> Visit<'a> for JsxPresenceCollector {
 fn expression_contains_jsx<'a>(expression: &Expression<'a>) -> bool {
     let mut collector = JsxPresenceCollector { found: false };
     collector.visit_expression(expression);
+    collector.found
+}
+
+struct SignalValueReadCollector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for SignalValueReadCollector {
+    fn visit_computed_member_expression(&mut self, expression: &ComputedMemberExpression<'a>) {
+        if matches!(
+            &expression.expression,
+            Expression::StringLiteral(literal) if literal.value.as_str() == "value"
+        ) {
+            self.found = true;
+            return;
+        }
+        walk::walk_computed_member_expression(self, expression);
+    }
+
+    fn visit_static_member_expression(&mut self, expression: &StaticMemberExpression<'a>) {
+        if expression.property.name.as_str() == "value" {
+            self.found = true;
+            return;
+        }
+        walk::walk_static_member_expression(self, expression);
+    }
+}
+
+fn jsx_expression_reads_signal_value<'a>(expression: &JSXExpression<'a>) -> bool {
+    let mut collector = SignalValueReadCollector { found: false };
+    collector.visit_jsx_expression(expression);
     collector.found
 }
 
@@ -118,6 +165,395 @@ fn is_direct_jsx_map_callback<'a>(callback: &'a ArrowFunctionExpression<'a>) -> 
         unwrap_parenthesized_expression(body),
         Expression::JSXElement(_) | Expression::JSXFragment(_)
     )
+}
+
+fn callback_contains_jsx<'a>(callback: &'a ArrowFunctionExpression<'a>) -> bool {
+    let mut collector = JsxPresenceCollector { found: false };
+    collector.visit_arrow_function_expression(callback);
+    collector.found
+}
+
+fn collect_simple_arrow_param_names<'a>(callback: &'a ArrowFunctionExpression<'a>) -> Option<Vec<String>> {
+    if callback.params.rest.is_some() || callback.params.items.len() > 2 {
+        return None;
+    }
+
+    let mut names = Vec::new();
+    for param in &callback.params.items {
+        let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &param.pattern.kind else {
+            return None;
+        };
+        names.push(identifier.name.as_str().to_string());
+    }
+    Some(names)
+}
+
+struct ParamValuePropertyCollector {
+    found: bool,
+    param_names: Vec<String>,
+}
+
+impl<'a> Visit<'a> for ParamValuePropertyCollector {
+    fn visit_computed_member_expression(&mut self, expression: &ComputedMemberExpression<'a>) {
+        if matches!(
+            &expression.expression,
+            Expression::StringLiteral(literal) if literal.value.as_str() == "value"
+        ) {
+            if let Expression::Identifier(identifier) = &expression.object {
+                if self.param_names.iter().any(|name| name == identifier.name.as_str()) {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        walk::walk_computed_member_expression(self, expression);
+    }
+
+    fn visit_static_member_expression(&mut self, expression: &StaticMemberExpression<'a>) {
+        if expression.property.name.as_str() == "value" {
+            if let Expression::Identifier(identifier) = &expression.object {
+                if self.param_names.iter().any(|name| name == identifier.name.as_str()) {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        walk::walk_static_member_expression(self, expression);
+    }
+}
+
+fn callback_reads_param_value_property<'a>(
+    callback: &'a ArrowFunctionExpression<'a>,
+    param_names: &[String],
+) -> bool {
+    let Some(body) = get_arrow_expression_body(callback) else {
+        return false;
+    };
+    let mut collector = ParamValuePropertyCollector {
+        found: false,
+        param_names: param_names.to_vec(),
+    };
+    collector.visit_expression(body);
+    collector.found
+}
+
+struct IdentifierReadCollector {
+    found: bool,
+    names: Vec<String>,
+}
+
+impl<'a> Visit<'a> for IdentifierReadCollector {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if self
+            .names
+            .iter()
+            .any(|name| name == identifier.name.as_str())
+        {
+            self.found = true;
+            return;
+        }
+        walk::walk_identifier_reference(self, identifier);
+    }
+}
+
+fn jsx_expression_reads_identifier_name(
+    expression: &JSXExpression<'_>,
+    names: &[String],
+) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let mut collector = IdentifierReadCollector {
+        found: false,
+        names: names.to_vec(),
+    };
+    collector.visit_jsx_expression(expression);
+    collector.found
+}
+
+struct IdentifierRewriteCollector {
+    rewrite_by_name: BTreeMap<String, String>,
+    replacements: Vec<Replacement>,
+    skip_root_arrow_scope: bool,
+    shadowed_params: Vec<Vec<String>>,
+}
+
+impl IdentifierRewriteCollector {
+    fn is_shadowed(&self, name: &str) -> bool {
+        self.shadowed_params
+            .iter()
+            .rev()
+            .any(|scope| scope.iter().any(|shadowed| shadowed == name))
+    }
+
+    fn push_arrow_scope<'a>(&mut self, callback: &'a ArrowFunctionExpression<'a>) {
+        let mut shadowed = Vec::new();
+        for param in &callback.params.items {
+            if let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &param.pattern.kind {
+                shadowed.push(identifier.name.as_str().to_string());
+            }
+        }
+        if let Some(rest) = &callback.params.rest {
+            if let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &rest.argument.kind {
+                shadowed.push(identifier.name.as_str().to_string());
+            }
+        }
+        self.shadowed_params.push(shadowed);
+    }
+}
+
+impl<'a> Visit<'a> for IdentifierRewriteCollector {
+    fn visit_arrow_function_expression(&mut self, expression: &ArrowFunctionExpression<'a>) {
+        if self.skip_root_arrow_scope {
+            self.skip_root_arrow_scope = false;
+            walk::walk_arrow_function_expression(self, expression);
+            return;
+        }
+        self.push_arrow_scope(expression);
+        walk::walk_arrow_function_expression(self, expression);
+        self.shadowed_params.pop();
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let name = identifier.name.as_str();
+        if let Some(code) = self.rewrite_by_name.get(name) {
+            if self.is_shadowed(name) {
+                return;
+            }
+            let (start, end) = span_range(identifier.span);
+            self.replacements.push(Replacement {
+                start,
+                end,
+                code: code.clone(),
+            });
+        }
+    }
+}
+
+fn rewrite_identifier_references_with_options(
+    source: &str,
+    source_type: SourceType,
+    rewrite_by_name: &BTreeMap<String, String>,
+    skip_root_arrow_scope: bool,
+) -> Result<String, String> {
+    if rewrite_by_name.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    let allocator = Allocator::default();
+    let parsed = parse_expression(&allocator, source, source_type, "<expression>")?;
+    let mut collector = IdentifierRewriteCollector {
+        rewrite_by_name: rewrite_by_name.clone(),
+        replacements: Vec::new(),
+        skip_root_arrow_scope,
+        shadowed_params: Vec::new(),
+    };
+    collector.visit_expression(&parsed);
+    apply_replacements(source, &mut collector.replacements)
+}
+
+struct IdentifierUsageCollector {
+    names: BTreeSet<String>,
+    shadowed_params: Vec<Vec<String>>,
+    used: BTreeSet<String>,
+}
+
+impl IdentifierUsageCollector {
+    fn is_shadowed(&self, name: &str) -> bool {
+        self.shadowed_params
+            .iter()
+            .rev()
+            .any(|scope| scope.iter().any(|shadowed| shadowed == name))
+    }
+
+    fn push_arrow_scope<'a>(&mut self, callback: &'a ArrowFunctionExpression<'a>) {
+        let mut shadowed = Vec::new();
+        for param in &callback.params.items {
+            if let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &param.pattern.kind {
+                shadowed.push(identifier.name.as_str().to_string());
+            }
+        }
+        if let Some(rest) = &callback.params.rest {
+            if let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &rest.argument.kind {
+                shadowed.push(identifier.name.as_str().to_string());
+            }
+        }
+        self.shadowed_params.push(shadowed);
+    }
+}
+
+impl<'a> Visit<'a> for IdentifierUsageCollector {
+    fn visit_arrow_function_expression(&mut self, expression: &ArrowFunctionExpression<'a>) {
+        self.push_arrow_scope(expression);
+        walk::walk_arrow_function_expression(self, expression);
+        self.shadowed_params.pop();
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let name = identifier.name.as_str();
+        if self.names.contains(name) && !self.is_shadowed(name) {
+            self.used.insert(name.to_string());
+        }
+        walk::walk_identifier_reference(self, identifier);
+    }
+}
+
+fn expression_is_side_effect_free(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::StringLiteral(_)
+        | Expression::Identifier(_)
+        | Expression::ThisExpression(_) => true,
+        Expression::ParenthesizedExpression(parenthesized) => {
+            expression_is_side_effect_free(&parenthesized.expression)
+        }
+        Expression::UnaryExpression(unary) => expression_is_side_effect_free(&unary.argument),
+        Expression::StaticMemberExpression(member) => {
+            !member.optional && expression_is_side_effect_free(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            !member.optional
+                && expression_is_side_effect_free(&member.object)
+                && expression_is_side_effect_free(&member.expression)
+        }
+        Expression::BinaryExpression(binary) => {
+            expression_is_side_effect_free(&binary.left)
+                && expression_is_side_effect_free(&binary.right)
+        }
+        Expression::LogicalExpression(logical) => {
+            expression_is_side_effect_free(&logical.left)
+                && expression_is_side_effect_free(&logical.right)
+        }
+        Expression::ConditionalExpression(conditional) => {
+            expression_is_side_effect_free(&conditional.test)
+                && expression_is_side_effect_free(&conditional.consequent)
+                && expression_is_side_effect_free(&conditional.alternate)
+        }
+        _ => false,
+    }
+}
+
+fn prune_unused_reactive_row_alias_statements(
+    source: &str,
+    source_type: SourceType,
+    alias_names: &BTreeSet<String>,
+) -> Result<String, String> {
+    if alias_names.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    let allocator = Allocator::default();
+    let parsed = parse_expression(&allocator, source, source_type, "<expression>")?;
+    let Expression::ArrowFunctionExpression(callback) = &parsed else {
+        return Ok(source.to_string());
+    };
+    if callback.expression {
+        return Ok(source.to_string());
+    }
+
+    let mut usage_collector = IdentifierUsageCollector {
+        names: alias_names.clone(),
+        shadowed_params: Vec::new(),
+        used: BTreeSet::new(),
+    };
+    usage_collector.visit_arrow_function_expression(callback);
+
+    let mut replacements = Vec::new();
+    for statement in &callback.body.statements {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind != VariableDeclarationKind::Const || declaration.declarations.len() != 1 {
+            continue;
+        }
+
+        let declarator = &declaration.declarations[0];
+        let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+            continue;
+        };
+        let alias = identifier.name.as_str();
+        if !alias_names.contains(alias) || usage_collector.used.contains(alias) {
+            continue;
+        }
+        let Some(init) = &declarator.init else {
+            continue;
+        };
+        if !expression_is_side_effect_free(init) {
+            continue;
+        }
+        let (start, end) = span_range(statement.span());
+        replacements.push(Replacement {
+            start,
+            end,
+            code: String::new(),
+        });
+    }
+
+    apply_replacements(source, &mut replacements)
+}
+
+fn rewrite_identifier_references(
+    source: &str,
+    source_type: SourceType,
+    rewrite_by_name: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    rewrite_identifier_references_with_options(source, source_type, rewrite_by_name, false)
+}
+
+fn collect_reactive_row_aliases<'a>(
+    callback: &'a ArrowFunctionExpression<'a>,
+    source: &str,
+    source_type: SourceType,
+    rewrite_by_name: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, String> {
+    if callback.expression {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut aliases = BTreeMap::new();
+    let mut active_rewrites = rewrite_by_name.clone();
+
+    for statement in &callback.body.statements {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind != VariableDeclarationKind::Const {
+            continue;
+        }
+
+        for declarator in &declaration.declarations {
+            let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+                continue;
+            };
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            if matches!(init, Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)) {
+                continue;
+            }
+            let original = &source[span_range(init.span()).0..span_range(init.span()).1];
+            let rewritten = rewrite_identifier_references(original, source_type, &active_rewrites)?;
+            if rewritten.contains("__eclipsaLazy(") || rewritten.contains("__eclipsaEvent(") {
+                continue;
+            }
+            if rewritten == original {
+                continue;
+            }
+            let alias = identifier.name.as_str().to_string();
+            let expression = format!("({rewritten})");
+            aliases.insert(alias.clone(), expression.clone());
+            active_rewrites.insert(alias, expression);
+        }
+    }
+
+    Ok(aliases)
+}
+
+fn expression_matches_stable_key(expression: &str, stable_key_expression: &str) -> bool {
+    expression == stable_key_expression || expression == format!("({stable_key_expression})")
 }
 
 fn get_static_map_callee<'a>(call: &'a CallExpression<'a>) -> Option<&'a StaticMemberExpression<'a>> {
@@ -161,9 +597,19 @@ fn run_with_panic_capture<T>(
 }
 
 #[napi(js_name = "compileClient")]
-pub fn compile_client(source: String, id: String, hmr: Option<bool>) -> napi::Result<String> {
+pub fn compile_client(
+    source: String,
+    id: String,
+    hmr: Option<bool>,
+    event_mode: Option<String>,
+) -> napi::Result<String> {
     run_with_panic_capture("compileClient", || {
-        transform_client(&source, &id, hmr.unwrap_or(false))
+        transform_client(
+            &source,
+            &id,
+            hmr.unwrap_or(false),
+            ClientEventMode::parse(event_mode.as_deref())?,
+        )
     })
 }
 
@@ -173,8 +619,15 @@ pub fn compile_ssr(source: String, id: String) -> napi::Result<String> {
 }
 
 #[napi(js_name = "analyzeModule")]
-pub fn analyze_module(source: String, id: String) -> napi::Result<AnalyzeResponse> {
-    run_with_panic_capture("analyzeModule", || analyze::transform_analyze(&source, &id))
+pub fn analyze_module(
+    source: String,
+    id: String,
+    event_mode: Option<String>,
+) -> napi::Result<AnalyzeResponse> {
+    run_with_panic_capture("analyzeModule", || {
+        let event_mode = analyze::EventMode::parse(event_mode.as_deref())?;
+        analyze::transform_analyze(&source, &id, event_mode)
+    })
 }
 
 fn strip_query(id: &str) -> &str {
@@ -238,17 +691,38 @@ fn strip_typescript_syntax(source: &str, id: &str) -> Result<String, String> {
     Ok(Codegen::new().build(&program).code)
 }
 
-fn transform_client(source: &str, id: &str, hmr: bool) -> Result<String, String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClientEventMode {
+    Resumable,
+    Direct,
+}
+
+impl ClientEventMode {
+    fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.unwrap_or("resumable") {
+            "resumable" => Ok(Self::Resumable),
+            "direct" => Ok(Self::Direct),
+            other => Err(format!("Unknown client event mode: {other}")),
+        }
+    }
+}
+
+fn transform_client(
+    source: &str,
+    id: &str,
+    hmr: bool,
+    event_mode: ClientEventMode,
+) -> Result<String, String> {
     let source_type = source_type_for(id);
     let allocator = Allocator::default();
     let program = parse_program(&allocator, source, source_type, id)?;
-    let mut compiler = ClientCompiler::new(source, source_type);
+    let mut compiler = ClientCompiler::new(source, source_type, event_mode);
     let jsx_source = compiler.apply_root_replacements(&program)?;
     let with_hmr = if hmr { wrap_hot_components(&jsx_source, id)? } else { jsx_source };
 
     let mut prefix = String::new();
     prefix.push_str(&format!(
-        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, insert as {CLIENT_INSERT}, attr as {CLIENT_ATTR}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
+        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, insert as {CLIENT_INSERT}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
     ));
     if compiler.uses_for {
         prefix.push_str(&format!(
@@ -373,6 +847,21 @@ fn escape_attr(value: &str) -> String {
     escape_text(value)
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+fn get_static_event_name(name: &str) -> Option<String> {
+    let mut chars = name.chars();
+    if chars.next() != Some('o') || chars.next() != Some('n') {
+        return None;
+    }
+    let first = chars.next()?;
+    if !first.is_ascii_uppercase() {
+        return None;
+    }
+
+    let mut event_name = first.to_ascii_lowercase().to_string();
+    event_name.push_str(chars.as_str());
+    Some(event_name)
 }
 
 fn normalize_jsx_text(value: &str) -> Option<String> {
@@ -537,20 +1026,28 @@ fn build_node_lookup(
 }
 
 struct ClientCompiler<'s> {
+    active_row_signal_aliases: BTreeMap<String, String>,
+    active_row_signal_params: Vec<String>,
+    event_mode: ClientEventMode,
     next_template_index: usize,
     source: &'s str,
     source_type: SourceType,
+    template_ids_by_html: BTreeMap<String, String>,
     templates: Vec<(String, String)>,
     uses_for: bool,
     uses_show: bool,
 }
 
 impl<'s> ClientCompiler<'s> {
-    fn new(source: &'s str, source_type: SourceType) -> Self {
+    fn new(source: &'s str, source_type: SourceType, event_mode: ClientEventMode) -> Self {
         Self {
+            active_row_signal_aliases: BTreeMap::new(),
+            active_row_signal_params: Vec::new(),
+            event_mode,
             next_template_index: 0,
             source,
             source_type,
+            template_ids_by_html: BTreeMap::new(),
             templates: Vec::new(),
             uses_for: false,
             uses_show: false,
@@ -580,13 +1077,36 @@ impl<'s> ClientCompiler<'s> {
         span: Span,
         allow_flow_lowering: bool,
     ) -> Result<String, String> {
-        let nested_source = self.slice(span).to_string();
+        self.render_nested_expression_source(self.slice(span).to_string(), allow_flow_lowering, true)
+    }
+
+    fn render_nested_expression_source(
+        &mut self,
+        nested_source: String,
+        allow_flow_lowering: bool,
+        rewrite_active_row_params: bool,
+    ) -> Result<String, String> {
+        let nested_source = if rewrite_active_row_params {
+            let mut rewrites = self
+                .active_row_signal_params
+                .iter()
+                .map(|name| (name.clone(), format!("{name}.value")))
+                .collect::<BTreeMap<_, _>>();
+            rewrites.extend(self.active_row_signal_aliases.clone());
+            rewrite_identifier_references(&nested_source, self.source_type, &rewrites)?
+        } else {
+            nested_source
+        };
         let allocator = Allocator::default();
         let parsed = parse_expression(&allocator, &nested_source, self.source_type, "<expression>")?;
         let mut nested_compiler = ClientCompiler {
+            active_row_signal_aliases: self.active_row_signal_aliases.clone(),
+            active_row_signal_params: self.active_row_signal_params.clone(),
+            event_mode: self.event_mode,
             next_template_index: self.next_template_index,
             source: &nested_source,
             source_type: self.source_type,
+            template_ids_by_html: self.template_ids_by_html.clone(),
             templates: Vec::new(),
             uses_for: false,
             uses_show: false,
@@ -605,6 +1125,7 @@ impl<'s> ClientCompiler<'s> {
         let mut replacements = collector.replacements;
         let transformed = apply_replacements(&nested_source, &mut replacements)?;
         self.next_template_index = nested_compiler.next_template_index;
+        self.template_ids_by_html = nested_compiler.template_ids_by_html;
         self.templates.extend(nested_compiler.templates);
         self.uses_for |= nested_compiler.uses_for;
         self.uses_show |= nested_compiler.uses_show;
@@ -626,18 +1147,79 @@ impl<'s> ClientCompiler<'s> {
         )
     }
 
+    fn render_reactive_row_callback(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+        stable_key_expression: Option<&str>,
+    ) -> Result<Option<(String, bool)>, String> {
+        let Some(param_names) = collect_simple_arrow_param_names(callback) else {
+            return Ok(None);
+        };
+        if !callback_contains_jsx(callback) || callback_reads_param_value_property(callback, &param_names) {
+            return Ok(None);
+        }
+
+        let base_aliases = param_names
+            .iter()
+            .map(|name| (name.clone(), format!("{name}.value")))
+            .collect::<BTreeMap<_, _>>();
+        let callback_source = self.slice(callback.span).to_string();
+        let mut row_aliases =
+            collect_reactive_row_aliases(callback, self.source, self.source_type, &base_aliases)?;
+        if let Some(stable_key_expression) = stable_key_expression {
+            row_aliases.retain(|_, expression| {
+                !expression_matches_stable_key(expression, stable_key_expression)
+            });
+        }
+        let alias_names = row_aliases.keys().cloned().collect::<BTreeSet<_>>();
+        let rewritten_callback_source = rewrite_identifier_references_with_options(
+            &callback_source,
+            self.source_type,
+            &base_aliases,
+            true,
+        )?;
+        let previous_row_params =
+            std::mem::replace(&mut self.active_row_signal_params, Vec::new());
+        let previous_row_aliases =
+            std::mem::replace(&mut self.active_row_signal_aliases, row_aliases);
+        let compiled_callback =
+            self.render_nested_expression_source(rewritten_callback_source, true, false)?;
+        self.active_row_signal_params = previous_row_params;
+        self.active_row_signal_aliases = previous_row_aliases;
+        let pruned_compiled_callback = prune_unused_reactive_row_alias_statements(
+            &compiled_callback,
+            self.source_type,
+            &alias_names,
+        )?;
+        Ok(Some((pruned_compiled_callback, param_names.len() > 1)))
+    }
+
     fn render_compiler_for(
         &mut self,
         arr: String,
         callback: String,
         key_callback: Option<String>,
+        reactive_rows: bool,
+        reactive_index: bool,
     ) -> String {
         self.uses_for = true;
+        let reactive_rows_prop = if reactive_rows {
+            ", reactiveRows: true"
+        } else {
+            ""
+        };
+        let reactive_index_prop = if reactive_rows && !reactive_index {
+            ", reactiveIndex: false"
+        } else {
+            ""
+        };
         match key_callback {
             Some(key_callback) => format!(
-                "{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback}, key: {key_callback} }})"
+                "{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback}, key: {key_callback}{reactive_rows_prop}{reactive_index_prop} }})"
             ),
-            None => format!("{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback} }})"),
+            None => format!(
+                "{CLIENT_CREATE_COMPONENT}({COMPILER_FOR}, {{ arr: {arr}, fn: {callback}{reactive_rows_prop}{reactive_index_prop} }})"
+            ),
         }
     }
 
@@ -712,18 +1294,45 @@ impl<'s> ClientCompiler<'s> {
         };
 
         let arr = self.render_nested_expression_span(member.object.span(), true)?;
-        let compiled_callback = self.render_nested_expression_span(callback.span(), true)?;
+        let reactive_callback = self.render_reactive_row_callback(callback, None)?;
+        let reactive_rows_enabled = reactive_callback.is_some();
+        let reactive_index_enabled = reactive_callback
+            .as_ref()
+            .map(|(_, reactive_index)| *reactive_index)
+            .unwrap_or(true);
+        let compiled_callback = if let Some((compiled_callback, _)) = reactive_callback {
+            compiled_callback
+        } else {
+            self.render_nested_expression_source(self.slice(callback.span).to_string(), true, false)?
+        };
         let params = self.slice(callback.params.span).to_string();
         let key_callback = self
             .extract_map_callback_key(callback)?
             .map(|key_expression| format!("{params} => {key_expression}"));
-        Ok(Some(self.render_compiler_for(arr, compiled_callback, key_callback)))
+        Ok(Some(self.render_compiler_for(
+            arr,
+            compiled_callback,
+            key_callback,
+            reactive_rows_enabled,
+            reactive_index_enabled,
+        )))
     }
 
     fn next_template_id(&mut self) -> String {
         let identifier = format!("__eclipsaTemplate{}", self.next_template_index);
         self.next_template_index += 1;
         identifier
+    }
+
+    fn get_or_create_template_id(&mut self, template_html: String) -> String {
+        if let Some(template_id) = self.template_ids_by_html.get(&template_html) {
+            return template_id.clone();
+        }
+        let template_id = self.next_template_id();
+        self.template_ids_by_html
+            .insert(template_html.clone(), template_id.clone());
+        self.templates.push((template_id.clone(), template_html));
+        template_id
     }
 
     fn render_root_fragment(&mut self, fragment: &JSXFragment<'_>) -> Result<String, String> {
@@ -736,7 +1345,10 @@ impl<'s> ClientCompiler<'s> {
     fn render_root_element(&mut self, element: &JSXElement<'_>) -> Result<String, String> {
         let name = get_jsx_element_name(&element.opening_element.name)?;
         if is_component_name(&name) {
-            let (props, key) = self.render_component_props(&element.opening_element.attributes, &element.children)?;
+            let (props, key, _) = self.render_component_props(
+                &element.opening_element.attributes,
+                &element.children,
+            )?;
             let expression = format!("{CLIENT_CREATE_COMPONENT}({name}, {props})");
             if let Some(key) = key {
                 return Ok(format!(
@@ -760,14 +1372,14 @@ impl<'s> ClientCompiler<'s> {
         attrs: Vec<ClientAttrOp>,
         key: Option<String>,
     ) -> Result<String, String> {
-        let template_id = self.next_template_id();
-        self.templates.push((template_id.clone(), template_html));
+        let template_id = self.get_or_create_template_id(template_html);
         let mut body = format!("var _cloned = {template_id}();");
         let mut lookup_paths = Vec::new();
 
         for insert in &inserts {
             let path = match insert {
                 ClientInsertOp::Apply { path, .. } => path,
+                ClientInsertOp::ApplyElementStatic { path, .. } => path,
                 ClientInsertOp::Component { path, .. } => path,
             };
             for prefix in collect_node_lookup_paths(path) {
@@ -790,13 +1402,37 @@ impl<'s> ClientCompiler<'s> {
         let mut cached_nodes = BTreeMap::new();
         for (index, path) in lookup_paths.iter().enumerate() {
             let variable = format!("__eclipsaNode{index}");
-            let lookup = if path.len() == 1 {
-                format!("_cloned.childNodes[{}]", path[0])
+            let parent = if path.len() > 1 {
+                Some(
+                    cached_nodes
+                        .get(&path[..path.len() - 1])
+                        .expect("parent lookup should be cached before children"),
+                )
             } else {
-                let parent = cached_nodes
-                    .get(&path[..path.len() - 1])
-                    .expect("parent lookup should be cached before children");
+                None
+            };
+            let previous_sibling = if path[path.len() - 1] > 0 {
+                cached_nodes.get(
+                    &path[..path.len() - 1]
+                        .iter()
+                        .copied()
+                        .chain([path[path.len() - 1] - 1])
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+            let lookup = if let Some(previous_sibling) = previous_sibling {
+                format!("{previous_sibling}.nextSibling")
+            } else if path[path.len() - 1] == 0 {
+                match parent {
+                    Some(parent) => format!("{parent}.firstChild"),
+                    None => "_cloned.firstChild".to_string(),
+                }
+            } else if let Some(parent) = parent {
                 format!("{parent}.childNodes[{}]", path[path.len() - 1])
+            } else {
+                format!("_cloned.childNodes[{}]", path[0])
             };
             body.push_str(&format!("var {variable} = {lookup};"));
             cached_nodes.insert(path.clone(), variable);
@@ -804,26 +1440,77 @@ impl<'s> ClientCompiler<'s> {
 
         for insert in inserts {
             match insert {
-                ClientInsertOp::Apply { expr, path } => {
+                ClientInsertOp::Apply { expr, path, tracked } => {
+                    if tracked && path.is_empty() {
+                        body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, _cloned);"));
+                        continue;
+                    }
                     let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
-                    body.push_str(&format!("{CLIENT_INSERT}(() => {expr}, {parent}, {marker});"));
+                    if tracked {
+                        body.push_str(&format!("{CLIENT_TEXT}(() => {expr}, {parent}, {marker});"));
+                    } else {
+                        body.push_str(&format!("{CLIENT_INSERT_STATIC}({expr}, {parent}, {marker});"));
+                    }
                 }
-                ClientInsertOp::Component { component, path, props } => {
+                ClientInsertOp::ApplyElementStatic { expr, path } => {
+                    let (_, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
+                    body.push_str(&format!("{CLIENT_INSERT_ELEMENT_STATIC}({expr}, {marker});"));
+                }
+                ClientInsertOp::Component {
+                    component,
+                    path,
+                    props,
+                    tracked,
+                } => {
                     let (parent, marker) = build_node_lookup("_cloned", &path, &cached_nodes);
-                    body.push_str(&format!(
-                        "{CLIENT_INSERT}({CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
-                    ));
+                    if tracked {
+                        body.push_str(&format!(
+                            "{CLIENT_INSERT}(() => {CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
+                        ));
+                    } else {
+                        body.push_str(&format!(
+                            "{CLIENT_INSERT_STATIC}({CLIENT_CREATE_COMPONENT}({component}, {props}), {parent}, {marker});"
+                        ));
+                    }
                 }
             }
         }
 
         for attr in attrs {
             let (_, marker) = build_node_lookup("_cloned", &attr.path, &cached_nodes);
-            body.push_str(&format!(
-                "{CLIENT_ATTR}({marker}, {}, () => {});",
-                js_string(&attr.name),
-                attr.value
-            ));
+            if attr.tracked {
+                if attr.name == "class" {
+                    body.push_str(&format!(
+                        "{CLIENT_CLASS_NAME}({marker}, () => {});",
+                        attr.value
+                    ));
+                } else {
+                    body.push_str(&format!(
+                        "{CLIENT_ATTR}({marker}, {}, () => {});",
+                        js_string(&attr.name),
+                        attr.value
+                    ));
+                }
+            } else {
+                if let Some(event_name) = get_static_event_name(&attr.name) {
+                    let event_helper = if self.event_mode == ClientEventMode::Direct {
+                        CLIENT_LISTENER_STATIC
+                    } else {
+                        CLIENT_EVENT_STATIC
+                    };
+                    body.push_str(&format!(
+                        "{event_helper}({marker}, {}, {});",
+                        js_string(&event_name),
+                        attr.value
+                    ));
+                } else {
+                    body.push_str(&format!(
+                        "{CLIENT_ATTR_STATIC}({marker}, {}, {});",
+                        js_string(&attr.name),
+                        attr.value
+                    ));
+                }
+            }
         }
 
         body.push_str("return _cloned;");
@@ -877,14 +1564,17 @@ impl<'s> ClientCompiler<'s> {
         &mut self,
         attributes: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
-    ) -> Result<(String, Option<String>), String> {
+    ) -> Result<(String, Option<String>, bool), String> {
         let mut props = Vec::new();
         let mut key = None;
-
+        let mut reactive_rows_enabled = false;
+        let mut reactive_index_enabled = true;
+        let mut tracked = false;
         for attribute in attributes {
             match attribute {
                 JSXAttributeItem::SpreadAttribute(attribute) => {
                     props.push(format!("...{}", self.slice(attribute.argument.span())));
+                    tracked = true;
                 }
                 JSXAttributeItem::Attribute(attribute) => {
                     let name = get_jsx_attribute_name(&attribute.name)?;
@@ -906,15 +1596,22 @@ impl<'s> ClientCompiler<'s> {
                         }
                         JSXAttributeValue::ExpressionContainer(container) => {
                             let JSXExpression::EmptyExpression(_) = &container.expression else {
-                                let expression =
-                                    self.render_jsx_expression(&container.expression, true)?;
+                                let reactive_callback = None::<(String, bool)>;
+                                if let Some((_, reactive_index)) = reactive_callback.as_ref() {
+                                    reactive_rows_enabled = true;
+                                    reactive_index_enabled = *reactive_index;
+                                }
+                                let expression = reactive_callback
+                                    .map(|(compiled_callback, _)| compiled_callback)
+                                    .unwrap_or(self.render_jsx_expression(&container.expression, true)?);
                                 if is_key {
                                     key = Some(self.render_jsx_expression(&container.expression, true)?);
                                 }
-                                if let Some(expression) = self.try_render_static_component_prop(&container.expression)? {
+                                if self.is_static_component_prop(&container.expression) {
                                     props.push(format!("{property_key}: {expression}"));
                                 } else {
                                     props.push(format!("get {property_key}() {{ return {expression}; }}"));
+                                    tracked = true;
                                 }
                                 continue;
                             };
@@ -925,6 +1622,7 @@ impl<'s> ClientCompiler<'s> {
                                 key = Some(self.render_root_element(element)?);
                             }
                             props.push(format!("get {property_key}() {{ return {expression}; }}"));
+                            tracked = true;
                         }
                         JSXAttributeValue::Fragment(fragment) => {
                             let expression = format!("() => {}", self.render_root_fragment(fragment)?);
@@ -932,38 +1630,49 @@ impl<'s> ClientCompiler<'s> {
                                 key = Some(self.render_root_fragment(fragment)?);
                             }
                             props.push(format!("get {property_key}() {{ return {expression}; }}"));
+                            tracked = true;
                         }
                     }
                 }
             }
         }
 
-        let children_expr = self.render_component_children(children)?;
+        let (children_expr, tracked_children) = self.render_component_children(children)?;
         if !children_expr.is_empty() {
             props.push(format!("children: [{}]", children_expr.join(", ")));
         }
+        tracked |= tracked_children;
+        if reactive_rows_enabled {
+            props.push("\"reactiveRows\": true".to_string());
+            if !reactive_index_enabled {
+                props.push("\"reactiveIndex\": false".to_string());
+            }
+        }
 
-        Ok((format!("{{ {} }}", props.join(", ")), key))
+        Ok((format!("{{ {} }}", props.join(", ")), key, tracked))
     }
 
-    fn try_render_static_component_prop(&mut self, expression: &JSXExpression<'_>) -> Result<Option<String>, String> {
+    fn is_static_component_prop(&self, expression: &JSXExpression<'_>) -> bool {
         match expression {
-            JSXExpression::BooleanLiteral(_)
+            JSXExpression::ArrowFunctionExpression(_)
+            | JSXExpression::BooleanLiteral(_)
             | JSXExpression::NullLiteral(_)
             | JSXExpression::NumericLiteral(_)
             | JSXExpression::BigIntLiteral(_)
+            | JSXExpression::FunctionExpression(_)
             | JSXExpression::RegExpLiteral(_)
-            | JSXExpression::StringLiteral(_) => Ok(Some(self.slice(expression.span()).to_string())),
-            JSXExpression::EmptyExpression(_) => Ok(None),
-            _ => Ok(None),
+            | JSXExpression::StringLiteral(_) => true,
+            JSXExpression::EmptyExpression(_) => false,
+            _ => false,
         }
     }
 
     fn render_component_children(
         &mut self,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<(Vec<String>, bool), String> {
         let mut output = Vec::new();
+        let mut tracked = false;
         for child in children {
             match child {
                 JSXChild::Text(text) => {
@@ -975,14 +1684,53 @@ impl<'s> ClientCompiler<'s> {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
                         continue;
                     }
+                    tracked |= self.should_track_runtime_expression(&container.expression);
                     output.push(self.render_jsx_expression(&container.expression, true)?);
                 }
                 JSXChild::Element(element) => output.push(format!("() => {}", self.render_root_element(element)?)),
-                JSXChild::Fragment(fragment) => output.extend(self.render_component_children(&fragment.children)?),
+                JSXChild::Fragment(fragment) => {
+                    let (children, fragment_tracked) =
+                        self.render_component_children(&fragment.children)?;
+                    tracked |= fragment_tracked;
+                    output.extend(children);
+                }
                 JSXChild::Spread(_) => {}
             }
         }
-        Ok(output)
+        Ok((output, tracked))
+    }
+
+    fn render_single_element_child(
+        &mut self,
+        children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
+    ) -> Result<Option<(String, bool)>, String> {
+        let mut expression = None;
+        let mut tracked = false;
+
+        for child in children {
+            match child {
+                JSXChild::Text(text) => {
+                    if normalize_jsx_text(text.value.as_str()).is_some() {
+                        return Ok(None);
+                    }
+                }
+                JSXChild::ExpressionContainer(container) => {
+                    if let JSXExpression::EmptyExpression(_) = &container.expression {
+                        continue;
+                    }
+                    if expression.is_some() {
+                        return Ok(None);
+                    }
+                    tracked = self.should_track_runtime_expression(&container.expression);
+                    expression = Some(self.render_jsx_expression(&container.expression, false)?);
+                }
+                JSXChild::Element(_) | JSXChild::Fragment(_) | JSXChild::Spread(_) => {
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(expression.map(|expression| (expression, tracked)))
     }
 
     fn render_jsx_expression(
@@ -1012,6 +1760,23 @@ impl<'s> ClientCompiler<'s> {
         }
     }
 
+    fn should_track_runtime_expression(&self, expression: &JSXExpression<'_>) -> bool {
+        if jsx_expression_reads_signal_value(expression) {
+            return true;
+        }
+        if self.active_row_signal_aliases.is_empty() {
+            return false;
+        }
+        jsx_expression_reads_identifier_name(
+            expression,
+            &self
+                .active_row_signal_aliases
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    }
+
     fn render_fragment_children(
         &mut self,
         children: &oxc_allocator::Vec<'_, JSXChild<'_>>,
@@ -1039,6 +1804,7 @@ impl<'s> ClientCompiler<'s> {
                     inserts.push(ClientInsertOp::Apply {
                         expr: self.render_jsx_expression(&container.expression, false)?,
                         path: child_path,
+                        tracked: self.should_track_runtime_expression(&container.expression),
                     });
                     path_index += 1;
                 }
@@ -1046,13 +1812,20 @@ impl<'s> ClientCompiler<'s> {
                     let child_path = path.iter().copied().chain([path_index]).collect::<Vec<_>>();
                     let name = get_jsx_element_name(&element.opening_element.name)?;
                     if is_component_name(&name) {
-                        let (props, _) =
-                            self.render_component_props(&element.opening_element.attributes, &element.children)?;
+                        let (props, _, tracked) = self.render_component_props(
+                            &element.opening_element.attributes,
+                            &element.children,
+                        )?;
                         html.push_str(&format!(
                             "<!-- {} -->",
                             child_path.iter().map(|part| part.to_string()).collect::<Vec<_>>().join(",")
                         ));
-                        inserts.push(ClientInsertOp::Component { component: name, path: child_path, props });
+                        inserts.push(ClientInsertOp::Component {
+                            component: name,
+                            path: child_path,
+                            props,
+                            tracked,
+                        });
                     } else {
                         html.push_str(&self.render_intrinsic_element(element, &child_path, inserts, attrs)?);
                     }
@@ -1118,14 +1891,40 @@ impl<'s> ClientCompiler<'s> {
                         Some(JSXAttributeValue::Element(element)) => self.render_root_element(element)?,
                         Some(JSXAttributeValue::Fragment(fragment)) => self.render_root_fragment(fragment)?,
                     };
-                    attrs.push(ClientAttrOp { name: attr_name, path: path.to_vec(), value });
+                    let tracked = match &attribute.value {
+                        Some(JSXAttributeValue::ExpressionContainer(container)) => {
+                            if let JSXExpression::EmptyExpression(_) = &container.expression {
+                                false
+                            } else {
+                                matches!(attr_name.as_str(), "bind:value" | "bind:checked")
+                                    || self.should_track_runtime_expression(&container.expression)
+                            }
+                        }
+                        _ => false,
+                    };
+                    attrs.push(ClientAttrOp { name: attr_name, path: path.to_vec(), tracked, value });
                 }
             }
         }
 
         html.push('>');
-        let children = self.render_fragment_children(&element.children, path, inserts, attrs)?;
-        html.push_str(&children);
+        if let Some((expr, tracked)) = self.render_single_element_child(&element.children)? {
+            if tracked {
+                inserts.push(ClientInsertOp::Apply {
+                    expr,
+                    path: path.to_vec(),
+                    tracked: true,
+                });
+            } else {
+                inserts.push(ClientInsertOp::ApplyElementStatic {
+                    expr,
+                    path: path.to_vec(),
+                });
+            }
+        } else {
+            let children = self.render_fragment_children(&element.children, path, inserts, attrs)?;
+            html.push_str(&children);
+        }
         html.push_str(&format!("</{name}>"));
         Ok(html)
     }

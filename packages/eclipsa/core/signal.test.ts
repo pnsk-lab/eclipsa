@@ -63,6 +63,7 @@ const createContainer = () =>
     dirtyFlushQueued: false,
     doc: new FakeDocument() as unknown as Document,
     eventDispatchPromise: null,
+    eventBindingScopeCache: new Map(),
     imports: new Map(),
     interactivePrefetchCheckQueued: false,
     loaderStates: new Map(),
@@ -79,6 +80,7 @@ const createContainer = () =>
     rootElement: undefined,
     router: null,
     scopes: new Map(),
+    materializedScopes: new Map(),
     signals: new Map(),
     symbols: new Map(),
     visibilityCheckQueued: false,
@@ -144,6 +146,23 @@ describe('signal', () => {
     count.value = 2
 
     expect(values).toEqual(['1:same', '1:new', '2:new'])
+  })
+
+  it('supports effects that skip runtime container capture', () => {
+    const count = signal(0)
+    const values: number[] = []
+
+    effect(
+      () => {
+        values.push(count.value)
+      },
+      { runInContainer: false },
+    )
+
+    count.value = 1
+    count.value = 2
+
+    expect(values).toEqual([0, 1, 2])
   })
 })
 
@@ -412,6 +431,34 @@ describe('useWatch', () => {
       tracked.value = 1
 
       expect(events).toEqual(['run:0:a', 'cleanup:0:a', 'run:0:b', 'cleanup:0:b', 'run:1:b'])
+    })
+  })
+
+  it('drops stale auto-tracked dependencies when conditional reads switch signals', () => {
+    withFakeNodeGlobal(() => {
+      let mode!: { value: 'left' | 'right' }
+      let left!: { value: number }
+      let right!: { value: number }
+      const values: string[] = []
+
+      renderComponent(() => {
+        mode = useSignal<'left' | 'right'>('left')
+        left = useSignal(0)
+        right = useSignal(0)
+
+        useWatch(() => {
+          values.push(mode.value === 'left' ? `left:${left.value}` : `right:${right.value}`)
+        })
+
+        return 'ready'
+      })
+
+      right.value = 1
+      mode.value = 'right'
+      left.value = 1
+      right.value = 2
+
+      expect(values).toEqual(['left:0', 'right:1', 'right:2'])
     })
   })
 

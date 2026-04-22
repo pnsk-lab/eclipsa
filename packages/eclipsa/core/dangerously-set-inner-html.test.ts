@@ -66,6 +66,7 @@ const createContainer = () => ({
   nextElementId: 0,
   nextScopeId: 0,
   nextSignalId: 0,
+  rootChildComponentIds: /* @__PURE__ */ new Set(),
   rootChildCursor: 0,
   rootElement: void 0,
   router: null,

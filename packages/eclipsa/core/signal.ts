@@ -12,6 +12,7 @@ import {
   writeAsyncSignalSnapshot,
 } from './runtime.ts'
 import { setSignalMeta, type SignalMeta } from './internal.ts'
+import type { EffectOptions } from './runtime/types.ts'
 import { createPendingSignalError, isPendingSignalError } from './suspense.ts'
 
 export interface Signal<T> {
@@ -195,7 +196,7 @@ export const useSignal = ((value) => useRuntimeSignal(value)) as SignalFactory
 signal.computed = createComputedSignalFactory((value) => createStandaloneRuntimeSignal(value))
 useSignal.computed = createComputedSignalFactory((value) => useRuntimeSignal(value))
 
-export const effect = (fn: () => void) => createEffect(fn)
+export const effect = (fn: () => void, options?: EffectOptions) => createEffect(fn, options)
 export const onCleanup = (fn: () => void) => createOnCleanup(fn)
 export const onMount = (fn: () => void) => createOnMount(fn)
 export const onVisible = (fn: () => void) => createOnVisible(fn)

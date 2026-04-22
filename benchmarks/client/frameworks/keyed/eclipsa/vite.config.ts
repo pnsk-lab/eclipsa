@@ -82,6 +82,7 @@ export const createEclipsaBenchmarkPlugin = () => ({
 
     return {
       code: await compileModuleForClient(code, stripQuery(id), {
+        eventMode: 'direct',
         hmr: false,
       }),
       map: null,
