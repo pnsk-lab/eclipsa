@@ -986,6 +986,23 @@ interface ComputedSignalSnapshot<T> {
   value?: T
 }
 
+type KeyedForRowState<T = unknown> = {
+  index: number
+  item: T
+  key: string | number | symbol
+  owner: ClientInsertOwner
+  start: Comment
+  end: Comment
+}
+
+type KeyedForOwnerState<T = unknown> = {
+  nextRowOwnerIndex: number
+  order: Array<string | number | symbol>
+  rows: Map<string | number | symbol, KeyedForRowState<T>>
+}
+
+const keyedForOwnerStates = new WeakMap<ComponentState, KeyedForOwnerState>()
+
 const isComputedSignalSnapshot = <T>(value: unknown): value is ComputedSignalSnapshot<T> =>
   !!value &&
   typeof value === 'object' &&
@@ -1739,6 +1756,40 @@ const pruneRemovedComponents = (
     }
     container.components.delete(descendantId)
   }
+}
+
+const disposeComponentState = (container: RuntimeContainer, component: ComponentState) => {
+  clearComponentSubscriptions(container, component.id)
+  disposeCleanupSlot(component.renderEffectCleanupSlot)
+  disposeComponentMountCleanups(component)
+  pruneComponentVisibles(container, component, 0)
+  pruneComponentWatches(container, component, 0)
+  for (const signalId of component.signalIds) {
+    container.signals.delete(signalId)
+    container.asyncSignalStates.delete(signalId)
+    container.asyncSignalSnapshotCache.delete(signalId)
+  }
+  container.scopes.delete(component.scopeId)
+  container.dirty.delete(component.id)
+  container.components.delete(component.id)
+}
+
+const disposeComponentTree = (container: RuntimeContainer, componentId: string) => {
+  const component = container.components.get(componentId)
+  if (!component) {
+    return
+  }
+
+  const descendants = collectDescendantIds(container, componentId).sort(
+    (left, right) => right.length - left.length,
+  )
+  for (const descendantId of descendants) {
+    const descendant = container.components.get(descendantId)
+    if (descendant) {
+      disposeComponentState(container, descendant)
+    }
+  }
+  disposeComponentState(container, component)
 }
 
 const scheduleMicrotask = (fn: () => void) => {
@@ -4316,7 +4367,7 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
     throw new Error('Client rendering requires a document.')
   }
 
-  let resolved = value
+  let resolved: unknown = value
   while (typeof resolved === 'function') {
     resolved = resolved()
   }
@@ -4396,6 +4447,211 @@ const inferClientInsertOwnerParentId = (componentId: string) => {
   return componentId.slice(0, lastDotIndex)
 }
 
+const getOrCreateClientInsertOwnerComponent = (
+  container: RuntimeContainer,
+  owner: ClientInsertOwner,
+) =>
+  getOrCreateComponentState(
+    container,
+    owner.componentId,
+    CLIENT_INSERT_OWNER_SYMBOL,
+    inferClientInsertOwnerParentId(owner.componentId),
+  )
+
+const createKeyedForRowOwner = (
+  container: RuntimeContainer,
+  ownerComponentId: string,
+  rowOwnerIndex: number,
+): ClientInsertOwner => {
+  const componentId = `${ownerComponentId}.${rowOwnerIndex}`
+  getOrCreateComponentState(
+    container,
+    componentId,
+    CLIENT_INSERT_OWNER_SYMBOL,
+    inferClientInsertOwnerParentId(componentId),
+  )
+  return {
+    childIndex: 0,
+    componentId,
+    keyedRangeCursor: 0,
+    projectionCounters: [],
+  }
+}
+
+const removeNodesFromParent = (nodes: Node[], parent: ParentNode) => {
+  for (const node of nodes) {
+    if (node.parentNode === parent) {
+      if (typeof (node as Node & { remove?: () => void }).remove === 'function') {
+        ;(node as Node & { remove: () => void }).remove()
+      } else {
+        parent.removeChild(node)
+      }
+    }
+  }
+}
+
+const insertNodesBeforeMarker = (nodes: Node[], parent: ParentNode, marker: Node | undefined) => {
+  for (const node of nodes) {
+    parent.insertBefore(node, marker ?? null)
+  }
+}
+
+const teardownKeyedForOwnerState = (
+  container: RuntimeContainer,
+  ownerComponent: ComponentState,
+  parent: ParentNode,
+  currentNodes: Node[],
+) => {
+  const state = keyedForOwnerStates.get(ownerComponent)
+  if (state) {
+    for (const row of state.rows.values()) {
+      removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
+      disposeComponentTree(container, row.owner.componentId)
+    }
+    keyedForOwnerStates.delete(ownerComponent)
+  }
+
+  clearComponentSubscriptions(container, ownerComponent.id)
+  resetComponentRenderEffects(ownerComponent)
+  pruneRemovedComponents(container, ownerComponent.id, new Set())
+  pruneComponentVisibles(container, ownerComponent, 0)
+  pruneComponentWatches(container, ownerComponent, 0)
+  removeNodesFromParent(currentNodes, parent)
+}
+
+export const reconcileClientKeyedForInPlace = (
+  value: Insertable,
+  container: RuntimeContainer,
+  owner: ClientInsertOwner | null,
+  parent: ParentNode,
+  marker: Node | undefined,
+  currentNodes: Node[],
+): Node[] | null => {
+  if (!owner) {
+    return null
+  }
+
+  let resolved: unknown = value
+  while (true) {
+    if (
+      typeof resolved === 'function' &&
+      !getLazyMeta(resolved) &&
+      !getComponentMeta(resolved) &&
+      !getContextProviderMeta(resolved)
+    ) {
+      resolved = resolved()
+      continue
+    }
+    if (
+      isRenderObject(resolved) &&
+      typeof resolved.type === 'function' &&
+      !getLazyMeta(resolved.type) &&
+      !getComponentMeta(resolved.type) &&
+      !getContextProviderMeta(resolved.type)
+    ) {
+      resolved = (resolved.type as (props: Record<string, unknown>) => unknown)(resolved.props)
+      continue
+    }
+    break
+  }
+
+  const ownerComponent = getOrCreateClientInsertOwnerComponent(container, owner)
+  if (!isForValue(resolved) || resolved.arr.length === 0) {
+    if (keyedForOwnerStates.has(ownerComponent)) {
+      teardownKeyedForOwnerState(container, ownerComponent, parent, currentNodes)
+    }
+    return null
+  }
+
+  const state = (keyedForOwnerStates.get(ownerComponent) as
+    | KeyedForOwnerState<(typeof resolved.arr)[number]>
+    | undefined) ?? {
+    nextRowOwnerIndex: 0,
+    order: [],
+    rows: new Map(),
+  }
+  if (!keyedForOwnerStates.has(ownerComponent)) {
+    keyedForOwnerStates.set(ownerComponent, state)
+    removeNodesFromParent(currentNodes, parent)
+  }
+
+  const nextRows = new Map<
+    string | number | symbol,
+    KeyedForRowState<(typeof resolved.arr)[number]>
+  >()
+  const nextOrder: Array<string | number | symbol> = []
+
+  for (let index = 0; index < resolved.arr.length; index += 1) {
+    const item = resolved.arr[index]!
+    const key = resolveForItemKey(resolved, item, index)
+    let row = state.rows.get(key)
+
+    if (!row) {
+      const rowOwner = createKeyedForRowOwner(
+        container,
+        owner.componentId,
+        state.nextRowOwnerIndex++,
+      )
+      const rowNodes = wrapNodesWithKeyedRange(
+        container.doc!,
+        renderClientInsertableForOwner(
+          stripForChildRootKey(resolved.fn(item, index)) as Insertable,
+          container,
+          rowOwner,
+        ),
+        allocateKeyedRangeScope(),
+        key,
+      )
+      insertNodesBeforeMarker(rowNodes, parent, marker)
+      row = {
+        end: rowNodes[rowNodes.length - 1]! as Comment,
+        index,
+        item,
+        key,
+        owner: rowOwner,
+        start: rowNodes[0]! as Comment,
+      }
+    } else {
+      const shouldRerender = row.item !== item || row.index !== index
+      if (shouldRerender) {
+        const nextBodyNodes = renderClientInsertableForOwner(
+          stripForChildRootKey(resolved.fn(item, index)) as Insertable,
+          container,
+          row.owner,
+        )
+        if (!tryPatchBoundaryContentsInPlace(row.start, row.end, nextBodyNodes)) {
+          replaceBoundaryContents(row.start, row.end, nextBodyNodes)
+        }
+      }
+
+      const rowNodes = collectBoundaryRangeNodes(row.start, row.end)
+      insertNodesBeforeMarker(rowNodes, parent, marker)
+      row.item = item
+      row.index = index
+    }
+
+    nextRows.set(key, row)
+    nextOrder.push(key)
+  }
+
+  for (const [key, row] of state.rows.entries()) {
+    if (nextRows.has(key)) {
+      continue
+    }
+    removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
+    disposeComponentTree(container, row.owner.componentId)
+  }
+
+  state.rows = nextRows
+  state.order = nextOrder
+  keyedForOwnerStates.set(ownerComponent, state)
+
+  return nextOrder.flatMap((key) => {
+    const row = nextRows.get(key)
+    return row ? collectBoundaryRangeNodes(row.start, row.end) : []
+  })
+}
+
 export const renderClientInsertableForOwner = (
   value: Insertable,
   container: RuntimeContainer,
@@ -4405,17 +4661,12 @@ export const renderClientInsertableForOwner = (
     return renderClientInsertable(value, container)
   }
 
-  const component =
-    container.components.get(owner.componentId) ??
-    getOrCreateComponentState(
-      container,
-      owner.componentId,
-      CLIENT_INSERT_OWNER_SYMBOL,
-      inferClientInsertOwnerParentId(owner.componentId),
-    )
+  const component = getOrCreateClientInsertOwnerComponent(container, owner)
 
   const parentFrame = getCurrentFrame()
+  clearComponentSubscriptions(container, owner.componentId)
   const oldDescendants = collectDescendantIds(container, owner.componentId)
+  resetComponentRenderEffects(component)
   const frame = createFrame(container, component, 'client', {
     reuseExistingDom: false,
     reuseProjectionSlotDom: false,

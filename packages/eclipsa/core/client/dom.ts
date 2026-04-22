@@ -27,6 +27,7 @@ import {
   rememberInsertMarkerRange,
   getRememberedInsertMarkerNodeCount,
   installResumeListeners,
+  reconcileClientKeyedForInPlace,
   renderClientInsertable,
   renderClientInsertableForOwner,
   restoreSignalRefs,
@@ -424,38 +425,56 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
       return
     }
 
-    const newNodes = owner
-      ? renderClientInsertableForOwner(value, runtimeContainer, owner)
-      : renderClientInsertable(value, runtimeContainer)
-    const seededCurrentNodes = seedCurrentNodes(newNodes.length)
-    const currentNodes =
-      seededCurrentNodes.length !== 0 &&
-      seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents)) &&
-      canReconnectOwnerRange(seededCurrentNodes, newNodes)
-        ? seededCurrentNodes
-        : collectCurrentNodes(liveMarker, stableParents)
+    const currentNodes = collectCurrentNodes(liveMarker, stableParents)
 
     if (currentNodes.length !== 0 && lastNodeLength === 0) {
       lastFirstNode = currentNodes[0]
       lastNodeLength = currentNodes.length
     }
 
+    const reconciledKeyedForNodes = reconcileClientKeyedForInPlace(
+      value,
+      runtimeContainer,
+      owner,
+      targetParent,
+      liveMarker,
+      currentNodes,
+    )
+    if (reconciledKeyedForNodes) {
+      restoreSignalRefs(runtimeContainer, targetParent)
+      rememberInsertMarkerRange(liveMarker, reconciledKeyedForNodes)
+      lastFirstNode = reconciledKeyedForNodes[0] ?? liveMarker
+      lastNodeLength = reconciledKeyedForNodes.length
+      return
+    }
+
+    const newNodes = owner
+      ? renderClientInsertableForOwner(value, runtimeContainer, owner)
+      : renderClientInsertable(value, runtimeContainer)
+    const seededCurrentNodes = seedCurrentNodes(newNodes.length)
+    const reconnectableCurrentNodes =
+      seededCurrentNodes.length !== 0 &&
+      seededCurrentNodes.every((node) => hasUsableInsertParent(node, stableParents)) &&
+      canReconnectOwnerRange(seededCurrentNodes, newNodes)
+        ? seededCurrentNodes
+        : currentNodes
+
     if (
-      currentNodes.length === lastNodeLength &&
-      currentNodes.length !== 0 &&
+      reconnectableCurrentNodes.length === lastNodeLength &&
+      reconnectableCurrentNodes.length !== 0 &&
       newNodes.length !== 0 &&
-      (tryPatchNodeSequenceInPlace(currentNodes, newNodes) ||
-        tryPatchSingleElementShellInPlace(currentNodes, newNodes))
+      (tryPatchNodeSequenceInPlace(reconnectableCurrentNodes, newNodes) ||
+        tryPatchSingleElementShellInPlace(reconnectableCurrentNodes, newNodes))
     ) {
       restoreSignalRefs(runtimeContainer, targetParent)
-      rememberInsertMarkerRange(liveMarker, currentNodes)
-      lastFirstNode = currentNodes[0]
-      lastNodeLength = currentNodes.length
+      rememberInsertMarkerRange(liveMarker, reconnectableCurrentNodes)
+      lastFirstNode = reconnectableCurrentNodes[0]
+      lastNodeLength = reconnectableCurrentNodes.length
       return
     }
 
     let replacementNodes = newNodes
-    if (currentNodes.length !== 0 && newNodes.length !== 0) {
+    if (reconnectableCurrentNodes.length !== 0 && newNodes.length !== 0) {
       const doc = runtimeContainer.doc
       if (!doc) {
         throw new Error('Client insertions require an active runtime document.')
@@ -464,12 +483,15 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
       for (const node of newNodes) {
         stagingParent.appendChild(node)
       }
-      preserveReusableContentInRoots(currentNodes, Array.from(stagingParent.childNodes))
+      preserveReusableContentInRoots(
+        reconnectableCurrentNodes,
+        Array.from(stagingParent.childNodes),
+      )
       replacementNodes = Array.from(stagingParent.childNodes)
     }
 
     const insertReference = liveMarker?.parentNode === targetParent ? liveMarker : null
-    for (const node of currentNodes) {
+    for (const node of reconnectableCurrentNodes) {
       if (node.parentNode === targetParent) {
         removeNodeFromParent(node, targetParent)
       }

@@ -9680,6 +9680,66 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('rerenders only changed keyed For rows when surviving items keep the same key and index', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third])
+      const renderCounts = new Map<string, number>()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) => {
+                  renderCounts.set(item.id, (renderCounts.get(item.id) ?? 0) + 1)
+                  return jsxDEV('li', { children: item.label }, null, false, {})
+                },
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(renderCounts).toEqual(
+        new Map([
+          ['a', 1],
+          ['b', 1],
+          ['c', 1],
+        ]),
+      )
+
+      items.value = [first, { id: 'b', label: 'B2' }, third]
+      await flushAsync()
+
+      expect(renderCounts).toEqual(
+        new Map([
+          ['a', 1],
+          ['b', 2],
+          ['c', 1],
+        ]),
+      )
+
+      const rows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(rows.map((row) => row.textContent)).toEqual(['A', 'B2', 'C'])
+    })
+  })
+
   it('preserves static text when inserting a primitive before a template marker', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
