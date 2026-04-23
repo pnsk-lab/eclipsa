@@ -148,10 +148,12 @@ export interface SignalRecord<T = unknown> {
 
 export interface CleanupSlot {
   callback?: CleanupCallback | null
-  callbacks: CleanupCallback[] | null
+  callbacks?: CleanupCallback[] | null
   effect?: RenderEffect | null
   secondEffect?: RenderEffect | null
-  effects: RenderEffect[] | null
+  effects?: RenderEffect[] | null
+  cleanupBinding?: unknown | null
+  cleanupBindings?: unknown[] | null
 }
 
 export interface ComponentState {
@@ -369,7 +371,9 @@ export interface ForValue<T = unknown> {
   __e_for: true
   arr: readonly T[]
   arrSignal?: { value: readonly T[] }
+  directRowUpdates?: boolean
   fallback?: JSX.Element
+  domOnlyRows?: boolean
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => string | number | symbol
   keyMember?: string

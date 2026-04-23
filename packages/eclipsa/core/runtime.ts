@@ -610,10 +610,53 @@ const createCleanupSlot = (): CleanupSlot => ({
   effect: null,
   secondEffect: null,
   effects: null,
+  cleanupBinding: null,
+  cleanupBindings: null,
 })
 
+const createClientInsertCleanupSlot = (): CleanupSlot => ({
+  cleanupBinding: null,
+  cleanupBindings: null,
+})
+
+const createRowUpdateSlot = <T>(): RowUpdateSlot<T> => ({
+  callback: null,
+  callbacks: null,
+})
+
+const addRowUpdateSlotCallback = <T>(slot: RowUpdateSlot<T>, callback: RowUpdateCallback<T>) => {
+  if (!slot.callback && !slot.callbacks) {
+    slot.callback = callback
+    return
+  }
+  if (slot.callbacks) {
+    slot.callbacks.push(callback)
+    return
+  }
+  slot.callbacks = [slot.callback!, callback]
+  slot.callback = null
+}
+
+const runRowUpdateSlot = <T>(slot: RowUpdateSlot<T> | null | undefined, value: T) => {
+  if (!slot) {
+    return
+  }
+  if (slot.callback) {
+    slot.callback(value)
+  }
+  const callbacks = slot.callbacks
+  if (callbacks) {
+    for (let index = 0; index < callbacks.length; index += 1) {
+      callbacks[index]?.(value)
+    }
+  }
+}
+
 const cleanupSlotHasCallbacks = (slot: CleanupSlot | null | undefined) =>
-  !!slot?.callback || !!slot?.callbacks?.length
+  !!slot?.callback ||
+  !!slot?.callbacks?.length ||
+  !!slot?.cleanupBinding ||
+  !!slot?.cleanupBindings?.length
 
 const cleanupSlotHasEffects = (slot: CleanupSlot | null | undefined) =>
   !!slot?.effect || !!slot?.secondEffect || !!slot?.effects?.length
@@ -647,6 +690,19 @@ const addCleanupSlotEffect = (slot: CleanupSlot, effect: RenderEffect) => {
   slot.effects = [slot.effect!, slot.secondEffect!, effect]
   slot.effect = null
   slot.secondEffect = null
+}
+
+const addCleanupSlotBinding = (slot: CleanupSlot, binding: CleanupBinding) => {
+  if (!slot.cleanupBinding && !slot.cleanupBindings) {
+    slot.cleanupBinding = binding
+    return
+  }
+  if (slot.cleanupBindings) {
+    slot.cleanupBindings.push(binding)
+    return
+  }
+  slot.cleanupBindings = [slot.cleanupBinding!, binding]
+  slot.cleanupBinding = null
 }
 
 const getCleanupSlotEffectsForReuse = (
@@ -741,12 +797,16 @@ const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
   const effect = slot.effect
   const secondEffect = slot.secondEffect
   const effects = slot.effects
+  const cleanupBinding = slot.cleanupBinding as CleanupBinding | null
+  const cleanupBindings = slot.cleanupBindings as CleanupBinding[] | null
   if (
     !callback &&
     (!callbacks || callbacks.length === 0) &&
     !effect &&
     !secondEffect &&
-    (!effects || effects.length === 0)
+    (!effects || effects.length === 0) &&
+    !cleanupBinding &&
+    (!cleanupBindings || cleanupBindings.length === 0)
   ) {
     return
   }
@@ -756,6 +816,8 @@ const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
   slot.effect = null
   slot.secondEffect = null
   slot.effects = null
+  slot.cleanupBinding = null
+  slot.cleanupBindings = null
   let firstError: unknown = null
   const previous = currentCleanupSlot
   currentCleanupSlot = null
@@ -815,6 +877,26 @@ const disposeCleanupSlot = (slot: CleanupSlot | null | undefined) => {
           } else {
             clearEffectSignals(effect)
           }
+        } catch (error) {
+          firstError ??= error
+        }
+      }
+    }
+    if (cleanupBinding) {
+      try {
+        disposeCleanupBinding(cleanupBinding)
+      } catch (error) {
+        firstError ??= error
+      }
+    }
+    if (cleanupBindings) {
+      for (let index = cleanupBindings.length - 1; index >= 0; index -= 1) {
+        const binding = cleanupBindings[index]
+        if (!binding) {
+          continue
+        }
+        try {
+          disposeCleanupBinding(binding)
         } catch (error) {
           firstError ??= error
         }
@@ -1801,16 +1883,30 @@ interface ComputedSignalSnapshot<T> {
 }
 
 type KeyedForRowState<T = unknown> = {
+  cleanupSlot?: CleanupSlot | null
   index: number
+  itemSignalHandle?: RowSignalHandle<T>
   indexSignalRecord?: SignalRecord<number>
   item: T
   itemSignalRecord?: SignalRecord<T>
   key: string | number | symbol
   nodeCount: number
-  owner: ClientInsertOwner
+  owner: ClientInsertOwner | null
   stableNodeCount: boolean
   start: Node
   end: Node
+  updateSlot?: RowUpdateSlot<T> | null
+}
+
+type RowUpdateCallback<T> = (value: T) => void
+
+type RowUpdateSlot<T = unknown> = {
+  callback: RowUpdateCallback<T> | null
+  callbacks: RowUpdateCallback<T>[] | null
+}
+
+type RowSignalHandle<T = unknown> = {
+  value: T
 }
 
 type KeyedForOwnerState<T = unknown> = {
@@ -1831,6 +1927,55 @@ type KeyedForReconcileResult = {
 }
 
 const keyedForOwnerStates = new WeakMap<ComponentState, KeyedForOwnerState>()
+let currentClientInsertCleanupSlot: CleanupSlot | null = null
+let currentClientInsertRowUpdateSlot: RowUpdateSlot | null = null
+let currentClientInsertRowSignalSource: unknown = null
+
+const withClientInsertCleanupSlot = <T>(slot: CleanupSlot, fn: () => T) => {
+  const previous = currentClientInsertCleanupSlot
+  currentClientInsertCleanupSlot = slot
+  try {
+    return fn()
+  } finally {
+    currentClientInsertCleanupSlot = previous
+  }
+}
+
+const withClientInsertRowUpdateSlot = <TValue, TResult>(
+  slot: RowUpdateSlot<TValue>,
+  signalSource: unknown,
+  fn: () => TResult,
+) => {
+  const previousSlot = currentClientInsertRowUpdateSlot
+  const previousSource = currentClientInsertRowSignalSource
+  currentClientInsertRowUpdateSlot = slot as RowUpdateSlot<unknown>
+  currentClientInsertRowSignalSource = signalSource
+  try {
+    return fn()
+  } finally {
+    currentClientInsertRowUpdateSlot = previousSlot
+    currentClientInsertRowSignalSource = previousSource
+  }
+}
+
+export const registerCurrentClientInsertRowUpdate = <T>(
+  signal: { value: T },
+  fn: (value: T) => void,
+) => {
+  if (!currentClientInsertRowUpdateSlot) {
+    return false
+  }
+  if (currentClientInsertRowSignalSource === signal) {
+    addRowUpdateSlotCallback(currentClientInsertRowUpdateSlot as RowUpdateSlot<T>, fn)
+    return true
+  }
+  const record = getRuntimeSignalRecordFromValue(signal)
+  if (!record || currentClientInsertRowSignalSource !== record) {
+    return false
+  }
+  addRowUpdateSlotCallback(currentClientInsertRowUpdateSlot as RowUpdateSlot<T>, fn)
+  return true
+}
 
 const ensureKeyedForRowMap = <T>(state: KeyedForOwnerState<T>) => {
   if (state.rows) {
@@ -2318,7 +2463,6 @@ type LiveClientEventBindingStore = LiveClientEventBinding | Map<string, LiveClie
 
 const LIVE_CLIENT_EVENT_BINDINGS_KEY = Symbol('eclipsa.live-client-event-bindings')
 const EMPTY_EVENT_CAPTURES: unknown[] = []
-const liveClientEventBindings = new WeakMap<Element, LiveClientEventBindingStore>()
 type LiveClientEventBindingElement = Element & {
   [LIVE_CLIENT_EVENT_BINDINGS_KEY]?: LiveClientEventBindingStore | null
 }
@@ -2380,30 +2524,15 @@ const forEachLiveClientEventBindingName = (
 
 const getLiveClientEventBindings = (element: Element) => {
   const domElement = element as LiveClientEventBindingElement
-  const inline = domElement[LIVE_CLIENT_EVENT_BINDINGS_KEY]
-  if (inline) {
-    return inline
-  }
-  return liveClientEventBindings.get(element) ?? null
+  return domElement[LIVE_CLIENT_EVENT_BINDINGS_KEY] ?? null
 }
 
 const setLiveClientEventBindings = (
   element: Element,
   bindings: LiveClientEventBindingStore | null,
 ) => {
-  if (Object.isExtensible(element)) {
-    const domElement = element as LiveClientEventBindingElement
-    domElement[LIVE_CLIENT_EVENT_BINDINGS_KEY] = bindings
-    if (bindings) {
-      liveClientEventBindings.delete(element)
-    }
-    return
-  }
-  if (bindings) {
-    liveClientEventBindings.set(element, bindings)
-    return
-  }
-  liveClientEventBindings.delete(element)
+  const domElement = element as LiveClientEventBindingElement
+  domElement[LIVE_CLIENT_EVENT_BINDINGS_KEY] = bindings
 }
 
 const getLiveClientEventBinding = (
@@ -2474,15 +2603,40 @@ const setLiveClientPackedEventBinding = (
   capture2?: unknown,
   capture3?: unknown,
 ) => {
-  const binding: LiveClientEventBinding = {
-    capture0,
-    capture1,
-    capture2,
-    capture3,
-    captureCount,
-    containerId: container.id,
-    eventName,
-    symbol,
+  let binding: LiveClientEventBinding
+  switch (captureCount) {
+    case 0:
+      binding = { captureCount, containerId: container.id, eventName, symbol }
+      break
+    case 1:
+      binding = { capture0, captureCount, containerId: container.id, eventName, symbol }
+      break
+    case 2:
+      binding = { capture0, capture1, captureCount, containerId: container.id, eventName, symbol }
+      break
+    case 3:
+      binding = {
+        capture0,
+        capture1,
+        capture2,
+        captureCount,
+        containerId: container.id,
+        eventName,
+        symbol,
+      }
+      break
+    default:
+      binding = {
+        capture0,
+        capture1,
+        capture2,
+        capture3,
+        captureCount,
+        containerId: container.id,
+        eventName,
+        symbol,
+      }
+      break
   }
   storeLiveClientEventBinding(element, binding)
   return binding
@@ -2521,6 +2675,9 @@ export const bindPackedRuntimeEvent = (
     capture2,
     capture3,
   )
+  if (container.warmedRuntimeSymbols?.has(symbol)) {
+    return
+  }
   const resolved = getResolvedRuntimeSymbols(container).get(symbol)
   if (resolved) {
     binding.module = resolved
@@ -4774,13 +4931,17 @@ const stripResolvedForChildRootKey = (resolved: JSX.Element): JSX.Element => {
 const stripForChildRootKey = (value: JSX.Element): JSX.Element =>
   stripResolvedForChildRootKey(resolveRenderable(value))
 
+const singleForCallbackNodeResult: Node[] = []
+
 const renderForCallbackResultNodes = (value: unknown, container: RuntimeContainer): Node[] => {
   const resolved = resolveRenderable(value as JSX.Element)
   if (typeof Node !== 'undefined' && resolved instanceof Node) {
     if (!hasRememberedManagedAttributesForSubtree(resolved)) {
       rememberManagedAttributesForSubtree(resolved)
     }
-    return [resolved]
+    singleForCallbackNodeResult[0] = resolved
+    singleForCallbackNodeResult.length = 1
+    return singleForCallbackNodeResult
   }
   return renderClientInsertable(stripResolvedForChildRootKey(resolved), container)
 }
@@ -6231,6 +6392,15 @@ const disposeClientInsertOwner = (container: RuntimeContainer, owner: ClientInse
   owner.state = null
 }
 
+const disposeKeyedForRow = (container: RuntimeContainer, row: KeyedForRowState) => {
+  disposeCleanupSlot(row.cleanupSlot)
+  row.cleanupSlot = null
+  row.updateSlot = null
+  if (row.owner) {
+    disposeClientInsertOwner(container, row.owner)
+  }
+}
+
 const teardownKeyedForOwnerState = (
   container: RuntimeContainer,
   ownerComponent: ComponentState,
@@ -6241,7 +6411,7 @@ const teardownKeyedForOwnerState = (
   if (state) {
     for (const row of state.orderedRows) {
       removeBoundaryRangeFromParent(row.start, row.end, parent)
-      disposeClientInsertOwner(container, row.owner)
+      disposeKeyedForRow(container, row)
     }
     keyedForOwnerStates.delete(ownerComponent)
   }
@@ -6325,18 +6495,45 @@ export const reconcileClientKeyedForInPlace = (
 
   const usesReactiveItem = resolved.reactiveRows
   const usesReactiveIndex = resolved.reactiveRows && resolved.reactiveIndex !== false
+  const usesDirectRowUpdates =
+    resolved.domOnlyRows === true &&
+    resolved.directRowUpdates === true &&
+    usesReactiveItem &&
+    !usesReactiveIndex
   const renderRowNodes = (
-    rowOwner: ClientInsertOwner,
+    rowOwner: ClientInsertOwner | null,
+    rowCleanupSlot: CleanupSlot | null,
+    rowUpdateSlot: RowUpdateSlot<(typeof resolved.arr)[number]> | null,
+    rowSignalSource: unknown,
     callbackItem: (typeof resolved.arr)[number] | { value: (typeof resolved.arr)[number] },
     callbackIndex: number | { value: number },
-  ) =>
-    renderForCallbackNodesForOwner(
+  ) => {
+    if (resolved.domOnlyRows === true && rowCleanupSlot && rowUpdateSlot && rowSignalSource) {
+      return renderDomOnlyForCallbackNodes(
+        container,
+        rowCleanupSlot,
+        rowUpdateSlot,
+        rowSignalSource,
+        resolved.fn as (item: typeof callbackItem, index: typeof callbackIndex) => unknown,
+        callbackItem,
+        callbackIndex,
+      )
+    }
+    if (!rowOwner) {
+      throw new Error('Keyed For row owners are required outside DOM-only row mode.')
+    }
+    return renderForCallbackNodesForOwner(
       container,
       rowOwner,
       resolved.fn as (item: typeof callbackItem, index: typeof callbackIndex) => unknown,
       callbackItem,
       callbackIndex,
     )
+  }
+  const hasStableRowNodeCount = (row: KeyedForRowState) =>
+    row.stableNodeCount &&
+    (resolved.domOnlyRows === true ||
+      (row.owner ? hasStableClientInsertOwnerNodeCount(container, row.owner) : false))
 
   if (state.orderedRows.length === 0) {
     const nextOrder: Array<string | number | symbol> = []
@@ -6352,16 +6549,36 @@ export const reconcileClientKeyedForInPlace = (
       for (let index = 0; index < resolved.arr.length; index += 1) {
         const item = resolved.arr[index]!
         const key = resolveForItemKey(resolved, item, index)
-        const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
-        const itemSignalRecord = usesReactiveItem
-          ? createTransientInternalSignalRecord(container, item)
+        const rowOwner =
+          resolved.domOnlyRows === true
+            ? null
+            : createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
+        const rowCleanupSlot =
+          resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+        const rowUpdateSlot =
+          resolved.domOnlyRows === true
+            ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+            : null
+        const itemSignalHandle = usesDirectRowUpdates
+          ? ({ value: item } satisfies RowSignalHandle<(typeof resolved.arr)[number]>)
           : undefined
+        const itemSignalRecord =
+          usesReactiveItem && !usesDirectRowUpdates
+            ? createTransientInternalSignalRecord(container, item)
+            : undefined
         const indexSignalRecord = usesReactiveIndex
           ? createTransientInternalSignalRecord(container, index)
           : undefined
-        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : item
+        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : (itemSignalHandle ?? item)
         const callbackIndex = indexSignalRecord ? indexSignalRecord.handle : index
-        const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
+        const bodyNodes = renderRowNodes(
+          rowOwner,
+          rowCleanupSlot,
+          rowUpdateSlot,
+          itemSignalRecord ?? itemSignalHandle,
+          callbackItem,
+          callbackIndex,
+        )
         if (fragment) {
           for (const node of bodyNodes) {
             fragment.appendChild(node)
@@ -6374,15 +6591,20 @@ export const reconcileClientKeyedForInPlace = (
 
         const row = {
           end: bodyNodes[bodyNodes.length - 1]!,
+          cleanupSlot: rowCleanupSlot,
           index,
           indexSignalRecord,
           item,
+          itemSignalHandle,
           itemSignalRecord,
           key,
           nodeCount: bodyNodes.length,
           owner: rowOwner,
-          stableNodeCount: hasStableClientInsertOwnerNodeCount(container, rowOwner),
+          stableNodeCount:
+            resolved.domOnlyRows === true ||
+            (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false),
           start: bodyNodes[0]!,
+          updateSlot: rowUpdateSlot,
         } satisfies KeyedForRowState<(typeof resolved.arr)[number]>
 
         totalNodeCount += row.nodeCount
@@ -6511,10 +6733,18 @@ export const reconcileClientKeyedForInPlace = (
         const row = state.dirtyRows[dirtyIndex]!
         const item = state.dirtyItems[dirtyIndex]!
         const index = state.dirtyIndexes[dirtyIndex]!
-        if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+        if (
+          resolved.reactiveRows &&
+          (row.itemSignalRecord || row.itemSignalHandle || row.indexSignalRecord)
+        ) {
           let wroteReactiveRowSignal = false
-          if (row.itemSignalRecord && row.item !== item) {
+          if (row.itemSignalHandle && row.item !== item) {
+            row.itemSignalHandle.value = item
+            runRowUpdateSlot(row.updateSlot, item)
+            wroteReactiveRowSignal = true
+          } else if (row.itemSignalRecord && row.item !== item) {
             writeSignalValue(container, row.itemSignalRecord, item)
+            runRowUpdateSlot(row.updateSlot, item)
             wroteReactiveRowSignal = true
           }
           if (row.indexSignalRecord && row.index !== index) {
@@ -6525,10 +6755,17 @@ export const reconcileClientKeyedForInPlace = (
             reactiveRowsNeedingNodeCountRefresh.push(row)
           }
         } else {
-          const nextBodyNodes = renderForCallbackNodesForOwner(
-            container,
+          disposeCleanupSlot(row.cleanupSlot)
+          row.cleanupSlot = resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+          row.updateSlot =
+            resolved.domOnlyRows === true
+              ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+              : null
+          const nextBodyNodes = renderRowNodes(
             row.owner,
-            resolved.fn,
+            row.cleanupSlot ?? null,
+            row.updateSlot,
+            row.itemSignalRecord ?? row.itemSignalHandle,
             item,
             index,
           )
@@ -6547,7 +6784,7 @@ export const reconcileClientKeyedForInPlace = (
       }
     })
     for (const row of reactiveRowsNeedingNodeCountRefresh) {
-      if (row.stableNodeCount && hasStableClientInsertOwnerNodeCount(container, row.owner)) {
+      if (hasStableRowNodeCount(row)) {
         continue
       }
       const nextNodeCount = countNodesBetween(row.start, row.end)
@@ -6595,10 +6832,18 @@ export const reconcileClientKeyedForInPlace = (
             const row = nextOrderedRows[index]!
             const item = resolved.arr[index]!
             if (row.item !== item || row.index !== index) {
-              if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+              if (
+                resolved.reactiveRows &&
+                (row.itemSignalRecord || row.itemSignalHandle || row.indexSignalRecord)
+              ) {
                 let wroteReactiveRowSignal = false
-                if (row.itemSignalRecord && row.item !== item) {
+                if (row.itemSignalHandle && row.item !== item) {
+                  row.itemSignalHandle.value = item
+                  runRowUpdateSlot(row.updateSlot, item)
+                  wroteReactiveRowSignal = true
+                } else if (row.itemSignalRecord && row.item !== item) {
                   writeSignalValue(container, row.itemSignalRecord, item)
+                  runRowUpdateSlot(row.updateSlot, item)
                   wroteReactiveRowSignal = true
                 }
                 if (row.indexSignalRecord && row.index !== index) {
@@ -6609,10 +6854,18 @@ export const reconcileClientKeyedForInPlace = (
                   reactiveRowsNeedingNodeCountRefresh.push(row)
                 }
               } else {
-                const nextBodyNodes = renderForCallbackNodesForOwner(
-                  container,
+                disposeCleanupSlot(row.cleanupSlot)
+                row.cleanupSlot =
+                  resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+                row.updateSlot =
+                  resolved.domOnlyRows === true
+                    ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+                    : null
+                const nextBodyNodes = renderRowNodes(
                   row.owner,
-                  resolved.fn,
+                  row.cleanupSlot ?? null,
+                  row.updateSlot,
+                  row.itemSignalRecord ?? row.itemSignalHandle,
                   item,
                   index,
                 )
@@ -6622,7 +6875,9 @@ export const reconcileClientKeyedForInPlace = (
                   row.end = nextBodyNodes[nextBodyNodes.length - 1]!
                 }
                 row.nodeCount = nextBodyNodes.length
-                row.stableNodeCount = hasStableClientInsertOwnerNodeCount(container, row.owner)
+                row.stableNodeCount =
+                  resolved.domOnlyRows === true ||
+                  (row.owner ? hasStableClientInsertOwnerNodeCount(container, row.owner) : false)
                 needsRefRestore ||=
                   container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(nextBodyNodes)
               }
@@ -6633,7 +6888,7 @@ export const reconcileClientKeyedForInPlace = (
         })
 
         for (const row of reactiveRowsNeedingNodeCountRefresh) {
-          if (row.stableNodeCount && hasStableClientInsertOwnerNodeCount(container, row.owner)) {
+          if (hasStableRowNodeCount(row)) {
             continue
           }
           row.nodeCount = countNodesBetween(row.start, row.end)
@@ -6648,7 +6903,7 @@ export const reconcileClientKeyedForInPlace = (
 
       for (const row of removedRows) {
         removeBoundaryRangeFromParent(row.start, row.end, parent)
-        disposeClientInsertOwner(container, row.owner)
+        disposeKeyedForRow(container, row)
         state.rows?.delete(row.key)
         if (canSkipSurvivingRowUpdates) {
           totalNodeCount -= row.nodeCount
@@ -6824,37 +7079,70 @@ export const reconcileClientKeyedForInPlace = (
       let row = currentRows.get(key)
 
       if (!row) {
-        const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
-        const itemSignalRecord = usesReactiveItem
-          ? createTransientInternalSignalRecord(container, item)
+        const rowOwner =
+          resolved.domOnlyRows === true
+            ? null
+            : createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
+        const rowCleanupSlot =
+          resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+        const rowUpdateSlot =
+          resolved.domOnlyRows === true
+            ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+            : null
+        const itemSignalHandle = usesDirectRowUpdates
+          ? ({ value: item } satisfies RowSignalHandle<(typeof resolved.arr)[number]>)
           : undefined
+        const itemSignalRecord =
+          usesReactiveItem && !usesDirectRowUpdates
+            ? createTransientInternalSignalRecord(container, item)
+            : undefined
         const indexSignalRecord = usesReactiveIndex
           ? createTransientInternalSignalRecord(container, index)
           : undefined
-        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : item
+        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : (itemSignalHandle ?? item)
         const callbackIndex = indexSignalRecord ? indexSignalRecord.handle : index
-        const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
+        const bodyNodes = renderRowNodes(
+          rowOwner,
+          rowCleanupSlot,
+          rowUpdateSlot,
+          itemSignalRecord ?? itemSignalHandle,
+          callbackItem,
+          callbackIndex,
+        )
         needsRefRestore ||=
           container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(bodyNodes)
         row = {
           end: bodyNodes[bodyNodes.length - 1]!,
+          cleanupSlot: rowCleanupSlot,
           index,
           indexSignalRecord,
           item,
+          itemSignalHandle,
           itemSignalRecord,
           key,
           nodeCount: bodyNodes.length,
           owner: rowOwner,
-          stableNodeCount: hasStableClientInsertOwnerNodeCount(container, rowOwner),
+          stableNodeCount:
+            resolved.domOnlyRows === true ||
+            (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false),
           start: bodyNodes[0]!,
+          updateSlot: rowUpdateSlot,
         }
       } else {
         const shouldRerender = row.item !== item || row.index !== index
         if (shouldRerender) {
-          if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+          if (
+            resolved.reactiveRows &&
+            (row.itemSignalRecord || row.itemSignalHandle || row.indexSignalRecord)
+          ) {
             let wroteReactiveRowSignal = false
-            if (row.itemSignalRecord && row.item !== item) {
+            if (row.itemSignalHandle && row.item !== item) {
+              row.itemSignalHandle.value = item
+              runRowUpdateSlot(row.updateSlot, item)
+              wroteReactiveRowSignal = true
+            } else if (row.itemSignalRecord && row.item !== item) {
               writeSignalValue(container, row.itemSignalRecord, item)
+              runRowUpdateSlot(row.updateSlot, item)
               wroteReactiveRowSignal = true
             }
             if (row.indexSignalRecord && row.index !== index) {
@@ -6865,10 +7153,17 @@ export const reconcileClientKeyedForInPlace = (
               reactiveRowsNeedingNodeCountRefresh.push(row)
             }
           } else {
-            const nextBodyNodes = renderForCallbackNodesForOwner(
-              container,
+            disposeCleanupSlot(row.cleanupSlot)
+            row.cleanupSlot = resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+            row.updateSlot =
+              resolved.domOnlyRows === true
+                ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+                : null
+            const nextBodyNodes = renderRowNodes(
               row.owner,
-              resolved.fn,
+              row.cleanupSlot ?? null,
+              row.updateSlot,
+              row.itemSignalRecord ?? row.itemSignalHandle,
               item,
               index,
             )
@@ -6878,7 +7173,9 @@ export const reconcileClientKeyedForInPlace = (
               row.end = nextBodyNodes[nextBodyNodes.length - 1]!
             }
             row.nodeCount = nextBodyNodes.length
-            row.stableNodeCount = hasStableClientInsertOwnerNodeCount(container, row.owner)
+            row.stableNodeCount =
+              resolved.domOnlyRows === true ||
+              (row.owner ? hasStableClientInsertOwnerNodeCount(container, row.owner) : false)
             needsRefRestore ||=
               container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(nextBodyNodes)
           }
@@ -6908,7 +7205,7 @@ export const reconcileClientKeyedForInPlace = (
   }
 
   for (const row of reactiveRowsNeedingNodeCountRefresh) {
-    if (row.stableNodeCount && hasStableClientInsertOwnerNodeCount(container, row.owner)) {
+    if (hasStableRowNodeCount(row)) {
       continue
     }
     row.nodeCount = countNodesBetween(row.start, row.end)
@@ -6920,7 +7217,7 @@ export const reconcileClientKeyedForInPlace = (
       continue
     }
     removeBoundaryRangeFromParent(row.start, row.end, parent)
-    disposeClientInsertOwner(container, row.owner)
+    disposeKeyedForRow(container, row)
   }
 
   let totalNodeCount = 0
@@ -7108,6 +7405,21 @@ const renderForCallbackNodesForOwner = <TItem, TIndex>(
   }
   return nodes
 }
+
+const renderDomOnlyForCallbackNodes = <TItem, TIndex>(
+  container: RuntimeContainer,
+  cleanupSlot: CleanupSlot,
+  rowUpdateSlot: RowUpdateSlot<TItem>,
+  rowSignalSource: unknown,
+  callback: (item: TItem, index: TIndex) => unknown,
+  item: TItem,
+  index: TIndex,
+) =>
+  withClientInsertCleanupSlot(cleanupSlot, () =>
+    withClientInsertRowUpdateSlot(rowUpdateSlot, rowSignalSource, () =>
+      renderForCallbackResultNodes(callback(item, index), container),
+    ),
+  )
 
 export const serializeContainerValue = (
   container: RuntimeContainer | null,
@@ -10744,12 +11056,331 @@ const reuseRuntimeFixedSignalEffect = <T>(
   return effect
 }
 
+type CleanupBinding = SignalEqualityBinding | SignalClassEqualityBinding
+
+interface SignalEqualityBinding {
+  cleanupKind: 'signal-equality'
+  callback: ((match: boolean) => void) | null
+  expected: unknown
+  state: SignalEqualityBindingState | null
+}
+
+interface SignalEqualityBindingState {
+  bindingCount: number
+  bindings: SignalEqualityBinding[]
+  dispatcher: FixedSignalEffect
+  record: SignalRecord
+  value: unknown
+}
+
+const SIGNAL_EQUALITY_BINDING_STATES = new WeakMap<SignalRecord, SignalEqualityBindingState>()
+
+const getOrCreateSignalEqualityBindingState = (
+  record: SignalRecord,
+): SignalEqualityBindingState => {
+  const existing = SIGNAL_EQUALITY_BINDING_STATES.get(record)
+  if (existing) {
+    return existing
+  }
+
+  const state: SignalEqualityBindingState = {
+    bindingCount: 0,
+    bindings: [],
+    dispatcher: undefined as unknown as FixedSignalEffect,
+    record,
+    value: record.value,
+  }
+
+  state.dispatcher = createRuntimeFixedSignalEffect(
+    record,
+    (nextValue) => {
+      const previousValue = state.value
+      if (previousValue === nextValue) {
+        return
+      }
+      state.value = nextValue
+      for (const binding of state.bindings) {
+        const callback = binding.callback
+        if (!callback) {
+          continue
+        }
+        const previousMatch = previousValue === binding.expected
+        const nextMatch = nextValue === binding.expected
+        if (previousMatch !== nextMatch) {
+          callback(nextMatch)
+        }
+      }
+    },
+    null,
+    false,
+  )
+  SIGNAL_EQUALITY_BINDING_STATES.set(record, state)
+  return state
+}
+
+function disposeSignalEqualityBinding(binding: SignalEqualityBinding) {
+  const state = binding.state
+  if (!state) {
+    return
+  }
+  binding.callback = null
+  binding.state = null
+  state.bindingCount -= 1
+  if (state.bindingCount === 0) {
+    removeFixedSignalEffect(state.record, state.dispatcher)
+    SIGNAL_EQUALITY_BINDING_STATES.delete(state.record)
+  }
+}
+
+function disposeCleanupBinding(binding: CleanupBinding) {
+  if (binding.cleanupKind === 'signal-class-equality') {
+    disposeSignalClassEqualityBinding(binding)
+    return
+  }
+  disposeSignalEqualityBinding(binding)
+}
+
+export const createSignalEqualityEffect = <T>(
+  signal: { value: T },
+  expected: unknown,
+  fn: (match: boolean) => void,
+  options?: Pick<EffectOptions, 'runInContainer' | 'skipInitialRun'>,
+) => {
+  const skipInitialRun = options?.skipInitialRun === true
+  if (
+    options?.runInContainer === false &&
+    registerCurrentClientInsertRowUpdate(signal, (value) => fn(value === expected))
+  ) {
+    if (!skipInitialRun) {
+      fn(signal.value === expected)
+    }
+    return true
+  }
+
+  if (options?.runInContainer !== false) {
+    return createFixedSignalEffect(signal, (value) => fn(value === expected), options)
+  }
+
+  const record = getRuntimeSignalRecordFromValue<T>(signal)
+  if (!record) {
+    return createFixedSignalEffect(signal, (value) => fn(value === expected), options)
+  }
+
+  const state = getOrCreateSignalEqualityBindingState(record)
+  const binding = {
+    cleanupKind: 'signal-equality',
+    callback: fn,
+    expected,
+    state,
+  } satisfies SignalEqualityBinding
+  state.bindings.push(binding)
+  state.bindingCount += 1
+
+  if (!skipInitialRun) {
+    fn(record.value === expected)
+  }
+
+  if (currentClientInsertCleanupSlot) {
+    addCleanupSlotBinding(currentClientInsertCleanupSlot, binding)
+  } else {
+    const frame = getCurrentFrame()
+    if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
+      addCleanupSlotBinding(ensureFrameEffectCleanupSlot(frame), binding)
+    }
+  }
+
+  return true
+}
+
+const SIGNAL_CLASS_EQUALITY_FALLBACK_OPTIONS = {
+  runInContainer: false,
+  skipInitialRun: true,
+} as const
+
+interface SignalClassEqualityBinding {
+  cleanupKind: 'signal-class-equality'
+  elem: Element | null
+  expected: unknown
+  falsyClassValue: string
+  isSVG: boolean
+  lastMatch: boolean
+  state: SignalClassEqualityBindingState | null
+  truthyClassValue: string
+}
+
+interface SignalClassEqualityBindingState {
+  bindingCount: number
+  bindings: SignalClassEqualityBinding[]
+  dispatcher: FixedSignalEffect
+  record: SignalRecord
+  value: unknown
+}
+
+const SIGNAL_CLASS_EQUALITY_BINDING_STATES = new WeakMap<
+  SignalRecord,
+  SignalClassEqualityBindingState
+>()
+
+const applySignalClassEqualityBinding = (binding: SignalClassEqualityBinding, match: boolean) => {
+  const elem = binding.elem
+  if (!elem) {
+    return
+  }
+  const nextClassValue = match ? binding.truthyClassValue : binding.falsyClassValue
+  if (nextClassValue === '') {
+    elem.removeAttribute('class')
+    syncManagedAttributeSnapshot(elem, 'class')
+    return
+  }
+  if (binding.isSVG) {
+    elem.setAttribute('class', nextClassValue)
+  } else {
+    ;(elem as Element & { className: string }).className = nextClassValue
+  }
+  syncManagedAttributeSnapshot(elem, 'class')
+}
+
+const getOrCreateSignalClassEqualityBindingState = (
+  record: SignalRecord,
+): SignalClassEqualityBindingState => {
+  const existing = SIGNAL_CLASS_EQUALITY_BINDING_STATES.get(record)
+  if (existing) {
+    return existing
+  }
+
+  const state: SignalClassEqualityBindingState = {
+    bindingCount: 0,
+    bindings: [],
+    dispatcher: undefined as unknown as FixedSignalEffect,
+    record,
+    value: record.value,
+  }
+
+  state.dispatcher = createRuntimeFixedSignalEffect(
+    record,
+    (nextValue) => {
+      if (state.value === nextValue) {
+        return
+      }
+      state.value = nextValue
+      for (const binding of state.bindings) {
+        if (!binding.elem) {
+          continue
+        }
+        const nextMatch = nextValue === binding.expected
+        if (binding.lastMatch !== nextMatch) {
+          applySignalClassEqualityBinding(binding, nextMatch)
+          binding.lastMatch = nextMatch
+        }
+      }
+    },
+    null,
+    false,
+  )
+  SIGNAL_CLASS_EQUALITY_BINDING_STATES.set(record, state)
+  return state
+}
+
+function disposeSignalClassEqualityBinding(binding: SignalClassEqualityBinding) {
+  const state = binding.state
+  if (!state) {
+    return
+  }
+  binding.elem = null
+  binding.state = null
+  state.bindingCount -= 1
+  if (state.bindingCount === 0) {
+    removeFixedSignalEffect(state.record, state.dispatcher)
+    SIGNAL_CLASS_EQUALITY_BINDING_STATES.delete(state.record)
+  }
+}
+
+export const createSignalClassEqualityEffect = <T>(
+  elem: Element,
+  signal: { value: T },
+  expected: unknown,
+  truthyValue: unknown,
+  falsyValue: unknown,
+) => {
+  const truthyClassValue = typeof truthyValue === 'string' ? truthyValue : String(truthyValue)
+  const falsyClassValue = typeof falsyValue === 'string' ? falsyValue : String(falsyValue)
+  const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
+  let lastMatch = signal.value === expected
+
+  const applyFallbackClassValue = (match: boolean) => {
+    const nextClassValue = match ? truthyClassValue : falsyClassValue
+    if (nextClassValue === '') {
+      elem.removeAttribute('class')
+      syncManagedAttributeSnapshot(elem, 'class')
+      return
+    }
+    if (isSVG) {
+      elem.setAttribute('class', nextClassValue)
+    } else {
+      ;(elem as Element & { className: string }).className = nextClassValue
+    }
+    syncManagedAttributeSnapshot(elem, 'class')
+  }
+
+  if (lastMatch || falsyClassValue !== '') {
+    applyFallbackClassValue(lastMatch)
+  }
+
+  const record = getRuntimeSignalRecordFromValue<T>(signal)
+  if (!record) {
+    createSignalEqualityEffect(
+      signal,
+      expected,
+      (nextMatch) => {
+        if (lastMatch !== nextMatch) {
+          applyFallbackClassValue(nextMatch)
+          lastMatch = nextMatch
+        }
+      },
+      SIGNAL_CLASS_EQUALITY_FALLBACK_OPTIONS,
+    )
+    return true
+  }
+
+  const state = getOrCreateSignalClassEqualityBindingState(record)
+  const binding = {
+    cleanupKind: 'signal-class-equality',
+    elem,
+    expected,
+    falsyClassValue,
+    isSVG,
+    lastMatch,
+    state,
+    truthyClassValue,
+  } satisfies SignalClassEqualityBinding
+  state.bindings.push(binding)
+  state.bindingCount += 1
+
+  if (currentClientInsertCleanupSlot) {
+    addCleanupSlotBinding(currentClientInsertCleanupSlot, binding)
+  } else {
+    const frame = getCurrentFrame()
+    if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
+      addCleanupSlotBinding(ensureFrameEffectCleanupSlot(frame), binding)
+    }
+  }
+
+  return true
+}
+
 export const createFixedSignalEffect = <T>(
   signal: { value: T },
   fn: (value: T) => void,
   options?: Pick<EffectOptions, 'runInContainer' | 'skipInitialRun'>,
 ) => {
   const skipInitialRun = options?.skipInitialRun === true
+  if (registerCurrentClientInsertRowUpdate(signal, fn)) {
+    if (!skipInitialRun) {
+      fn(signal.value)
+    }
+    return true
+  }
+
   const record = getRuntimeSignalRecordFromValue<T>(signal)
   if (!record) {
     let initialized = skipInitialRun !== true
@@ -10762,6 +11393,17 @@ export const createFixedSignalEffect = <T>(
       fn(value)
     }, options)
     return false
+  }
+
+  if (record.skipComponentSubscription === true && options?.runInContainer === false) {
+    const effect = createRuntimeFixedSignalEffect(record, fn, null, false)
+    if (currentClientInsertCleanupSlot) {
+      addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
+    }
+    if (!skipInitialRun) {
+      runFixedSignalEffect(effect)
+    }
+    return true
   }
 
   const container = getCurrentContainer()
@@ -10797,6 +11439,8 @@ export const createFixedSignalEffect = <T>(
 
   if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
     addCleanupSlotEffect(ensureFrameEffectCleanupSlot(frame), effect)
+  } else if (currentClientInsertCleanupSlot) {
+    addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
   }
 
   return true

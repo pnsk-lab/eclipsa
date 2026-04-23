@@ -3,6 +3,7 @@ import { motion } from '../../motion/mod.ts'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
 import {
+  classSignalEquals,
   attr,
   eventStatic,
   insert,
@@ -10,6 +11,7 @@ import {
   insertStatic,
   listenerStatic,
   text,
+  textNodeSignalMember,
 } from './client/dom.ts'
 import {
   createContext,
@@ -11981,6 +11983,121 @@ describe('renderClientInsertable', () => {
       expect(renderedRows.map((row) => row.textContent)).toEqual(['A', 'B'])
       expect(arrGetterReads).toBe(0)
       expect(staticPropReads).toBe(3)
+    })
+  })
+
+  it('updates compiler-lowered reactive row member effects after rows are patched and removed', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal(container, 'rows', [
+        { id: 1, label: 'A' },
+        { id: 2, label: 'B' },
+      ])
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insertFor(
+          {
+            arrSignal: rows,
+            fn: (row: { value: { id: number; label: string } }) => {
+              const tr = new FakeElement('tr')
+              const label = new FakeText(row.value.label)
+              tr.appendChild(label)
+              textNodeSignalMember(row, 'label', label as unknown as Node)
+              return tr as unknown as JSX.Element
+            },
+            key: (row: { id: number }) => row.id,
+            keyMember: 'id',
+            reactiveRows: true,
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      rows.value = [
+        { id: 2, label: 'B2' },
+        { id: 3, label: 'C' },
+      ]
+      await flushAsync()
+
+      const renderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(renderedRows.map((row) => row.textContent)).toEqual(['B2', 'C'])
+
+      rows.value = [{ id: 3, label: 'C2' }]
+      await flushAsync()
+
+      expect(renderedRows[0]?.parentNode).toBeNull()
+      const remainingRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(remainingRows.map((row) => row.textContent)).toEqual(['C2'])
+    })
+  })
+
+  it('cleans DOM-only keyed row signal effects when rows are removed', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal(container, 'rows', [
+        { id: 1, label: 'A' },
+        { id: 2, label: 'B' },
+      ])
+      const selected = createDetachedRuntimeSignal(container, 'selected', 2)
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insertFor(
+          {
+            arrSignal: rows,
+            directRowUpdates: true,
+            domOnlyRows: true,
+            fn: (row: { value: { id: number; label: string } }) => {
+              const tr = new FakeElement('tr')
+              const label = new FakeText(row.value.label)
+              tr.appendChild(label)
+              classSignalEquals(tr as unknown as Element, selected, row.value.id, 'danger', '')
+              textNodeSignalMember(row, 'label', label as unknown as Node)
+              return tr as unknown as JSX.Element
+            },
+            key: (row: { id: number }) => row.id,
+            keyMember: 'id',
+            reactiveRows: true,
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      await flushAsync()
+
+      const renderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      const removedSelectedRow = renderedRows[1]!
+      expect(removedSelectedRow.className).toBe('danger')
+      expect([...container.components.keys()].some((id) => id.includes('.'))).toBe(false)
+
+      rows.value = [{ id: 1, label: 'A2' }]
+      await flushAsync()
+      expect(removedSelectedRow.parentNode).toBeNull()
+
+      selected.value = 1
+      rows.value = [{ id: 1, label: 'A3' }]
+      await flushAsync()
+
+      expect(removedSelectedRow.className).toBe('danger')
+      const remainingRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(remainingRows).toHaveLength(1)
+      expect(remainingRows[0]?.className).toBe('danger')
+      expect(remainingRows[0]?.textContent).toBe('A3')
     })
   })
 })

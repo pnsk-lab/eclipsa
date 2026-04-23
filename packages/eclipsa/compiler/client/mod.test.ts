@@ -91,7 +91,7 @@ describe('compileClientModule', () => {
     )
 
     const headerInsertIndex = resultCode.indexOf('_insertStatic(_createComponent(Header')
-    const childrenInsertIndex = resultCode.indexOf('_insertElementStatic(props.children')
+    const childrenInsertIndex = resultCode.indexOf('let _textValue0 = props.children')
     expect(headerInsertIndex).toBeGreaterThanOrEqual(0)
     expect(childrenInsertIndex).toBeGreaterThanOrEqual(0)
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
@@ -174,7 +174,9 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('_classSignalEquals(_cloned, selected, rowId, "danger", "");')
+    expect(resultCode).toContain(
+      '_classSignalEqualsStatic(_cloned, selected, rowId, "danger", "");',
+    )
     expect(resultCode).not.toContain('_className(_cloned')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
   })
@@ -324,9 +326,11 @@ describe('compileClientModule', () => {
 
     expect(resultCode).not.toContain('=> <li')
     expect(resultCode).toContain('__e_for: true')
-    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li></li>");')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li> </li>");')
     expect(resultCode).toMatch(/"?reactiveRows"?: true/)
-    expect(resultCode).toContain('_textNodeSignalValue(todo, _cloned);')
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+    expect(resultCode).toContain('_textNodeSignalValue(todo, _ref0);')
+    expect(resultCode).not.toContain('_attr(_cloned, "key"')
   })
 
   it('emits one-shot inserts for expressions that do not read signals directly', async () => {
@@ -334,7 +338,7 @@ describe('compileClientModule', () => {
       hmr: false,
     })
 
-    expect(resultCode).toContain('_insertElementStatic(row.label, _cloned);')
+    expect(resultCode).toContain('let _textValue0 = row.label;')
     expect(resultCode).not.toContain('_insert(() => row.label')
   })
 
@@ -344,7 +348,8 @@ describe('compileClientModule', () => {
     })
 
     expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<a></a>");')
-    expect(resultCode).toContain('_insertElementStatic(label, _cloned);')
+    expect(resultCode).not.toContain('let _textValue0 = label;')
+    expect(resultCode).toContain('typeof label')
     expect(resultCode).not.toContain('<!-- 0 -->')
   })
 
@@ -353,7 +358,8 @@ describe('compileClientModule', () => {
       hmr: false,
     })
 
-    expect(resultCode).toContain('_textNodeSignalValue(count, _cloned);')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<div> </div>");')
+    expect(resultCode).toContain('_textNodeSignalValue(count, _ref0);')
     expect(resultCode).not.toContain('<!-- 0 -->')
   })
 
@@ -384,6 +390,7 @@ describe('compileClientModule', () => {
     expect(resultCode).toMatch(/_insertFor\(\{\s*arrSignal: rows/)
     expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
     expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).toContain('"directRowUpdates": true')
     expect(resultCode).not.toContain('_createComponent(For')
     expect(resultCode).not.toContain('_insertStatic(({ __e_for: true')
   })
@@ -403,7 +410,7 @@ describe('compileClientModule', () => {
     )
 
     expect(
-      resultCode.match(/const __eclipsaTemplate\d+ = _createTemplate\("<span><\/span>"\);/g),
+      resultCode.match(/const __eclipsaTemplate\d+ = _createTemplate\("<span> <\/span>"\);/g),
     ).toHaveLength(1)
   })
 
@@ -434,16 +441,39 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+    expect(resultCode).toContain('directRowUpdates: true')
     expect(resultCode).toContain('reactiveIndex: false')
     expect(resultCode).toContain('const rowId = row.value.id;')
-    expect(resultCode).toContain('_insertElementStatic(rowId')
-    expect(resultCode).toContain('_textNodeSignalMember(row, "label"')
+    expect(resultCode).not.toContain('let _textValue0 = rowId;')
+    expect(resultCode).toContain('typeof rowId')
+    expect(resultCode).toContain('_textNodeSignalMemberStatic(row, "label"')
     expect(resultCode).not.toContain('<!-- 1,0,0 -->')
-    expect(resultCode).toContain('_classSignalEquals(')
+    expect(resultCode).toContain('_classSignalEqualsStatic(')
     expect(resultCode).toContain('_eventStatic(')
     expect(resultCode).toContain('"click", handleClick')
     expect(resultCode).toContain('keyMember: "id"')
     expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
+  })
+
+  it('keeps lowered For callbacks with nested components on owner-backed rows', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          fn={(row) => <li><Widget value={row.label} /></li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toContain('_createComponent(Widget')
+    expect(resultCode).not.toMatch(/"?domOnlyRows"?: true/)
   })
 
   it('preserves explicit reactive row handle usage in For callbacks', async () => {
@@ -486,6 +516,7 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain('arrSignal: rows')
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
   })
 
   it('omits comment markers for tracked single-child text insertions inside nested elements', async () => {
@@ -498,10 +529,10 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain(
-      'const __eclipsaTemplate0 = _createTemplate("<tr><td></td><td><a></a></td></tr>");',
+      'const __eclipsaTemplate0 = _createTemplate("<tr><td> </td><td><a> </a></td></tr>");',
     )
-    expect(resultCode).toContain('_textNodeSignalValue(label, _ref0);')
     expect(resultCode).toContain('_textNodeSignalValue(label, _ref2);')
+    expect(resultCode).toContain('_textNodeSignalValue(label, _ref4);')
     expect(resultCode).not.toContain('<!-- 0,0 -->')
     expect(resultCode).not.toContain('<!-- 1,0,0 -->')
   })
@@ -531,6 +562,7 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain('reactiveRows: true')
+    expect(resultCode).not.toContain('domOnlyRows: true')
     expect(resultCode).toContain('_text(() => i.value')
     expect(resultCode).toContain('item.value.label')
     expect(resultCode).toContain('item.value.id')
@@ -547,7 +579,7 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).not.toContain('reactiveRows: true')
-    expect(resultCode).toContain('_textNodeSignalValue(item, _cloned);')
+    expect(resultCode).toContain('_textNodeSignalValue(item, _ref0);')
     expect(resultCode).not.toContain('item.value.value')
   })
 
@@ -579,7 +611,8 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
     expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<span></span>");')
-    expect(resultCode).toContain('_insertElementStatic(count, _cloned);')
+    expect(resultCode).not.toContain('let _textValue0 = count;')
+    expect(resultCode).toContain('typeof count')
   })
 
   it('lowers || expressions with JSX branches to Show components', async () => {
@@ -626,6 +659,9 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
     expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).toContain('domOnlyRows: true')
+    expect(resultCode).toContain('directRowUpdates: true')
+    expect(resultCode).not.toContain('_attr(_cloned, "key"')
   })
 
   it('does not lower non-JSX map expressions to For components', async () => {

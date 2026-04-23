@@ -8,10 +8,12 @@ import {
   eventStatic,
   hydrate,
   insertElementStatic,
+  insertElementTextStatic,
   listenerStatic,
   materializeTemplateRefs,
   text,
   textNodeSignalMember,
+  textNodeSignalMemberStatic,
   textNodeSignal,
   textNodeSignalValue,
   textSignal,
@@ -1455,6 +1457,16 @@ describe('core/client dom text', () => {
     })
   })
 
+  it('uses the compiler text insert helper for primitive element children', () => {
+    const parent = {
+      textContent: 'stale',
+    } as unknown as Element
+
+    insertElementTextStatic(42, parent)
+
+    expect(parent.textContent).toBe('42')
+  })
+
   it('replaces existing children with rendered nodes for non-primitive values', () => {
     withFakeTextDom((doc) => {
       const container = createDetachedRuntimeContainer()
@@ -1723,6 +1735,31 @@ describe('core/client dom text', () => {
 
       expect(parent.firstChild).toBe(restoredTextNode)
       expect(parent.firstChild?.textContent).toBe('gamma')
+    })
+  })
+
+  it('uses the compiler member text helper while values stay primitive', () => {
+    withFakeTextDom((doc) => {
+      const container = createDetachedRuntimeContainer()
+      container.doc = doc as unknown as Document
+      const parent = doc.createElement('div')
+      const textNode = doc.createTextNode(' ')
+      parent.appendChild(textNode)
+      const row = createDetachedRuntimeSignal(container, 's0', {
+        label: 'alpha',
+      })
+
+      withRuntimeContainer(container, () => {
+        textNodeSignalMemberStatic(row, 'label', textNode)
+      })
+
+      expect(parent.firstChild).toBe(textNode)
+      expect(textNode.data).toBe('alpha')
+
+      row.value = { label: 'beta' }
+
+      expect(parent.firstChild).toBe(textNode)
+      expect(textNode.data).toBe('beta')
     })
   })
 

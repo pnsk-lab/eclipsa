@@ -6,6 +6,8 @@ type ShowBranch<T> = JSX.Element | ((value: T) => JSX.Element)
 interface ForValue<T> {
   __e_for: true
   arr: readonly T[]
+  directRowUpdates?: boolean
+  domOnlyRows?: boolean
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => Key
@@ -23,15 +25,19 @@ interface ShowValue<T> {
 
 export const For = <T>(props: {
   arr: readonly T[]
+  directRowUpdates?: boolean
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => Key
+  domOnlyRows?: boolean
   reactiveIndex?: boolean
   reactiveRows?: boolean
 }) =>
   ({
     __e_for: true,
     arr: props.arr,
+    directRowUpdates: props.directRowUpdates,
+    domOnlyRows: props.domOnlyRows,
     fallback: props.fallback,
     fn: props.fn,
     key: props.key,

@@ -35,12 +35,14 @@ const CLIENT_TEXT: &str = "_text";
 const CLIENT_TEXT_SIGNAL: &str = "_textSignal";
 const CLIENT_TEXT_NODE_SIGNAL: &str = "_textNodeSignal";
 const CLIENT_TEXT_NODE_SIGNAL_MEMBER: &str = "_textNodeSignalMember";
+const CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC: &str = "_textNodeSignalMemberStatic";
 const CLIENT_TEXT_NODE_SIGNAL_VALUE: &str = "_textNodeSignalValue";
 const CLIENT_ATTR: &str = "_attr";
 const CLIENT_ATTR_STATIC: &str = "_attrStatic";
 const CLIENT_CLASS_NAME: &str = "_className";
 const CLIENT_CLASS_SIGNAL: &str = "_classSignal";
 const CLIENT_CLASS_SIGNAL_EQUALS: &str = "_classSignalEquals";
+const CLIENT_CLASS_SIGNAL_EQUALS_STATIC: &str = "_classSignalEqualsStatic";
 const CLIENT_CLASS_SIGNAL_MEMBER: &str = "_classSignalMember";
 const CLIENT_CLASS_SIGNAL_VALUE: &str = "_classSignalValue";
 const CLIENT_EVENT_STATIC: &str = "_eventStatic";
@@ -63,6 +65,17 @@ const DANGEROUSLY_SET_INNER_HTML_PROP: &str = "dangerouslySetInnerHTML";
 const ACTION_FORM_ATTR: &str = "data-e-action-form";
 const SHOW_VALUE_PARAM: &str = "__e_showValue";
 const SIGNAL_VALUE_PARAM: &str = "__e_signalValue";
+
+fn is_dom_only_compiled_for_callback(source: &str) -> bool {
+    !source.contains(CLIENT_CREATE_COMPONENT)
+        && !source.contains(&format!("{CLIENT_INSERT}("))
+        && !source.contains(CLIENT_INSERT_FOR)
+        && !source.contains(&format!("{CLIENT_TEXT}("))
+        && !source.contains(&format!("{CLIENT_ATTR}("))
+        && !source.contains(&format!("{CLIENT_CLASS_NAME}("))
+        && !source.contains(COMPILER_FOR)
+        && !source.contains(COMPILER_SHOW)
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Replacement {
@@ -213,6 +226,18 @@ fn trim_wrapping_parens(expression: &str) -> &str {
         trimmed = &trimmed[1..trimmed.len() - 1];
         trimmed = trimmed.trim();
     }
+}
+
+fn is_simple_ascii_identifier_expression(expression: &str) -> bool {
+    let trimmed = trim_wrapping_parens(expression).trim();
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
 fn is_signal_value_identifier(expression: &Expression<'_>) -> bool {
@@ -1225,7 +1250,7 @@ fn transform_client(
 
     let mut prefix = String::new();
     prefix.push_str(&format!(
-        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, materializeTemplateRefs as {CLIENT_MATERIALIZE_TEMPLATE_REFS}, insert as {CLIENT_INSERT}, insertFor as {CLIENT_INSERT_FOR}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, textSignal as {CLIENT_TEXT_SIGNAL}, textNodeSignal as {CLIENT_TEXT_NODE_SIGNAL}, textNodeSignalMember as {CLIENT_TEXT_NODE_SIGNAL_MEMBER}, textNodeSignalValue as {CLIENT_TEXT_NODE_SIGNAL_VALUE}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, classSignal as {CLIENT_CLASS_SIGNAL}, classSignalEquals as {CLIENT_CLASS_SIGNAL_EQUALS}, classSignalMember as {CLIENT_CLASS_SIGNAL_MEMBER}, classSignalValue as {CLIENT_CLASS_SIGNAL_VALUE}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
+        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, materializeTemplateRefs as {CLIENT_MATERIALIZE_TEMPLATE_REFS}, insert as {CLIENT_INSERT}, insertFor as {CLIENT_INSERT_FOR}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, textSignal as {CLIENT_TEXT_SIGNAL}, textNodeSignal as {CLIENT_TEXT_NODE_SIGNAL}, textNodeSignalMember as {CLIENT_TEXT_NODE_SIGNAL_MEMBER}, textNodeSignalMemberStatic as {CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC}, textNodeSignalValue as {CLIENT_TEXT_NODE_SIGNAL_VALUE}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, classSignal as {CLIENT_CLASS_SIGNAL}, classSignalEquals as {CLIENT_CLASS_SIGNAL_EQUALS}, classSignalEqualsStatic as {CLIENT_CLASS_SIGNAL_EQUALS_STATIC}, classSignalMember as {CLIENT_CLASS_SIGNAL_MEMBER}, classSignalValue as {CLIENT_CLASS_SIGNAL_VALUE}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
     ));
     if compiler.uses_for {
         prefix.push_str(&format!(
@@ -1826,9 +1851,20 @@ impl<'s> ClientCompiler<'s> {
         key_member: Option<String>,
         reactive_rows: bool,
         reactive_index: bool,
+        dom_only_rows: bool,
     ) -> String {
         let reactive_rows_prop = if reactive_rows {
             ", reactiveRows: true"
+        } else {
+            ""
+        };
+        let dom_only_rows_prop = if dom_only_rows {
+            ", domOnlyRows: true"
+        } else {
+            ""
+        };
+        let direct_row_updates_prop = if reactive_rows && dom_only_rows && !reactive_index {
+            ", directRowUpdates: true"
         } else {
             ""
         };
@@ -1846,10 +1882,10 @@ impl<'s> ClientCompiler<'s> {
             .unwrap_or_default();
         match key_callback {
             Some(key_callback) => format!(
-                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}, key: {key_callback}{key_member_prop}{reactive_rows_prop}{reactive_index_prop} }})"
+                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}, key: {key_callback}{key_member_prop}{reactive_rows_prop}{dom_only_rows_prop}{direct_row_updates_prop}{reactive_index_prop} }})"
             ),
             None => format!(
-                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}{key_member_prop}{reactive_rows_prop}{reactive_index_prop} }})"
+                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}{key_member_prop}{reactive_rows_prop}{dom_only_rows_prop}{direct_row_updates_prop}{reactive_index_prop} }})"
             ),
         }
     }
@@ -1879,6 +1915,7 @@ impl<'s> ClientCompiler<'s> {
         let mut props = vec!["__e_for: true".to_string()];
         let mut reactive_rows_enabled = false;
         let mut reactive_index_enabled = true;
+        let mut dom_only_rows_enabled = false;
         let mut key_member = None;
 
         for attribute in attributes {
@@ -1929,9 +1966,13 @@ impl<'s> ClientCompiler<'s> {
                             reactive_rows_enabled = true;
                             reactive_index_enabled = *reactive_index;
                         }
-                        reactive_callback
-                            .map(|(compiled_callback, _)| compiled_callback)
-                            .unwrap_or(self.render_jsx_expression(&container.expression, true)?)
+                        if let Some((compiled_callback, _)) = reactive_callback {
+                            dom_only_rows_enabled =
+                                is_dom_only_compiled_for_callback(&compiled_callback);
+                            compiled_callback
+                        } else {
+                            self.render_jsx_expression(&container.expression, true)?
+                        }
                     } else {
                         continue;
                     }
@@ -1953,6 +1994,12 @@ impl<'s> ClientCompiler<'s> {
 
         if reactive_rows_enabled {
             props.push("reactiveRows: true".to_string());
+            if dom_only_rows_enabled {
+                props.push("domOnlyRows: true".to_string());
+            }
+            if dom_only_rows_enabled && !reactive_index_enabled {
+                props.push("directRowUpdates: true".to_string());
+            }
             if !reactive_index_enabled {
                 props.push("reactiveIndex: false".to_string());
             }
@@ -2048,6 +2095,8 @@ impl<'s> ClientCompiler<'s> {
         } else {
             self.render_nested_expression_source(self.slice(callback.span).to_string(), true, false)?
         };
+        let dom_only_rows_enabled = reactive_rows_enabled
+            && is_dom_only_compiled_for_callback(&compiled_callback);
         let params = self.slice(callback.params.span).to_string();
         let key_callback = self
             .extract_map_callback_key(callback)?
@@ -2060,6 +2109,7 @@ impl<'s> ClientCompiler<'s> {
             key_member,
             reactive_rows_enabled,
             reactive_index_enabled,
+            dom_only_rows_enabled,
         )))
     }
 
@@ -2163,6 +2213,7 @@ impl<'s> ClientCompiler<'s> {
         lookup_paths.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
 
         let mut cached_nodes = BTreeMap::new();
+        let mut text_value_index = 0usize;
         if !lookup_paths.is_empty() {
             for (index, path) in lookup_paths.iter().enumerate() {
                 let parent_index = if path.len() > 1 {
@@ -2248,7 +2299,7 @@ impl<'s> ClientCompiler<'s> {
                             binding.source
                         )),
                         SignalProjectionKind::Member(member) => body.push_str(&format!(
-                            "{CLIENT_TEXT_NODE_SIGNAL_MEMBER}({}, {}, {marker});",
+                            "{CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC}({}, {}, {marker});",
                             binding.source,
                             js_string(member)
                         )),
@@ -2260,7 +2311,19 @@ impl<'s> ClientCompiler<'s> {
                 }
                 ClientInsertOp::ApplyElementStatic { expr, path } => {
                     let (_, marker) = build_node_lookup("_cloned", &path, "_ref", &cached_nodes);
-                    body.push_str(&format!("{CLIENT_INSERT_ELEMENT_STATIC}({expr}, {marker});"));
+                    let value_type = format!("_textValueType{text_value_index}");
+                    text_value_index += 1;
+                    if is_simple_ascii_identifier_expression(&expr) {
+                        let value = trim_wrapping_parens(&expr).trim();
+                        body.push_str(&format!(
+                            "if ({value} === null || {value} === undefined || {value} === false) {{{marker}.textContent = \"\";}} else {{let {value_type} = typeof {value};if ({value_type} === \"string\" || {value_type} === \"number\" || {value_type} === \"boolean\") {{{marker}.textContent = {value};}} else {{{CLIENT_INSERT_ELEMENT_STATIC}({value}, {marker});}}}}"
+                        ));
+                    } else {
+                        let value = format!("_textValue{}", text_value_index - 1);
+                        body.push_str(&format!(
+                            "let {value} = {expr};if ({value} === null || {value} === undefined || {value} === false) {{{marker}.textContent = \"\";}} else {{let {value_type} = typeof {value};if ({value_type} === \"string\" || {value_type} === \"number\" || {value_type} === \"boolean\") {{{marker}.textContent = {value};}} else {{{CLIENT_INSERT_ELEMENT_STATIC}({value}, {marker});}}}}"
+                        ));
+                    }
                 }
                 ClientInsertOp::Component {
                     component,
@@ -2307,7 +2370,7 @@ impl<'s> ClientCompiler<'s> {
                     if let Some(class_equals_binding) = attr.class_equals_binding.as_ref() {
                         let source = &attr.binding.as_ref().expect("class equality binding requires signal binding").source;
                         body.push_str(&format!(
-                            "{CLIENT_CLASS_SIGNAL_EQUALS}({marker}, {source}, {}, {}, {});",
+                            "{CLIENT_CLASS_SIGNAL_EQUALS_STATIC}({marker}, {source}, {}, {}, {});",
                             class_equals_binding.compare,
                             class_equals_binding.truthy,
                             class_equals_binding.falsy,
@@ -2634,6 +2697,7 @@ impl<'s> ClientCompiler<'s> {
         let mut key = None;
         let mut reactive_rows_enabled = false;
         let mut reactive_index_enabled = true;
+        let mut dom_only_rows_enabled = false;
         let mut key_member = None;
         let mut tracked = false;
         let can_auto_lower_for_callback = component_name == Some("For")
@@ -2707,9 +2771,14 @@ impl<'s> ClientCompiler<'s> {
                                     reactive_rows_enabled = true;
                                     reactive_index_enabled = *reactive_index;
                                 }
-                                let expression = reactive_callback
-                                    .map(|(compiled_callback, _)| compiled_callback)
-                                    .unwrap_or(self.render_jsx_expression(&container.expression, true)?);
+                                let expression =
+                                    if let Some((compiled_callback, _)) = reactive_callback {
+                                        dom_only_rows_enabled =
+                                            is_dom_only_compiled_for_callback(&compiled_callback);
+                                        compiled_callback
+                                    } else {
+                                        self.render_jsx_expression(&container.expression, true)?
+                                    };
                                 if is_key {
                                     key = Some(self.render_jsx_expression(&container.expression, true)?);
                                 }
@@ -2755,6 +2824,12 @@ impl<'s> ClientCompiler<'s> {
         tracked |= tracked_children;
         if reactive_rows_enabled {
             props.push("\"reactiveRows\": true".to_string());
+            if dom_only_rows_enabled {
+                props.push("\"domOnlyRows\": true".to_string());
+            }
+            if dom_only_rows_enabled && !reactive_index_enabled {
+                props.push("\"directRowUpdates\": true".to_string());
+            }
             if !reactive_index_enabled {
                 props.push("\"reactiveIndex\": false".to_string());
             }
@@ -2986,6 +3061,9 @@ impl<'s> ClientCompiler<'s> {
                 }
                 JSXAttributeItem::Attribute(attribute) => {
                     let attr_name = get_jsx_attribute_name(&attribute.name)?;
+                    if attr_name == "key" {
+                        continue;
+                    }
                     if !should_apply_attr_at_runtime(&attr_name) {
                         match &attribute.value {
                             None => {
@@ -3057,9 +3135,11 @@ impl<'s> ClientCompiler<'s> {
         if let Some((expr, tracked)) = single_child {
             if tracked {
                 if let Some(binding) = render_signal_value_projection_binding(&expr) {
+                    html.push(' ');
+                    let child_path = path.iter().copied().chain([0]).collect::<Vec<_>>();
                     inserts.push(ClientInsertOp::ApplyElementTrackedSignal {
                         binding,
-                        path: path.to_vec(),
+                        path: child_path,
                     });
                 } else {
                     inserts.push(ClientInsertOp::ApplyElementTracked {

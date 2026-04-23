@@ -26,11 +26,14 @@ import {
   createDetachedClientInsertOwner,
   createDetachedRuntimeContainer,
   createFixedSignalEffect,
+  createSignalClassEqualityEffect,
+  createSignalEqualityEffect,
   getRuntimeSignalId,
   getRuntimeContainer,
   getRuntimeComponentId,
   markComponentMayChangeNodeCount,
   preserveReusableContentInRoots,
+  registerCurrentClientInsertRowUpdate,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberManagedAttributesForSubtree,
@@ -53,7 +56,7 @@ import {
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
-import type { ForValue } from '../runtime/types.ts'
+import type { ForValue, RuntimeContainer } from '../runtime/types.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
 
 const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
@@ -191,6 +194,31 @@ const isTextNode = (node: Node | null | undefined): node is Text =>
 
 const getSingleTextChild = (parent: Node): Text | null =>
   parent.childNodes.length === 1 && isTextNode(parent.firstChild) ? parent.firstChild : null
+
+const appendTextToEmptyElement = (
+  parent: Element,
+  value: string,
+  runtimeContainer: RuntimeContainer,
+) => {
+  if (value !== '') {
+    try {
+      parent.textContent = value
+      const textNode = parent.firstChild
+      if (isTextNode(textNode)) {
+        return textNode
+      }
+    } catch {
+      // Some test doubles expose textContent as a getter only; keep the DOM fallback available.
+    }
+  }
+
+  const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(value)
+  if (!nextNode) {
+    throw new Error('Client insertions require an active runtime document.')
+  }
+  parent.appendChild(nextNode)
+  return nextNode
+}
 
 const hasUsableInsertParent = (
   node: Node | null | undefined,
@@ -969,6 +997,17 @@ export const insertElementStatic = (value: Insertable, parent: Element) => {
   rememberManagedAttributesForNodes(nodes)
 }
 
+export const insertElementTextStatic = (value: Insertable, parent: Element) => {
+  const resolved = resolveFastInsertValue(value)
+  if (resolved !== null) {
+    ;(parent as Element & { textContent: string }).textContent =
+      resolved !== EMPTY_FAST_INSERT_VALUE ? resolved : ''
+    return
+  }
+
+  insertElementStatic(value, parent)
+}
+
 export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   const runtimeContainer = getRuntimeContainer()
   if (!runtimeContainer) {
@@ -998,6 +1037,8 @@ export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, 
   const arrSignal = props.arrSignal
   const canUseFixedArrSignal =
     arrSignal &&
+    !Object.getOwnPropertyDescriptor(props, 'directRowUpdates')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'domOnlyRows')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'fallback')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'fn')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'key')?.get &&
@@ -1006,6 +1047,8 @@ export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, 
     !Object.getOwnPropertyDescriptor(props, 'reactiveRows')?.get
 
   if (canUseFixedArrSignal) {
+    value.directRowUpdates = props.directRowUpdates
+    value.domOnlyRows = props.domOnlyRows
     value.fallback = props.fallback
     value.fn = props.fn
     value.key = props.key
@@ -1025,6 +1068,8 @@ export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, 
 
   effect(() => {
     value.arr = props.arr
+    value.directRowUpdates = props.directRowUpdates
+    value.domOnlyRows = props.domOnlyRows
     value.fallback = props.fallback
     value.fn = props.fn
     value.key = props.key
@@ -1210,14 +1255,7 @@ export const textNodeSignal = <T>(
               return
             }
             if (parent.childNodes.length === 0) {
-              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue,
-              )
-              if (!nextNode) {
-                throw new Error('Client insertions require an active runtime document.')
-              }
-              parent.appendChild(nextNode)
-              textNode = nextNode
+              textNode = appendTextToEmptyElement(parent, primitiveValue, runtimeContainer)
               return
             }
           }
@@ -1389,14 +1427,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
             return
           }
           if (parent.childNodes.length === 0) {
-            const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-              primitiveValue,
-            )
-            if (!nextNode) {
-              throw new Error('Client insertions require an active runtime document.')
-            }
-            parent.appendChild(nextNode)
-            textNode = nextNode
+            textNode = appendTextToEmptyElement(parent, primitiveValue, runtimeContainer)
             return
           }
         }
@@ -1452,6 +1483,94 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
   }
 
   textSignal(signal, (value) => value[member as keyof T] as Insertable, target)
+}
+
+export const textNodeSignalMemberStatic = <T extends Record<string, unknown>>(
+  signal: { value: T },
+  member: string,
+  target: Node,
+) => {
+  if (!isTextNode(target)) {
+    textNodeSignalMember(signal, member, target)
+    return
+  }
+
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+
+  let textNode: Text | null = target
+  let delegated = false
+  let state: InsertBindingState | null = null
+  let lastMemberValue = signal.value[member as keyof T] as Insertable
+  const initialPrimitiveValue = resolveFastInsertValue(lastMemberValue)
+  if (initialPrimitiveValue !== null && initialPrimitiveValue !== EMPTY_FAST_INSERT_VALUE) {
+    if (target.data !== initialPrimitiveValue) {
+      target.data = initialPrimitiveValue
+    }
+  } else {
+    textNodeSignalMember(signal, member, target)
+    return
+  }
+
+  const updateFromSignalValue = (signalValue: T) => {
+    const nextMemberValue = signalValue[member as keyof T] as Insertable
+    if (
+      !delegated &&
+      Object.is(nextMemberValue, lastMemberValue) &&
+      isFastPrimitiveInsertInput(nextMemberValue)
+    ) {
+      return
+    }
+    lastMemberValue = nextMemberValue
+
+    if (!delegated) {
+      const primitiveValue = resolveFastInsertValue(nextMemberValue)
+      if (
+        primitiveValue !== null &&
+        primitiveValue !== EMPTY_FAST_INSERT_VALUE &&
+        textNode?.parentNode
+      ) {
+        if (textNode.data !== primitiveValue) {
+          textNode.data = primitiveValue
+        }
+        return
+      }
+
+      const currentTextNode = textNode
+      const parent = currentTextNode?.parentNode
+      if (!parent) {
+        return
+      }
+      state = createInsertBindingState(
+        parent,
+        currentTextNode.nextSibling ?? undefined,
+        runtimeContainer,
+      )
+      state.lastFirstNode = currentTextNode
+      state.lastNodeLength = 1
+      markInsertBindingVariableNodeCount(state)
+      delegated = true
+    }
+
+    if (!state) {
+      return
+    }
+    runInsertEffect(state, nextMemberValue)
+    textNode =
+      state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+  }
+
+  if (registerCurrentClientInsertRowUpdate(signal, updateFromSignalValue)) {
+    return
+  }
+
+  createFixedSignalEffect(
+    signal,
+    updateFromSignalValue,
+    SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
+  )
 }
 
 export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
@@ -1572,14 +1691,7 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
               return
             }
             if (parent.childNodes.length === 0) {
-              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue,
-              )
-              if (!nextNode) {
-                throw new Error('Client insertions require an active runtime document.')
-              }
-              parent.appendChild(nextNode)
-              textNode = nextNode
+              textNode = appendTextToEmptyElement(parent, primitiveValue, runtimeContainer)
               return
             }
           }
@@ -1733,10 +1845,10 @@ export const classSignalEquals = <T>(
     lastMatch = initialMatch
   }
 
-  createFixedSignalEffect(
+  createSignalEqualityEffect(
     signal,
-    (signalValue) => {
-      const nextMatch = signalValue === expected
+    expected,
+    (nextMatch) => {
       if (lastMatch !== nextMatch) {
         applyClassEqualsValue(nextMatch)
         lastMatch = nextMatch
@@ -1744,6 +1856,16 @@ export const classSignalEquals = <T>(
     },
     SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
+}
+
+export const classSignalEqualsStatic = <T>(
+  elem: Element,
+  signal: { value: T },
+  expected: unknown,
+  truthyValue: unknown,
+  falsyValue: unknown,
+) => {
+  createSignalClassEqualityEffect(elem, signal, expected, truthyValue, falsyValue)
 }
 
 const EVENT_ATTR_REGEX = /^on[A-Z].+$/
