@@ -633,6 +633,12 @@ const createRowUpdateSlot = <T>(): RowUpdateSlot<T> => ({
   callbacks: null,
 })
 
+const createRowSignalHandle = <T>(value: T): RowSignalHandle<T> => ({
+  callback: null,
+  callbacks: null,
+  value,
+})
+
 const addRowUpdateSlotCallback = <T>(slot: RowUpdateSlot<T>, callback: RowUpdateCallback<T>) => {
   if (!slot.callback && !slot.callbacks) {
     slot.callback = callback
@@ -656,7 +662,7 @@ const runRowUpdateSlot = <T>(slot: RowUpdateSlot<T> | null | undefined, value: T
   const callbacks = slot.callbacks
   if (callbacks) {
     for (let index = 0; index < callbacks.length; index += 1) {
-      callbacks[index]?.(value)
+      callbacks[index]!(value)
     }
   }
 }
@@ -1914,7 +1920,7 @@ type RowUpdateSlot<T = unknown> = {
   callbacks: RowUpdateCallback<T>[] | null
 }
 
-type RowSignalHandle<T = unknown> = {
+type RowSignalHandle<T = unknown> = RowUpdateSlot<T> & {
   value: T
 }
 
@@ -6509,6 +6515,12 @@ export const reconcileClientKeyedForInPlace = (
     resolved.directRowUpdates === true &&
     usesReactiveItem &&
     !usesReactiveIndex
+  const rowIndexAffectsRenderedOutput = !resolved.reactiveRows || usesReactiveIndex
+  const rowNeedsRenderedUpdate = (
+    row: KeyedForRowState<(typeof resolved.arr)[number]>,
+    item: (typeof resolved.arr)[number],
+    index: number,
+  ) => row.item !== item || (rowIndexAffectsRenderedOutput && row.index !== index)
   const renderRowNodes = (
     rowOwner: ClientInsertOwner | null,
     rowCleanupSlot: CleanupSlot | null,
@@ -6564,13 +6576,13 @@ export const reconcileClientKeyedForInPlace = (
             : createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
         const rowCleanupSlot =
           resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+        const itemSignalHandle = usesDirectRowUpdates
+          ? createRowSignalHandle<(typeof resolved.arr)[number]>(item)
+          : undefined
         const rowUpdateSlot =
           resolved.domOnlyRows === true
-            ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+            ? (itemSignalHandle ?? createRowUpdateSlot<(typeof resolved.arr)[number]>())
             : null
-        const itemSignalHandle = usesDirectRowUpdates
-          ? ({ value: item } satisfies RowSignalHandle<(typeof resolved.arr)[number]>)
-          : undefined
         const itemSignalRecord =
           usesReactiveItem && !usesDirectRowUpdates
             ? createTransientInternalSignalRecord(container, item)
@@ -6598,23 +6610,37 @@ export const reconcileClientKeyedForInPlace = (
         needsRefRestore ||=
           container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(bodyNodes)
 
-        const row = {
-          end: bodyNodes[bodyNodes.length - 1]!,
-          cleanupSlot: rowCleanupSlot,
-          index,
-          indexSignalRecord,
-          item,
-          itemSignalHandle,
-          itemSignalRecord,
-          key,
-          nodeCount: bodyNodes.length,
-          owner: rowOwner,
-          stableNodeCount:
-            resolved.domOnlyRows === true ||
-            (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false),
-          start: bodyNodes[0]!,
-          updateSlot: rowUpdateSlot,
-        } satisfies KeyedForRowState<(typeof resolved.arr)[number]>
+        const stableNodeCount =
+          resolved.domOnlyRows === true ||
+          (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false)
+        const row = usesDirectRowUpdates
+          ? ({
+              cleanupSlot: rowCleanupSlot,
+              end: bodyNodes[bodyNodes.length - 1]!,
+              index,
+              item,
+              itemSignalHandle,
+              key,
+              nodeCount: bodyNodes.length,
+              owner: rowOwner,
+              stableNodeCount,
+              start: bodyNodes[0]!,
+            } satisfies KeyedForRowState<(typeof resolved.arr)[number]>)
+          : ({
+              cleanupSlot: rowCleanupSlot,
+              end: bodyNodes[bodyNodes.length - 1]!,
+              index,
+              indexSignalRecord,
+              item,
+              itemSignalHandle,
+              itemSignalRecord,
+              key,
+              nodeCount: bodyNodes.length,
+              owner: rowOwner,
+              stableNodeCount,
+              start: bodyNodes[0]!,
+              updateSlot: rowUpdateSlot,
+            } satisfies KeyedForRowState<(typeof resolved.arr)[number]>)
 
         totalNodeCount += row.nodeCount
         nextOrder[index] = key
@@ -6689,8 +6715,10 @@ export const reconcileClientKeyedForInPlace = (
         )
       }
 
-      firstRow.index = secondSwapIndex
-      secondRow.index = firstSwapIndex
+      if (rowIndexAffectsRenderedOutput) {
+        firstRow.index = secondSwapIndex
+        secondRow.index = firstSwapIndex
+      }
       state.orderedRows[firstSwapIndex] = secondRow
       state.orderedRows[secondSwapIndex] = firstRow
       state.order[firstSwapIndex] = secondRow.key
@@ -6718,14 +6746,12 @@ export const reconcileClientKeyedForInPlace = (
         canUseStableOrderFastPath = false
         break
       }
-      if (
-        (row.item !== item || row.index !== index) &&
-        resolveForItemKey(resolved, item, index) !== row.key
-      ) {
+      const needsRenderedUpdate = rowNeedsRenderedUpdate(row, item, index)
+      if (needsRenderedUpdate && resolveForItemKey(resolved, item, index) !== row.key) {
         canUseStableOrderFastPath = false
         break
       }
-      if (row.item !== item || row.index !== index) {
+      if (needsRenderedUpdate) {
         state.dirtyRows.push(row)
         state.dirtyItems.push(item)
         state.dirtyIndexes.push(index)
@@ -6735,8 +6761,9 @@ export const reconcileClientKeyedForInPlace = (
 
   if (canUseStableOrderFastPath) {
     let totalNodeCountDelta = 0
-    const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] =
-      []
+    let reactiveRowsNeedingNodeCountRefresh:
+      | KeyedForRowState<(typeof resolved.arr)[number]>[]
+      | null = null
     withBatchedSignalWrites(container, () => {
       for (let dirtyIndex = 0; dirtyIndex < state.dirtyRows.length; dirtyIndex += 1) {
         const row = state.dirtyRows[dirtyIndex]!
@@ -6749,19 +6776,19 @@ export const reconcileClientKeyedForInPlace = (
           let wroteReactiveRowSignal = false
           if (row.itemSignalHandle && row.item !== item) {
             row.itemSignalHandle.value = item
-            runRowUpdateSlot(row.updateSlot, item)
+            runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
             wroteReactiveRowSignal = true
           } else if (row.itemSignalRecord && row.item !== item) {
             writeSignalValue(container, row.itemSignalRecord, item)
-            runRowUpdateSlot(row.updateSlot, item)
+            runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
             wroteReactiveRowSignal = true
           }
           if (row.indexSignalRecord && row.index !== index) {
             writeSignalValue(container, row.indexSignalRecord, index)
             wroteReactiveRowSignal = true
           }
-          if (wroteReactiveRowSignal) {
-            reactiveRowsNeedingNodeCountRefresh.push(row)
+          if (wroteReactiveRowSignal && !row.stableNodeCount) {
+            ;(reactiveRowsNeedingNodeCountRefresh ??= []).push(row)
           }
         } else {
           disposeCleanupSlot(row.cleanupSlot)
@@ -6789,17 +6816,24 @@ export const reconcileClientKeyedForInPlace = (
         }
 
         row.item = item
-        row.index = index
+        if (rowIndexAffectsRenderedOutput) {
+          row.index = index
+        }
       }
     })
-    for (const row of reactiveRowsNeedingNodeCountRefresh) {
-      if (hasStableRowNodeCount(row)) {
-        continue
+    const rowsNeedingNodeCountRefresh = reactiveRowsNeedingNodeCountRefresh as
+      | KeyedForRowState<(typeof resolved.arr)[number]>[]
+      | null
+    if (rowsNeedingNodeCountRefresh) {
+      for (const row of rowsNeedingNodeCountRefresh) {
+        if (hasStableRowNodeCount(row)) {
+          continue
+        }
+        const nextNodeCount = countNodesBetween(row.start, row.end)
+        totalNodeCountDelta += nextNodeCount - row.nodeCount
+        row.nodeCount = nextNodeCount
+        row.stableNodeCount = false
       }
-      const nextNodeCount = countNodesBetween(row.start, row.end)
-      totalNodeCountDelta += nextNodeCount - row.nodeCount
-      row.nodeCount = nextNodeCount
-      row.stableNodeCount = false
     }
     state.totalNodeCount += totalNodeCountDelta
   }
@@ -6827,15 +6861,10 @@ export const reconcileClientKeyedForInPlace = (
       const canSkipSurvivingRowUpdates =
         options?.preserveSurvivingItems === true && resolved.reactiveRows && !usesReactiveIndex
 
-      if (canSkipSurvivingRowUpdates) {
-        for (let index = 0; index < nextOrderedRows.length; index += 1) {
-          const row = nextOrderedRows[index]!
-          row.index = index
-        }
-      } else {
-        const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<
-          (typeof resolved.arr)[number]
-        >[] = []
+      if (!canSkipSurvivingRowUpdates) {
+        let reactiveRowsNeedingNodeCountRefresh:
+          | KeyedForRowState<(typeof resolved.arr)[number]>[]
+          | null = null
         withBatchedSignalWrites(container, () => {
           for (let index = 0; index < nextOrderedRows.length; index += 1) {
             const row = nextOrderedRows[index]!
@@ -6848,19 +6877,19 @@ export const reconcileClientKeyedForInPlace = (
                 let wroteReactiveRowSignal = false
                 if (row.itemSignalHandle && row.item !== item) {
                   row.itemSignalHandle.value = item
-                  runRowUpdateSlot(row.updateSlot, item)
+                  runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
                   wroteReactiveRowSignal = true
                 } else if (row.itemSignalRecord && row.item !== item) {
                   writeSignalValue(container, row.itemSignalRecord, item)
-                  runRowUpdateSlot(row.updateSlot, item)
+                  runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
                   wroteReactiveRowSignal = true
                 }
                 if (row.indexSignalRecord && row.index !== index) {
                   writeSignalValue(container, row.indexSignalRecord, index)
                   wroteReactiveRowSignal = true
                 }
-                if (wroteReactiveRowSignal) {
-                  reactiveRowsNeedingNodeCountRefresh.push(row)
+                if (wroteReactiveRowSignal && !row.stableNodeCount) {
+                  ;(reactiveRowsNeedingNodeCountRefresh ??= []).push(row)
                 }
               } else {
                 disposeCleanupSlot(row.cleanupSlot)
@@ -6896,12 +6925,17 @@ export const reconcileClientKeyedForInPlace = (
           }
         })
 
-        for (const row of reactiveRowsNeedingNodeCountRefresh) {
-          if (hasStableRowNodeCount(row)) {
-            continue
+        const rowsNeedingNodeCountRefresh = reactiveRowsNeedingNodeCountRefresh as
+          | KeyedForRowState<(typeof resolved.arr)[number]>[]
+          | null
+        if (rowsNeedingNodeCountRefresh) {
+          for (const row of rowsNeedingNodeCountRefresh) {
+            if (hasStableRowNodeCount(row)) {
+              continue
+            }
+            row.nodeCount = countNodesBetween(row.start, row.end)
+            row.stableNodeCount = false
           }
-          row.nodeCount = countNodesBetween(row.start, row.end)
-          row.stableNodeCount = false
         }
 
         totalNodeCount = 0
@@ -7032,7 +7066,9 @@ export const reconcileClientKeyedForInPlace = (
           canUseIdentityReorderFastPath = false
           break
         }
-        row.index = index
+        if (rowIndexAffectsRenderedOutput) {
+          row.index = index
+        }
         nextOrder[index] = row.key
         nextOrderedRows[index] = row
       }
@@ -7078,7 +7114,9 @@ export const reconcileClientKeyedForInPlace = (
   const nextOrder: Array<string | number | symbol> = []
   const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
   let needsRefRestore = false
-  const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+  let reactiveRowsNeedingNodeCountRefresh:
+    | KeyedForRowState<(typeof resolved.arr)[number]>[]
+    | null = null
   const currentRows = ensureKeyedForRowMap(state)
 
   withBatchedSignalWrites(container, () => {
@@ -7094,13 +7132,13 @@ export const reconcileClientKeyedForInPlace = (
             : createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
         const rowCleanupSlot =
           resolved.domOnlyRows === true ? createClientInsertCleanupSlot() : null
+        const itemSignalHandle = usesDirectRowUpdates
+          ? createRowSignalHandle<(typeof resolved.arr)[number]>(item)
+          : undefined
         const rowUpdateSlot =
           resolved.domOnlyRows === true
-            ? createRowUpdateSlot<(typeof resolved.arr)[number]>()
+            ? (itemSignalHandle ?? createRowUpdateSlot<(typeof resolved.arr)[number]>())
             : null
-        const itemSignalHandle = usesDirectRowUpdates
-          ? ({ value: item } satisfies RowSignalHandle<(typeof resolved.arr)[number]>)
-          : undefined
         const itemSignalRecord =
           usesReactiveItem && !usesDirectRowUpdates
             ? createTransientInternalSignalRecord(container, item)
@@ -7120,23 +7158,37 @@ export const reconcileClientKeyedForInPlace = (
         )
         needsRefRestore ||=
           container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(bodyNodes)
-        row = {
-          end: bodyNodes[bodyNodes.length - 1]!,
-          cleanupSlot: rowCleanupSlot,
-          index,
-          indexSignalRecord,
-          item,
-          itemSignalHandle,
-          itemSignalRecord,
-          key,
-          nodeCount: bodyNodes.length,
-          owner: rowOwner,
-          stableNodeCount:
-            resolved.domOnlyRows === true ||
-            (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false),
-          start: bodyNodes[0]!,
-          updateSlot: rowUpdateSlot,
-        }
+        const stableNodeCount =
+          resolved.domOnlyRows === true ||
+          (rowOwner ? hasStableClientInsertOwnerNodeCount(container, rowOwner) : false)
+        row = usesDirectRowUpdates
+          ? {
+              cleanupSlot: rowCleanupSlot,
+              end: bodyNodes[bodyNodes.length - 1]!,
+              index,
+              item,
+              itemSignalHandle,
+              key,
+              nodeCount: bodyNodes.length,
+              owner: rowOwner,
+              stableNodeCount,
+              start: bodyNodes[0]!,
+            }
+          : {
+              cleanupSlot: rowCleanupSlot,
+              end: bodyNodes[bodyNodes.length - 1]!,
+              index,
+              indexSignalRecord,
+              item,
+              itemSignalHandle,
+              itemSignalRecord,
+              key,
+              nodeCount: bodyNodes.length,
+              owner: rowOwner,
+              stableNodeCount,
+              start: bodyNodes[0]!,
+              updateSlot: rowUpdateSlot,
+            }
       } else {
         const shouldRerender = row.item !== item || row.index !== index
         if (shouldRerender) {
@@ -7147,19 +7199,19 @@ export const reconcileClientKeyedForInPlace = (
             let wroteReactiveRowSignal = false
             if (row.itemSignalHandle && row.item !== item) {
               row.itemSignalHandle.value = item
-              runRowUpdateSlot(row.updateSlot, item)
+              runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
               wroteReactiveRowSignal = true
             } else if (row.itemSignalRecord && row.item !== item) {
               writeSignalValue(container, row.itemSignalRecord, item)
-              runRowUpdateSlot(row.updateSlot, item)
+              runRowUpdateSlot(row.updateSlot ?? row.itemSignalHandle, item)
               wroteReactiveRowSignal = true
             }
             if (row.indexSignalRecord && row.index !== index) {
               writeSignalValue(container, row.indexSignalRecord, index)
               wroteReactiveRowSignal = true
             }
-            if (wroteReactiveRowSignal) {
-              reactiveRowsNeedingNodeCountRefresh.push(row)
+            if (wroteReactiveRowSignal && !row.stableNodeCount) {
+              ;(reactiveRowsNeedingNodeCountRefresh ??= []).push(row)
             }
           } else {
             disposeCleanupSlot(row.cleanupSlot)
@@ -7193,9 +7245,9 @@ export const reconcileClientKeyedForInPlace = (
         row.index = index
       }
 
-      nextRows.set(key, row)
+      nextRows.set(key, row!)
       nextOrder[index] = key
-      nextOrderedRows[index] = row
+      nextOrderedRows[index] = row!
     }
   })
 
@@ -7213,12 +7265,17 @@ export const reconcileClientKeyedForInPlace = (
     insertionReference = row.start
   }
 
-  for (const row of reactiveRowsNeedingNodeCountRefresh) {
-    if (hasStableRowNodeCount(row)) {
-      continue
+  const rowsNeedingNodeCountRefresh = reactiveRowsNeedingNodeCountRefresh as
+    | KeyedForRowState<(typeof resolved.arr)[number]>[]
+    | null
+  if (rowsNeedingNodeCountRefresh) {
+    for (const row of rowsNeedingNodeCountRefresh) {
+      if (hasStableRowNodeCount(row)) {
+        continue
+      }
+      row.nodeCount = countNodesBetween(row.start, row.end)
+      row.stableNodeCount = false
     }
-    row.nodeCount = countNodesBetween(row.start, row.end)
-    row.stableNodeCount = false
   }
 
   for (const [key, row] of currentRows.entries()) {

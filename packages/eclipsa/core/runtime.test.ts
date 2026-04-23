@@ -10737,6 +10737,66 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('does not treat ignored reactive row indexes as stable-order dirtiness', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 1, label: 'A' }
+      const second = { id: 2, label: 'B' }
+      const third = { id: 3, label: 'C' }
+      const rows = createDetachedRuntimeSignal(container, 'rows', [first, second, third])
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      let keyCalls = 0
+      let renderCalls = 0
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insertFor(
+          {
+            arrSignal: rows,
+            directRowUpdates: true,
+            domOnlyRows: true,
+            fn: (row: { value: { id: number; label: string } }) => {
+              renderCalls += 1
+              const element = new FakeElement('tr')
+              const label = new FakeText(row.value.label)
+              element.appendChild(label)
+              textNodeSignalMember(row, 'label', label as unknown as Node)
+              return element as unknown as JSX.Element
+            },
+            key: (row: { id: number }) => {
+              keyCalls += 1
+              return row.id
+            },
+            reactiveIndex: false,
+            reactiveRows: true,
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      await flushAsync()
+      expect(keyCalls).toBe(3)
+      expect(renderCalls).toBe(3)
+
+      rows.value = [third, second, first]
+      await flushAsync()
+      expect(keyCalls).toBe(3)
+      expect(renderCalls).toBe(3)
+
+      rows.value = [third, second, { id: 1, label: 'A2' }]
+      await flushAsync()
+
+      const renderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(renderedRows.map((row) => row.textContent)).toEqual(['C', 'B', 'A2'])
+      expect(keyCalls).toBe(4)
+      expect(renderCalls).toBe(3)
+    })
+  })
+
   it('uses compiler-provided keyed For member keys without calling the key function', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
