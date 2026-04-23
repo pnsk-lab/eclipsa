@@ -57,4 +57,5 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           use_oidc: true
+          version: v11.2.7
           fail_ci_if_error: true
