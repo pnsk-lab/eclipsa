@@ -53,6 +53,7 @@ import {
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
+import type { ForValue } from '../runtime/types.ts'
 import type { ClientElementLike, Insertable } from './types.ts'
 
 const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
@@ -260,16 +261,16 @@ const canReconnectOwnerRange = (currentNodes: Node[], newNodes: Node[]) => {
   return sawBoundary
 }
 
-const resolveFastInsertValue = (value: unknown) => {
+const EMPTY_FAST_INSERT_VALUE = Symbol('eclipsa.emptyInsert')
+
+const resolveFastInsertValue = (value: unknown): string | typeof EMPTY_FAST_INSERT_VALUE | null => {
   let resolved = value
   while (typeof resolved === 'function') {
     resolved = resolved()
   }
 
   if (resolved === null || resolved === undefined || resolved === false) {
-    return {
-      kind: 'empty' as const,
-    }
+    return EMPTY_FAST_INSERT_VALUE
   }
 
   if (
@@ -277,14 +278,19 @@ const resolveFastInsertValue = (value: unknown) => {
     typeof resolved === 'number' ||
     typeof resolved === 'boolean'
   ) {
-    return {
-      kind: 'text' as const,
-      value: String(resolved),
-    }
+    return String(resolved)
   }
 
   return null
 }
+
+const isFastPrimitiveInsertInput = (value: unknown) =>
+  value === null ||
+  value === undefined ||
+  value === false ||
+  typeof value === 'string' ||
+  typeof value === 'number' ||
+  typeof value === 'boolean'
 
 const isManagedEmptyInsertComment = (node: Node | null | undefined): node is Comment =>
   node instanceof Comment && node.data === EMPTY_INSERT_COMMENT
@@ -381,13 +387,13 @@ const createStaticInsertNodes = (
   ownerSiteKey: string | null,
 ) => {
   const primitiveValue = resolveFastInsertValue(value)
-  if (primitiveValue) {
+  if (primitiveValue !== null) {
     const doc = runtimeContainer.doc ?? targetParent.ownerDocument
     if (!doc) {
       throw new Error('Client insertions require an active runtime document.')
     }
-    if (primitiveValue.kind === 'text') {
-      return [doc.createTextNode(primitiveValue.value)]
+    if (primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
+      return [doc.createTextNode(primitiveValue)]
     }
     return [doc.createComment(EMPTY_INSERT_COMMENT)]
   }
@@ -548,11 +554,11 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
   const primitiveValue = resolveFastInsertValue(value)
   const { liveMarker, stableParents, targetParent } = resolveInsertBindingContext(state)
 
-  if (primitiveValue && state.lastNodeLength === 1 && state.lastFirstNode?.parentNode) {
-    if (primitiveValue.kind === 'text') {
+  if (primitiveValue !== null && state.lastNodeLength === 1 && state.lastFirstNode?.parentNode) {
+    if (primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
       if (isTextNode(state.lastFirstNode)) {
-        if (state.lastFirstNode.data !== primitiveValue.value) {
-          state.lastFirstNode.data = primitiveValue.value
+        if (state.lastFirstNode.data !== primitiveValue) {
+          state.lastFirstNode.data = primitiveValue
         }
         return
       }
@@ -568,7 +574,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
         if (
           replaceSinglePrimitiveNode(
             state.lastFirstNode,
-            doc.createTextNode(primitiveValue.value),
+            doc.createTextNode(primitiveValue),
             liveMarker,
             state,
           )
@@ -603,7 +609,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
     }
   }
 
-  if (primitiveValue) {
+  if (primitiveValue !== null) {
     const seededCurrentNodes = seedCurrentNodesForBinding(state, liveMarker, 1)
     const currentNodes =
       seededCurrentNodes.length !== 0 &&
@@ -616,10 +622,10 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
       state.lastNodeLength = currentNodes.length
     }
 
-    if (primitiveValue.kind === 'text') {
+    if (primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
       if (currentNodes.length === 1 && isTextNode(currentNodes[0])) {
-        if (currentNodes[0].data !== primitiveValue.value) {
-          currentNodes[0].data = primitiveValue.value
+        if (currentNodes[0].data !== primitiveValue) {
+          currentNodes[0].data = primitiveValue
         }
         rememberInsertMarkerRange(liveMarker, currentNodes)
         state.lastFirstNode = currentNodes[0]
@@ -635,7 +641,7 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
       replaceBindingCurrentNodes(
         state,
         currentNodes,
-        doc.createTextNode(primitiveValue.value),
+        doc.createTextNode(primitiveValue),
         liveMarker,
         targetParent,
       )
@@ -753,6 +759,69 @@ const runInsertEffect = (state: InsertBindingState, value: Insertable) => {
   state.lastNodeLength = replacementNodes.length
 }
 
+const runForInsertEffect = <T>(state: InsertBindingState, value: ForValue<T>) => {
+  const { liveMarker, stableParents, targetParent } = resolveInsertBindingContext(state)
+  const insertionMarker = liveMarker?.parentNode === targetParent ? liveMarker : undefined
+  let currentNodes: Node[] | null = null
+  const readCurrentNodes = () => {
+    currentNodes ??= collectCurrentNodesForBinding(state, insertionMarker, stableParents)
+    if (currentNodes.length !== 0 && state.lastNodeLength === 0) {
+      state.lastFirstNode = currentNodes[0]
+      state.lastNodeLength = currentNodes.length
+    }
+    return currentNodes
+  }
+
+  const hasFallback =
+    value.fallback !== null && value.fallback !== undefined && value.fallback !== false
+  if (value.arr.length === 0 && !hasFallback) {
+    if (state.owner || state.lastNodeLength > 0) {
+      reconcileClientKeyedForInPlace(
+        value as unknown as Insertable,
+        state.runtimeContainer,
+        ensureInsertBindingOwner(state),
+        targetParent,
+        insertionMarker,
+        readCurrentNodes,
+      )
+      currentNodes = readCurrentNodes()
+      for (const node of currentNodes) {
+        if (node.parentNode === targetParent) {
+          removeNodeFromParent(node, targetParent)
+        }
+      }
+    }
+    if (insertionMarker instanceof Comment) {
+      setRememberedInsertMarkerNodeCount(insertionMarker, 0)
+    }
+    state.lastFirstNode = insertionMarker
+    state.lastNodeLength = 0
+    return
+  }
+
+  const reconciledKeyedForResult = reconcileClientKeyedForInPlace(
+    value as unknown as Insertable,
+    state.runtimeContainer,
+    ensureInsertBindingOwner(state),
+    targetParent,
+    insertionMarker,
+    readCurrentNodes,
+  )
+  if (reconciledKeyedForResult) {
+    if (reconciledKeyedForResult.needsRefRestore) {
+      restoreSignalRefs(state.runtimeContainer, targetParent)
+    }
+    if (insertionMarker instanceof Comment) {
+      setRememberedInsertMarkerNodeCount(insertionMarker, reconciledKeyedForResult.nodeCount)
+    }
+    state.lastFirstNode = reconciledKeyedForResult.firstNode ?? insertionMarker
+    state.lastNodeLength = reconciledKeyedForResult.nodeCount
+    return
+  }
+
+  runInsertEffect(state, value as unknown as Insertable)
+}
+
 const replaceSinglePrimitiveNode = (
   currentNode: Node,
   replacementNode: Node,
@@ -775,7 +844,7 @@ const replaceSinglePrimitiveNode = (
 
 const runSimpleTextBindingEffect = (state: InsertBindingState, value: Insertable) => {
   const primitiveValue = resolveFastInsertValue(value)
-  if (!primitiveValue) {
+  if (primitiveValue === null) {
     return false
   }
 
@@ -796,15 +865,15 @@ const runSimpleTextBindingEffect = (state: InsertBindingState, value: Insertable
     throw new Error('Client insertions require an active runtime document.')
   }
 
-  if (primitiveValue.kind === 'text') {
+  if (primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
     if (isTextNode(currentNode)) {
-      if (currentNode.data !== primitiveValue.value) {
-        currentNode.data = primitiveValue.value
+      if (currentNode.data !== primitiveValue) {
+        currentNode.data = primitiveValue
       }
       return true
     }
 
-    const nextNode = doc.createTextNode(primitiveValue.value)
+    const nextNode = doc.createTextNode(primitiveValue)
     if (currentNode) {
       targetParent.insertBefore(nextNode, currentNode)
       removeNodeFromParent(currentNode, targetParent)
@@ -855,18 +924,18 @@ export const insertStatic = (value: Insertable, parent: Node, marker?: Node) => 
 
 export const insertElementStatic = (value: Insertable, parent: Element) => {
   const resolved = resolveFastInsertValue(value)
-  if (resolved) {
+  if (resolved !== null) {
     if (
-      resolved.kind === 'text' &&
+      resolved !== EMPTY_FAST_INSERT_VALUE &&
       parent.childNodes.length === 1 &&
       isTextNode(parent.firstChild)
     ) {
-      parent.firstChild.data = resolved.value
+      parent.firstChild.data = resolved
       return
     }
     try {
       ;(parent as Element & { textContent: string }).textContent =
-        resolved.kind === 'text' ? resolved.value : ''
+        resolved !== EMPTY_FAST_INSERT_VALUE ? resolved : ''
       return
     } catch {
       // Some lightweight test DOMs expose a readonly textContent property.
@@ -874,8 +943,8 @@ export const insertElementStatic = (value: Insertable, parent: Element) => {
     while (parent.firstChild) {
       parent.removeChild(parent.firstChild)
     }
-    if (resolved.kind === 'text') {
-      parent.appendChild(parent.ownerDocument.createTextNode(resolved.value))
+    if (resolved !== EMPTY_FAST_INSERT_VALUE) {
+      parent.appendChild(parent.ownerDocument.createTextNode(resolved))
     }
     return
   }
@@ -906,6 +975,59 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   effect(
     () => {
       runInsertEffect(state, value)
+    },
+    { runInContainer: false },
+  )
+}
+
+export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, marker?: Node) => {
+  const runtimeContainer = getRuntimeContainer()
+  if (!runtimeContainer) {
+    throw new Error('Client insertions require an active runtime container.')
+  }
+  const state = createInsertBindingState(parent, marker, runtimeContainer)
+  markInsertBindingVariableNodeCount(state)
+  const value: ForValue<T> = {
+    __e_for: true,
+    arr: [],
+    fn: (() => null) as ForValue<T>['fn'],
+  }
+
+  const arrSignal = props.arrSignal
+  const canUseFixedArrSignal =
+    arrSignal &&
+    !Object.getOwnPropertyDescriptor(props, 'fallback')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'fn')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'key')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'reactiveIndex')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'reactiveRows')?.get
+
+  if (canUseFixedArrSignal) {
+    createFixedSignalEffect(
+      arrSignal,
+      (arr) => {
+        value.arr = arr
+        value.fallback = props.fallback
+        value.fn = props.fn
+        value.key = props.key
+        value.reactiveIndex = props.reactiveIndex
+        value.reactiveRows = props.reactiveRows
+        runForInsertEffect(state, value)
+      },
+      { runInContainer: false },
+    )
+    return
+  }
+
+  effect(
+    () => {
+      value.arr = props.arr
+      value.fallback = props.fallback
+      value.fn = props.fn
+      value.key = props.key
+      value.reactiveIndex = props.reactiveIndex
+      value.reactiveRows = props.reactiveRows
+      runForInsertEffect(state, value)
     },
     { runInContainer: false },
   )
@@ -992,10 +1114,10 @@ export const textNodeSignal = <T>(
           const currentTextNode = textNode?.parentNode ? textNode : null
           const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
           const primitiveValue = resolveFastInsertValue(value)
-          if (primitiveValue?.kind === 'text') {
+          if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
             if (currentTextNode) {
-              if (currentTextNode.data !== primitiveValue.value) {
-                currentTextNode.data = primitiveValue.value
+              if (currentTextNode.data !== primitiveValue) {
+                currentTextNode.data = primitiveValue
               }
               textNode = currentTextNode
               return
@@ -1005,7 +1127,7 @@ export const textNodeSignal = <T>(
             const doc =
               runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
             if (currentEmptyNode && parent && doc) {
-              const nextNode = doc.createTextNode(primitiveValue.value)
+              const nextNode = doc.createTextNode(primitiveValue)
               parent.insertBefore(nextNode, currentEmptyNode)
               removeNodeFromParent(currentEmptyNode, parent)
               textNode = nextNode
@@ -1014,7 +1136,7 @@ export const textNodeSignal = <T>(
             }
           }
 
-          if (primitiveValue?.kind === 'empty') {
+          if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
             if (currentEmptyNode) {
               emptyNode = currentEmptyNode
               textNode = null
@@ -1078,19 +1200,19 @@ export const textNodeSignal = <T>(
         const value = project(signalValue)
         if (!delegated) {
           const primitiveValue = resolveFastInsertValue(value)
-          if (primitiveValue?.kind === 'text') {
+          if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
-              if (currentTextNode.data !== primitiveValue.value) {
-                currentTextNode.data = primitiveValue.value
+              if (currentTextNode.data !== primitiveValue) {
+                currentTextNode.data = primitiveValue
               }
               textNode = currentTextNode
               return
             }
             if (parent.childNodes.length === 0) {
               const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue.value,
+                primitiveValue,
               )
               if (!nextNode) {
                 throw new Error('Client insertions require an active runtime document.')
@@ -1100,7 +1222,7 @@ export const textNodeSignal = <T>(
               return
             }
           }
-          if (primitiveValue?.kind === 'empty') {
+          if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
@@ -1157,10 +1279,10 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
         const currentTextNode = textNode?.parentNode ? textNode : null
         const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
         const primitiveValue = resolveFastInsertValue(value)
-        if (primitiveValue?.kind === 'text') {
+        if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
           if (currentTextNode) {
-            if (currentTextNode.data !== primitiveValue.value) {
-              currentTextNode.data = primitiveValue.value
+            if (currentTextNode.data !== primitiveValue) {
+              currentTextNode.data = primitiveValue
             }
             textNode = currentTextNode
             return
@@ -1170,7 +1292,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
           const doc =
             runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
           if (currentEmptyNode && parent && doc) {
-            const nextNode = doc.createTextNode(primitiveValue.value)
+            const nextNode = doc.createTextNode(primitiveValue)
             parent.insertBefore(nextNode, currentEmptyNode)
             removeNodeFromParent(currentEmptyNode, parent)
             textNode = nextNode
@@ -1179,7 +1301,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
           }
         }
 
-        if (primitiveValue?.kind === 'empty') {
+        if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
           if (currentEmptyNode) {
             emptyNode = currentEmptyNode
             textNode = null
@@ -1227,10 +1349,22 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
           : null
     }
 
-    update(signal.value[member as keyof T] as Insertable)
+    let lastMemberValue = signal.value[member as keyof T] as Insertable
+    update(lastMemberValue)
     createFixedSignalEffect(
       signal,
-      (signalValue) => update(signalValue[member as keyof T] as Insertable),
+      (signalValue) => {
+        const nextMemberValue = signalValue[member as keyof T] as Insertable
+        if (
+          !delegated &&
+          Object.is(nextMemberValue, lastMemberValue) &&
+          isFastPrimitiveInsertInput(nextMemberValue)
+        ) {
+          return
+        }
+        lastMemberValue = nextMemberValue
+        update(nextMemberValue)
+      },
       {
         runInContainer: false,
         skipInitialRun: true,
@@ -1251,19 +1385,19 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
         const value = signalValue[member as keyof T] as Insertable
         if (!delegated) {
           const primitiveValue = resolveFastInsertValue(value)
-          if (primitiveValue?.kind === 'text') {
+          if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
-              if (currentTextNode.data !== primitiveValue.value) {
-                currentTextNode.data = primitiveValue.value
+              if (currentTextNode.data !== primitiveValue) {
+                currentTextNode.data = primitiveValue
               }
               textNode = currentTextNode
               return
             }
             if (parent.childNodes.length === 0) {
               const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue.value,
+                primitiveValue,
               )
               if (!nextNode) {
                 throw new Error('Client insertions require an active runtime document.')
@@ -1273,7 +1407,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
               return
             }
           }
-          if (primitiveValue?.kind === 'empty') {
+          if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
@@ -1326,10 +1460,10 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
         const currentTextNode = textNode?.parentNode ? textNode : null
         const currentEmptyNode = emptyNode?.parentNode ? emptyNode : null
         const primitiveValue = resolveFastInsertValue(value)
-        if (primitiveValue?.kind === 'text') {
+        if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
           if (currentTextNode) {
-            if (currentTextNode.data !== primitiveValue.value) {
-              currentTextNode.data = primitiveValue.value
+            if (currentTextNode.data !== primitiveValue) {
+              currentTextNode.data = primitiveValue
             }
             textNode = currentTextNode
             return
@@ -1339,7 +1473,7 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
           const doc =
             runtimeContainer.doc ?? currentEmptyNode?.ownerDocument ?? parent?.ownerDocument
           if (currentEmptyNode && parent && doc) {
-            const nextNode = doc.createTextNode(primitiveValue.value)
+            const nextNode = doc.createTextNode(primitiveValue)
             parent.insertBefore(nextNode, currentEmptyNode)
             removeNodeFromParent(currentEmptyNode, parent)
             textNode = nextNode
@@ -1348,7 +1482,7 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
           }
         }
 
-        if (primitiveValue?.kind === 'empty') {
+        if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
           if (currentEmptyNode) {
             emptyNode = currentEmptyNode
             textNode = null
@@ -1416,19 +1550,19 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
         const value = signalValue as Insertable
         if (!delegated) {
           const primitiveValue = resolveFastInsertValue(value)
-          if (primitiveValue?.kind === 'text') {
+          if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
-              if (currentTextNode.data !== primitiveValue.value) {
-                currentTextNode.data = primitiveValue.value
+              if (currentTextNode.data !== primitiveValue) {
+                currentTextNode.data = primitiveValue
               }
               textNode = currentTextNode
               return
             }
             if (parent.childNodes.length === 0) {
               const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue.value,
+                primitiveValue,
               )
               if (!nextNode) {
                 throw new Error('Client insertions require an active runtime document.')
@@ -1438,7 +1572,7 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
               return
             }
           }
-          if (primitiveValue?.kind === 'empty') {
+          if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
             const currentTextNode =
               textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
             if (currentTextNode) {
@@ -1559,6 +1693,20 @@ export const classSignalEquals = <T>(
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
   const truthyClassValue = String(truthyValue)
   const falsyClassValue = String(falsyValue)
+  const applyClassEqualsValue = (match: boolean) => {
+    const nextClassValue = match ? truthyClassValue : falsyClassValue
+    if (nextClassValue === '') {
+      elem.removeAttribute('class')
+      syncManagedAttributeSnapshot(elem, 'class')
+      return
+    }
+    if (isSVG) {
+      elem.setAttribute('class', nextClassValue)
+    } else {
+      ;(elem as Element & { className: string }).className = nextClassValue
+    }
+    syncManagedAttributeSnapshot(elem, 'class')
+  }
   const initialClassValue = readCurrentClassValue(elem, isSVG)
   let lastMatch =
     truthyClassValue !== falsyClassValue
@@ -1570,7 +1718,7 @@ export const classSignalEquals = <T>(
       : (ATTR_UNSET as boolean | symbol)
   const initialMatch = signal.value === expected
   if (lastMatch !== initialMatch) {
-    applyClassValue(elem, initialMatch ? truthyClassValue : falsyClassValue, isSVG)
+    applyClassEqualsValue(initialMatch)
     lastMatch = initialMatch
   }
 
@@ -1579,8 +1727,7 @@ export const classSignalEquals = <T>(
     (signalValue) => {
       const nextMatch = signalValue === expected
       if (lastMatch !== nextMatch) {
-        const nextClassValue = nextMatch ? truthyClassValue : falsyClassValue
-        applyClassValue(elem, nextClassValue, isSVG)
+        applyClassEqualsValue(nextMatch)
         lastMatch = nextMatch
       }
     },

@@ -368,6 +368,7 @@ export interface RenderComponentTypeRef {
 export interface ForValue<T = unknown> {
   __e_for: true
   arr: readonly T[]
+  arrSignal?: { value: readonly T[] }
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => string | number | symbol

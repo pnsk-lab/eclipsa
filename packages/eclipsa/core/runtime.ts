@@ -419,10 +419,7 @@ export const clearAsyncSignalSnapshot = (
   clearGlobalAsyncSignalSnapshot(id, container)
 }
 
-const getCurrentFrame = (): RenderFrame | null => {
-  const stack = getFrameStack()
-  return stack.length > 0 ? stack[stack.length - 1] : null
-}
+const getCurrentFrame = (): RenderFrame | null => currentFrame
 
 export const shouldReconnectDetachedInsertMarkers = (container: RuntimeContainer | null) => {
   const frame = getCurrentFrame()
@@ -528,6 +525,7 @@ export const registerRuntimeScopedStyle = (
 
 let currentEffect: ReactiveEffect | null = null
 let currentCleanupSlot: CleanupSlot | null = null
+let currentFrame: RenderFrame | null = null
 const withoutTrackedEffect = <T>(fn: () => T): T => {
   const previous = currentEffect
   currentEffect = null
@@ -581,25 +579,31 @@ const createInactiveComponentState = (
   watchCount: 0,
 })
 
-const createLazyClientInsertOwnerState = (owner: ClientInsertOwner): ComponentState => ({
-  active: false,
-  childComponentIds: null,
-  didMount: false,
-  id: owner.componentId,
-  mayChangeNodeCount: false,
-  mountCleanupSlots: null,
-  parentId: owner.parentComponentId,
-  props: null,
-  projectionSlots: null,
-  registered: false,
-  renderEffectCleanupSlot: null,
-  scopeId: null,
-  signalIds: EMPTY_COMPONENT_SIGNAL_IDS,
-  subscribedSignalIds: null,
-  symbol: CLIENT_INSERT_OWNER_SYMBOL,
-  visibleCount: 0,
-  watchCount: 0,
-})
+const createLazyClientInsertOwnerState = (owner: ClientInsertOwner): ComponentState =>
+  ({
+    id: owner.componentId,
+    mayChangeNodeCount: false,
+    parentId: owner.parentComponentId,
+    registered: false,
+    renderEffectCleanupSlot: null,
+    symbol: CLIENT_INSERT_OWNER_SYMBOL,
+  }) as ComponentState
+
+const materializeComponentStateFields = (component: ComponentState) => {
+  component.active ??= false
+  component.childComponentIds ??= null
+  component.didMount ??= false
+  component.mountCleanupSlots ??= null
+  component.mayChangeNodeCount ??= false
+  component.props ??= null
+  component.projectionSlots ??= null
+  component.renderEffectCleanupSlot ??= null
+  component.scopeId ??= null
+  component.signalIds ??= EMPTY_COMPONENT_SIGNAL_IDS
+  component.subscribedSignalIds ??= null
+  component.visibleCount ??= 0
+  component.watchCount ??= 0
+}
 
 const createCleanupSlot = (): CleanupSlot => ({
   callback: null,
@@ -1098,30 +1102,6 @@ const addNextEffectSignal = (effect: ReactiveEffect, record: SignalRecord) => {
   effect.nextSignals?.add(record)
 }
 
-const forEachSignalEffect = (record: SignalRecord, visit: (effect: RenderEffect) => void) => {
-  if (record.effect) {
-    visit(record.effect)
-  }
-  if (record.fixedEffect) {
-    visit(record.fixedEffect)
-  }
-  if (record.secondFixedEffect) {
-    visit(record.secondFixedEffect)
-  }
-  if (!record.effects) {
-    if (!record.fixedEffects) {
-      return
-    }
-  } else {
-    for (const effect of record.effects) {
-      visit(effect)
-    }
-  }
-  for (const effect of record.fixedEffects ?? []) {
-    visit(effect)
-  }
-}
-
 const forEachEffectSignal = (effect: ReactiveEffect, visit: (record: SignalRecord) => void) => {
   if (effect.signal) {
     visit(effect.signal)
@@ -1242,16 +1222,20 @@ const runWithoutDependencyTracking = <T>(fn: () => T): T => {
   }
 }
 
+const runFixedSignalEffect = (effect: FixedSignalEffect) => {
+  const container = effect.container
+  if (effect.runInContainer === false || !container) {
+    effect.callback(effect.signal.value)
+    return
+  }
+  pushContainer(container, () => {
+    effect.callback(effect.signal.value)
+  })
+}
+
 const runEffect = (effect: RenderEffect) => {
   if (isFixedSignalEffect(effect)) {
-    const { callback, container, runInContainer, signal } = effect
-    if (runInContainer === false || !container) {
-      callback(signal.value)
-      return
-    }
-    pushContainer(container, () => {
-      callback(signal.value)
-    })
+    runFixedSignalEffect(effect)
     return
   }
   effect.fn()
@@ -1264,14 +1248,18 @@ const flushPendingSignalEffects = (container: RuntimeContainer) => {
 
   container.signalEffectsFlushing = true
   try {
-    while (container.pendingSignalEffects.length > 0) {
-      const batch = container.pendingSignalEffects
-      container.pendingSignalEffects = []
-      for (const effect of batch) {
-        effect.queued = false
-        runEffect(effect)
+    const pendingEffects = container.pendingSignalEffects
+    let cursor = 0
+    while (cursor < pendingEffects.length) {
+      const effect = pendingEffects[cursor++]!
+      effect.queued = false
+      if (isFixedSignalEffect(effect)) {
+        runFixedSignalEffect(effect)
+      } else {
+        effect.fn()
       }
     }
+    pendingEffects.length = 0
   } finally {
     container.signalEffectsFlushing = false
   }
@@ -1753,8 +1741,12 @@ class RuntimeSignalHandle<T> {
   ) {}
 
   get value(): T {
-    recordSignalRead(this.__record)
-    return this.__record.value
+    const record = this.__record
+    if (record.skipComponentSubscription === true && currentEffect === null) {
+      return record.value
+    }
+    recordSignalRead(record)
+    return record.value
   }
 
   set value(value: T) {
@@ -1811,11 +1803,9 @@ interface ComputedSignalSnapshot<T> {
 
 type KeyedForRowState<T = unknown> = {
   index: number
-  indexSignal?: { value: number }
-  indexSignalId?: string
+  indexSignalRecord?: SignalRecord<number>
   item: T
-  itemSignal?: { value: T }
-  itemSignalId?: string
+  itemSignalRecord?: SignalRecord<T>
   key: string | number | symbol
   nodeCount: number
   owner: ClientInsertOwner
@@ -1824,14 +1814,10 @@ type KeyedForRowState<T = unknown> = {
   end: Node
 }
 
-type KeyedForDirtyRowState<T = unknown> = {
-  index: number
-  item: T
-  row: KeyedForRowState<T>
-}
-
 type KeyedForOwnerState<T = unknown> = {
-  dirtyRows: KeyedForDirtyRowState<T>[]
+  dirtyIndexes: number[]
+  dirtyItems: T[]
+  dirtyRows: KeyedForRowState<T>[]
   nextRowOwnerIndex: number
   order: Array<string | number | symbol>
   orderedRows: KeyedForRowState<T>[]
@@ -2040,15 +2026,46 @@ const recordSignalRead = (record: SignalRecord) => {
   frame.component.subscribedSignalIds.add(record.id)
 }
 
+const queuePendingSignalEffect = (container: RuntimeContainer, effect: RenderEffect) => {
+  if ((!isFixedSignalEffect(effect) && effect.collecting) || effect.queued) {
+    return
+  }
+  effect.queued = true
+  container.pendingSignalEffects.push(effect)
+}
+
+const queuePendingFixedSignalEffect = (container: RuntimeContainer, effect: FixedSignalEffect) => {
+  if (effect.queued) {
+    return
+  }
+  effect.queued = true
+  container.pendingSignalEffects.push(effect)
+}
+
 const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRecord) => {
   if (container && (container.signalEffectBatchDepth > 0 || container.signalEffectsFlushing)) {
-    forEachSignalEffect(record, (effect) => {
-      if ((!isFixedSignalEffect(effect) && effect.collecting) || effect.queued) {
-        return
+    const singleEffect = record.effect
+    if (singleEffect) {
+      queuePendingSignalEffect(container, singleEffect)
+    }
+    const singleFixedEffect = record.fixedEffect
+    if (singleFixedEffect) {
+      queuePendingFixedSignalEffect(container, singleFixedEffect)
+    }
+    const secondFixedEffect = record.secondFixedEffect
+    if (secondFixedEffect) {
+      queuePendingFixedSignalEffect(container, secondFixedEffect)
+    }
+    if (record.effects) {
+      for (const effect of record.effects) {
+        queuePendingSignalEffect(container, effect)
       }
-      effect.queued = true
-      container.pendingSignalEffects.push(effect)
-    })
+    }
+    if (record.fixedEffects) {
+      for (const effect of record.fixedEffects) {
+        queuePendingFixedSignalEffect(container, effect)
+      }
+    }
   } else {
     const singleEffect = record.effect
     if (singleEffect && !singleEffect.collecting) {
@@ -2056,11 +2073,11 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     }
     const singleFixedEffect = record.fixedEffect
     if (singleFixedEffect) {
-      runEffect(singleFixedEffect)
+      runFixedSignalEffect(singleFixedEffect)
     }
     const secondFixedEffect = record.secondFixedEffect
     if (secondFixedEffect) {
-      runEffect(secondFixedEffect)
+      runFixedSignalEffect(secondFixedEffect)
     }
     if (record.effects) {
       for (const effect of Array.from(record.effects)) {
@@ -2072,14 +2089,15 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     }
     if (record.fixedEffects) {
       for (const effect of record.fixedEffects) {
-        runEffect(effect)
+        runFixedSignalEffect(effect)
       }
     }
   }
-  if (!container) {
+  const subscribers = record.subscribers
+  if (!container || !subscribers?.size) {
     return
   }
-  for (const componentId of record.subscribers ?? []) {
+  for (const componentId of subscribers) {
     const component = container.components.get(componentId)
     if (!component?.start || !component.end) {
       continue
@@ -2260,12 +2278,15 @@ const withRuntimeContextValue = <T>(token: RuntimeContextToken, value: unknown, 
 }
 
 const pushFrame = <T>(frame: RenderFrame, fn: () => T): T => {
+  const previousFrame = currentFrame
+  currentFrame = frame
   const stack = getFrameStack()
   stack.push(frame)
   try {
     return fn()
   } finally {
     stack.pop()
+    currentFrame = previousFrame
     FRAME_POOL.push(frame)
   }
 }
@@ -2281,12 +2302,14 @@ interface LiveClientEventBinding {
   containerId: string
   eventName: string
   handler?: EventDescriptor | LazyMeta | ((event: Event) => unknown)
+  module?: RuntimeSymbolModule
   symbol?: string
 }
 
 type LiveClientEventBindingStore = LiveClientEventBinding | Map<string, LiveClientEventBinding>
 
 const LIVE_CLIENT_EVENT_BINDINGS_KEY = Symbol('eclipsa.live-client-event-bindings')
+const EMPTY_EVENT_CAPTURES: unknown[] = []
 const liveClientEventBindings = new WeakMap<Element, LiveClientEventBindingStore>()
 type LiveClientEventBindingElement = Element & {
   [LIVE_CLIENT_EVENT_BINDINGS_KEY]?: LiveClientEventBindingStore | null
@@ -2326,6 +2349,7 @@ const cloneLiveClientEventBinding = (binding: LiveClientEventBinding): LiveClien
   containerId: binding.containerId,
   eventName: binding.eventName,
   handler: binding.handler,
+  module: binding.module,
   symbol: binding.symbol,
 })
 
@@ -2442,7 +2466,7 @@ const setLiveClientPackedEventBinding = (
   capture2?: unknown,
   capture3?: unknown,
 ) => {
-  storeLiveClientEventBinding(element, {
+  const binding: LiveClientEventBinding = {
     capture0,
     capture1,
     capture2,
@@ -2451,7 +2475,9 @@ const setLiveClientPackedEventBinding = (
     containerId: container.id,
     eventName,
     symbol,
-  })
+  }
+  storeLiveClientEventBinding(element, binding)
+  return binding
 }
 
 export const bindLiveClientListener = (
@@ -2476,7 +2502,7 @@ export const bindPackedRuntimeEvent = (
   capture3?: unknown,
 ) => {
   ensureDelegatedDocumentEventListener(container, eventName)
-  setLiveClientPackedEventBinding(
+  const binding = setLiveClientPackedEventBinding(
     container,
     element,
     eventName,
@@ -2487,6 +2513,11 @@ export const bindPackedRuntimeEvent = (
     capture2,
     capture3,
   )
+  const resolved = getResolvedRuntimeSymbols(container).get(symbol)
+  if (resolved) {
+    binding.module = resolved
+    return
+  }
   warmRuntimeSymbol(container, symbol)
 }
 
@@ -2719,6 +2750,7 @@ const registerComponentState = (container: RuntimeContainer, component: Componen
   if (component.registered === true) {
     return component
   }
+  materializeComponentStateFields(component)
   component.registered = true
   container.components.set(component.id, component)
   attachComponentToParent(container, component.id, component.parentId)
@@ -3319,17 +3351,28 @@ const scheduleMountCallbacks = (
   }
   component.didMount = true
   scheduleMicrotask(() => {
-    void withClientContainer(container, () => {
+    const afterCallbacks = () => {
+      const pendingFlush = flushDirtyComponentsIfNeeded(container)
+      if (pendingFlush) {
+        return pendingFlush.then(() => {
+          scheduleVisibleCallbacksCheck(container)
+        })
+      }
+      scheduleVisibleCallbacksCheck(container)
+      return undefined
+    }
+    const result = withClientContainer(container, () => {
       for (const callback of callbacks) {
         const cleanupSlot = createCleanupSlot()
         ;(component.mountCleanupSlots ??= []).push(cleanupSlot)
         withCleanupSlot(cleanupSlot, callback)
       }
     })
-      .then(() => flushDirtyComponents(container))
-      .then(() => {
-        scheduleVisibleCallbacksCheck(container)
-      })
+    if (isPromiseLike(result)) {
+      void Promise.resolve(result).then(afterCallbacks)
+      return
+    }
+    void afterCallbacks()
   })
 }
 
@@ -4088,14 +4131,16 @@ export const tryPatchElementShellInPlace = (current: Element, next: Element) => 
   }
 
   syncManagedElementAttributes(current, next)
-  preserveReusableContentInRoots(listNodeChildren(current), listNodeChildren(next))
+  let nextChildren = listNodeChildren(next)
+  preserveReusableContentInRoots(listNodeChildren(current), nextChildren)
+  nextChildren = listNodeChildren(next)
   while (current.firstChild) {
     current.firstChild.remove()
   }
-  while (next.firstChild) {
-    current.appendChild(next.firstChild)
+  for (const child of nextChildren) {
+    current.appendChild(child)
   }
-  rememberManagedAttributesForNodes(current.childNodes as Iterable<Node>)
+  rememberManagedAttributesForNodes(nextChildren)
   return true
 }
 
@@ -4662,17 +4707,6 @@ const createForCallbackArgs = <T>(value: ForValue<T>, item: T, index: number): [
         createStaticRowSignalHandle(index) as unknown as number,
       ]
     : [item, index]
-
-const disposeKeyedForRowSignals = (container: RuntimeContainer, row: KeyedForRowState<unknown>) => {
-  for (const signalId of [row.itemSignalId, row.indexSignalId]) {
-    if (!signalId) {
-      continue
-    }
-    container.signals.delete(signalId)
-    container.asyncSignalStates.delete(signalId)
-    container.asyncSignalSnapshotCache.delete(signalId)
-  }
-}
 
 const getKeyedForOwnerRange = <T>(state: KeyedForOwnerState<T>) => {
   const firstKey = state.order[0]
@@ -5822,7 +5856,6 @@ export const renderClientNodes = (
       for (const child of childNodes) {
         element.appendChild(child)
       }
-
       rememberManagedAttributesForNode(element)
       nodes = [element]
     }
@@ -6037,6 +6070,35 @@ const removeNodesFromParent = (nodes: Node[], parent: ParentNode) => {
   }
 }
 
+const removeBoundaryRangeFromParent = (start: Node, end: Node, parent: ParentNode) => {
+  if (start === end) {
+    if (start.parentNode === parent) {
+      if (typeof (start as Node & { remove?: () => void }).remove === 'function') {
+        ;(start as Node & { remove: () => void }).remove()
+      } else {
+        parent.removeChild(start)
+      }
+    }
+    return
+  }
+
+  let cursor: Node | null = start
+  while (cursor) {
+    const next: Node | null = cursor === end ? null : cursor.nextSibling
+    if (cursor.parentNode === parent) {
+      if (typeof (cursor as Node & { remove?: () => void }).remove === 'function') {
+        ;(cursor as Node & { remove: () => void }).remove()
+      } else {
+        parent.removeChild(cursor)
+      }
+    }
+    if (cursor === end) {
+      return
+    }
+    cursor = next
+  }
+}
+
 const insertNodesBeforeMarker = (nodes: Node[], parent: ParentNode, marker: Node | undefined) => {
   for (const node of nodes) {
     parent.insertBefore(node, marker ?? null)
@@ -6049,6 +6111,11 @@ const moveBoundaryRangeBeforeMarker = (
   parent: ParentNode,
   marker: Node | undefined,
 ) => {
+  if (start === end) {
+    parent.insertBefore(start, marker ?? null)
+    return
+  }
+
   const doc = parent.ownerDocument ?? start.ownerDocument
   if (!doc || typeof doc.createDocumentFragment !== 'function') {
     insertNodesBeforeMarker(collectBoundaryRangeNodes(start, end), parent, marker)
@@ -6066,6 +6133,54 @@ const moveBoundaryRangeBeforeMarker = (
     cursor = next
   }
   parent.insertBefore(fragment, marker ?? null)
+}
+
+const collectStableKeyedMovePositions = (
+  previousOrder: readonly (string | number | symbol)[],
+  nextOrder: readonly (string | number | symbol)[],
+) => {
+  if (nextOrder.length === 0 || previousOrder.length === 0) {
+    return new Uint8Array(0)
+  }
+
+  const previousIndexByKey = new Map<string | number | symbol, number>()
+  for (let index = 0; index < previousOrder.length; index += 1) {
+    previousIndexByKey.set(previousOrder[index]!, index)
+  }
+
+  const previousIndexes = Array.from({ length: nextOrder.length }, () => -1)
+  const predecessors = Array.from({ length: nextOrder.length }, () => -1)
+  const tails: number[] = []
+  for (let index = 0; index < nextOrder.length; index += 1) {
+    const previousIndex = previousIndexByKey.get(nextOrder[index]!)
+    if (previousIndex === undefined) {
+      continue
+    }
+    previousIndexes[index] = previousIndex
+
+    let low = 0
+    let high = tails.length
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (previousIndexes[tails[middle]!] < previousIndex) {
+        low = middle + 1
+      } else {
+        high = middle
+      }
+    }
+    if (low > 0) {
+      predecessors[index] = tails[low - 1]!
+    }
+    tails[low] = index
+  }
+
+  const stablePositions = new Uint8Array(nextOrder.length)
+  let cursor = tails[tails.length - 1] ?? -1
+  while (cursor >= 0) {
+    stablePositions[cursor] = 1
+    cursor = predecessors[cursor] ?? -1
+  }
+  return stablePositions
 }
 
 const disposeClientInsertOwner = (container: RuntimeContainer, owner: ClientInsertOwner) => {
@@ -6092,8 +6207,7 @@ const teardownKeyedForOwnerState = (
   const state = keyedForOwnerStates.get(ownerComponent)
   if (state) {
     for (const row of state.rows.values()) {
-      removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
-      disposeKeyedForRowSignals(container, row as KeyedForRowState<unknown>)
+      removeBoundaryRangeFromParent(row.start, row.end, parent)
       disposeClientInsertOwner(container, row.owner)
     }
     keyedForOwnerStates.delete(ownerComponent)
@@ -6162,6 +6276,8 @@ export const reconcileClientKeyedForInPlace = (
   const state: KeyedForOwnerState<(typeof resolved.arr)[number]> = (keyedForOwnerStates.get(
     ownerComponent,
   ) as KeyedForOwnerState<(typeof resolved.arr)[number]> | undefined) ?? {
+    dirtyIndexes: [],
+    dirtyItems: [],
     dirtyRows: [],
     nextRowOwnerIndex: 0,
     order: [],
@@ -6208,12 +6324,14 @@ export const reconcileClientKeyedForInPlace = (
         const item = resolved.arr[index]!
         const key = resolveForItemKey(resolved, item, index)
         const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
-        const callbackItem = usesReactiveItem
-          ? createTransientInternalDetachedRuntimeSignal(container, item)
-          : item
-        const callbackIndex = usesReactiveIndex
-          ? createTransientInternalDetachedRuntimeSignal(container, index)
-          : index
+        const itemSignalRecord = usesReactiveItem
+          ? createTransientInternalSignalRecord(container, item)
+          : undefined
+        const indexSignalRecord = usesReactiveIndex
+          ? createTransientInternalSignalRecord(container, index)
+          : undefined
+        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : item
+        const callbackIndex = indexSignalRecord ? indexSignalRecord.handle : index
         const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
         if (fragment) {
           for (const node of bodyNodes) {
@@ -6228,13 +6346,9 @@ export const reconcileClientKeyedForInPlace = (
         const row = {
           end: bodyNodes[bodyNodes.length - 1]!,
           index,
-          indexSignal: usesReactiveIndex ? (callbackIndex as { value: number }) : undefined,
-          indexSignalId: undefined,
+          indexSignalRecord,
           item,
-          itemSignal: usesReactiveItem
-            ? (callbackItem as { value: (typeof resolved.arr)[number] })
-            : undefined,
-          itemSignalId: undefined,
+          itemSignalRecord,
           key,
           nodeCount: bodyNodes.length,
           owner: rowOwner,
@@ -6266,7 +6380,75 @@ export const reconcileClientKeyedForInPlace = (
     }
   }
 
+  const canUseIdentityReorderScan =
+    state.orderedRows.length === resolved.arr.length &&
+    resolved.reactiveRows &&
+    !usesReactiveIndex &&
+    ((resolved.key && resolved.key.length < 2) ||
+      (!resolved.key &&
+        resolved.arr.every(
+          (item) =>
+            typeof item === 'string' || typeof item === 'number' || typeof item === 'symbol',
+        )))
+
+  if (canUseIdentityReorderScan) {
+    let firstSwapIndex = -1
+    let secondSwapIndex = -1
+    let mismatchCount = 0
+    for (let index = 0; index < resolved.arr.length; index += 1) {
+      if (state.orderedRows[index]?.item === resolved.arr[index]) {
+        continue
+      }
+      mismatchCount += 1
+      if (mismatchCount === 1) {
+        firstSwapIndex = index
+      } else if (mismatchCount === 2) {
+        secondSwapIndex = index
+      } else {
+        break
+      }
+    }
+
+    if (
+      mismatchCount === 2 &&
+      state.orderedRows[firstSwapIndex]?.item === resolved.arr[secondSwapIndex] &&
+      state.orderedRows[secondSwapIndex]?.item === resolved.arr[firstSwapIndex]
+    ) {
+      const firstRow = state.orderedRows[firstSwapIndex]!
+      const secondRow = state.orderedRows[secondSwapIndex]!
+      const afterSecondRow = secondRow.end.nextSibling
+      if (secondRow.start.parentNode !== parent || secondRow.end.nextSibling !== firstRow.start) {
+        moveBoundaryRangeBeforeMarker(secondRow.start, secondRow.end, parent, firstRow.start)
+      }
+      if (firstRow.start.parentNode !== parent || firstRow.end.nextSibling !== afterSecondRow) {
+        moveBoundaryRangeBeforeMarker(
+          firstRow.start,
+          firstRow.end,
+          parent,
+          afterSecondRow ?? undefined,
+        )
+      }
+
+      firstRow.index = secondSwapIndex
+      secondRow.index = firstSwapIndex
+      state.orderedRows[firstSwapIndex] = secondRow
+      state.orderedRows[secondSwapIndex] = firstRow
+      state.order[firstSwapIndex] = secondRow.key
+      state.order[secondSwapIndex] = firstRow.key
+      keyedForOwnerStates.set(ownerComponent, state)
+
+      const { start } = getKeyedForOwnerRange(state)
+      return {
+        firstNode: start,
+        needsRefRestore: false,
+        nodeCount: state.totalNodeCount,
+      }
+    }
+  }
+
   let canUseStableOrderFastPath = state.orderedRows.length === resolved.arr.length
+  state.dirtyIndexes.length = 0
+  state.dirtyItems.length = 0
   state.dirtyRows.length = 0
   if (canUseStableOrderFastPath) {
     for (let index = 0; index < resolved.arr.length; index += 1) {
@@ -6284,7 +6466,9 @@ export const reconcileClientKeyedForInPlace = (
         break
       }
       if (row.item !== item || row.index !== index) {
-        state.dirtyRows.push({ index, item, row })
+        state.dirtyRows.push(row)
+        state.dirtyItems.push(item)
+        state.dirtyIndexes.push(index)
       }
     }
   }
@@ -6294,15 +6478,23 @@ export const reconcileClientKeyedForInPlace = (
     const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] =
       []
     withBatchedSignalWrites(container, () => {
-      for (const { index, item, row } of state.dirtyRows) {
-        if (resolved.reactiveRows && (row.itemSignal || row.indexSignal)) {
-          if (row.itemSignal && row.item !== item) {
-            row.itemSignal.value = item
+      for (let dirtyIndex = 0; dirtyIndex < state.dirtyRows.length; dirtyIndex += 1) {
+        const row = state.dirtyRows[dirtyIndex]!
+        const item = state.dirtyItems[dirtyIndex]!
+        const index = state.dirtyIndexes[dirtyIndex]!
+        if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+          let wroteReactiveRowSignal = false
+          if (row.itemSignalRecord && row.item !== item) {
+            writeSignalValue(container, row.itemSignalRecord, item)
+            wroteReactiveRowSignal = true
           }
-          if (row.indexSignal && row.index !== index) {
-            row.indexSignal.value = index
+          if (row.indexSignalRecord && row.index !== index) {
+            writeSignalValue(container, row.indexSignalRecord, index)
+            wroteReactiveRowSignal = true
           }
-          reactiveRowsNeedingNodeCountRefresh.push(row)
+          if (wroteReactiveRowSignal) {
+            reactiveRowsNeedingNodeCountRefresh.push(row)
+          }
         } else {
           const nextBodyNodes = renderForCallbackNodesForOwner(
             container,
@@ -6346,6 +6538,245 @@ export const reconcileClientKeyedForInPlace = (
     }
   }
 
+  if (state.orderedRows.length > resolved.arr.length) {
+    const applyOrderedDeletionFastPath = (
+      nextOrder: Array<string | number | symbol>,
+      nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[],
+      removedRows: KeyedForRowState<(typeof resolved.arr)[number]>[],
+      options?: {
+        preserveSurvivingItems?: boolean
+      },
+    ) => {
+      let needsRefRestore = false
+      let totalNodeCount = state.totalNodeCount
+      const canSkipSurvivingRowUpdates =
+        options?.preserveSurvivingItems === true && resolved.reactiveRows && !usesReactiveIndex
+
+      if (canSkipSurvivingRowUpdates) {
+        for (let index = 0; index < nextOrderedRows.length; index += 1) {
+          const row = nextOrderedRows[index]!
+          row.index = index
+        }
+      } else {
+        const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<
+          (typeof resolved.arr)[number]
+        >[] = []
+        withBatchedSignalWrites(container, () => {
+          for (let index = 0; index < nextOrderedRows.length; index += 1) {
+            const row = nextOrderedRows[index]!
+            const item = resolved.arr[index]!
+            if (row.item !== item || row.index !== index) {
+              if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+                let wroteReactiveRowSignal = false
+                if (row.itemSignalRecord && row.item !== item) {
+                  writeSignalValue(container, row.itemSignalRecord, item)
+                  wroteReactiveRowSignal = true
+                }
+                if (row.indexSignalRecord && row.index !== index) {
+                  writeSignalValue(container, row.indexSignalRecord, index)
+                  wroteReactiveRowSignal = true
+                }
+                if (wroteReactiveRowSignal) {
+                  reactiveRowsNeedingNodeCountRefresh.push(row)
+                }
+              } else {
+                const nextBodyNodes = renderForCallbackNodesForOwner(
+                  container,
+                  row.owner,
+                  resolved.fn,
+                  item,
+                  index,
+                )
+                if (!tryPatchNodeRangeInPlace(row.start, row.end, nextBodyNodes)) {
+                  replaceNodeRange(row.start, row.end, nextBodyNodes)
+                  row.start = nextBodyNodes[0]!
+                  row.end = nextBodyNodes[nextBodyNodes.length - 1]!
+                }
+                row.nodeCount = nextBodyNodes.length
+                row.stableNodeCount = hasStableClientInsertOwnerNodeCount(container, row.owner)
+                needsRefRestore ||=
+                  container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(nextBodyNodes)
+              }
+            }
+            row.item = item
+            row.index = index
+          }
+        })
+
+        for (const row of reactiveRowsNeedingNodeCountRefresh) {
+          if (row.stableNodeCount && hasStableClientInsertOwnerNodeCount(container, row.owner)) {
+            continue
+          }
+          row.nodeCount = countNodesBetween(row.start, row.end)
+          row.stableNodeCount = false
+        }
+
+        totalNodeCount = 0
+        for (const row of nextOrderedRows) {
+          totalNodeCount += row.nodeCount
+        }
+      }
+
+      for (const row of removedRows) {
+        removeBoundaryRangeFromParent(row.start, row.end, parent)
+        disposeClientInsertOwner(container, row.owner)
+        state.rows.delete(row.key)
+        if (canSkipSurvivingRowUpdates) {
+          totalNodeCount -= row.nodeCount
+        }
+      }
+
+      state.order = nextOrder
+      state.orderedRows = nextOrderedRows
+      state.totalNodeCount = totalNodeCount
+      keyedForOwnerStates.set(ownerComponent, state)
+
+      const { start } = getKeyedForOwnerRange(state)
+      return {
+        firstNode: start,
+        needsRefRestore,
+        nodeCount: state.totalNodeCount,
+      }
+    }
+
+    const canUseIdentityDeletionScan =
+      (resolved.key && resolved.key.length < 2) ||
+      (!resolved.key &&
+        resolved.arr.every(
+          (item) =>
+            typeof item === 'string' || typeof item === 'number' || typeof item === 'symbol',
+        ))
+
+    if (canUseIdentityDeletionScan) {
+      const nextOrder: Array<string | number | symbol> = []
+      const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+      const removedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+      let previousIndex = 0
+      let canUseOrderedDeletionFastPath = true
+
+      for (let index = 0; index < resolved.arr.length; index += 1) {
+        const item = resolved.arr[index]!
+        let row: KeyedForRowState<(typeof resolved.arr)[number]> | undefined
+        while (previousIndex < state.orderedRows.length) {
+          const candidate = state.orderedRows[previousIndex++]!
+          if (candidate.item === item) {
+            row = candidate
+            break
+          }
+          removedRows.push(candidate)
+        }
+        if (!row) {
+          canUseOrderedDeletionFastPath = false
+          break
+        }
+        nextOrder[index] = row.key
+        nextOrderedRows[index] = row
+      }
+
+      if (canUseOrderedDeletionFastPath) {
+        for (; previousIndex < state.orderedRows.length; previousIndex += 1) {
+          removedRows.push(state.orderedRows[previousIndex]!)
+        }
+        return applyOrderedDeletionFastPath(nextOrder, nextOrderedRows, removedRows, {
+          preserveSurvivingItems: true,
+        })
+      }
+    }
+
+    const nextOrder: Array<string | number | symbol> = []
+    const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+    const removedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+    let previousIndex = 0
+    let canUseOrderedDeletionFastPath = true
+
+    for (let index = 0; index < resolved.arr.length; index += 1) {
+      const item = resolved.arr[index]!
+      const key = resolveForItemKey(resolved, item, index)
+      let row: KeyedForRowState<(typeof resolved.arr)[number]> | undefined
+      while (previousIndex < state.orderedRows.length) {
+        const candidate = state.orderedRows[previousIndex++]!
+        if (candidate.key === key) {
+          row = candidate
+          break
+        }
+        removedRows.push(candidate)
+      }
+      if (!row) {
+        canUseOrderedDeletionFastPath = false
+        break
+      }
+      nextOrder[index] = key
+      nextOrderedRows[index] = row
+    }
+
+    if (canUseOrderedDeletionFastPath) {
+      for (; previousIndex < state.orderedRows.length; previousIndex += 1) {
+        removedRows.push(state.orderedRows[previousIndex]!)
+      }
+      return applyOrderedDeletionFastPath(nextOrder, nextOrderedRows, removedRows)
+    }
+  }
+
+  if (canUseIdentityReorderScan) {
+    const rowByItem = new Map<unknown, KeyedForRowState<(typeof resolved.arr)[number]>>()
+    let canUseIdentityReorderFastPath = true
+    for (const row of state.orderedRows) {
+      if (rowByItem.has(row.item)) {
+        canUseIdentityReorderFastPath = false
+        break
+      }
+      rowByItem.set(row.item, row)
+    }
+
+    if (canUseIdentityReorderFastPath) {
+      const nextOrder: Array<string | number | symbol> = []
+      const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+      for (let index = 0; index < resolved.arr.length; index += 1) {
+        const item = resolved.arr[index]!
+        const row = rowByItem.get(item)
+        if (!row) {
+          canUseIdentityReorderFastPath = false
+          break
+        }
+        row.index = index
+        nextOrder[index] = row.key
+        nextOrderedRows[index] = row
+      }
+
+      if (canUseIdentityReorderFastPath) {
+        const stableMovePositions = collectStableKeyedMovePositions(state.order, nextOrder)
+        let insertionReference = marker ?? null
+        for (let index = nextOrderedRows.length - 1; index >= 0; index -= 1) {
+          const row = nextOrderedRows[index]!
+          if (stableMovePositions[index] === 1 && row.start.parentNode === parent) {
+            insertionReference = row.start
+            continue
+          }
+          if (row.start.parentNode !== parent || row.end.nextSibling !== insertionReference) {
+            moveBoundaryRangeBeforeMarker(
+              row.start,
+              row.end,
+              parent,
+              insertionReference ?? undefined,
+            )
+          }
+          insertionReference = row.start
+        }
+
+        state.order = nextOrder
+        state.orderedRows = nextOrderedRows
+        keyedForOwnerStates.set(ownerComponent, state)
+
+        const { start } = getKeyedForOwnerRange(state)
+        return {
+          firstNode: start,
+          needsRefRestore: false,
+          nodeCount: state.totalNodeCount,
+        }
+      }
+    }
+  }
+
   const nextRows = new Map<
     string | number | symbol,
     KeyedForRowState<(typeof resolved.arr)[number]>
@@ -6355,36 +6786,31 @@ export const reconcileClientKeyedForInPlace = (
   let needsRefRestore = false
   const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
 
-  let insertionReference = marker ?? null
-
   withBatchedSignalWrites(container, () => {
-    for (let index = resolved.arr.length - 1; index >= 0; index -= 1) {
+    for (let index = 0; index < resolved.arr.length; index += 1) {
       const item = resolved.arr[index]!
       const key = resolveForItemKey(resolved, item, index)
       let row = state.rows.get(key)
 
       if (!row) {
         const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
-        const callbackItem = usesReactiveItem
-          ? createTransientInternalDetachedRuntimeSignal(container, item)
-          : item
-        const callbackIndex = usesReactiveIndex
-          ? createTransientInternalDetachedRuntimeSignal(container, index)
-          : index
+        const itemSignalRecord = usesReactiveItem
+          ? createTransientInternalSignalRecord(container, item)
+          : undefined
+        const indexSignalRecord = usesReactiveIndex
+          ? createTransientInternalSignalRecord(container, index)
+          : undefined
+        const callbackItem = itemSignalRecord ? itemSignalRecord.handle : item
+        const callbackIndex = indexSignalRecord ? indexSignalRecord.handle : index
         const bodyNodes = renderRowNodes(rowOwner, callbackItem, callbackIndex)
-        insertNodesBeforeMarker(bodyNodes, parent, insertionReference ?? undefined)
         needsRefRestore ||=
           container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(bodyNodes)
         row = {
           end: bodyNodes[bodyNodes.length - 1]!,
           index,
-          indexSignal: usesReactiveIndex ? (callbackIndex as { value: number }) : undefined,
-          indexSignalId: undefined,
+          indexSignalRecord,
           item,
-          itemSignal: usesReactiveItem
-            ? (callbackItem as { value: (typeof resolved.arr)[number] })
-            : undefined,
-          itemSignalId: undefined,
+          itemSignalRecord,
           key,
           nodeCount: bodyNodes.length,
           owner: rowOwner,
@@ -6394,14 +6820,19 @@ export const reconcileClientKeyedForInPlace = (
       } else {
         const shouldRerender = row.item !== item || row.index !== index
         if (shouldRerender) {
-          if (resolved.reactiveRows && (row.itemSignal || row.indexSignal)) {
-            if (row.itemSignal && row.item !== item) {
-              row.itemSignal.value = item
+          if (resolved.reactiveRows && (row.itemSignalRecord || row.indexSignalRecord)) {
+            let wroteReactiveRowSignal = false
+            if (row.itemSignalRecord && row.item !== item) {
+              writeSignalValue(container, row.itemSignalRecord, item)
+              wroteReactiveRowSignal = true
             }
-            if (row.indexSignal && row.index !== index) {
-              row.indexSignal.value = index
+            if (row.indexSignalRecord && row.index !== index) {
+              writeSignalValue(container, row.indexSignalRecord, index)
+              wroteReactiveRowSignal = true
             }
-            reactiveRowsNeedingNodeCountRefresh.push(row)
+            if (wroteReactiveRowSignal) {
+              reactiveRowsNeedingNodeCountRefresh.push(row)
+            }
           } else {
             const nextBodyNodes = renderForCallbackNodesForOwner(
               container,
@@ -6421,10 +6852,6 @@ export const reconcileClientKeyedForInPlace = (
               container.hasRuntimeRefMarkers && nodesContainSignalRefMarkers(nextBodyNodes)
           }
         }
-
-        if (row.start.parentNode !== parent || row.end.nextSibling !== insertionReference) {
-          moveBoundaryRangeBeforeMarker(row.start, row.end, parent, insertionReference ?? undefined)
-        }
         row.item = item
         row.index = index
       }
@@ -6432,9 +6859,22 @@ export const reconcileClientKeyedForInPlace = (
       nextRows.set(key, row)
       nextOrder[index] = key
       nextOrderedRows[index] = row
-      insertionReference = row.start
     }
   })
+
+  const stableMovePositions = collectStableKeyedMovePositions(state.order, nextOrder)
+  let insertionReference = marker ?? null
+  for (let index = nextOrderedRows.length - 1; index >= 0; index -= 1) {
+    const row = nextOrderedRows[index]!
+    if (stableMovePositions[index] === 1 && row.start.parentNode === parent) {
+      insertionReference = row.start
+      continue
+    }
+    if (row.start.parentNode !== parent || row.end.nextSibling !== insertionReference) {
+      moveBoundaryRangeBeforeMarker(row.start, row.end, parent, insertionReference ?? undefined)
+    }
+    insertionReference = row.start
+  }
 
   for (const row of reactiveRowsNeedingNodeCountRefresh) {
     if (row.stableNodeCount && hasStableClientInsertOwnerNodeCount(container, row.owner)) {
@@ -6448,15 +6888,19 @@ export const reconcileClientKeyedForInPlace = (
     if (nextRows.has(key)) {
       continue
     }
-    removeNodesFromParent(collectBoundaryRangeNodes(row.start, row.end), parent)
-    disposeKeyedForRowSignals(container, row as KeyedForRowState<unknown>)
+    removeBoundaryRangeFromParent(row.start, row.end, parent)
     disposeClientInsertOwner(container, row.owner)
+  }
+
+  let totalNodeCount = 0
+  for (const row of nextOrderedRows) {
+    totalNodeCount += row.nodeCount
   }
 
   state.rows = nextRows
   state.order = nextOrder
   state.orderedRows = nextOrderedRows
-  state.totalNodeCount = [...nextRows.values()].reduce((total, row) => total + row.nodeCount, 0)
+  state.totalNodeCount = totalNodeCount
   keyedForOwnerStates.set(ownerComponent, state)
 
   const { start } = getKeyedForOwnerRange(state)
@@ -6504,11 +6948,9 @@ export const renderClientInsertableForOwner = (
   const nodes = pushContainer(container, () =>
     pushFrame(frame, () => renderClientInsertable(value, container)),
   )
-  commitFrameRenderEffects(frame)
-  const componentIsRegistered = component.registered === true
-  const visitedDescendants = getFrameVisitedDescendants(frame)
   if (isFreshOwner) {
-    if (componentIsRegistered && parentFrame && parentFrame !== frame) {
+    if (component.registered === true && parentFrame && parentFrame !== frame) {
+      const visitedDescendants = getFrameVisitedDescendants(frame)
       const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
       parentVisitedDescendants.add(owner.componentId)
       for (const descendantId of visitedDescendants) {
@@ -6517,6 +6959,9 @@ export const renderClientInsertableForOwner = (
     }
     return nodes
   }
+  commitFrameRenderEffects(frame)
+  const componentIsRegistered = component.registered === true
+  const visitedDescendants = getFrameVisitedDescendants(frame)
   if (!componentIsRegistered) {
     return nodes
   }
@@ -6592,11 +7037,9 @@ const renderForCallbackNodesForOwner = <TItem, TIndex>(
       renderClientInsertable(stripForChildRootKey(callback(item, index) as JSX.Element), container),
     ),
   )
-  commitFrameRenderEffects(frame)
-  const componentIsRegistered = component.registered === true
-  const visitedDescendants = getFrameVisitedDescendants(frame)
   if (isFreshOwner) {
-    if (componentIsRegistered && parentFrame && parentFrame !== frame) {
+    if (component.registered === true && parentFrame && parentFrame !== frame) {
+      const visitedDescendants = getFrameVisitedDescendants(frame)
       const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
       parentVisitedDescendants.add(owner.componentId)
       for (const descendantId of visitedDescendants) {
@@ -6605,6 +7048,9 @@ const renderForCallbackNodesForOwner = <TItem, TIndex>(
     }
     return nodes
   }
+  commitFrameRenderEffects(frame)
+  const componentIsRegistered = component.registered === true
+  const visitedDescendants = getFrameVisitedDescendants(frame)
   if (!componentIsRegistered) {
     return nodes
   }
@@ -6658,9 +7104,20 @@ export const renderClientInsertable = (
     return []
   }
   if (Array.isArray(value)) {
-    return withActiveKeyedRangeScope(allocateKeyedRangeScope(), () =>
-      value.flatMap((entry) => renderClientInsertable(entry, container)),
-    )
+    return withActiveKeyedRangeScope(allocateKeyedRangeScope(), () => {
+      const nodes: Node[] = []
+      for (const entry of value) {
+        const rendered = renderClientInsertable(entry, container)
+        if (rendered.length === 1) {
+          nodes.push(rendered[0]!)
+          continue
+        }
+        if (rendered.length > 1) {
+          nodes.push(...rendered)
+        }
+      }
+      return nodes
+    })
   }
 
   let resolved = value
@@ -6690,9 +7147,23 @@ export const renderClientInsertable = (
   if (isForValue(resolved)) {
     return container
       ? renderForValueToNodes(resolved, container)
-      : resolved.arr.flatMap((item, index) =>
-          renderClientInsertable(resolved.fn(item, index), container),
-        )
+      : (() => {
+          const nodes: Node[] = []
+          for (let index = 0; index < resolved.arr.length; index += 1) {
+            const rendered = renderClientInsertable(
+              resolved.fn(resolved.arr[index]!, index),
+              container,
+            )
+            if (rendered.length === 1) {
+              nodes.push(rendered[0]!)
+              continue
+            }
+            if (rendered.length > 1) {
+              nodes.push(...rendered)
+            }
+          }
+          return nodes
+        })()
   }
   if (isProjectionSlot(resolved)) {
     return container
@@ -8722,6 +9193,9 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
   }
 }
 
+const flushDirtyComponentsIfNeeded = (container: RuntimeContainer) =>
+  container.dirty.size > 0 ? flushDirtyComponents(container) : undefined
+
 const waitForPendingDirtyFlush = async () => {
   const existing = (globalThis as Record<PropertyKey, unknown>)[DIRTY_FLUSH_PROMISE_KEY]
   if (existing instanceof Promise) {
@@ -9399,22 +9873,37 @@ const getRouterEventState = (event: Event): RouterEventState => {
   return state
 }
 
-const findInteractiveTarget = (
+const findInteractiveDispatchTarget = (
   container: RuntimeContainer,
   target: EventTarget | null,
   eventName: string,
-): Element | null => {
+): {
+  attrBinding: string | null
+  element: Element
+  liveBinding: LiveClientEventBinding | null
+} | null => {
   let element = isElementNode(target)
     ? target
     : target instanceof Node
       ? target.parentElement
       : null
+  const attrName = `data-e-on${eventName}`
   while (element) {
-    if (
-      getLiveClientEventBinding(container, element, eventName) ||
-      element.hasAttribute(`data-e-on${eventName}`)
-    ) {
-      return element
+    const liveBinding = getLiveClientEventBinding(container, element, eventName)
+    if (liveBinding) {
+      return {
+        attrBinding: null,
+        element,
+        liveBinding,
+      }
+    }
+    const attrBinding = element.getAttribute(attrName)
+    if (attrBinding) {
+      return {
+        attrBinding,
+        element,
+        liveBinding: null,
+      }
     }
     element = element.parentElement
   }
@@ -9720,8 +10209,13 @@ const parseBinding = (value: string): { scopeId: string; symbolId: string } => {
   return parsed
 }
 
-const withClientContainer = async <T>(container: RuntimeContainer, fn: () => Promise<T> | T) =>
-  pushContainer(container, () => Promise.resolve(fn()))
+const isPromiseLike = <T = unknown>(value: unknown): value is PromiseLike<T> =>
+  !!value &&
+  (typeof value === 'object' || typeof value === 'function') &&
+  typeof (value as { then?: unknown }).then === 'function'
+
+const withClientContainer = <T>(container: RuntimeContainer, fn: () => Promise<T> | T) =>
+  pushContainer(container, fn)
 
 export const createDelegatedEvent = (event: Event, currentTarget: Element) =>
   new Proxy(event, {
@@ -9785,21 +10279,35 @@ export const syncBoundElementSignal = (container: RuntimeContainer, target: Even
   return didSync
 }
 
-const dispatchLiveClientEvent = async (
+const finishEventDispatch = (
+  container: RuntimeContainer,
+  result: unknown,
+  wrapError?: (error: unknown) => unknown,
+) => {
+  if (isPromiseLike(result)) {
+    let pending = Promise.resolve(result)
+    if (wrapError) {
+      pending = pending.catch((error) => {
+        throw wrapError(error)
+      })
+    }
+    return pending.then(() => flushDirtyComponentsIfNeeded(container))
+  }
+  return flushDirtyComponentsIfNeeded(container)
+}
+
+const dispatchLiveClientEvent = (
   container: RuntimeContainer,
   binding: LiveClientEventBinding,
   currentTarget: Element,
   event: Event,
 ) => {
-  const delegatedEvent = createDelegatedEvent(event, currentTarget)
   const handler = binding.handler
 
   if (typeof handler === 'function') {
-    await withClientContainer(container, async () => {
-      await handler.call(currentTarget, delegatedEvent)
-    })
-    await flushDirtyComponents(container)
-    return
+    const delegatedEvent = createDelegatedEvent(event, currentTarget)
+    const result = withClientContainer(container, () => handler.call(currentTarget, delegatedEvent))
+    return finishEventDispatch(container, result)
   }
 
   const symbolId = binding.symbol ?? handler?.symbol
@@ -9809,7 +10317,7 @@ const dispatchLiveClientEvent = async (
   const captures = handler
     ? resolveEventDescriptorCaptures(handler)
     : binding.captureCount === 0
-      ? []
+      ? EMPTY_EVENT_CAPTURES
       : binding.captureCount === 1
         ? [binding.capture0]
         : binding.captureCount === 2
@@ -9817,100 +10325,166 @@ const dispatchLiveClientEvent = async (
           : binding.captureCount === 3
             ? [binding.capture0, binding.capture1, binding.capture2]
             : [binding.capture0, binding.capture1, binding.capture2, binding.capture3]
-  const module = await loadSymbol(container, symbolId)
-  try {
-    await withClientContainer(container, async () => {
-      await module.default(captures, delegatedEvent)
-    })
-  } catch (error) {
-    throw wrapGeneratedScopeReferenceError(error, {
-      phase: 'running a live client event handler for',
-      symbolId,
-    })
+  const runModule = (loadedModule: RuntimeSymbolModule) => {
+    binding.module = loadedModule
+    try {
+      const result = withClientContainer(container, () =>
+        loadedModule.default(
+          captures,
+          loadedModule.default.length >= 2 ? createDelegatedEvent(event, currentTarget) : undefined,
+        ),
+      )
+      return finishEventDispatch(container, result, (error) =>
+        wrapGeneratedScopeReferenceError(error, {
+          phase: 'running a live client event handler for',
+          symbolId,
+        }),
+      )
+    } catch (error) {
+      throw wrapGeneratedScopeReferenceError(error, {
+        phase: 'running a live client event handler for',
+        symbolId,
+      })
+    }
   }
-  await flushDirtyComponents(container)
+
+  const module = binding.module ?? getResolvedRuntimeSymbols(container).get(symbolId)
+  return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
 }
 
-export const dispatchResumeEvent = async (container: RuntimeContainer, event: Event) => {
-  const interactiveTarget = findInteractiveTarget(container, event.target, event.type)
-  if (!interactiveTarget) {
+export const dispatchResumeEvent = (container: RuntimeContainer, event: Event) => {
+  const target = findInteractiveDispatchTarget(container, event.target, event.type)
+  if (!target) {
     return
   }
-  const liveBinding = getLiveClientEventBinding(container, interactiveTarget, event.type)
+  const { attrBinding, element: interactiveTarget, liveBinding } = target
   if (liveBinding) {
-    const pendingFocus = capturePendingFocusRestore(container, event.target)
-    await dispatchLiveClientEvent(container, liveBinding, interactiveTarget, event)
-    restorePendingFocus(container, pendingFocus)
-    return
+    return dispatchLiveClientEvent(container, liveBinding, interactiveTarget, event)
   }
 
-  const binding = interactiveTarget.getAttribute(`data-e-on${event.type}`)
-  if (!binding) {
+  if (!attrBinding) {
     return
   }
   const pendingFocus = capturePendingFocusRestore(container, event.target)
 
-  const { scopeId, symbolId } = parseBinding(binding)
-  const module =
-    getResolvedRuntimeSymbols(container).get(symbolId) ?? (await loadSymbol(container, symbolId))
-  const scope = materializeScope(container, scopeId)
-  try {
-    await withClientContainer(container, async () => {
-      await module.default(scope, createDelegatedEvent(event, interactiveTarget))
-    })
-  } catch (error) {
-    throw wrapGeneratedScopeReferenceError(error, {
-      phase: 'running a resumable event handler for',
-      symbolId,
-    })
+  const { scopeId, symbolId } = parseBinding(attrBinding)
+  const runModule = (module: RuntimeSymbolModule) => {
+    const scope = materializeScope(container, scopeId)
+    try {
+      const result = withClientContainer(container, () =>
+        module.default(
+          scope,
+          module.default.length >= 2 ? createDelegatedEvent(event, interactiveTarget) : undefined,
+        ),
+      )
+      const pendingDispatch = finishEventDispatch(container, result, (error) =>
+        wrapGeneratedScopeReferenceError(error, {
+          phase: 'running a resumable event handler for',
+          symbolId,
+        }),
+      )
+      if (isPromiseLike(pendingDispatch)) {
+        return Promise.resolve(pendingDispatch).then(() => {
+          restorePendingFocus(container, pendingFocus)
+        })
+      }
+      restorePendingFocus(container, pendingFocus)
+      return
+    } catch (error) {
+      throw wrapGeneratedScopeReferenceError(error, {
+        phase: 'running a resumable event handler for',
+        symbolId,
+      })
+    }
   }
-  await flushDirtyComponents(container)
-  restorePendingFocus(container, pendingFocus)
+
+  const module = getResolvedRuntimeSymbols(container).get(symbolId)
+  return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
 }
 
-export const dispatchDocumentEvent = async (container: RuntimeContainer, event: Event) => {
-  if (container.resumeReadyPromise) {
-    await container.resumeReadyPromise
+const dispatchSubmitActionIfNeeded = (container: RuntimeContainer, event: Event) => {
+  if (event.type !== 'submit' || event.defaultPrevented || !isHTMLFormElementNode(event.target)) {
+    return
   }
+  const actionId = event.target.getAttribute(ACTION_FORM_ATTR)
+  if (!actionId) {
+    return
+  }
+  const handle = container.actions.get(actionId) as
+    | {
+        action: (input?: unknown) => Promise<unknown>
+      }
+    | undefined
+  if (!handle) {
+    return
+  }
+  event.preventDefault()
+  const submitter =
+    typeof SubmitEvent !== 'undefined' && event instanceof SubmitEvent
+      ? (event.submitter ?? undefined)
+      : undefined
+  const formData = isHTMLElementNode(submitter)
+    ? new FormData(event.target, submitter)
+    : new FormData(event.target)
+  return Promise.resolve(handle.action(formData)).then(() =>
+    flushDirtyComponentsIfNeeded(container),
+  )
+}
+
+const finishDocumentEventAfterResume = (
+  container: RuntimeContainer,
+  event: Event,
+  didSyncBoundSignal: boolean,
+  pendingFocus: PendingFocusRestore | null,
+) => {
+  if (didSyncBoundSignal) {
+    const pendingFlush = flushDirtyComponentsIfNeeded(container)
+    if (pendingFlush) {
+      return pendingFlush.then(() => {
+        restorePendingFocus(container, pendingFocus)
+        return dispatchSubmitActionIfNeeded(container, event)
+      })
+    }
+    restorePendingFocus(container, pendingFocus)
+  }
+  return dispatchSubmitActionIfNeeded(container, event)
+}
+
+const dispatchDocumentEventReady = (container: RuntimeContainer, event: Event) => {
   const didSyncBoundSignal =
     (event.type === 'input' || event.type === 'change') &&
     syncBoundElementSignal(container, event.target)
   const pendingFocus = didSyncBoundSignal
     ? capturePendingFocusRestore(container, event.target)
     : null
-  await dispatchResumeEvent(container, event)
-  if (didSyncBoundSignal) {
-    await flushDirtyComponents(container)
-    restorePendingFocus(container, pendingFocus)
+  const pendingDispatch = dispatchResumeEvent(container, event)
+  if (isPromiseLike(pendingDispatch)) {
+    return Promise.resolve(pendingDispatch).then(() =>
+      finishDocumentEventAfterResume(container, event, didSyncBoundSignal, pendingFocus),
+    )
   }
-  if (event.type === 'submit' && !event.defaultPrevented && isHTMLFormElementNode(event.target)) {
-    const actionId = event.target.getAttribute(ACTION_FORM_ATTR)
-    if (actionId) {
-      const handle = container.actions.get(actionId) as
-        | {
-            action: (input?: unknown) => Promise<unknown>
-          }
-        | undefined
-      if (handle) {
-        event.preventDefault()
-        const submitter =
-          typeof SubmitEvent !== 'undefined' && event instanceof SubmitEvent
-            ? (event.submitter ?? undefined)
-            : undefined
-        const formData = isHTMLElementNode(submitter)
-          ? new FormData(event.target, submitter)
-          : new FormData(event.target)
-        await handle.action(formData)
-        await flushDirtyComponents(container)
-      }
-    }
+  return finishDocumentEventAfterResume(container, event, didSyncBoundSignal, pendingFocus)
+}
+
+export const dispatchDocumentEvent = (container: RuntimeContainer, event: Event) => {
+  if (container.resumeReadyPromise) {
+    return container.resumeReadyPromise.then(() => dispatchDocumentEventReady(container, event))
   }
+  return dispatchDocumentEventReady(container, event)
 }
 
 const enqueueDocumentEvent = (container: RuntimeContainer, event: Event) => {
   if (!container.eventDispatchPromise) {
-    const running = dispatchDocumentEvent(container, event)
-    const tracked = running.finally(() => {
+    let running: void | PromiseLike<void>
+    try {
+      running = dispatchDocumentEvent(container, event)
+    } catch (error) {
+      running = Promise.reject(error)
+    }
+    if (!isPromiseLike(running)) {
+      return undefined
+    }
+    const tracked = Promise.resolve(running).finally(() => {
       if (container.eventDispatchPromise === tracked) {
         container.eventDispatchPromise = null
       }
@@ -9920,11 +10494,7 @@ const enqueueDocumentEvent = (container: RuntimeContainer, event: Event) => {
   }
 
   const previous = container.eventDispatchPromise ?? Promise.resolve()
-  const queued = previous
-    .catch(() => {})
-    .then(async () => {
-      await dispatchDocumentEvent(container, event)
-    })
+  const queued = previous.catch(() => {}).then(() => dispatchDocumentEvent(container, event))
   container.eventDispatchPromise = queued.finally(() => {
     if (container.eventDispatchPromise === queued) {
       container.eventDispatchPromise = null
@@ -10086,11 +10656,6 @@ export const createDetachedRuntimeSignal = <T>(
   id: string,
   fallback: T,
 ): { value: T } => ensureSignalRecord(container, id, fallback).handle
-
-const createTransientInternalDetachedRuntimeSignal = <T>(
-  container: RuntimeContainer,
-  fallback: T,
-): { value: T } => createTransientInternalSignalRecord(container, fallback).handle
 
 export const getRuntimeComponentId = () => getCurrentFrame()?.component.id ?? null
 export const getRuntimeSignalId = (value: unknown) => {

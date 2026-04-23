@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { motion } from '../../motion/mod.ts'
 import { jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import type { JSX } from '../jsx/types.ts'
-import { attr, eventStatic, insert, insertStatic, listenerStatic, text } from './client/dom.ts'
+import {
+  attr,
+  eventStatic,
+  insert,
+  insertFor,
+  insertStatic,
+  listenerStatic,
+  text,
+} from './client/dom.ts'
 import {
   createContext,
   getRuntimeContextReference,
@@ -2657,6 +2665,70 @@ describe('renderClientInsertable', () => {
       )
 
       expect(seenScopes).toEqual([[42]])
+    })
+  })
+
+  it('does not walk document focus paths for live client event bindings', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let handled = 0
+      host.appendChild(marker)
+
+      container.imports.set(
+        'live-focus-path-symbol',
+        Promise.resolve({
+          default: () => {
+            handled += 1
+          },
+        }),
+      )
+
+      withRuntimeContainer(container, () => {
+        insert(
+          jsxDEV(
+            'button',
+            {
+              children: 'Click me',
+              onClick: __eclipsaEvent('click', 'live-focus-path-symbol', () => []),
+            },
+            null,
+            false,
+            {},
+          ),
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const button = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
+      )
+      expect(button).toBeTruthy()
+      Object.defineProperty((container.doc as unknown as FakeDocument).body, 'children', {
+        configurable: true,
+        get() {
+          throw new Error('live client events should not capture focus paths eagerly')
+        },
+      })
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(handled).toBe(1)
     })
   })
 
@@ -6436,6 +6508,32 @@ describe('renderClientInsertable', () => {
         'ec:s:parent:children:0:start',
         'ec:s:parent:children:0:end',
       ])
+    })
+  })
+
+  it('records managed attribute snapshots for shell patch children after moving them into place', () => {
+    withFakeNodeGlobal(() => {
+      const doc = new FakeDocument()
+      const current = doc.createElement('section') as unknown as FakeElement
+      const next = doc.createElement('section') as unknown as FakeElement
+
+      const staleChild = doc.createElement('article') as unknown as FakeElement
+      staleChild.setAttribute('data-page', 'old')
+      current.appendChild(staleChild)
+
+      const freshChild = doc.createElement('article') as unknown as FakeElement
+      freshChild.setAttribute('data-page', 'new')
+      freshChild.setAttribute('class', 'active')
+      next.appendChild(freshChild)
+
+      expect(
+        tryPatchElementShellInPlace(current as unknown as Element, next as unknown as Element),
+      ).toBe(true)
+
+      expect(current.firstChild).toBe(freshChild)
+      expect(getManagedAttributeSnapshot(freshChild as unknown as Element)).toEqual(
+        new Set(['data-page', 'class']),
+      )
     })
   })
 
@@ -10334,6 +10432,243 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('moves only displaced keyed For boundaries when swapping distant rows', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const fourth = { id: 'd', label: 'D' }
+      const fifth = { id: 'e', label: 'E' }
+      const items = createDetachedRuntimeSignal(container, 's0', [
+        first,
+        second,
+        third,
+        fourth,
+        fifth,
+      ])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let insertBeforeCount = 0
+      const originalInsertBefore = host.insertBefore.bind(host)
+      host.insertBefore = ((node: FakeNode, referenceNode: FakeNode | null) => {
+        insertBeforeCount += 1
+        return originalInsertBefore(node, referenceNode)
+      }) as typeof host.insertBefore
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const initialRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      insertBeforeCount = 0
+      items.value = [first, fourth, third, second, fifth]
+      await flushAsync()
+
+      const reorderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(reorderedRows.map((row) => row.textContent)).toEqual(['A', 'D', 'C', 'B', 'E'])
+      expect(reorderedRows[0]).toBe(initialRows[0])
+      expect(reorderedRows[1]).toBe(initialRows[3])
+      expect(reorderedRows[2]).toBe(initialRows[2])
+      expect(reorderedRows[3]).toBe(initialRows[1])
+      expect(reorderedRows[4]).toBe(initialRows[4])
+      expect(insertBeforeCount).toBeLessThanOrEqual(2)
+    })
+  })
+
+  it('avoids full item-only keyed For key recomputation when reordering rows by identity', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const fourth = { id: 'd', label: 'D' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third, fourth])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let keyCalls = 0
+      let insertBeforeCount = 0
+      const originalInsertBefore = host.insertBefore.bind(host)
+      host.insertBefore = ((node: FakeNode, referenceNode: FakeNode | null) => {
+        insertBeforeCount += 1
+        return originalInsertBefore(node, referenceNode)
+      }) as typeof host.insertBefore
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { value: { id: string; label: string } }) =>
+                  jsxDEV('li', { children: item.value.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => {
+                  keyCalls += 1
+                  return item.id
+                },
+                reactiveIndex: false,
+                reactiveRows: true,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(keyCalls).toBe(4)
+      let fragmentCount = 0
+      const fakeDocument = container.doc as unknown as FakeDocument
+      const originalCreateDocumentFragment = fakeDocument.createDocumentFragment.bind(fakeDocument)
+      fakeDocument.createDocumentFragment = () => {
+        fragmentCount += 1
+        return originalCreateDocumentFragment()
+      }
+      insertBeforeCount = 0
+      items.value = [first, fourth, third, second]
+      await flushAsync()
+
+      const reorderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(reorderedRows.map((row) => row.textContent)).toEqual(['A', 'D', 'C', 'B'])
+      expect(insertBeforeCount).toBeLessThanOrEqual(2)
+      expect(fragmentCount).toBe(0)
+      expect(keyCalls).toBe(4)
+    })
+  })
+
+  it('does not move surviving keyed For rows when removing one row', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const fourth = { id: 'd', label: 'D' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third, fourth])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let insertBeforeCount = 0
+      const originalInsertBefore = host.insertBefore.bind(host)
+      host.insertBefore = ((node: FakeNode, referenceNode: FakeNode | null) => {
+        insertBeforeCount += 1
+        return originalInsertBefore(node, referenceNode)
+      }) as typeof host.insertBefore
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const initialRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      insertBeforeCount = 0
+      items.value = [first, second, fourth]
+      await flushAsync()
+
+      const survivingRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(survivingRows.map((row) => row.textContent)).toEqual(['A', 'B', 'D'])
+      expect(survivingRows[0]).toBe(initialRows[0])
+      expect(survivingRows[1]).toBe(initialRows[1])
+      expect(survivingRows[2]).toBe(initialRows[3])
+      expect(insertBeforeCount).toBe(0)
+    })
+  })
+
+  it('does not recompute item-only keyed For row keys when deleting rows by identity', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const fourth = { id: 'd', label: 'D' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third, fourth])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let keyCalls = 0
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => {
+                  keyCalls += 1
+                  return item.id
+                },
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(keyCalls).toBe(4)
+
+      keyCalls = 0
+      items.value = [first, second, fourth]
+      await flushAsync()
+
+      const rows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(rows.map((row) => row.textContent)).toEqual(['A', 'B', 'D'])
+      expect(keyCalls).toBe(0)
+    })
+  })
+
   it('does not reuse keyed ranges across sibling parents with overlapping keys', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
@@ -11444,6 +11779,100 @@ describe('renderClientInsertable', () => {
       ]
       await flushAsync()
       expect(getRows().map((row) => row.textContent)).toEqual(['A', 'C'])
+    })
+  })
+
+  it('repopulates compiler-lowered For inserts after initially empty rows', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal<
+        Array<{
+          id: number
+          label: string
+        }>
+      >(container, 'rows', [])
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insertFor(
+          {
+            get arr() {
+              return rows.value
+            },
+            fn: (row: { value: { id: number; label: string } }) =>
+              jsxDEV(
+                'tr',
+                {
+                  children: [
+                    jsxDEV('td', { children: row.value.id }, null, false, {}),
+                    jsxDEV('td', { children: row.value.label }, null, false, {}),
+                  ],
+                },
+                null,
+                true,
+                {},
+              ),
+            key: (row: { id: number }) => row.id,
+            reactiveRows: true,
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      rows.value = [
+        { id: 1, label: 'A' },
+        { id: 2, label: 'B' },
+      ]
+      await flushAsync()
+
+      const renderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(renderedRows.map((row) => row.textContent)).toEqual(['1A', '2B'])
+    })
+  })
+
+  it('runs compiler-lowered For inserts directly from arrSignal when static props allow it', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const rows = createDetachedRuntimeSignal(container, 'rows', [{ id: 1, label: 'A' }])
+      const host = new FakeElement('tbody')
+      const marker = new FakeComment('marker')
+      let arrGetterReads = 0
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insertFor(
+          {
+            get arr() {
+              arrGetterReads += 1
+              return rows.value
+            },
+            arrSignal: rows,
+            fn: (row: { value: { id: number; label: string } }) =>
+              jsxDEV('tr', { children: row.value.label }, null, false, {}),
+            key: (row: { id: number }) => row.id,
+            reactiveRows: true,
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      rows.value = [
+        { id: 1, label: 'A' },
+        { id: 2, label: 'B' },
+      ]
+      await flushAsync()
+
+      const renderedRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'tr',
+      )
+      expect(renderedRows.map((row) => row.textContent)).toEqual(['A', 'B'])
+      expect(arrGetterReads).toBe(0)
     })
   })
 })

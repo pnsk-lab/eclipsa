@@ -244,7 +244,7 @@ export const syncManagedAttributeSnapshot = (element: Element, name: string) => 
       ? previousSnapshot
       : previousSnapshot
         ? new Set(previousSnapshot)
-        : new Set<string>()
+        : new Set(getElementAttributeNames(element))
   const hasAttribute = hasElementAttribute(element, name)
   if (hasAttribute === true) {
     snapshot.add(name)

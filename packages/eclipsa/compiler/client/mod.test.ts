@@ -106,10 +106,11 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('_materializeTemplateRefs(_cloned,')
-    expect(resultCode).toMatch(/\[\s*-1,\s*-1,\s*0\s*\]/)
-    expect(resultCode).toMatch(/\[\s*-1,\s*-1,\s*2\s*\]/)
-    expect(resultCode).toMatch(/\[\s*-?\d+,\s*-?\d+,\s*3\s*\]/)
+    expect(resultCode).not.toContain('_materializeTemplateRefs(_cloned,')
+    expect(resultCode).toContain('let _ref0 = _cloned.firstChild;')
+    expect(resultCode).toContain('let _ref1 = _cloned.childNodes[2];')
+    expect(resultCode).toContain('let _ref2 = _ref1.nextSibling;')
+    expect(resultCode).toContain('let _ref3 = _ref1.childNodes[1];')
     expect(resultCode).not.toContain(
       '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
     )
@@ -322,9 +323,9 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).not.toContain('=> <li')
-    expect(resultCode).toContain('_createComponent(For')
+    expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li></li>");')
-    expect(resultCode).toContain('"reactiveRows": true')
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
     expect(resultCode).toContain('_textNodeSignalValue(todo, _cloned);')
   })
 
@@ -380,9 +381,10 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('_insert(() => _createComponent(For, {')
+    expect(resultCode).toMatch(/_insertFor\(\{\s*arrSignal: rows/)
     expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
-    expect(resultCode).not.toContain('_insertStatic(_createComponent(For')
+    expect(resultCode).not.toContain('_createComponent(For')
+    expect(resultCode).not.toContain('_insertStatic(({ __e_for: true')
   })
 
   it('reuses identical intrinsic templates across multiple lowered JSX roots', async () => {
@@ -430,8 +432,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('"reactiveRows": true')
-    expect(resultCode).toContain('"reactiveIndex": false')
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toContain('reactiveIndex: false')
     expect(resultCode).toContain('const rowId = row.value.id;')
     expect(resultCode).toContain('_insertElementStatic(rowId')
     expect(resultCode).toContain('_textNodeSignalMember(row, "label"')
@@ -458,12 +460,30 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('"reactiveRows": true')
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
     expect(resultCode).toContain('row.value.id')
     expect(resultCode).toContain('row.value.label')
     expect(resultCode).toContain('i.value')
     expect(resultCode).not.toContain('row.value.value')
     expect(resultCode).not.toContain('i.value.value')
+  })
+
+  it('passes signal handles to compiler-lowered For inserts when the array prop reads signal.value', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows.value}
+          fn={(row) => <li>{row.label}</li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('arrSignal: rows')
   })
 
   it('omits comment markers for tracked single-child text insertions inside nested elements', async () => {
@@ -478,8 +498,8 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain(
       'const __eclipsaTemplate0 = _createTemplate("<tr><td></td><td><a></a></td></tr>");',
     )
-    expect(resultCode).toContain('_textNodeSignalValue(label, _refs[0]);')
-    expect(resultCode).toContain('_textNodeSignalValue(label, _refs[2]);')
+    expect(resultCode).toContain('_textNodeSignalValue(label, _ref0);')
+    expect(resultCode).toContain('_textNodeSignalValue(label, _ref2);')
     expect(resultCode).not.toContain('<!-- 0,0 -->')
     expect(resultCode).not.toContain('<!-- 1,0,0 -->')
   })
@@ -538,8 +558,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('when: flag')
     expect(resultCode).not.toContain('flag ? <span>')
   })
@@ -553,8 +573,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
     expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<span></span>");')
     expect(resultCode).toContain('_insertElementStatic(count, _cloned);')
@@ -569,8 +589,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('children: (__e_showValue) => __e_showValue')
     expect(resultCode).toContain('fallback: (__e_showValue) => (() => {')
   })
@@ -584,8 +604,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toContain('arr: items')
     expect(resultCode).not.toContain('=> <li')
   })
@@ -599,7 +619,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
   })
 

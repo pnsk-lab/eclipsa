@@ -7,63 +7,96 @@ import {
 } from './constants.ts'
 import type { RenderFrame, RuntimeContainer, RuntimeContextValue } from './types.ts'
 
+let containerStackCache: RuntimeContainer[] | null = null
+let contextValueStackCache: RuntimeContextValue[] | null = null
+let frameStackCache: RenderFrame[] | null = null
+let resumeContainersCache: Set<RuntimeContainer> | null = null
+let asyncSignalSnapshotCache: Map<string, unknown> | null = null
+
+const getGlobalRecord = () => globalThis as Record<PropertyKey, unknown>
+
 export const getContainerStack = (): RuntimeContainer[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  if (containerStackCache) {
+    return containerStackCache
+  }
+  const globalRecord = getGlobalRecord()
   const existing = globalRecord[CONTAINER_STACK_KEY]
   if (Array.isArray(existing)) {
-    return existing as RuntimeContainer[]
+    containerStackCache = existing as RuntimeContainer[]
+    return containerStackCache
   }
   const created: RuntimeContainer[] = []
   globalRecord[CONTAINER_STACK_KEY] = created
+  containerStackCache = created
   return created
 }
 
 export const getContextValueStack = (): RuntimeContextValue[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  if (contextValueStackCache) {
+    return contextValueStackCache
+  }
+  const globalRecord = getGlobalRecord()
   const existing = globalRecord[CONTEXT_VALUE_STACK_KEY]
   if (Array.isArray(existing)) {
-    return existing as RuntimeContextValue[]
+    contextValueStackCache = existing as RuntimeContextValue[]
+    return contextValueStackCache
   }
   const created: RuntimeContextValue[] = []
   globalRecord[CONTEXT_VALUE_STACK_KEY] = created
+  contextValueStackCache = created
   return created
 }
 
 export const getFrameStack = (): RenderFrame[] => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  if (frameStackCache) {
+    return frameStackCache
+  }
+  const globalRecord = getGlobalRecord()
   const existing = globalRecord[FRAME_STACK_KEY]
   if (Array.isArray(existing)) {
-    return existing as RenderFrame[]
+    frameStackCache = existing as RenderFrame[]
+    return frameStackCache
   }
   const created: RenderFrame[] = []
   globalRecord[FRAME_STACK_KEY] = created
+  frameStackCache = created
   return created
 }
 
 export const getResumeContainers = () => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  if (resumeContainersCache) {
+    return resumeContainersCache
+  }
+  const globalRecord = getGlobalRecord()
   const existing = globalRecord[RESUME_CONTAINERS_KEY]
   if (existing instanceof Set) {
-    return existing as Set<RuntimeContainer>
+    resumeContainersCache = existing as Set<RuntimeContainer>
+    return resumeContainersCache
   }
   const created = new Set<RuntimeContainer>()
   globalRecord[RESUME_CONTAINERS_KEY] = created
+  resumeContainersCache = created
   return created
 }
 
 export const getCurrentContainer = (): RuntimeContainer | null => {
-  const stack = getContainerStack()
+  const stack = containerStackCache ?? getContainerStack()
   return stack.length > 0 ? stack[stack.length - 1]! : null
 }
 
 const getAsyncSignalSnapshotCache = () => {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>
+  if (asyncSignalSnapshotCache) {
+    return asyncSignalSnapshotCache
+  }
+  const globalRecord = getGlobalRecord()
   const existing = globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY]
   if (existing instanceof Map) {
-    return existing as Map<string, unknown>
+    asyncSignalSnapshotCache = existing as Map<string, unknown>
+    return asyncSignalSnapshotCache
   }
   const created = new Map<string, unknown>()
   globalRecord[ASYNC_SIGNAL_SNAPSHOT_CACHE_KEY] = created
+  asyncSignalSnapshotCache = created
   return created
 }
 
