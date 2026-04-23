@@ -117,6 +117,10 @@ class FakeNode {
     this.childNodes = [new FakeText(value)]
     this.childNodes[0]!.parentNode = this
   }
+
+  cloneNode(_deep?: boolean) {
+    throw new Error('cloneNode() is not implemented for this fake node.')
+  }
 }
 
 class FakeText extends FakeNode {
@@ -132,6 +136,12 @@ class FakeText extends FakeNode {
   override set textContent(value: string) {
     ;(this as { data: string }).data = value
   }
+
+  override cloneNode() {
+    const clone = new FakeText(this.data)
+    clone.ownerDocument = this.ownerDocument
+    return clone
+  }
 }
 
 class FakeComment extends FakeNode {
@@ -146,6 +156,12 @@ class FakeComment extends FakeNode {
 
   override set textContent(value: string) {
     ;(this as { data: string }).data = value
+  }
+
+  override cloneNode() {
+    const clone = new FakeComment(this.data)
+    clone.ownerDocument = this.ownerDocument
+    return clone
   }
 }
 
@@ -167,6 +183,17 @@ class FakeDocumentFragment extends FakeNode {
     node.parentNode = this
     this.childNodes.push(node)
     return node
+  }
+
+  override cloneNode(deep = false) {
+    const clone = new FakeDocumentFragment()
+    clone.ownerDocument = this.ownerDocument
+    if (deep) {
+      for (const child of this.childNodes) {
+        clone.appendChild(child.cloneNode(true) as FakeNode)
+      }
+    }
+    return clone
   }
 }
 
@@ -247,6 +274,32 @@ class FakeElement extends FakeNode {
   constructor(readonly tagName: string) {
     super()
     this.nodeType = 1
+  }
+
+  override cloneNode(deep = false) {
+    const clone = new FakeElement(this.tagName)
+    clone.ownerDocument = this.ownerDocument
+    clone.namespaceURI = this.namespaceURI
+    clone.checked = this.checked
+    clone.open = this.open
+    clone.selectionDirection = this.selectionDirection
+    clone.selectionEnd = this.selectionEnd
+    clone.selectionStart = this.selectionStart
+    clone.type = this.type
+    clone.value = this.value
+    clone.className = this.className
+    for (const [name, value] of this.attributes) {
+      if (name === 'class') {
+        continue
+      }
+      clone.attributes.set(name, value)
+    }
+    if (deep) {
+      for (const child of this.childNodes) {
+        clone.appendChild(child.cloneNode(true) as FakeNode)
+      }
+    }
+    return clone
   }
 
   get className() {
@@ -6756,6 +6809,44 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('keeps the detached next shell tree intact after an in-place shell patch', () => {
+    withFakeNodeGlobal(() => {
+      const doc = new FakeDocument()
+      const current = doc.createElement('button') as unknown as FakeElement
+      current.setAttribute('type', 'button')
+      const next = doc.createElement('button') as unknown as FakeElement
+      next.setAttribute('type', 'button')
+
+      const currentIcon = doc.createElement('div') as unknown as FakeElement
+      currentIcon.setAttribute('data-icon', 'current')
+      const currentTitle = doc.createElement('div') as unknown as FakeElement
+      currentTitle.appendChild(doc.createTextNode('Current') as unknown as FakeNode)
+      const currentMarker = doc.createComment('ec:i:7') as unknown as FakeNode
+      current.appendChild(currentIcon)
+      current.appendChild(currentTitle)
+      current.appendChild(currentMarker)
+
+      const nextIcon = doc.createElement('div') as unknown as FakeElement
+      nextIcon.setAttribute('data-icon', 'next')
+      const nextTitle = doc.createElement('div') as unknown as FakeElement
+      nextTitle.appendChild(doc.createTextNode('Materials') as unknown as FakeNode)
+      const nextMarker = doc.createComment('ec:i:16') as unknown as FakeNode
+      next.appendChild(nextIcon)
+      next.appendChild(nextTitle)
+      next.appendChild(nextMarker)
+
+      expect(
+        tryPatchElementShellInPlace(current as unknown as Element, next as unknown as Element),
+      ).toBe(true)
+
+      expect(current.textContent).toContain('Materials')
+      expect(next.textContent).toContain('Materials')
+      expect(current.childNodes).toHaveLength(3)
+      expect(next.childNodes).toHaveLength(3)
+      expect(collectComments([next as unknown as FakeNode])).toEqual(['ec:i:16'])
+    })
+  })
+
   it('does not duplicate resumed owner ranges when insert marker ownership has not been measured yet', () => {
     withFakeNodeGlobal(() => {
       const doc = new FakeDocument()
@@ -7813,6 +7904,205 @@ describe('renderClientInsertable', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(host.textContent).toContain('No results found.')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('preserves marker-backed section button titles when a route-location parent rerender patches a live shell', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(container, '$router:path', '/docs/overview')
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      const ChevronBody = () =>
+        jsxDEV(
+          'div',
+          {
+            'data-chevron': '',
+            children: 'v',
+          },
+          null,
+          false,
+          {},
+        )
+
+      const Chevron = __eclipsaComponent(ChevronBody, 'sidebar-dir-chevron', () => [])
+
+      const DirBody = (props: { activeHref: string; title: string }) => {
+        const root = document.createElement('section')
+        root.setAttribute('data-dir-root', props.title)
+
+        const button = document.createElement('button')
+        button.setAttribute('class', 'min-h-8')
+        button.setAttribute('data-dir-button', props.title)
+        button.setAttribute('type', 'button')
+        const buttonMarker = document.createComment('sidebar-dir-button-marker')
+        button.appendChild(buttonMarker)
+
+        const icon = document.createElement('div')
+        icon.setAttribute('data-dir-icon', props.title)
+
+        const title = document.createElement('div')
+        title.setAttribute('data-dir-title', props.title)
+        title.appendChild(document.createTextNode(props.title))
+
+        const grow = document.createElement('div')
+        grow.setAttribute('class', 'grow')
+
+        insert(
+          asInsertable([
+            icon as unknown as JSX.Element,
+            title as unknown as JSX.Element,
+            grow as unknown as JSX.Element,
+            jsxDEV(Chevron as any, {}, null, false, {}),
+          ]),
+          button,
+          buttonMarker,
+        )
+
+        const links = document.createElement('div')
+        links.setAttribute('data-dir-links', props.title)
+
+        const overview = document.createElement('a')
+        overview.setAttribute(
+          'class',
+          props.activeHref === '/docs/overview' ? 'active' : 'inactive',
+        )
+        overview.setAttribute('data-dir-link', 'Overview')
+        overview.appendChild(document.createTextNode('Overview'))
+        links.appendChild(overview)
+
+        const routing = document.createElement('a')
+        routing.setAttribute(
+          'class',
+          props.activeHref === '/docs/materials/routing' ? 'active' : 'inactive',
+        )
+        routing.setAttribute('data-dir-link', 'Routing')
+        routing.appendChild(document.createTextNode('Routing'))
+        links.appendChild(routing)
+
+        root.appendChild(button)
+        root.appendChild(links)
+        return root as unknown as JSX.Element
+      }
+
+      const Dir = __eclipsaComponent(DirBody as any, 'sidebar-dir', () => [])
+
+      const LayoutBody = () => {
+        const location = useLocation()
+        return jsxDEV(
+          'nav',
+          {
+            children: [
+              jsxDEV('span', { children: location.pathname }, null, false, {}),
+              jsxDEV(
+                Dir as any,
+                {
+                  activeHref: location.pathname,
+                  title: 'Materials',
+                },
+                null,
+                false,
+                {},
+              ),
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(LayoutBody, 'sidebar-dir-layout', () => [])
+
+      container.imports.set(
+        'sidebar-dir-layout',
+        Promise.resolve({
+          default: () => LayoutBody(),
+        }),
+      )
+      container.imports.set(
+        'sidebar-dir',
+        Promise.resolve({
+          default: (_scope: unknown, props: { activeHref: string; title: string }) =>
+            DirBody(props),
+        }),
+      )
+      container.imports.set(
+        'sidebar-dir-chevron',
+        Promise.resolve({
+          default: () => ChevronBody(),
+        }),
+      )
+
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        container.doc as Document
+      try {
+        const host = new FakeElement('div')
+        ;(container.doc as unknown as FakeDocument).body.appendChild(host as unknown as Node)
+        const nodes = withRuntimeContainer(container, () =>
+          renderClientInsertable(jsxDEV(Layout as any, {}, null, false, {}), container),
+        ) as unknown as FakeNode[]
+
+        for (const node of nodes) {
+          host.appendChild(node)
+        }
+
+        const getButton = () =>
+          queryFakeElements(host as unknown as FakeNode, 'button[data-dir-button]')[0] ?? null
+        const getTitles = () =>
+          queryFakeElements(host as unknown as FakeNode, 'div[data-dir-title]')
+        const getLinks = () => queryFakeElements(host as unknown as FakeNode, 'a[data-dir-link]')
+
+        expect(getButton()?.textContent).toContain('Materials')
+        expect(getTitles()).toHaveLength(1)
+        expect(getLinks().map((link) => link.getAttribute('class'))).toEqual(['active', 'inactive'])
+
+        currentPath.value = '/docs/materials/routing'
+        currentUrl.value = 'http://local/docs/materials/routing'
+        await flushDirtyComponents(container)
+        await flushAsync()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(getButton()?.textContent).toContain('Materials')
+        expect(getTitles()).toHaveLength(1)
+        expect(getLinks().map((link) => link.getAttribute('class'))).toEqual(['inactive', 'active'])
       } finally {
         globalThis.document = originalDocument
       }
@@ -10270,30 +10560,35 @@ describe('renderClientInsertable', () => {
           title: string
         }) =>
           jsxDEV(
-            motion.div as any,
+            'div',
             {
-              children: props.links.map((link) =>
+              children: [
                 jsxDEV(
-                  Link as any,
+                  'button',
                   {
-                    class: props.activeHref === link.href ? 'active' : 'inactive',
-                    'data-doc-link': `${props.title}:${link.label}`,
-                    href: link.href,
+                    'data-doc-section': props.title,
+                    type: 'button',
                     children: [
+                      jsxDEV('div', { class: 'icon' }, null, false, {}),
                       jsxDEV(
                         'div',
                         {
-                          class: props.activeHref === link.href ? 'line active-line' : 'line',
+                          class: 'section-title',
+                          children: props.title,
                         },
                         null,
                         false,
                         {},
                       ),
+                      jsxDEV('div', { class: 'grow' }, null, false, {}),
                       jsxDEV(
-                        'div',
+                        motion.div as any,
                         {
-                          class: 'label',
-                          children: link.label,
+                          class: 'chevron',
+                          initial: false,
+                          animate: {
+                            rotate: 0,
+                          },
                         },
                         null,
                         false,
@@ -10301,11 +10596,53 @@ describe('renderClientInsertable', () => {
                       ),
                     ],
                   },
-                  link.href,
+                  null,
                   false,
                   {},
                 ),
-              ),
+                jsxDEV(
+                  motion.div as any,
+                  {
+                    children: props.links.map((link) =>
+                      jsxDEV(
+                        Link as any,
+                        {
+                          class: props.activeHref === link.href ? 'active' : 'inactive',
+                          'data-doc-link': `${props.title}:${link.label}`,
+                          href: link.href,
+                          children: [
+                            jsxDEV(
+                              'div',
+                              {
+                                class: props.activeHref === link.href ? 'line active-line' : 'line',
+                              },
+                              null,
+                              false,
+                              {},
+                            ),
+                            jsxDEV(
+                              'div',
+                              {
+                                class: 'label',
+                                children: link.label,
+                              },
+                              null,
+                              false,
+                              {},
+                            ),
+                          ],
+                        },
+                        link.href,
+                        false,
+                        {},
+                      ),
+                    ),
+                  },
+                  null,
+                  false,
+                  {},
+                ),
+              ],
             },
             null,
             false,
@@ -10404,6 +10741,10 @@ describe('renderClientInsertable', () => {
         queryFakeElements(host as unknown as FakeNode, 'a[data-doc-link]').find(
           (link) => link.textContent === label,
         ) ?? null
+      const getSectionButton = (title: string) =>
+        queryFakeElements(host as unknown as FakeNode, 'button[data-doc-section]').find(
+          (button) => button.getAttribute('data-doc-section') === title,
+        ) ?? null
       const getLine = (label: string) => {
         const link = getLink(label)
         if (!link) {
@@ -10419,6 +10760,8 @@ describe('renderClientInsertable', () => {
 
       expect(getLink('Overview')?.getAttribute('class')).toBe('active')
       expect(getLink('Routing')?.getAttribute('class')).toBe('inactive')
+      expect(getSectionButton('Getting Started')?.textContent).toContain('Getting Started')
+      expect(getSectionButton('Materials')?.textContent).toContain('Materials')
 
       const layout = container.components.get('c0')
       expect(layout).toBeTruthy()
@@ -10452,6 +10795,8 @@ describe('renderClientInsertable', () => {
       expect(getLink('Routing')?.getAttribute('class')).toBe('active')
       expect(getLine('Overview')?.getAttribute('class')).toBe('line')
       expect(getLine('Routing')?.getAttribute('class')).toBe('line active-line')
+      expect(getSectionButton('Getting Started')?.textContent).toContain('Getting Started')
+      expect(getSectionButton('Materials')?.textContent).toContain('Materials')
     })
   })
 
@@ -10518,6 +10863,25 @@ describe('renderClientInsertable', () => {
       ).toBe(true)
       expect(current.getAttribute('class')).toBe('after')
       expect(current.textContent).toBe('Quick Start')
+    })
+  })
+
+  it('does not clear a live element shell when patching the same node instance', () => {
+    withFakeNodeGlobal(() => {
+      const button = new FakeElement('button')
+      const icon = new FakeElement('div')
+      const title = new FakeElement('div')
+      title.appendChild(new FakeText('Materials'))
+      const grow = new FakeElement('div')
+      button.appendChild(icon)
+      button.appendChild(title)
+      button.appendChild(grow)
+
+      expect(
+        tryPatchElementShellInPlace(button as unknown as Element, button as unknown as Element),
+      ).toBe(true)
+      expect(button.childNodes).toHaveLength(3)
+      expect(button.textContent).toContain('Materials')
     })
   })
 

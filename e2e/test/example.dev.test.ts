@@ -536,6 +536,39 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('slot-motion-nav-overview-link')).toHaveClass(/active/)
   })
 
+  test('keeps motion section titles when sidebar links patch a shared layout shell', async ({
+    page,
+  }) => {
+    await page.goto('/sidebar-shell/overview')
+    await waitForResumedRoute(page)
+
+    const gettingStartedButton = page.getByTestId('sidebar-shell-section-button-getting-started')
+    const materialsButton = page.getByTestId('sidebar-shell-section-button-materials')
+
+    await expect(page.getByRole('heading', { name: 'overview' })).toBeVisible()
+    await expect(gettingStartedButton).toContainText('Getting Started')
+    await expect(materialsButton).toContainText('Materials')
+    await expect(page.getByTestId('sidebar-shell-link-state-overview')).toHaveText(' active')
+    await expect(page.getByTestId('sidebar-shell-link-state-routing')).toHaveText(' inactive')
+
+    await page.getByTestId('sidebar-shell-link-materials-routing').click()
+
+    await expect(page).toHaveURL(/\/sidebar-shell\/routing$/)
+    await expect(page.getByRole('heading', { name: 'routing' })).toBeVisible()
+    await expect(page.getByTestId('sidebar-shell-pathname')).toHaveText('/sidebar-shell/routing')
+    await expect(gettingStartedButton).toContainText('Getting Started')
+    await expect(materialsButton).toContainText('Materials')
+    await expect(page.getByTestId('sidebar-shell-link-state-overview')).toHaveText(' inactive')
+    await expect(page.getByTestId('sidebar-shell-link-state-routing')).toHaveText(' active')
+
+    await page.getByTestId('sidebar-shell-link-getting-started-quick-start').click()
+
+    await expect(page).toHaveURL(/\/sidebar-shell\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await expect(gettingStartedButton).toContainText('Getting Started')
+    await expect(materialsButton).toContainText('Materials')
+  })
+
   test('keeps declarative motion sidebar toggles working after resume across nested layouts', async ({
     page,
   }) => {

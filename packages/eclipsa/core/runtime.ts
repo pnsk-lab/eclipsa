@@ -4349,6 +4349,10 @@ export const syncManagedElementAttributes = (current: Element, next: Element) =>
 }
 
 export const tryPatchElementShellInPlace = (current: Element, next: Element) => {
+  if (current === next) {
+    return true
+  }
+
   if (current.tagName !== next.tagName) {
     return false
   }
@@ -4357,11 +4361,17 @@ export const tryPatchElementShellInPlace = (current: Element, next: Element) => 
   let nextChildren = listNodeChildren(next)
   preserveReusableContentInRoots(listNodeChildren(current), nextChildren)
   nextChildren = listNodeChildren(next)
+  const detachedNextChildren = nextChildren.map((child) => child.cloneNode(true))
   while (current.firstChild) {
     current.firstChild.remove()
   }
   for (const child of nextChildren) {
     current.appendChild(child)
+  }
+  if (next.childNodes.length === 0) {
+    for (const child of detachedNextChildren) {
+      next.appendChild(child)
+    }
   }
   rememberManagedAttributesForNodes(nextChildren)
   return true
@@ -4610,6 +4620,10 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
 }
 
 const patchNodeInPlace = (current: Node, next: Node): boolean => {
+  if (current === next) {
+    return true
+  }
+
   if (current.nodeType !== next.nodeType) {
     return false
   }
