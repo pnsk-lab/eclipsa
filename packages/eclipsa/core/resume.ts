@@ -88,7 +88,9 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
     return
   }
 
+  const appHooksManifest = getAppHooksManifest(doc)
   const container = createResumeContainer(root, payload, {
+    routeDataEndpoint: appHooksManifest.routeDataEndpoint !== false,
     routeManifest: getRouteManifest(doc),
   })
   let resolveResumeReady!: () => void
@@ -98,7 +100,6 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
   installResumeListeners(container)
 
   try {
-    const appHooksManifest = getAppHooksManifest(doc)
     if (appHooksManifest.client) {
       const module = (await import(/* @vite-ignore */ appHooksManifest.client)) as AppHooksModule
       registerClientHooks({

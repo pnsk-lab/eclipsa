@@ -1868,6 +1868,9 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
+                if self.semantic.symbol_references(symbol_id).count() > 1 {
+                    return;
+                }
                 let dependencies = match self.collect_symbol_dependencies_from_expression(init) {
                     Ok(dependencies) => dependencies,
                     Err(error) => {

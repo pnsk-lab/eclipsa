@@ -53,7 +53,7 @@ export default (__scope) => {
     onCleanup(() => {
       console.log(`cleanup:${value}`)
     })
-  }, [value]))
+  }, () => [value]))
 
   return <button>{value}</button>
 };

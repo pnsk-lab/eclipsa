@@ -2396,6 +2396,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     manifest: [],
     navigate: undefined as unknown as Navigate,
     prefetchedLoaders: new Map(),
+    routeDataEndpoint: true,
     routeModuleBusts: new Map(),
     routePrefetches: new Map(),
     sequence: 0,
@@ -2823,9 +2824,26 @@ const materializeSymbolReference = (
   scopeId: string,
 ) => {
   const fn = (...args: unknown[]) => {
-    void loadSymbol(container, symbolId).then((module) =>
-      module.default(materializeScope(container, scopeId), ...args),
-    )
+    const runModule = (module: RuntimeSymbolModule) => {
+      const scope = normalizeCapturedEventValues(container, materializeScope(container, scopeId))
+      try {
+        const result = withClientContainer(container, () => module.default(scope, ...args))
+        return finishEventDispatch(container, result, (error) =>
+          wrapGeneratedScopeReferenceError(error, {
+            phase: 'running a materialized symbol reference for',
+            symbolId,
+          }),
+        )
+      } catch (error) {
+        throw wrapGeneratedScopeReferenceError(error, {
+          phase: 'running a materialized symbol reference for',
+          symbolId,
+        })
+      }
+    }
+
+    const module = getResolvedRuntimeSymbols(container).get(symbolId)
+    return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
   }
   Object.defineProperty(fn, 'name', {
     configurable: true,
@@ -8561,19 +8579,21 @@ const requestRouteData = async (
   const requestUrl = new URL(href, baseUrl)
 
   try {
-    const endpointUrl = new URL(ROUTE_DATA_ENDPOINT, requestUrl)
-    endpointUrl.searchParams.set('href', requestUrl.href)
-    const response = await fetch(endpointUrl.href)
-    if (response.status >= 200 && response.status < 300) {
-      const body = (await response.json()) as RouteDataResponse
-      if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
-        return ROUTE_DOCUMENT_FALLBACK
-      }
-      if (isRouteDataSuccess(body)) {
-        return body
-      }
-      if ('location' in body && typeof body.location === 'string') {
-        return body
+    if (ensureRouterState(container).routeDataEndpoint !== false) {
+      const endpointUrl = new URL(ROUTE_DATA_ENDPOINT, requestUrl)
+      endpointUrl.searchParams.set('href', requestUrl.href)
+      const response = await fetch(endpointUrl.href)
+      if (response.status >= 200 && response.status < 300) {
+        const body = (await response.json()) as RouteDataResponse
+        if (!body || typeof body !== 'object' || typeof body.ok !== 'boolean') {
+          return ROUTE_DOCUMENT_FALLBACK
+        }
+        if (isRouteDataSuccess(body)) {
+          return body
+        }
+        if ('location' in body && typeof body.location === 'string') {
+          return body
+        }
       }
     }
   } catch {}
@@ -10136,6 +10156,7 @@ export const createResumeContainer = (
   source: Document | HTMLElement,
   payload: ResumePayload,
   options?: {
+    routeDataEndpoint?: boolean
     routeManifest?: RouteManifest
   },
 ) => {
@@ -10144,7 +10165,8 @@ export const createResumeContainer = (
   const container = createContainer(payload.symbols, doc)
   container.rootElement = root as HTMLElement
   container.hasRuntimeRefMarkers = true
-  ensureRouterState(container, options?.routeManifest)
+  ensureRouterState(container, options?.routeManifest).routeDataEndpoint =
+    options?.routeDataEndpoint ?? true
 
   mergeResumePayload(container, payload)
   rememberManagedAttributesForSubtree(root as HTMLElement)

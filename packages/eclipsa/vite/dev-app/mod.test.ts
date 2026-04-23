@@ -432,6 +432,7 @@ describe('createDevFetch', () => {
     expect(html).toContain('"id":"eclipsa-resume"')
     expect(html).toContain(`"id":"${'eclipsa-route-manifest'}"`)
     expect(html).toContain(`"id":"${'eclipsa-app-hooks'}"`)
+    expect(html).toContain('"routeDataEndpoint":true')
     expect(html).not.toContain('__ECLIPSA_RESUME_PAYLOAD__')
     expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
     expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
@@ -628,7 +629,7 @@ describe('createDevFetch', () => {
     expect(html).not.toContain('__ECLIPSA_ROUTE_MANIFEST__')
     expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
     expect(html).toContain('\\"routePath\\":\\"/\\"')
-    expect(html).toContain('{\\"client\\":null}')
+    expect(html).toContain('{\\"client\\":null,\\"routeDataEndpoint\\":true}')
   })
 
   it('injects the suspense streaming bootstrap script without escaping it', async () => {

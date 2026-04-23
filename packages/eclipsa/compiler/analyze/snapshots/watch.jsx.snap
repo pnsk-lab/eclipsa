@@ -59,11 +59,11 @@ export default (__scope) => {
 
   useWatch(__eclipsaWatch("159qphd", () => {
     console.log(dynamic.value)
-  }, [dynamic]))
+  }, () => [dynamic]))
 
   useWatch(__eclipsaWatch("1dd4kme", () => {
     console.log(explicit.value)
-  }, [explicit]), [tracked, () => explicit.value])
+  }, () => [explicit]), [tracked, () => explicit.value])
 
   return <button>{tracked.value}</button>
 };

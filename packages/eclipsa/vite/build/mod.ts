@@ -583,6 +583,7 @@ const renderAppModule = (
   routes: Awaited<ReturnType<typeof createRoutes>>,
   routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
   routeManifest: RouteManifest,
+  routeDataEndpoint: boolean,
   serverHooksUrl: string | null,
   symbolUrls: Record<string, string>,
   stylesheetUrls: string[],
@@ -594,6 +595,7 @@ const renderAppModule = (
   const loaderTable = createLoaderTable(loaders)
   const serializedAppHooksManifest = JSON.stringify({
     client: appHooksClientUrl,
+    routeDataEndpoint,
   })
   const serializedRouteServerAccessEntries = JSON.stringify(routeServerAccessEntries)
   const serializedAppHooksServerUrl = JSON.stringify(appHooksServerUrl)
@@ -1844,6 +1846,7 @@ export const build = async (
       routes,
       routeServerAccessEntries,
       routeManifest,
+      options.output !== 'ssg',
       serverHooksUrl,
       symbolUrls,
       stylesheetUrls,

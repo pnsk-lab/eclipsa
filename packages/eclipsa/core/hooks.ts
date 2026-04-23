@@ -26,6 +26,7 @@ export interface PublicError extends PublicErrorShape {}
 
 export interface AppHooksManifest {
   client: string | null
+  routeDataEndpoint?: boolean
 }
 
 export type RequestFetch = typeof fetch

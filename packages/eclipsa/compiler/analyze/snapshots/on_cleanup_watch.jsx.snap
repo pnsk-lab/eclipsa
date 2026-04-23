@@ -53,7 +53,7 @@ export default (__scope) => {
     onCleanup(() => {
       console.log(`cleanup:${tracked.value}`)
     })
-  }, [tracked]), [tracked])
+  }, () => [tracked]), [tracked])
 
   return <button>{tracked.value}</button>
 };

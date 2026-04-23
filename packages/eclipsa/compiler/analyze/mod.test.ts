@@ -173,6 +173,29 @@ describe('analyzeModule()', () => {
     expect(analyzed.code).not.toContain('__eclipsaEvent.__1("click"')
   })
 
+  it('defers nested lazy captures inside generated symbols', async () => {
+    const analyzed = await analyzeModule(`
+      export const App = () => {
+        const open = () => {
+          const retry = () => {
+            requestAnimationFrame(retry);
+          };
+          retry();
+        };
+        const invoke = () => open();
+        return <button onClick={open} onMouseEnter={invoke}>Open</button>;
+      };
+    `)
+
+    const symbolCode = [...analyzed.symbols.values()]
+      .map((symbol) => symbol.code)
+      .find((code) => code.includes('__eclipsaLazy') && code.includes('requestAnimationFrame'))
+
+    expect(symbolCode).toContain('__eclipsaLazy')
+    expect(symbolCode).toContain('() => [retry]')
+    expect(symbolCode).not.toContain(', [retry]')
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (
@@ -386,6 +409,33 @@ describe('analyzeModule()', () => {
       0,
     )
     expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'event')).toHaveLength(
+      1,
+    )
+  })
+
+  it('keeps local handlers callable when they are used outside event props', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const ready = "ready";
+        const close = () => {
+          console.log(ready);
+        };
+        const handleKeyDown = (event) => {
+          if (event.key === "Escape") {
+            close();
+          }
+        };
+
+        return <dialog onCancel={close} onKeyDown={handleKeyDown}>{ready}</dialog>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('const close = __eclipsaLazy')
+    expect(analyzed.code).toContain('onCancel={close}')
+    expect(
+      [...analyzed.symbols.values()].some((symbol) => symbol.code.includes('__scope[0]();')),
+    ).toBe(true)
+    expect([...analyzed.symbols.values()].filter((symbol) => symbol.kind === 'lazy')).toHaveLength(
       1,
     )
   })

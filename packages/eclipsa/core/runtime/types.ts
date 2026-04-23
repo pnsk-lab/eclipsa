@@ -399,6 +399,7 @@ export interface RouterState {
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
+  routeDataEndpoint?: boolean
   routeModuleBusts: Map<string, number>
   routePrefetches: Map<string, Promise<RoutePrefetchResult>>
   sequence: number

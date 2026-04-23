@@ -24,6 +24,7 @@ export default function Root(props: SSRRootProps) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <title>Document</title>
         <script dangerouslySetInnerHTML={docsThemeBootstrap} />
         {import.meta.env.VITE_ERUDA && (

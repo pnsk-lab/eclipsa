@@ -227,7 +227,10 @@ const inlineStaticEventCaptureArrays = (source: string, id: string) => {
     ts.ScriptKind.TSX,
   )
   const replacements: Array<{ end: number; start: number; text: string }> = []
-  const declarationStartsByName = new Map<string, number[]>()
+  const declarationRangesByName = new Map<
+    string,
+    Array<{ initializerEnd?: number; initializerStart?: number; start: number }>
+  >()
 
   const unwrapArrayExpression = (expression: ts.Expression): ts.ArrayLiteralExpression | null => {
     let current = expression
@@ -237,37 +240,56 @@ const inlineStaticEventCaptureArrays = (source: string, id: string) => {
     return ts.isArrayLiteralExpression(current) ? current : null
   }
 
-  const addDeclarationStart = (name: string, node: ts.Node) => {
-    const starts = declarationStartsByName.get(name)
-    const start = node.getStart(sourceFile)
-    if (starts) {
-      starts.push(start)
+  const addDeclarationRange = (name: string, node: ts.Node, initializer?: ts.Expression | null) => {
+    const ranges = declarationRangesByName.get(name)
+    const range = {
+      initializerEnd: initializer?.end,
+      initializerStart: initializer?.getStart(sourceFile),
+      start: node.getStart(sourceFile),
+    }
+    if (ranges) {
+      ranges.push(range)
       return
     }
-    declarationStartsByName.set(name, [start])
+    declarationRangesByName.set(name, [range])
   }
 
   const collectDeclarations = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      addDeclarationStart(node.name.text, node.name)
+      addDeclarationRange(node.name.text, node.name, node.initializer)
     } else if (ts.isFunctionDeclaration(node) && node.name) {
-      addDeclarationStart(node.name.text, node.name)
+      addDeclarationRange(node.name.text, node.name)
     } else if (ts.isClassDeclaration(node) && node.name) {
-      addDeclarationStart(node.name.text, node.name)
+      addDeclarationRange(node.name.text, node.name)
     } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
-      addDeclarationStart(node.name.text, node.name)
+      addDeclarationRange(node.name.text, node.name)
     }
     ts.forEachChild(node, collectDeclarations)
   }
 
   collectDeclarations(sourceFile)
 
-  const hasLaterDeclarationCapture = (captureArray: ts.ArrayLiteralExpression, callStart: number) =>
+  const hasUnsafeDeclarationCapture = (
+    captureArray: ts.ArrayLiteralExpression,
+    callStart: number,
+  ) =>
     captureArray.elements.some((element) => {
       if (!ts.isIdentifier(element)) {
         return false
       }
-      return declarationStartsByName.get(element.text)?.some((start) => start > callStart) === true
+      return (
+        declarationRangesByName.get(element.text)?.some((range) => {
+          if (range.start > callStart) {
+            return true
+          }
+          return (
+            range.initializerStart !== undefined &&
+            range.initializerEnd !== undefined &&
+            range.initializerStart <= callStart &&
+            callStart < range.initializerEnd
+          )
+        }) === true
+      )
     })
 
   const visit = (node: ts.Node) => {
@@ -288,7 +310,7 @@ const inlineStaticEventCaptureArrays = (source: string, id: string) => {
           ? unwrapArrayExpression(captures.body)
           : null)
       if (inlineArray) {
-        if (hasLaterDeclarationCapture(inlineArray, node.getStart(sourceFile))) {
+        if (hasUnsafeDeclarationCapture(inlineArray, node.getStart(sourceFile))) {
           if (unwrapArrayExpression(captures)) {
             replacements.push({
               end: captures.end,
@@ -407,13 +429,19 @@ export const analyzeModule = async (
     id,
   )
   const symbols = new Map(
-    [...analyzed.symbols].map(([symbolId, symbol]) => [
-      symbolId,
-      {
-        ...symbol,
-        code: inlineStaticEventCaptureArrays(symbol.code, symbol.filePath || id),
-      },
-    ]),
+    [...analyzed.symbols].map(([symbolId, symbol]) => {
+      const symbolFilePath = symbol.filePath || id
+      return [
+        symbolId,
+        {
+          ...symbol,
+          code: inlineStaticEventCaptureArrays(
+            deferLazyCaptureArrays(symbol.code, symbolFilePath),
+            symbolFilePath,
+          ),
+        },
+      ]
+    }),
   )
   return {
     actions: new Map(analyzed.actions),

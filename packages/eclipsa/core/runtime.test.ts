@@ -22,6 +22,7 @@ import {
 import {
   __eclipsaComponent,
   __eclipsaEvent,
+  __eclipsaLazy,
   __eclipsaWatch,
   setExternalComponentMeta,
 } from './internal.ts'
@@ -3607,6 +3608,7 @@ describe('renderClientInsertable', () => {
           visibles: {},
           watches: {},
         })
+        const routeDataRequests: string[] = []
 
         globalThis.fetch = (async (input: RequestInfo | URL) => {
           const url =
@@ -3615,6 +3617,7 @@ describe('renderClientInsertable', () => {
           if (
             url === 'http://local/__eclipsa/route-data?href=http%3A%2F%2Flocal%2Fdocs%2Fquick-start'
           ) {
+            routeDataRequests.push(url)
             return {
               json: async () => ({ document: true, ok: false }),
               status: 404,
@@ -3757,6 +3760,7 @@ describe('renderClientInsertable', () => {
           ],
           navigate: (async () => {}) as any,
           prefetchedLoaders: new Map(),
+          routeDataEndpoint: false,
           routeModuleBusts: new Map(),
           routePrefetches: new Map(),
           sequence: 0,
@@ -3777,6 +3781,7 @@ describe('renderClientInsertable', () => {
         await flushAsync()
 
         expect(event.defaultPrevented).toBe(true)
+        expect(routeDataRequests).toEqual([])
         expect((doc.body as unknown as FakeElement).textContent).toContain('quick start')
         expect(doc.location.pathname).toBe('/docs/quick-start')
         cleanup()
@@ -12037,6 +12042,60 @@ describe('renderClientInsertable', () => {
       },
       type: 'script',
     })
+  })
+
+  it('runs materialized symbol references with normalized nested symbol captures', async () => {
+    const container = createContainer()
+    const moduleUrl = (source: string) => `data:text/javascript,${encodeURIComponent(source)}`
+    const callsKey = '__eclipsaRuntimeMaterializedSymbolCalls'
+    const globals = globalThis as typeof globalThis & {
+      __eclipsaRuntimeMaterializedSymbolCalls?: unknown[]
+    }
+    globals[callsKey] = []
+    container.symbols.set(
+      'outer-materialized-symbol',
+      moduleUrl(`
+        export default (__scope, value) => {
+          return __scope[0](value + ':inner')
+        }
+      `),
+    )
+    container.symbols.set(
+      'inner-materialized-symbol',
+      moduleUrl(`
+        export default (__scope, value) => {
+          globalThis.${callsKey}.push({
+            capture: __scope[0],
+            value
+          })
+        }
+      `),
+    )
+
+    const inner = __eclipsaLazy(
+      'inner-materialized-symbol',
+      () => {},
+      () => ['captured'],
+    )
+    const outer = __eclipsaLazy(
+      'outer-materialized-symbol',
+      () => {},
+      () => [inner],
+    )
+    const restored = deserializeContainerValue(
+      container,
+      serializeContainerValue(container, outer) as never,
+    ) as (value: string) => unknown
+
+    await restored('open')
+
+    expect(globals[callsKey]).toEqual([
+      {
+        capture: 'captured',
+        value: 'open:inner',
+      },
+    ])
+    delete globals[callsKey]
   })
 
   it('serializes computed handles as computed-signal references without losing computed semantics', () => {

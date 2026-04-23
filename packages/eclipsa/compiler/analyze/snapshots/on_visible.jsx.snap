@@ -40,7 +40,7 @@ export default (__scope) => {
 
   onVisible(__eclipsaLazy("1s0b9ti", () => {
     console.log(value)
-  }, [value]))
+  }, () => [value]))
 
   return <button>{value}</button>
 };
