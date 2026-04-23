@@ -3481,7 +3481,7 @@ describe('renderClientInsertable', () => {
             return {
               status: 200,
               text: async () =>
-                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script ></body></html>`,
+                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script\t\n ignored></body></html>`,
               url,
             } as Response
           }

@@ -542,6 +542,16 @@ const EMPTY_FRAME_PROJECTION_COUNTERS = new Map<string, number>()
 const FRAME_POOL: RenderFrame[] = []
 const noop = () => {}
 
+interface DirtyFlushMarker {
+  promise: Promise<void>
+}
+
+const isDirtyFlushMarker = (value: unknown): value is DirtyFlushMarker =>
+  typeof value === 'object' &&
+  value !== null &&
+  'promise' in value &&
+  (value as { promise?: unknown }).promise instanceof Promise
+
 const createInactiveComponentState = (
   id: string,
   parentId: string | null,
@@ -8380,7 +8390,7 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
 }
 
 const extractScriptTextById = (html: string, id: string) => {
-  const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+  const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi
   const idPattern = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i
 
   for (const match of html.matchAll(scriptPattern)) {
@@ -9461,8 +9471,8 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
   const globalRecord = globalThis as Record<PropertyKey, unknown>
   while (true) {
     const existing = globalRecord[DIRTY_FLUSH_PROMISE_KEY]
-    if (existing instanceof Promise) {
-      await existing
+    if (isDirtyFlushMarker(existing)) {
+      await existing.promise
       if (container.dirty.size === 0) {
         return
       }
@@ -9513,10 +9523,10 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
       }
     })()
 
-    const activeFlush: unknown = flushing
+    const activeFlush: DirtyFlushMarker = { promise: flushing }
     globalRecord[DIRTY_FLUSH_PROMISE_KEY] = activeFlush
     try {
-      await flushing
+      await activeFlush.promise
     } finally {
       if (globalRecord[DIRTY_FLUSH_PROMISE_KEY] === activeFlush) {
         delete globalRecord[DIRTY_FLUSH_PROMISE_KEY]
@@ -9536,8 +9546,8 @@ const flushDirtyComponentsIfNeeded = (container: RuntimeContainer) =>
 
 const waitForPendingDirtyFlush = async () => {
   const existing = (globalThis as Record<PropertyKey, unknown>)[DIRTY_FLUSH_PROMISE_KEY]
-  if (existing instanceof Promise) {
-    await existing
+  if (isDirtyFlushMarker(existing)) {
+    await existing.promise
   }
 }
 
