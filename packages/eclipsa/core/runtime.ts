@@ -2701,15 +2701,24 @@ export const bindPackedRuntimeEvent = (
     capture2,
     capture3,
   )
-  if (container.warmedRuntimeSymbols?.has(symbol)) {
-    return
-  }
   const resolved = getResolvedRuntimeSymbols(container).get(symbol)
   if (resolved) {
     binding.module = resolved
-    return
+  } else {
+    warmRuntimeSymbol(container, symbol)
   }
-  warmRuntimeSymbol(container, symbol)
+  warmCapturedRuntimeEventDescriptors(
+    container,
+    captureCount === 0
+      ? EMPTY_EVENT_CAPTURES
+      : captureCount === 1
+        ? [capture0]
+        : captureCount === 2
+          ? [capture0, capture1]
+          : captureCount === 3
+            ? [capture0, capture1, capture2]
+            : [capture0, capture1, capture2, capture3],
+  )
 }
 
 const syncLiveClientEventBindings = (current: Element, next: Element) => {
@@ -4813,6 +4822,25 @@ const registerEventBinding = (
 const getRuntimeEventDescriptor = (value: unknown): EventDescriptor | LazyMeta | null =>
   getEventMeta(value) ?? getLazyMeta(value)
 
+const warmCapturedRuntimeEventDescriptors = (
+  container: RuntimeContainer,
+  values: readonly unknown[],
+  seen = new Set<unknown>(),
+) => {
+  for (const value of values) {
+    if (!value || typeof value !== 'object' || seen.has(value)) {
+      continue
+    }
+    const descriptor = getRuntimeEventDescriptor(value)
+    if (!descriptor) {
+      continue
+    }
+    seen.add(value)
+    warmRuntimeSymbol(container, descriptor.symbol)
+    warmCapturedRuntimeEventDescriptors(container, resolveEventDescriptorCaptures(descriptor), seen)
+  }
+}
+
 const isForValue = (value: unknown): value is ForValue =>
   !!value && typeof value === 'object' && (value as ForValue).__e_for === true
 
@@ -4833,6 +4861,7 @@ export const bindRuntimeEvent = (element: Element, eventName: string, value: unk
   ensureDelegatedDocumentEventListener(container, eventName)
   setLiveClientEventBinding(container, element, eventName, descriptor)
   warmRuntimeSymbol(container, descriptor.symbol)
+  warmCapturedRuntimeEventDescriptors(container, resolveEventDescriptorCaptures(descriptor))
   return true
 }
 
@@ -5890,6 +5919,8 @@ const applyElementProp = (
       return
     }
     setLiveClientEventBinding(container, element, eventName, eventMeta)
+    warmRuntimeSymbol(container, eventMeta.symbol)
+    warmCapturedRuntimeEventDescriptors(container, resolveEventDescriptorCaptures(eventMeta))
     return
   }
 
@@ -10713,6 +10744,68 @@ const finishEventDispatch = (
   return flushDirtyComponentsIfNeeded(container)
 }
 
+const materializeCapturedEventDescriptor = (
+  container: RuntimeContainer,
+  descriptor: EventDescriptor | LazyMeta,
+) => {
+  const fn = (...args: unknown[]) => {
+    const runModule = (module: RuntimeSymbolModule) => {
+      const scope = normalizeCapturedEventValues(
+        container,
+        resolveEventDescriptorCaptures(descriptor),
+      )
+      try {
+        const result = withClientContainer(container, () => module.default(scope, ...args))
+        return finishEventDispatch(container, result, (error) =>
+          wrapGeneratedScopeReferenceError(error, {
+            phase: 'running a captured event handler for',
+            symbolId: descriptor.symbol,
+          }),
+        )
+      } catch (error) {
+        throw wrapGeneratedScopeReferenceError(error, {
+          phase: 'running a captured event handler for',
+          symbolId: descriptor.symbol,
+        })
+      }
+    }
+
+    const module = getResolvedRuntimeSymbols(container).get(descriptor.symbol)
+    return module ? runModule(module) : loadSymbol(container, descriptor.symbol).then(runModule)
+  }
+
+  Object.defineProperty(fn, 'name', {
+    configurable: true,
+    value: `eclipsa$${descriptor.symbol}`,
+  })
+  return fn
+}
+
+const normalizeCapturedEventValue = (container: RuntimeContainer, value: unknown) => {
+  if (typeof value === 'function') {
+    return value
+  }
+  const descriptor = getRuntimeEventDescriptor(value)
+  return descriptor ? materializeCapturedEventDescriptor(container, descriptor) : value
+}
+
+const normalizeCapturedEventValues = (container: RuntimeContainer, values: unknown[]) => {
+  let normalized: unknown[] | null = null
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index]
+    const nextValue = normalizeCapturedEventValue(container, value)
+    if (nextValue === value) {
+      if (normalized) {
+        normalized.push(value)
+      }
+      continue
+    }
+    normalized ??= values.slice(0, index)
+    normalized.push(nextValue)
+  }
+  return normalized ?? values
+}
+
 const dispatchLiveClientEvent = (
   container: RuntimeContainer,
   binding: LiveClientEventBinding,
@@ -10742,12 +10835,13 @@ const dispatchLiveClientEvent = (
           : binding.captureCount === 3
             ? [binding.capture0, binding.capture1, binding.capture2]
             : [binding.capture0, binding.capture1, binding.capture2, binding.capture3]
+  const normalizedCaptures = normalizeCapturedEventValues(container, captures)
   const runModule = (loadedModule: RuntimeSymbolModule) => {
     binding.module = loadedModule
     try {
       const result = withClientContainer(container, () =>
         loadedModule.default(
-          captures,
+          normalizedCaptures,
           loadedModule.default.length >= 2 ? createDelegatedEvent(event, currentTarget) : undefined,
         ),
       )
@@ -10786,7 +10880,7 @@ export const dispatchResumeEvent = (container: RuntimeContainer, event: Event) =
 
   const { scopeId, symbolId } = parseBinding(attrBinding)
   const runModule = (module: RuntimeSymbolModule) => {
-    const scope = materializeScope(container, scopeId)
+    const scope = normalizeCapturedEventValues(container, materializeScope(container, scopeId))
     try {
       const result = withClientContainer(container, () =>
         module.default(

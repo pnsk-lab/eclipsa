@@ -2736,6 +2736,152 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('materializes captured live event descriptors as callable handlers', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      const open = { value: true }
+      host.appendChild(marker)
+
+      const closeModuleImport = Promise.resolve({
+        default: (scope: unknown[]) => {
+          ;(scope[0] as typeof open).value = false
+        },
+      })
+      container.imports.set('nested-close-symbol', closeModuleImport)
+      container.imports.set(
+        'nested-overlay-symbol',
+        Promise.resolve({
+          default: (scope: unknown[], event: Event) => {
+            if (event.target === event.currentTarget) {
+              ;(scope[0] as () => void)()
+            }
+          },
+        }),
+      )
+
+      withRuntimeContainer(container, () => {
+        insert(
+          jsxDEV(
+            'div',
+            {
+              children: 'Overlay',
+              onClick: __eclipsaEvent.__1(
+                'click',
+                'nested-overlay-symbol',
+                __eclipsaEvent.__1('click', 'nested-close-symbol', open),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(container.imports.get('nested-close-symbol')).not.toBe(closeModuleImport)
+      const closeImport = container.imports.get('nested-close-symbol')
+      expect(closeImport).toBeTruthy()
+      await closeImport
+      const overlay = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'div',
+      )
+      expect(overlay).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(overlay as unknown as EventTarget),
+      )
+
+      expect(open.value).toBe(false)
+    })
+  })
+
+  it('forwards delegated events through captured live event descriptors', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let forwardedCurrentTarget: EventTarget | null = null
+      host.appendChild(marker)
+
+      const receiverModuleImport = Promise.resolve({
+        default: (_scope: unknown[], event: Event) => {
+          forwardedCurrentTarget = event.currentTarget
+        },
+      })
+      container.imports.set('nested-receiver-symbol', receiverModuleImport)
+      container.imports.set(
+        'nested-forwarder-symbol',
+        Promise.resolve({
+          default: (scope: unknown[], event: Event) => {
+            ;(scope[0] as (event: Event) => void)(event)
+          },
+        }),
+      )
+
+      withRuntimeContainer(container, () => {
+        insert(
+          jsxDEV(
+            'button',
+            {
+              children: 'Forward',
+              onClick: __eclipsaEvent.__1(
+                'click',
+                'nested-forwarder-symbol',
+                __eclipsaEvent.__0('click', 'nested-receiver-symbol'),
+              ),
+            },
+            null,
+            false,
+            {},
+          ),
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(container.imports.get('nested-receiver-symbol')).not.toBe(receiverModuleImport)
+      const receiverImport = container.imports.get('nested-receiver-symbol')
+      expect(receiverImport).toBeTruthy()
+      await receiverImport
+      const button = host.childNodes.find(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
+      )
+      expect(button).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(forwardedCurrentTarget).toBe(button)
+    })
+  })
+
   it('does not walk document focus paths for live client event bindings', async () => {
     await withFakeNodeGlobal(async () => {
       class TargetedClickEvent extends Event {
