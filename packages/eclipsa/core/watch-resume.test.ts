@@ -95,4 +95,65 @@ describe('useWatch resume payload', () => {
       ),
     ).not.toThrow()
   })
+
+  it('serializes resumable metadata when captures are provided as inline arrays', () => {
+    const App = __eclipsaComponent(
+      () => {
+        const controller = useSignal(null)
+        const api = {
+          set: __eclipsaLazy(
+            'api-set-inline-array-symbol',
+            (value) => {
+              controller.value?.set(value)
+            },
+            [controller],
+          ),
+        }
+        controller.value = noSerialize({
+          set() {},
+        })
+        useWatch(
+          __eclipsaWatch(
+            'watch-inline-array-symbol',
+            () => {
+              api.set(1)
+            },
+            [api],
+          ),
+        )
+        return /* @__PURE__ */ jsxDEV('button', { children: 'ready' }, void 0, false, {
+          fileName: 'packages/eclipsa/core/watch-resume.test.ts',
+          lineNumber: 109,
+          columnNumber: 16,
+        })
+      },
+      'component-inline-array-symbol',
+      [],
+    )
+
+    expect(() =>
+      renderSSR(
+        () =>
+          /* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
+            fileName: 'packages/eclipsa/core/watch-resume.test.ts',
+            lineNumber: 119,
+            columnNumber: 23,
+          }),
+        {
+          symbols: {
+            'api-set-inline-array-symbol': '/app/api?eclipsa-symbol=api-set-inline-array-symbol',
+            'watch-inline-array-symbol': '/app/api?eclipsa-symbol=watch-inline-array-symbol',
+          },
+        },
+      ),
+    ).not.toThrow()
+  })
+
+  it('attaches lazy and watch metadata without wrapping extensible functions', () => {
+    const lazy = (value: number) => value + 1
+    const watch = () => undefined
+
+    expect(__eclipsaLazy('identity-lazy-symbol', lazy, [])).toBe(lazy)
+    expect(__eclipsaWatch('identity-watch-symbol', watch, [])).toBe(watch)
+  })
 })

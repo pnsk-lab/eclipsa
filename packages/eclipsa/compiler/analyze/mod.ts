@@ -2,6 +2,7 @@ import ts from 'typescript'
 import { runRustAnalyzeCompiler } from '@eclipsa/optimizer'
 
 type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
+export type AnalyzeEventMode = 'resumable' | 'direct'
 
 export interface ResumeSymbol {
   captures: string[]
@@ -217,13 +218,231 @@ const annotateOptimizedRootComponents = (source: string, id: string) => {
   return nextSource
 }
 
+const inlineStaticEventCaptureArrays = (source: string, id: string) => {
+  const sourceFile = ts.createSourceFile(
+    id,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const replacements: Array<{ end: number; start: number; text: string }> = []
+  const declarationRangesByName = new Map<
+    string,
+    Array<{ initializerEnd?: number; initializerStart?: number; start: number }>
+  >()
+
+  const unwrapArrayExpression = (expression: ts.Expression): ts.ArrayLiteralExpression | null => {
+    let current = expression
+    while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)) {
+      current = current.expression
+    }
+    return ts.isArrayLiteralExpression(current) ? current : null
+  }
+
+  const addDeclarationRange = (name: string, node: ts.Node, initializer?: ts.Expression | null) => {
+    const ranges = declarationRangesByName.get(name)
+    const range = {
+      initializerEnd: initializer?.end,
+      initializerStart: initializer?.getStart(sourceFile),
+      start: node.getStart(sourceFile),
+    }
+    if (ranges) {
+      ranges.push(range)
+      return
+    }
+    declarationRangesByName.set(name, [range])
+  }
+
+  const collectDeclarations = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      addDeclarationRange(node.name.text, node.name, node.initializer)
+    } else if (ts.isFunctionDeclaration(node) && node.name) {
+      addDeclarationRange(node.name.text, node.name)
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      addDeclarationRange(node.name.text, node.name)
+    } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+      addDeclarationRange(node.name.text, node.name)
+    }
+    ts.forEachChild(node, collectDeclarations)
+  }
+
+  collectDeclarations(sourceFile)
+
+  const hasUnsafeDeclarationCapture = (
+    captureArray: ts.ArrayLiteralExpression,
+    callStart: number,
+  ) =>
+    captureArray.elements.some((element) => {
+      if (!ts.isIdentifier(element)) {
+        return false
+      }
+      return (
+        declarationRangesByName.get(element.text)?.some((range) => {
+          if (range.start > callStart) {
+            return true
+          }
+          return (
+            range.initializerStart !== undefined &&
+            range.initializerEnd !== undefined &&
+            range.initializerStart <= callStart &&
+            callStart < range.initializerEnd
+          )
+        }) === true
+      )
+    })
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === '__eclipsaEvent' &&
+      node.arguments.length >= 3
+    ) {
+      const eventName = node.arguments[0]
+      const symbol = node.arguments[1]
+      const captures = node.arguments[2]!
+      const inlineArray =
+        unwrapArrayExpression(captures) ??
+        ((ts.isArrowFunction(captures) || ts.isFunctionExpression(captures)) &&
+        captures.parameters.length === 0 &&
+        !ts.isBlock(captures.body)
+          ? unwrapArrayExpression(captures.body)
+          : null)
+      if (inlineArray) {
+        if (hasUnsafeDeclarationCapture(inlineArray, node.getStart(sourceFile))) {
+          if (unwrapArrayExpression(captures)) {
+            replacements.push({
+              end: captures.end,
+              start: captures.getStart(sourceFile),
+              text: `() => ${captures.getText(sourceFile)}`,
+            })
+          }
+          ts.forEachChild(node, visit)
+          return
+        }
+        const inlineElements = inlineArray.elements.filter(
+          (element): element is ts.Expression =>
+            !!element && !ts.isOmittedExpression(element) && !ts.isSpreadElement(element),
+        )
+        if (inlineElements.length === inlineArray.elements.length && inlineElements.length <= 4) {
+          replacements.push({
+            end: node.end,
+            start: node.getStart(sourceFile),
+            text: `__eclipsaEvent.__${inlineElements.length}(${[
+              eventName?.getText(sourceFile),
+              symbol?.getText(sourceFile),
+              ...inlineElements.map((element) => element.getText(sourceFile)),
+            ].join(', ')})`,
+          })
+          ts.forEachChild(node, visit)
+          return
+        }
+        replacements.push({
+          end: captures.end,
+          start: captures.getStart(sourceFile),
+          text: inlineArray.getText(sourceFile),
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+
+  if (replacements.length === 0) {
+    return source
+  }
+
+  let nextSource = source
+  for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+    nextSource =
+      nextSource.slice(0, replacement.start) + replacement.text + nextSource.slice(replacement.end)
+  }
+
+  return nextSource
+}
+
+const deferLazyCaptureArrays = (source: string, id: string) => {
+  const sourceFile = ts.createSourceFile(
+    id,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const replacements: Array<{ end: number; start: number; text: string }> = []
+
+  const unwrapArrayExpression = (expression: ts.Expression): ts.ArrayLiteralExpression | null => {
+    let current = expression
+    while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)) {
+      current = current.expression
+    }
+    return ts.isArrayLiteralExpression(current) ? current : null
+  }
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      (node.expression.text === '__eclipsaLazy' || node.expression.text === '__eclipsaWatch') &&
+      node.arguments.length >= 3
+    ) {
+      const captures = node.arguments[2]!
+      const captureArray = unwrapArrayExpression(captures)
+      if (captureArray && captureArray.elements.length > 0) {
+        replacements.push({
+          end: captures.end,
+          start: captures.getStart(sourceFile),
+          text: `() => ${captures.getText(sourceFile)}`,
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+
+  if (replacements.length === 0) {
+    return source
+  }
+
+  let nextSource = source
+  for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+    nextSource =
+      nextSource.slice(0, replacement.start) + replacement.text + nextSource.slice(replacement.end)
+  }
+  return nextSource
+}
+
 export const analyzeModule = async (
   source: string,
   id = 'analyze-input.tsx',
+  options?: {
+    eventMode?: AnalyzeEventMode
+  },
 ): Promise<AnalyzedModule> => {
   validateSingleReturnComponents(source, id)
-  const analyzed = await runRustAnalyzeCompiler(id, source)
-  const code = annotateOptimizedRootComponents(analyzed.code, id)
+  const analyzed = await runRustAnalyzeCompiler(id, source, options?.eventMode)
+  const code = inlineStaticEventCaptureArrays(
+    deferLazyCaptureArrays(annotateOptimizedRootComponents(analyzed.code, id), id),
+    id,
+  )
+  const symbols = new Map(
+    [...analyzed.symbols].map(([symbolId, symbol]) => {
+      const symbolFilePath = symbol.filePath || id
+      return [
+        symbolId,
+        {
+          ...symbol,
+          code: inlineStaticEventCaptureArrays(
+            deferLazyCaptureArrays(symbol.code, symbolFilePath),
+            symbolFilePath,
+          ),
+        },
+      ]
+    }),
+  )
   return {
     actions: new Map(analyzed.actions),
     code,
@@ -232,6 +451,6 @@ export const analyzeModule = async (
       symbols: new Map(analyzed.hmrManifest.symbols),
     },
     loaders: new Map(analyzed.loaders),
-    symbols: new Map(analyzed.symbols),
+    symbols,
   }
 }

@@ -27,7 +27,7 @@ const ACTION_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.action-hook-registry')
 const LOADER_HOOK_REGISTRY_KEY = Symbol.for('eclipsa.loader-hook-registry')
 
 export interface ComponentMeta {
-  captures: () => unknown[]
+  captures: (() => unknown[]) | unknown[]
   external?: ExternalComponentDescriptor
   optimizedRoot?: boolean
   projectionSlots?: Record<string, number>
@@ -56,13 +56,13 @@ export interface ExternalComponentMeta extends ExternalComponentDescriptor {
 }
 
 export interface LazyMeta {
-  captures: () => unknown[]
+  captures: (() => unknown[]) | unknown[]
   eventName?: string
   symbol: string
 }
 
 export interface WatchMeta {
-  captures: () => unknown[]
+  captures: (() => unknown[]) | unknown[]
   symbol: string
 }
 
@@ -97,10 +97,41 @@ export interface LoaderHookMeta {
   readonly kind: 'loader-hook'
 }
 
-export interface EventDescriptor {
-  captures: () => unknown[]
+export interface CapturedEventDescriptor {
+  captures: (() => unknown[]) | unknown[]
   eventName?: string
   symbol: string
+}
+
+export interface PackedEventDescriptor {
+  capture0?: unknown
+  capture1?: unknown
+  capture2?: unknown
+  capture3?: unknown
+  captureCount: 0 | 1 | 2 | 3 | 4
+  eventName?: string
+  symbol: string
+}
+
+export type EventDescriptor = CapturedEventDescriptor | PackedEventDescriptor
+
+const defineCallableMeta = <T extends Function, M>(target: T, key: symbol, value: M): T => {
+  const define = (fn: T) => {
+    Object.defineProperty(fn, key, {
+      configurable: true,
+      enumerable: false,
+      value,
+      writable: true,
+    })
+    return fn
+  }
+
+  if (Object.isExtensible(target)) {
+    return define(target)
+  }
+
+  const wrapped = ((...args: unknown[]) => target(...args)) as unknown as T
+  return define(wrapped)
 }
 
 export interface LazyReference<
@@ -125,7 +156,7 @@ export interface ExternalComponentReference<T = unknown> extends Function {
 export const __eclipsaComponent = <T>(
   component: Component<T>,
   symbol: string,
-  captures: () => unknown[],
+  captures: (() => unknown[]) | unknown[],
   projectionSlots?: Record<string, number>,
   options?: ComponentOptions,
 ): Component<T> => {
@@ -147,48 +178,122 @@ export const __eclipsaComponent = <T>(
 export const __eclipsaLazy = <T extends (...args: any[]) => unknown>(
   symbol: string,
   fn: T,
-  captures: () => unknown[],
+  captures: (() => unknown[]) | unknown[],
 ): EURL<T> => {
-  const wrapped = ((...args: Parameters<T>) => fn(...args)) as LazyReference<T>
-  Object.defineProperty(wrapped, LAZY_META_KEY, {
-    configurable: true,
-    enumerable: false,
-    value: {
-      symbol,
-      captures,
-    } satisfies LazyMeta,
-    writable: true,
-  })
-  return wrapped as EURL<T>
+  return defineCallableMeta(fn as LazyReference<T>, LAZY_META_KEY, {
+    symbol,
+    captures,
+  } satisfies LazyMeta) as EURL<T>
 }
 
 export const __eclipsaWatch = <T extends (...args: any[]) => unknown>(
   symbol: string,
   fn: T,
-  captures: () => unknown[],
+  captures: (() => unknown[]) | unknown[],
 ): T => {
-  const wrapped = ((...args: Parameters<T>) => fn(...args)) as WatchReference<T>
-  Object.defineProperty(wrapped, WATCH_META_KEY, {
-    configurable: true,
-    enumerable: false,
-    value: {
-      symbol,
-      captures,
-    } satisfies WatchMeta,
-    writable: true,
-  })
-  return wrapped as T
+  return defineCallableMeta(fn as WatchReference<T>, WATCH_META_KEY, {
+    symbol,
+    captures,
+  } satisfies WatchMeta) as T
 }
 
-export const __eclipsaEvent = (
+const createPackedEventDescriptor = (
   eventName: string,
   symbol: string,
-  captures: () => unknown[],
-): EventDescriptor => ({
+  captureCount: PackedEventDescriptor['captureCount'],
+  capture0?: unknown,
+  capture1?: unknown,
+  capture2?: unknown,
+  capture3?: unknown,
+): PackedEventDescriptor => ({
+  capture0,
+  capture1,
+  capture2,
+  capture3,
+  captureCount,
   eventName,
   symbol,
-  captures,
 })
+
+type EventFactory = ((
+  eventName: string,
+  symbol: string,
+  captures: (() => unknown[]) | unknown[],
+) => EventDescriptor) & {
+  __0: (eventName: string, symbol: string) => EventDescriptor
+  __1: (eventName: string, symbol: string, capture0: unknown) => EventDescriptor
+  __2: (eventName: string, symbol: string, capture0: unknown, capture1: unknown) => EventDescriptor
+  __3: (
+    eventName: string,
+    symbol: string,
+    capture0: unknown,
+    capture1: unknown,
+    capture2: unknown,
+  ) => EventDescriptor
+  __4: (
+    eventName: string,
+    symbol: string,
+    capture0: unknown,
+    capture1: unknown,
+    capture2: unknown,
+    capture3: unknown,
+  ) => EventDescriptor
+}
+
+export const __eclipsaEvent = Object.assign(
+  (
+    eventName: string,
+    symbol: string,
+    captures: (() => unknown[]) | unknown[],
+  ): EventDescriptor => ({
+    eventName,
+    symbol,
+    captures,
+  }),
+  {
+    __0: (eventName: string, symbol: string) => createPackedEventDescriptor(eventName, symbol, 0),
+    __1: (eventName: string, symbol: string, capture0: unknown) =>
+      createPackedEventDescriptor(eventName, symbol, 1, capture0),
+    __2: (eventName: string, symbol: string, capture0: unknown, capture1: unknown) =>
+      createPackedEventDescriptor(eventName, symbol, 2, capture0, capture1),
+    __3: (
+      eventName: string,
+      symbol: string,
+      capture0: unknown,
+      capture1: unknown,
+      capture2: unknown,
+    ) => createPackedEventDescriptor(eventName, symbol, 3, capture0, capture1, capture2),
+    __4: (
+      eventName: string,
+      symbol: string,
+      capture0: unknown,
+      capture1: unknown,
+      capture2: unknown,
+      capture3: unknown,
+    ) => createPackedEventDescriptor(eventName, symbol, 4, capture0, capture1, capture2, capture3),
+  },
+) satisfies EventFactory
+
+export const resolveCaptureValues = (captures: (() => unknown[]) | unknown[]) =>
+  typeof captures === 'function' ? captures() : captures
+
+export const resolveEventDescriptorCaptures = (descriptor: EventDescriptor): unknown[] => {
+  if ('captures' in descriptor) {
+    return resolveCaptureValues(descriptor.captures)
+  }
+  switch (descriptor.captureCount) {
+    case 0:
+      return []
+    case 1:
+      return [descriptor.capture0]
+    case 2:
+      return [descriptor.capture0, descriptor.capture1]
+    case 3:
+      return [descriptor.capture0, descriptor.capture1, descriptor.capture2]
+    case 4:
+      return [descriptor.capture0, descriptor.capture1, descriptor.capture2, descriptor.capture3]
+  }
+}
 
 export const getComponentMeta = (value: unknown): ComponentMeta | null => {
   if (typeof value !== 'function') {
@@ -409,7 +514,17 @@ export const getWatchMeta = (value: unknown): WatchMeta | null => {
 export const getEventMeta = (value: unknown): EventDescriptor | LazyMeta | null => {
   if (value && typeof value === 'object') {
     const descriptor = value as EventDescriptor
-    if (typeof descriptor.symbol === 'string' && typeof descriptor.captures === 'function') {
+    if (typeof descriptor.symbol === 'string' && 'captures' in descriptor) {
+      if (typeof descriptor.captures === 'function' || Array.isArray(descriptor.captures)) {
+        return descriptor
+      }
+    }
+    if (
+      typeof descriptor.symbol === 'string' &&
+      'captureCount' in descriptor &&
+      descriptor.captureCount >= 0 &&
+      descriptor.captureCount <= 4
+    ) {
       return descriptor
     }
   }
@@ -417,11 +532,27 @@ export const getEventMeta = (value: unknown): EventDescriptor | LazyMeta | null 
 }
 
 export const setSignalMeta = <T>(target: { value: T }, meta: SignalMeta<T>): { value: T } => {
+  ;(target as Record<PropertyKey, unknown>)[SIGNAL_META_KEY] = meta
+  return target
+}
+
+export const setLazySignalMeta = <T>(
+  target: { value: T },
+  createMeta: () => SignalMeta<T>,
+): { value: T } => {
   Object.defineProperty(target, SIGNAL_META_KEY, {
     configurable: true,
     enumerable: false,
-    value: meta,
-    writable: true,
+    get() {
+      const meta = createMeta()
+      Object.defineProperty(target, SIGNAL_META_KEY, {
+        configurable: true,
+        enumerable: false,
+        value: meta,
+        writable: true,
+      })
+      return meta
+    },
   })
   return target
 }

@@ -84,6 +84,7 @@ describe('resumeContainer interactivity bootstrap', () => {
           return {
             textContent: JSON.stringify({
               client: null,
+              routeDataEndpoint: false,
             }),
           }
         }
@@ -98,6 +99,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       await Promise.resolve()
 
       expect(createResumeContainer).toHaveBeenCalledWith(root, expect.any(Object), {
+        routeDataEndpoint: false,
         routeManifest: [],
       })
       expect(installResumeListeners).toHaveBeenCalledWith(container)

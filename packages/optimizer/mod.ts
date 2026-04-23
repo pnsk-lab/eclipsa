@@ -48,12 +48,13 @@ interface AnalyzeResponse {
 }
 
 interface NativeBinding {
-  analyzeModule(source: string, id: string): AnalyzeResponse
-  compileClient(source: string, id: string, hmr?: boolean | null): string
+  analyzeModule(source: string, id: string, eventMode?: string | null): AnalyzeResponse
+  compileClient(source: string, id: string, hmr?: boolean | null, eventMode?: string | null): string
   compileSsr(source: string, id: string): string
 }
 
 interface CompilerRequest {
+  eventMode?: 'resumable' | 'direct'
   hmr?: boolean
   id: string
   source: string
@@ -249,12 +250,17 @@ export const runRustCompiler = async (request: CompilerRequest) => {
   const binding = await loadNativeBinding()
 
   if (request.target === 'client') {
-    return binding.compileClient(request.source, request.id, request.hmr ?? false)
+    return binding.compileClient(
+      request.source,
+      request.id,
+      request.hmr ?? false,
+      request.eventMode ?? 'resumable',
+    )
   }
   return binding.compileSsr(request.source, request.id)
 }
 
-export const runRustAnalyzeCompiler = async (id: string, source: string) => {
+export const runRustAnalyzeCompiler = async (id: string, source: string, eventMode?: string) => {
   const binding = await loadNativeBinding()
-  return binding.analyzeModule(source, id)
+  return binding.analyzeModule(source, id, eventMode)
 }

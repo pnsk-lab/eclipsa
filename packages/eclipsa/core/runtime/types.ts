@@ -27,6 +27,8 @@ export type WatchDependency = { value: unknown } | (() => unknown)
 export type EffectOptions = {
   dependencies?: WatchDependency[]
   errorLabel?: string
+  runInContainer?: boolean
+  skipInitialRun?: boolean
   untracked?: boolean
 }
 
@@ -104,28 +106,60 @@ export interface StreamState {
 }
 
 export interface ReactiveEffect {
+  collecting: boolean
   container?: RuntimeContainer | null
+  fixed: boolean
+  fixedCallback: ((value: unknown) => void) | null
   fn: () => void
-  signals: Set<SignalRecord>
+  nextSignal: SignalRecord | null
+  nextSignals: Set<SignalRecord> | null
+  queued: boolean
+  runInContainer?: boolean
+  signal: SignalRecord | null
+  signals: Set<SignalRecord> | null
 }
 
+export interface FixedSignalEffect {
+  callback: (value: unknown) => void
+  container?: RuntimeContainer | null
+  fixedIndex: number
+  kind: 'fixed'
+  queued: boolean
+  runInContainer?: boolean
+  signal: SignalRecord
+}
+
+export type RenderEffect = ReactiveEffect | FixedSignalEffect
+
 export interface SignalRecord<T = unknown> {
-  effects: Set<ReactiveEffect>
+  effect: ReactiveEffect | null
+  effects: Set<ReactiveEffect> | null
+  fixedEffect: FixedSignalEffect | null
+  secondFixedEffect: FixedSignalEffect | null
+  fixedEffects: FixedSignalEffect[] | null
   handle: {
     value: T
   }
   id: string
-  subscribers: Set<string>
+  skipComponentSubscription?: boolean
+  subscribers: Set<string> | null
   value: T
 }
 
 export interface CleanupSlot {
-  callbacks: CleanupCallback[]
+  callback?: CleanupCallback | null
+  callbacks?: CleanupCallback[] | null
+  effect?: RenderEffect | null
+  secondEffect?: RenderEffect | null
+  effects?: RenderEffect[] | null
+  cleanupBinding?: unknown | null
+  cleanupBindings?: unknown[] | null
 }
 
 export interface ComponentState {
   active: boolean
   activateModeOnFlush?: 'patch' | 'replace'
+  childComponentIds: Set<string> | null
   didMount: boolean
   end?: Comment
   external?: ExternalComponentDescriptor
@@ -134,19 +168,22 @@ export interface ComponentState {
   externalInstance?: unknown
   externalMeta?: ExternalComponentMeta | null
   id: string
-  mountCleanupSlots: CleanupSlot[]
+  mountCleanupSlots: CleanupSlot[] | null
+  mayChangeNodeCount?: boolean
   optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
   props: unknown
   projectionSlots: Record<string, number> | null
   rawProps?: Record<string, unknown> | null
-  renderEffectCleanupSlot: CleanupSlot
+  registered?: boolean
+  renderEffectCleanupSlot: CleanupSlot | null
   reuseExistingDomOnActivate?: boolean
   reuseProjectionSlotDomOnActivate?: boolean
-  scopeId: string
+  scopeId: string | null
   signalIds: string[]
   start?: Comment
+  subscribedSignalIds: Set<string> | null
   symbol: string
   suspensePromise?: Promise<unknown> | null
   visibleCount: number
@@ -157,19 +194,24 @@ export interface RenderFrame {
   childCursor: number
   component: ComponentState
   container: RuntimeContainer
-  effectCleanupSlot: CleanupSlot
+  effectCursor: number
+  effectCleanupSlot: CleanupSlot | null
+  existingRenderEffects: RenderEffect[] | null
   insertCursor: number
   keyedRangeCursor: number
-  keyedRangeScopeStack: string[]
-  mountCallbacks: Array<() => void>
+  keyedRangeScopeStack: string[] | null
+  mountCallbacks: Array<() => void> | null
+  nextEffectCursor: number
+  nextRenderEffects: RenderEffect[] | null
   projectionState: {
-    counters: Map<string, number>
+    counters: Map<string, number> | null
     reuseExistingDom: boolean
     reuseProjectionSlotDom: boolean
   }
-  visitedDescendants: Set<string>
+  reuseRenderEffects: boolean
+  visitedDescendants: Set<string> | null
   mode: 'client' | 'ssr'
-  scopedStyles: ScopedStyleEntry[]
+  scopedStyles: ScopedStyleEntry[] | null
   signalCursor: number
   visibleCursor: number
   watchCursor: number
@@ -179,7 +221,10 @@ export interface ClientInsertOwner {
   childIndex: number
   componentId: string
   keyedRangeCursor: number
+  lazy?: boolean
+  parentComponentId: string | null
   projectionCounters: Array<[string, number]>
+  state?: ComponentState | null
 }
 
 export interface ScopedStyleEntry {
@@ -325,9 +370,15 @@ export interface RenderComponentTypeRef {
 export interface ForValue<T = unknown> {
   __e_for: true
   arr: readonly T[]
+  arrSignal?: { value: readonly T[] }
+  directRowUpdates?: boolean
   fallback?: JSX.Element
+  domOnlyRows?: boolean
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => string | number | symbol
+  keyMember?: string
+  reactiveIndex?: boolean
+  reactiveRows?: boolean
 }
 
 export interface ShowValue<T = unknown> {
@@ -348,6 +399,7 @@ export interface RouterState {
   manifest: RouteManifest
   navigate: Navigate
   prefetchedLoaders: Map<string, Map<string, LoaderSnapshot>>
+  routeDataEndpoint?: boolean
   routeModuleBusts: Map<string, number>
   routePrefetches: Map<string, Promise<RoutePrefetchResult>>
   sequence: number
@@ -366,8 +418,12 @@ export interface RuntimeContainer {
   components: Map<string, ComponentState>
   dirty: Set<string>
   dirtyFlushQueued: boolean
+  delegatedEventName: string | null
+  delegatedEventListener: ((event: Event) => void) | null
+  delegatedEventNames: Set<string> | null
   doc?: Document
   eventDispatchPromise: Promise<void> | null
+  eventBindingScopeCache: Map<string, string>
   externalRenderCache: Map<
     string,
     {
@@ -379,7 +435,9 @@ export interface RuntimeContainer {
   >
   id: string
   imports: Map<string, Promise<RuntimeSymbolModule>>
+  insertMarkerLookup: Map<string, Comment | null>
   interactivePrefetchCheckQueued: boolean
+  hasRuntimeRefMarkers: boolean
   loaderStates: Map<
     string,
     {
@@ -389,12 +447,21 @@ export interface RuntimeContainer {
     }
   >
   loaders: Map<string, unknown>
+  materializedScopes: Map<
+    string,
+    {
+      slots: SerializedValue[]
+      values: unknown[]
+    }
+  >
   nextComponentId: number
   nextElementId: number
   nextScopeId: number
   nextSignalId: number
   pendingSuspensePromises: Set<Promise<unknown>>
+  pendingSignalEffects: RenderEffect[]
   resumeReadyPromise: Promise<void> | null
+  rootChildComponentIds: Set<string>
   rootChildCursor: number
   rootElement?: HTMLElement
   router: RouterState | null
@@ -404,9 +471,12 @@ export interface RuntimeContainer {
   nextAtomId: number
   scopes: Map<string, SerializedValue[]>
   signals: Map<string, SignalRecord>
+  signalEffectBatchDepth: number
+  signalEffectsFlushing: boolean
   symbols: Map<string, string>
   visibilityListenersCleanup: (() => void) | null
   visibilityCheckQueued: boolean
   visibles: Map<string, VisibleState>
   watches: Map<string, WatchState>
+  warmedRuntimeSymbols: Set<string>
 }

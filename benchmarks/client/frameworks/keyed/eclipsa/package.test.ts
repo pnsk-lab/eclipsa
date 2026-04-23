@@ -16,5 +16,5 @@ test('benchmark metadata uses an explicit framework version for the local worksp
 })
 
 test('benchmark package installs the local Eclipsa workspace as a normal dependency', () => {
-  expect(packageJson.dependencies?.eclipsa).toBe('file:../../../../../../../packages/eclipsa')
+  expect(packageJson.dependencies?.eclipsa).toBe('file:../../../../../packages/eclipsa')
 })

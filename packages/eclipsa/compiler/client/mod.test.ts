@@ -90,8 +90,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    const headerInsertIndex = resultCode.indexOf('_insert(_createComponent(Header')
-    const childrenInsertIndex = resultCode.indexOf('_insert(() => props.children')
+    const headerInsertIndex = resultCode.indexOf('_insertStatic(_createComponent(Header')
+    const childrenInsertIndex = resultCode.indexOf('let _textValue0 = props.children')
     expect(headerInsertIndex).toBeGreaterThanOrEqual(0)
     expect(childrenInsertIndex).toBeGreaterThanOrEqual(0)
     expect(headerInsertIndex).toBeLessThan(childrenInsertIndex)
@@ -106,9 +106,11 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[0\];/)
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[2\];/)
-    expect(resultCode).toMatch(/var __eclipsaNode\d+ = _cloned\.childNodes\[3\];/)
+    expect(resultCode).not.toContain('_materializeTemplateRefs(_cloned,')
+    expect(resultCode).toContain('let _ref0 = _cloned.firstChild;')
+    expect(resultCode).toContain('let _ref1 = _cloned.childNodes[2];')
+    expect(resultCode).toContain('let _ref2 = _ref1.nextSibling;')
+    expect(resultCode).toContain('let _ref3 = _ref1.childNodes[1];')
     expect(resultCode).not.toContain(
       '_insert(() => count.value, _cloned.childNodes[2], _cloned.childNodes[2].childNodes[1]);',
     )
@@ -157,10 +159,114 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toContain('<div class=\\"card\\"></div>')
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
-    expect(resultCode).toContain('_attr(_cloned, "data-id", () => id);')
+    expect(resultCode).toContain('_attrStatic(_cloned, "data-id", id);')
     expect(resultCode).toContain(
-      '_attr(_cloned, "dangerouslySetInnerHTML", () => "<span>raw</span>");',
+      '_attrStatic(_cloned, "dangerouslySetInnerHTML", "<span>raw</span>");',
     )
+  })
+
+  it('routes tracked class bindings through the specialized class helper', async () => {
+    const resultCode = await compileClientModule(
+      `<div class={selected.value === rowId ? 'danger' : ''} />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain(
+      '_classSignalEqualsStatic(_cloned, selected, rowId, "danger", "");',
+    )
+    expect(resultCode).not.toContain('_className(_cloned')
+    expect(resultCode).not.toContain('_attr(_cloned, "class"')
+  })
+
+  it('routes static event bindings through the specialized event helper', async () => {
+    const resultCode = await compileClientModule(
+      `<button onClick={handleClick}>Run</button>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic(_cloned, "click", handleClick);')
+    expect(resultCode).not.toContain('_attrStatic(_cloned, "onClick", handleClick);')
+  })
+
+  it('routes packed resumable event bindings through the specialized direct event helper', async () => {
+    const analyzed = await analyzeModule(`
+      export default () => {
+        const rowId = 1;
+        const selected = { value: null };
+        return <button onClick={() => [selected, rowId]}>Run</button>;
+      };
+    `)
+
+    const resultCode = await compileClientModule(analyzed.code, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", __eclipsaEvent.__2(')
+  })
+
+  it('routes parenthesized packed resumable event bindings through the specialized direct event helper', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <button onClick={(__eclipsaEvent.__2("click", "symbol-click", selected, rowId))}>
+          Run
+        </button>
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).not.toContain(
+      '_eventStatic(_cloned, "click", (__eclipsaEvent.__2("click", "symbol-click", selected, rowId)));',
+    )
+  })
+
+  it('routes aliased packed resumable event bindings inside reactive row callbacks through the specialized direct event helper', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows.value}
+          fn={(row) => {
+            const rowId = row.value.id
+            const handleSelect = __eclipsaEvent.__2("click", "symbol-click", selected, rowId)
+            return <button onClick={handleSelect}>{row.value.label}</button>
+          }}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).toContain('"symbol-click", selected, rowId')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", handleSelect);')
+    expect(resultCode).not.toContain('const handleSelect = __eclipsaEvent.__2(')
+  })
+
+  it('routes direct-mode static event bindings through the plain listener helper', async () => {
+    const resultCode = await compileClientModule(
+      `<button onClick={handleClick}>Run</button>`,
+      'mod.test.tsx',
+      {
+        eventMode: 'direct',
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_listenerStatic(_cloned, "click", handleClick);')
+    expect(resultCode).not.toContain('_eventStatic(_cloned, "click", handleClick);')
   })
 
   it('emits dangerouslySetInnerHTML through runtime attr application', async () => {
@@ -172,7 +278,7 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('_attr(')
+    expect(resultCode).toContain('_attrStatic(')
     expect(resultCode).toContain('"dangerouslySetInnerHTML"')
     expect(resultCode).not.toContain('dangerouslySetInnerHTML="&lt;span&gt;raw&lt;/span&gt;"')
   })
@@ -219,8 +325,262 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).not.toContain('=> <li')
-    expect(resultCode).toContain('_createComponent(For')
-    expect(resultCode).toContain('<li><!-- 0 --></li>')
+    expect(resultCode).toContain('__e_for: true')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<li> </li>");')
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+    expect(resultCode).toContain('_textNodeSignalValue(todo, _ref0);')
+    expect(resultCode).not.toContain('_attr(_cloned, "key"')
+  })
+
+  it('emits one-shot inserts for expressions that do not read signals directly', async () => {
+    const resultCode = await compileClientModule(`<div>{row.label}</div>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('let _textValue0 = row.label;')
+    expect(resultCode).not.toContain('_insert(() => row.label')
+  })
+
+  it('omits comment markers for intrinsic elements that only contain one static runtime child', async () => {
+    const resultCode = await compileClientModule(`<a>{label}</a>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<a></a>");')
+    expect(resultCode).not.toContain('let _textValue0 = label;')
+    expect(resultCode).toContain('typeof label')
+    expect(resultCode).not.toContain('<!-- 0 -->')
+  })
+
+  it('keeps signal-backed text expressions on the fixed-signal text path', async () => {
+    const resultCode = await compileClientModule(`<div>{count.value}</div>`, 'mod.test.tsx', {
+      hmr: false,
+    })
+
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<div> </div>");')
+    expect(resultCode).toContain('_textNodeSignalValue(count, _ref0);')
+    expect(resultCode).not.toContain('<!-- 0 -->')
+  })
+
+  it('keeps signal-backed component props on the tracked insert path', async () => {
+    const resultCode = await compileClientModule(
+      `<div><Layout value={count.value} flag={enabled.value} /></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('_insert(() => _createComponent(Layout, {')
+    expect(resultCode).toMatch(/get "value"\(\)\s*\{\s*return count\.value;\s*\}/)
+    expect(resultCode).toMatch(/get "flag"\(\)\s*\{\s*return enabled\.value;\s*\}/)
+    expect(resultCode).not.toContain('_insertStatic(_createComponent(Layout')
+  })
+
+  it('keeps dynamic For props on the tracked insert path', async () => {
+    const resultCode = await compileClientModule(
+      `<div><For arr={rows.value} fn={(row) => <li>{row.label}</li>} key={(row) => row.id} /></div>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/_insertFor\(\{\s*arrSignal: rows/)
+    expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
+    expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).toContain('"directRowUpdates": true')
+    expect(resultCode).not.toContain('_createComponent(For')
+    expect(resultCode).not.toContain('_insertStatic(({ __e_for: true')
+  })
+
+  it('reuses identical intrinsic templates across multiple lowered JSX roots', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <div>
+          {left.map((item) => <span>{item.label}</span>)}
+          {right.map((item) => <span>{item.label}</span>)}
+        </div>
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(
+      resultCode.match(/const __eclipsaTemplate\d+ = _createTemplate\("<span> <\/span>"\);/g),
+    ).toHaveLength(1)
+  })
+
+  it('lowers eligible explicit For callbacks onto reactive row signals without changing row syntax', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          fn={(row) => {
+            const rowId = row.id
+            const label = row.label
+            const handleClick = () => select(rowId)
+
+            return (
+              <tr class={selected.value === rowId ? 'danger' : ''}>
+                <td>{rowId}</td>
+                <td><a onClick={handleClick}>{label}</a></td>
+              </tr>
+            )
+          }}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+    expect(resultCode).toContain('directRowUpdates: true')
+    expect(resultCode).toContain('reactiveIndex: false')
+    expect(resultCode).toContain('const rowId = row.value.id;')
+    expect(resultCode).not.toContain('let _textValue0 = rowId;')
+    expect(resultCode).toContain('typeof rowId')
+    expect(resultCode).toContain('_textNodeSignalMemberStatic(row, "label"')
+    expect(resultCode).not.toContain('<!-- 1,0,0 -->')
+    expect(resultCode).toContain('_classSignalEqualsStatic(')
+    expect(resultCode).toContain('_eventStatic(')
+    expect(resultCode).toContain('"click", handleClick')
+    expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
+  })
+
+  it('keeps lowered For callbacks with nested components on owner-backed rows', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          fn={(row) => <li><Widget value={row.label} /></li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toContain('_createComponent(Widget')
+    expect(resultCode).not.toMatch(/"?domOnlyRows"?: true/)
+  })
+
+  it('preserves explicit reactive row handle usage in For callbacks', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows}
+          reactiveRows={true}
+          fn={(row, i) => <li data-id={row.value.id}>{i.value}:{row.value.label}</li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toMatch(/"?reactiveRows"?: true/)
+    expect(resultCode).toContain('row.value.id')
+    expect(resultCode).toContain('row.value.label')
+    expect(resultCode).toContain('i.value')
+    expect(resultCode).not.toContain('row.value.value')
+    expect(resultCode).not.toContain('i.value.value')
+  })
+
+  it('passes signal handles to compiler-lowered For inserts when the array prop reads signal.value', async () => {
+    const resultCode = await compileClientModule(
+      `
+        <For
+          arr={rows.value}
+          fn={(row) => <li>{row.label}</li>}
+          key={(row) => row.id}
+        />
+      `,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('arrSignal: rows')
+    expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+  })
+
+  it('omits comment markers for tracked single-child text insertions inside nested elements', async () => {
+    const resultCode = await compileClientModule(
+      `<tr><td>{label.value}</td><td><a>{label.value}</a></td></tr>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain(
+      'const __eclipsaTemplate0 = _createTemplate("<tr><td> </td><td><a> </a></td></tr>");',
+    )
+    expect(resultCode).toContain('_textNodeSignalValue(label, _ref2);')
+    expect(resultCode).toContain('_textNodeSignalValue(label, _ref4);')
+    expect(resultCode).not.toContain('<!-- 0,0 -->')
+    expect(resultCode).not.toContain('<!-- 1,0,0 -->')
+  })
+
+  it('passes function props to components as stable values', async () => {
+    const resultCode = await compileClientModule(
+      `<For fn={(todo, i) => <li key={i}>{todo.label}</li>} key={(todo) => todo.id} />`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('"fn": (todo, i) => (() => {')
+    expect(resultCode).toContain('"key": (todo) => todo.id')
+    expect(resultCode).not.toContain('get "fn"()')
+    expect(resultCode).not.toContain('get "key"()')
+  })
+
+  it('lowers direct JSX map callbacks onto reactive row signals when callback params are simple identifiers', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item, i) => <li data-id={item.id}>{i}:{item.label}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('reactiveRows: true')
+    expect(resultCode).not.toContain('domOnlyRows: true')
+    expect(resultCode).toContain('_text(() => i.value')
+    expect(resultCode).toContain('item.value.label')
+    expect(resultCode).toContain('item.value.id')
+    expect(resultCode).not.toContain('reactiveIndex: false')
+  })
+
+  it('skips reactive row lowering when callback params already access a raw value property', async () => {
+    const resultCode = await compileClientModule(
+      `<ul>{items.map((item) => <li>{item.value}</li>)}</ul>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).not.toContain('reactiveRows: true')
+    expect(resultCode).toContain('_textNodeSignalValue(item, _ref0);')
+    expect(resultCode).not.toContain('item.value.value')
   })
 
   it('lowers ternaries with JSX branches to Show components', async () => {
@@ -232,8 +592,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('when: flag')
     expect(resultCode).not.toContain('flag ? <span>')
   })
@@ -247,10 +607,12 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('fallback: (__e_showValue) => __e_showValue')
-    expect(resultCode).toContain('<span><!-- 0 --></span>')
+    expect(resultCode).toContain('const __eclipsaTemplate0 = _createTemplate("<span></span>");')
+    expect(resultCode).not.toContain('let _textValue0 = count;')
+    expect(resultCode).toContain('typeof count')
   })
 
   it('lowers || expressions with JSX branches to Show components', async () => {
@@ -262,8 +624,8 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { Show as __eclipsaShow } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaShow')
+    expect(resultCode).not.toContain('import { Show as __eclipsaShow } from "eclipsa";')
+    expect(resultCode).toContain('__e_show: true')
     expect(resultCode).toContain('children: (__e_showValue) => __e_showValue')
     expect(resultCode).toContain('fallback: (__e_showValue) => (() => {')
   })
@@ -277,9 +639,10 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
-    expect(resultCode).toContain('_createComponent(__eclipsaFor')
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toContain('arr: items')
+    expect(resultCode).not.toContain('keyMember')
     expect(resultCode).not.toContain('=> <li')
   })
 
@@ -292,8 +655,13 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
+    expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
+    expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).toContain('domOnlyRows: true')
+    expect(resultCode).toContain('directRowUpdates: true')
+    expect(resultCode).not.toContain('_attr(_cloned, "key"')
   })
 
   it('does not lower non-JSX map expressions to For components', async () => {

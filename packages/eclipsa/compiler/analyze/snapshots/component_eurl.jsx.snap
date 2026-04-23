@@ -10,29 +10,25 @@ export default () => {
 
 
 // ================= analyzed ==
-import { __eclipsaComponent, __eclipsaLazy } from "eclipsa/internal";
+import { __eclipsaComponent, __eclipsaEvent } from "eclipsa/internal";
 export default __eclipsaComponent(() => {
   const a = 0
-  const add = __eclipsaLazy("wrvk12", async () => {
-    console.log(a)
-  }, ()=>[a])
+  const add = __eclipsaEvent.__1("click", "1ln2shq", a)
 
   return <button onClick={add}>Add</button>
-}, "jqsdkp", ()=>[], undefined, { optimizedRoot: true })
+}, "jqsdkp", [], undefined, { optimizedRoot: true })
 
 
-// ================= wrvk12 (lazy) ==
+// ================= 1ln2shq (event) ==
 export default async (__scope) => {
     console.log(__scope[0])
   };
 
 // ================= jqsdkp (component) ==
-import { __eclipsaLazy } from "eclipsa/internal";
+import { __eclipsaEvent } from "eclipsa/internal";
 export default (__scope) => {
   const a = 0
-  const add = __eclipsaLazy("wrvk12", async () => {
-    console.log(a)
-  }, ()=>[a])
+  const add = __eclipsaEvent.__1("click", "1ln2shq", a)
 
   return <button onClick={add}>Add</button>
 };

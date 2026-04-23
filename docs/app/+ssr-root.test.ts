@@ -42,5 +42,6 @@ describe('docs ssr root', () => {
     expect(result.html).toContain('<script>(() => {')
     expect(result.html).not.toContain('&gt;')
     expect(result.html).toContain('root.dataset.docsTheme = resolved;')
+    expect(result.html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">')
   })
 })

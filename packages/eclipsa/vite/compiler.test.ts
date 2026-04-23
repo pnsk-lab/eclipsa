@@ -10,14 +10,17 @@ import {
   collectAppSymbols,
   createBuildSymbolEntryName,
   createBuildSymbolUrl,
+  compileModuleForClient,
   compileModuleForSSR,
   createSymbolRequestId,
   createDevSymbolUrl,
   parseSymbolRequest,
   primeCompilerCache,
   createResumeHmrUpdate,
+  inspectResumeHmrUpdate,
   loadSymbolModuleForSSR,
   resetCompilerCache,
+  resolveResumeHmrUpdate,
 } from './compiler.ts'
 
 const analyze = async (source: string, filePath = '/tmp/example.tsx') => {
@@ -606,5 +609,120 @@ describe('createResumeHmrUpdate', () => {
     } finally {
       await fs.rm(root, { force: true, recursive: true })
     }
+  })
+
+  it('keeps plain event handlers static inside reactive For rows through the full client pipeline', async () => {
+    const compiled = await compileModuleForClient(
+      `
+        import { For } from "eclipsa";
+
+        export default () => (
+          <For
+            arr={rows}
+            fn={(row) => {
+              const rowId = row.id;
+              const label = row.label;
+              const handleClick = () => select(rowId);
+
+              return (
+                <tr class={selected.value === rowId ? "danger" : ""}>
+                  <td>{rowId}</td>
+                  <td><a onClick={handleClick}>{label}</a></td>
+                </tr>
+              );
+            }}
+            key={(row) => row.id}
+          />
+        );
+      `,
+      '/tmp/reactive-for-event.tsx',
+    )
+
+    expect(compiled).toContain('_eventStatic.__')
+    expect(compiled).toContain('"click"')
+    expect(compiled).toContain('"ka2v86"')
+    expect(compiled).toContain('rowId')
+    expect(compiled).not.toContain('"onClick", () => __eclipsaLazy')
+  })
+
+  it('can skip resumable event lowering for direct client-only builds', async () => {
+    const source = `
+      import { For } from "eclipsa";
+
+      export default () => (
+        <For
+          arr={rows}
+          fn={(row) => {
+            const rowId = row.id;
+            const label = row.label;
+            const handleClick = () => select(rowId);
+
+            return (
+              <tr class={selected.value === rowId ? "danger" : ""}>
+                <td>{rowId}</td>
+                <td><a onClick={handleClick}>{label}</a></td>
+              </tr>
+            );
+          }}
+          key={(row) => row.id}
+        />
+      );
+    `
+
+    const direct = await compileModuleForClient(source, '/tmp/reactive-for-event.tsx', {
+      eventMode: 'direct',
+    })
+    const resumable = await compileModuleForClient(source, '/tmp/reactive-for-event.tsx')
+
+    expect(direct).toContain('const handleClick = () => select(rowId);')
+    expect(direct).toContain('_listenerStatic(')
+    expect(direct).toContain('"click", handleClick')
+    expect(direct).not.toContain('_eventStatic(')
+    expect(direct).not.toContain('__eclipsaEvent')
+    expect(resumable).toContain('_eventStatic.__')
+  })
+
+  it('keeps resumable diff updates after an SSR inspection pass', async () => {
+    const filePath = '/tmp/ssr-inspect-then-client-resolve.tsx'
+    const previousSource = `
+      import { useSignal } from "eclipsa";
+      export default () => {
+        const count = useSignal(0);
+        return <button onClick={() => { count.value += 1; }}>{count.value}</button>;
+      };
+    `
+    const nextSource = `
+      import { useSignal } from "eclipsa";
+      export default () => {
+        const count = useSignal(0);
+        return <button onClick={() => { count.value += 2; }}>{count.value}</button>;
+      };
+    `
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const inspected = await inspectResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: nextSource,
+    })
+    const resolved = await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: nextSource,
+    })
+
+    expect(inspected.update).toMatchObject({
+      fileUrl: '/ssr-inspect-then-client-resolve.tsx',
+      fullReload: false,
+    })
+    expect(resolved.update).toMatchObject({
+      fileUrl: '/ssr-inspect-then-client-resolve.tsx',
+      fullReload: false,
+    })
   })
 })

@@ -7,6 +7,7 @@ import {
   analyzeModule,
   compileClientModule,
   compileSSRModule,
+  type AnalyzeEventMode,
   type AnalyzedModule,
   type ResumeHmrComponentEntry,
   type ResumeHmrSymbolEntry,
@@ -30,12 +31,17 @@ interface AnalyzedEntry {
 interface ResumeHmrResolution {
   isResumable: boolean
   nextEntry: AnalyzedEntry
-  normalizedId: string
   update: ResumeHmrUpdatePayload | null
 }
 
 const cache = new Map<string, AnalyzedEntry>()
 const servedSources = new Map<string, string>()
+
+const normalizeAnalyzeEventMode = (eventMode?: AnalyzeEventMode): AnalyzeEventMode =>
+  eventMode ?? 'resumable'
+
+const createAnalyzedCacheKey = (id: string, eventMode?: AnalyzeEventMode) =>
+  `${normalizeCompilerModuleId(id)}::${normalizeAnalyzeEventMode(eventMode)}`
 
 export const resetCompilerCache = () => {
   cache.clear()
@@ -44,9 +50,9 @@ export const resetCompilerCache = () => {
 
 export const primeCompilerCache = async (filePath: string, source?: string) => {
   const normalizedPath = stripQuery(filePath)
-  const normalizedId = normalizeCompilerModuleId(normalizedPath)
+  const cacheKey = createAnalyzedCacheKey(normalizedPath)
   const resolvedSource = source ?? (await fs.readFile(normalizedPath, 'utf8'))
-  servedSources.set(normalizedId, resolvedSource)
+  servedSources.set(cacheKey, resolvedSource)
   await loadAnalyzedModule(normalizedPath, resolvedSource)
 }
 
@@ -93,10 +99,17 @@ export const parseSymbolRequest = (id: string): { filePath: string; symbolId: st
 export const createSymbolRequestId = (filePath: string, symbolId: string) =>
   `${filePath}?${SYMBOL_QUERY}=${symbolId}&${SYMBOL_LANG_QUERY}`
 
-const loadAnalyzedModule = async (filePath: string, source?: string) => {
+const loadAnalyzedModule = async (
+  filePath: string,
+  source?: string,
+  options?: {
+    eventMode?: AnalyzeEventMode
+  },
+) => {
   const normalizedPath = stripQuery(filePath)
   const normalizedId = normalizeCompilerModuleId(normalizedPath)
-  const cached = cache.get(normalizedId)
+  const cacheKey = createAnalyzedCacheKey(normalizedPath, options?.eventMode)
+  const cached = cache.get(cacheKey)
   if (source == null && cached && isAppModuleId(normalizedPath)) {
     return cached.analyzed
   }
@@ -106,7 +119,9 @@ const loadAnalyzedModule = async (filePath: string, source?: string) => {
     return cached.analyzed
   }
 
-  const analyzed = await analyzeModule(resolvedSource, normalizedId)
+  const analyzed = await analyzeModule(resolvedSource, normalizedId, {
+    eventMode: options?.eventMode,
+  })
   if (!analyzed) {
     throw new Error(`Failed to compile ${normalizedId}.`)
   }
@@ -121,13 +136,21 @@ const loadAnalyzedModule = async (filePath: string, source?: string) => {
       : null,
     source: resolvedSource,
   } satisfies AnalyzedEntry
-  cache.set(normalizedId, entry)
+  cache.set(cacheKey, entry)
 
   return entry.analyzed
 }
 
-const createAnalyzedEntry = async (filePath: string, source: string): Promise<AnalyzedEntry> => {
-  const analyzed = await analyzeModule(source, normalizeCompilerModuleId(filePath))
+const createAnalyzedEntry = async (
+  filePath: string,
+  source: string,
+  options?: {
+    eventMode?: AnalyzeEventMode
+  },
+): Promise<AnalyzedEntry> => {
+  const analyzed = await analyzeModule(source, normalizeCompilerModuleId(filePath), {
+    eventMode: options?.eventMode,
+  })
   if (!analyzed) {
     throw new Error(`Failed to compile ${filePath}.`)
   }
@@ -355,7 +378,7 @@ export const resolveResumeHmrUpdate = async (options: {
   update: ResumeHmrUpdatePayload | null
 }> => {
   const resolution = await inspectResumeHmrUpdate(options)
-  cache.set(resolution.normalizedId, resolution.nextEntry)
+  cache.set(createAnalyzedCacheKey(options.filePath), resolution.nextEntry)
   return {
     isResumable: resolution.isResumable,
     update: resolution.update,
@@ -368,8 +391,8 @@ export const inspectResumeHmrUpdate = async (options: {
   source: string
 }): Promise<ResumeHmrResolution> => {
   const normalizedPath = stripQuery(options.filePath)
-  const normalizedId = normalizeCompilerModuleId(normalizedPath)
-  const cached = cache.get(normalizedId)
+  const cacheKey = createAnalyzedCacheKey(normalizedPath)
+  const cached = cache.get(cacheKey)
   let nextEntry: AnalyzedEntry
   if (cached?.source === options.source) {
     nextEntry = cached
@@ -390,7 +413,7 @@ export const inspectResumeHmrUpdate = async (options: {
       ? (nextEntry.previous?.analyzed ?? null)
       : (cached?.analyzed ?? null)
   if (!previous) {
-    const servedSource = servedSources.get(normalizedId)
+    const servedSource = servedSources.get(cacheKey)
     if (servedSource && servedSource !== options.source) {
       const previousEntry = await createAnalyzedEntry(normalizedPath, servedSource)
       previous = previousEntry.analyzed
@@ -411,11 +434,10 @@ export const inspectResumeHmrUpdate = async (options: {
     previous,
     root: options.root,
   })
-  servedSources.set(normalizedId, nextEntry.source)
+  servedSources.set(cacheKey, nextEntry.source)
   return {
     isResumable: (previous?.symbols.size ?? 0) > 0 || nextEntry.analyzed.symbols.size > 0,
     nextEntry,
-    normalizedId,
     update,
   }
 }
@@ -424,23 +446,27 @@ export const compileModuleForClient = async (
   source: string,
   id: string,
   options?: {
+    eventMode?: AnalyzeEventMode
     hmr?: boolean
   },
 ) => {
   const filePath = stripQuery(id)
-  const normalizedId = normalizeCompilerModuleId(filePath)
-  const analyzed = await loadAnalyzedModule(filePath, source)
-  servedSources.set(normalizedId, servedSources.get(normalizedId) ?? source)
+  const cacheKey = createAnalyzedCacheKey(filePath, options?.eventMode)
+  const analyzed = await loadAnalyzedModule(filePath, source, {
+    eventMode: options?.eventMode,
+  })
+  servedSources.set(cacheKey, servedSources.get(cacheKey) ?? source)
   return compileClientModule(analyzed.code, filePath, {
+    eventMode: options?.eventMode,
     hmr: options?.hmr ?? false,
   })
 }
 
 export const compileModuleForSSR = async (source: string, id: string) => {
   const filePath = stripQuery(id)
-  const normalizedId = normalizeCompilerModuleId(filePath)
+  const cacheKey = createAnalyzedCacheKey(filePath)
   const analyzed = await loadAnalyzedModule(filePath, source)
-  servedSources.set(normalizedId, servedSources.get(normalizedId) ?? source)
+  servedSources.set(cacheKey, servedSources.get(cacheKey) ?? source)
   return compileSSRModule(analyzed.code, filePath)
 }
 

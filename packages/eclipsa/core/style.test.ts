@@ -69,6 +69,7 @@ const createContainer = () => ({
   nextScopeId: 0,
   nextSignalId: 0,
   pendingSuspensePromises: /* @__PURE__ */ new Set(),
+  rootChildComponentIds: /* @__PURE__ */ new Set(),
   rootChildCursor: 0,
   rootElement: void 0,
   router: null,
@@ -214,6 +215,28 @@ h1 { color: red; }
     )
     expect(html).toContain('<div>plain</div>')
     expect(html).not.toContain('@scope (')
+  })
+  it('materializes an empty component scope when serializing resumable payloads', () => {
+    const App = __eclipsaComponent(
+      () =>
+        /* @__PURE__ */ jsxDEV('div', { children: 'plain' }, void 0, false, {
+          fileName: 'packages/eclipsa/core/style.test.ts',
+          lineNumber: 178,
+          columnNumber: 14,
+        }),
+      'plain-symbol',
+      () => [],
+    )
+    const { payload } = renderSSR(() =>
+      /* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
+        fileName: 'packages/eclipsa/core/style.test.ts',
+        lineNumber: 186,
+        columnNumber: 40,
+      }),
+    )
+    const scopeId = payload.components.c0?.scope
+    expect(scopeId).toBeTruthy()
+    expect(payload.scopes[scopeId!]).toEqual([])
   })
   it('renders scoped style nodes during client rendering', () =>
     withFakeNodeGlobal(() => {

@@ -1,5 +1,6 @@
 export {
   analyzeModule,
+  type AnalyzeEventMode,
   type AnalyzedModule,
   type ResumeHmrComponentEntry,
   type ResumeHmrManifest,

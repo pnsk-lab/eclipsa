@@ -21,6 +21,7 @@ import {
   getNavigateMeta,
   getRegisteredActionHook,
   getRegisteredLoaderHook,
+  resolveCaptureValues,
   getSignalMeta,
 } from '../internal.ts'
 import {
@@ -171,7 +172,7 @@ export const createRuntimeSerialization = ({
       data: [
         'component',
         meta.symbol,
-        registerScope(container, meta.captures()),
+        registerScope(container, resolveCaptureValues(meta.captures)),
         serializeRuntimeValue(container, evaluatedProps),
         serializeRuntimeValue(container, key),
         isStatic,
@@ -375,7 +376,9 @@ export const createRuntimeSerialization = ({
         if (lazyMeta) {
           return {
             __eclipsa_type: 'ref',
-            data: lazyMeta.captures().map((entry) => serializeRuntimeValue(container, entry)),
+            data: resolveCaptureValues(lazyMeta.captures).map((entry) =>
+              serializeRuntimeValue(container, entry),
+            ),
             kind: 'symbol',
             token: lazyMeta.symbol,
           }

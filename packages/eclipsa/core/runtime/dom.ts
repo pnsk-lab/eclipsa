@@ -7,6 +7,8 @@ type DomConstructorName =
   | 'HTMLAnchorElement'
   | 'HTMLFormElement'
 
+const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
+
 export interface FocusSnapshot {
   path: number[]
   selectionDirection?: 'backward' | 'forward' | 'none' | null
@@ -18,34 +20,76 @@ export interface PendingFocusRestore {
   snapshot: FocusSnapshot
 }
 
-const managedElementAttributes = new WeakMap<Element, Set<string>>()
-const insertMarkerNodeCounts = new WeakMap<Comment, number>()
+type ManagedAttributeSnapshot = Set<string> | readonly string[]
 
-const getDomContexts = (value: unknown): Array<Window | typeof globalThis> => {
-  const contexts: Array<Window | typeof globalThis> = []
-  if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
-    return contexts
+const managedElementAttributes = new WeakMap<Element, ManagedAttributeSnapshot>()
+const insertMarkerNodeCounts = new WeakMap<Comment, number>()
+const managedRememberedSubtrees = new WeakSet<Node>()
+
+const isObjectLike = (value: unknown): value is Record<PropertyKey, unknown> =>
+  !!value && (typeof value === 'object' || typeof value === 'function')
+
+const getOwnerDefaultView = (value: unknown) => {
+  if (!isObjectLike(value) || !('ownerDocument' in value)) {
+    return null
   }
-  if ('ownerDocument' in value) {
-    const ownerDocument = (value as { ownerDocument?: Document | null }).ownerDocument
-    if (ownerDocument?.defaultView) {
-      contexts.push(ownerDocument.defaultView)
-    }
-  }
-  if ('defaultView' in value) {
-    const defaultView = (value as { defaultView?: Window | null }).defaultView
-    if (defaultView) {
-      contexts.push(defaultView)
-    }
-  }
-  contexts.push(globalThis)
-  return contexts
+
+  return (value as { ownerDocument?: Document | null }).ownerDocument?.defaultView ?? null
 }
 
+const getDefaultView = (value: unknown) => {
+  if (!isObjectLike(value) || !('defaultView' in value)) {
+    return null
+  }
+
+  return (value as { defaultView?: Window | null }).defaultView ?? null
+}
+
+const isNodeType = (value: unknown, nodeType: number) =>
+  isObjectLike(value) &&
+  'nodeType' in value &&
+  (value as { nodeType?: unknown }).nodeType === nodeType
+
+const hasTagName = (value: unknown): value is { namespaceURI?: string | null; tagName: string } =>
+  isObjectLike(value) &&
+  'tagName' in value &&
+  typeof (value as { tagName?: unknown }).tagName === 'string'
+
+const isHtmlNamespace = (value: { namespaceURI?: string | null }) =>
+  value.namespaceURI === undefined ||
+  value.namespaceURI === null ||
+  value.namespaceURI === HTML_NAMESPACE
+
+const isHtmlElementTag = (value: unknown, tagName: string) =>
+  isNodeType(value, 1) &&
+  hasTagName(value) &&
+  isHtmlNamespace(value) &&
+  value.tagName.toUpperCase() === tagName
+
 const isDomInstance = <T>(value: unknown, name: DomConstructorName): value is T => {
-  for (const context of getDomContexts(value)) {
-    const ctor = (context as Record<DomConstructorName, unknown>)[name]
-    if (typeof ctor === 'function' && value instanceof ctor) {
+  if (!isObjectLike(value)) {
+    return false
+  }
+
+  const globalDomContext = globalThis as unknown as Record<DomConstructorName, unknown>
+  const globalDefaultView = globalThis as unknown as Window
+  const globalCtor = globalDomContext[name]
+  if (typeof globalCtor === 'function' && value instanceof globalCtor) {
+    return true
+  }
+
+  const ownerDefaultView = getOwnerDefaultView(value)
+  if (ownerDefaultView && ownerDefaultView !== globalDefaultView) {
+    const ownerCtor = (ownerDefaultView as unknown as Record<DomConstructorName, unknown>)[name]
+    if (typeof ownerCtor === 'function' && value instanceof ownerCtor) {
+      return true
+    }
+  }
+
+  const defaultView = getDefaultView(value)
+  if (defaultView && defaultView !== globalDefaultView && defaultView !== ownerDefaultView) {
+    const defaultCtor = (defaultView as unknown as Record<DomConstructorName, unknown>)[name]
+    if (typeof defaultCtor === 'function' && value instanceof defaultCtor) {
       return true
     }
   }
@@ -55,25 +99,38 @@ const isDomInstance = <T>(value: unknown, name: DomConstructorName): value is T 
 export const hasOwnerDocument = (
   value: unknown,
 ): value is ParentNode & { ownerDocument: Document } =>
-  !!value &&
-  (typeof value === 'object' || typeof value === 'function') &&
+  isObjectLike(value) &&
   'ownerDocument' in value &&
   !!(value as { ownerDocument?: Document | null }).ownerDocument
 
 export const isElementNode = (value: unknown): value is Element =>
-  isDomInstance<Element>(value, 'Element') || isDomInstance<HTMLElement>(value, 'HTMLElement')
+  (isNodeType(value, 1) &&
+    hasTagName(value) &&
+    typeof (value as { getAttribute?: unknown }).getAttribute === 'function') ||
+  isDomInstance<Element>(value, 'Element') ||
+  isDomInstance<HTMLElement>(value, 'HTMLElement')
 
 export const isHTMLElementNode = (value: unknown): value is HTMLElement =>
+  (isNodeType(value, 1) &&
+    hasTagName(value) &&
+    isHtmlNamespace(value) &&
+    typeof (value as { focus?: unknown }).focus === 'function') ||
   isDomInstance<HTMLElement>(value, 'HTMLElement')
 
 export const isHTMLInputElementNode = (value: unknown): value is HTMLInputElement =>
-  isDomInstance<HTMLInputElement>(value, 'HTMLInputElement')
+  isNodeType(value, 1) && hasTagName(value)
+    ? isHtmlElementTag(value, 'INPUT')
+    : isDomInstance<HTMLInputElement>(value, 'HTMLInputElement')
 
 export const isHTMLSelectElementNode = (value: unknown): value is HTMLSelectElement =>
-  isDomInstance<HTMLSelectElement>(value, 'HTMLSelectElement')
+  isNodeType(value, 1) && hasTagName(value)
+    ? isHtmlElementTag(value, 'SELECT')
+    : isDomInstance<HTMLSelectElement>(value, 'HTMLSelectElement')
 
 export const isHTMLTextAreaElementNode = (value: unknown): value is HTMLTextAreaElement =>
-  isDomInstance<HTMLTextAreaElement>(value, 'HTMLTextAreaElement')
+  isNodeType(value, 1) && hasTagName(value)
+    ? isHtmlElementTag(value, 'TEXTAREA')
+    : isDomInstance<HTMLTextAreaElement>(value, 'HTMLTextAreaElement')
 
 export const isTextEntryElement = (
   value: unknown,
@@ -81,14 +138,35 @@ export const isTextEntryElement = (
   isHTMLInputElementNode(value) || isHTMLTextAreaElementNode(value)
 
 export const isHTMLAnchorElementNode = (value: unknown): value is HTMLAnchorElement =>
-  isDomInstance<HTMLAnchorElement>(value, 'HTMLAnchorElement')
+  isNodeType(value, 1) && hasTagName(value)
+    ? isHtmlElementTag(value, 'A')
+    : isDomInstance<HTMLAnchorElement>(value, 'HTMLAnchorElement')
 
 export const isHTMLFormElementNode = (value: unknown): value is HTMLFormElement =>
-  isDomInstance<HTMLFormElement>(value, 'HTMLFormElement')
+  isNodeType(value, 1) && hasTagName(value)
+    ? isHtmlElementTag(value, 'FORM')
+    : isDomInstance<HTMLFormElement>(value, 'HTMLFormElement')
 
 export const listNodeChildren = (
   node: { childNodes?: Iterable<Node> | ArrayLike<Node> } | null | undefined,
-) => Array.from((node?.childNodes ?? []) as Iterable<Node> | ArrayLike<Node>)
+) => {
+  const childNodes = node?.childNodes
+  if (!childNodes) {
+    return [] as Node[]
+  }
+  if (Array.isArray(childNodes)) {
+    return childNodes.slice()
+  }
+  if (typeof (childNodes as ArrayLike<Node>).length === 'number') {
+    const length = (childNodes as ArrayLike<Node>).length
+    const children = Array.from({ length }, () => null as unknown as Node)
+    for (let index = 0; index < length; index += 1) {
+      children[index] = (childNodes as ArrayLike<Node>)[index]!
+    }
+    return children
+  }
+  return [...(childNodes as Iterable<Node>)]
+}
 
 const getElementAttributeNames = (element: Element): string[] => {
   const withGetAttributeNames = element as Element & { getAttributeNames?: () => string[] }
@@ -140,18 +218,33 @@ const hasElementAttribute = (element: Element, name: string): boolean | null => 
   return null
 }
 
-const cloneManagedAttributeSnapshot = (element: Element) =>
-  new Set(getElementAttributeNames(element))
-
 export const replaceManagedAttributeSnapshot = (element: Element, names: Iterable<string>) => {
-  managedElementAttributes.set(element, new Set(names))
+  if (names instanceof Set || Array.isArray(names)) {
+    managedElementAttributes.set(element, names)
+    return
+  }
+  managedElementAttributes.set(element, [...names])
 }
 
-export const getManagedAttributeSnapshot = (element: Element) =>
+export const getManagedAttributeSnapshotValues = (element: Element) =>
   managedElementAttributes.get(element) ?? null
 
+export const getManagedAttributeSnapshot = (element: Element) => {
+  const snapshot = getManagedAttributeSnapshotValues(element)
+  if (!snapshot) {
+    return null
+  }
+  return snapshot instanceof Set ? snapshot : new Set(snapshot)
+}
+
 export const syncManagedAttributeSnapshot = (element: Element, name: string) => {
-  const snapshot = getManagedAttributeSnapshot(element) ?? new Set<string>()
+  const previousSnapshot = getManagedAttributeSnapshotValues(element)
+  const snapshot =
+    previousSnapshot instanceof Set
+      ? previousSnapshot
+      : previousSnapshot
+        ? new Set(previousSnapshot)
+        : new Set(getElementAttributeNames(element))
   const hasAttribute = hasElementAttribute(element, name)
   if (hasAttribute === true) {
     snapshot.add(name)
@@ -160,30 +253,64 @@ export const syncManagedAttributeSnapshot = (element: Element, name: string) => 
   } else {
     snapshot.add(name)
   }
-  replaceManagedAttributeSnapshot(element, snapshot)
+  managedElementAttributes.set(element, snapshot)
 }
 
 export const rememberManagedAttributesForNode = (node: Node | null | undefined) => {
-  if (!node) {
+  if (!isElementNode(node)) {
     return
   }
-
-  const visit = (current: Node) => {
-    if (isElementNode(current)) {
-      replaceManagedAttributeSnapshot(current, cloneManagedAttributeSnapshot(current))
-    }
-    for (const child of listNodeChildren(current)) {
-      visit(child)
-    }
-  }
-
-  visit(node)
+  replaceManagedAttributeSnapshot(node, getElementAttributeNames(node))
 }
 
 export const rememberManagedAttributesForNodes = (nodes: Iterable<Node>) => {
   for (const node of nodes) {
     rememberManagedAttributesForNode(node)
   }
+}
+
+export const rememberManagedAttributesForSubtree = (node: Node | null | undefined) => {
+  if (!node) {
+    return
+  }
+
+  const stack = [node]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    rememberManagedAttributesForNode(current)
+    const childNodes = (
+      current as Node & {
+        childNodes?: Iterable<Node> | ArrayLike<Node>
+      }
+    ).childNodes
+    if (!childNodes) {
+      continue
+    }
+    if (typeof (childNodes as ArrayLike<Node>).length === 'number') {
+      for (let index = (childNodes as ArrayLike<Node>).length - 1; index >= 0; index -= 1) {
+        const child = (childNodes as ArrayLike<Node>)[index]
+        if (child) {
+          stack.push(child)
+        }
+      }
+      continue
+    }
+    for (const child of childNodes as Iterable<Node>) {
+      stack.push(child)
+    }
+  }
+
+  managedRememberedSubtrees.add(node)
+}
+
+export const hasRememberedManagedAttributesForSubtree = (node: Node | null | undefined) =>
+  !!node && managedRememberedSubtrees.has(node)
+
+export const markManagedAttributesForSubtreeRemembered = (node: Node | null | undefined) => {
+  if (!node) {
+    return
+  }
+  managedRememberedSubtrees.add(node)
 }
 
 export const rememberInsertMarkerRange = (

@@ -345,7 +345,7 @@ describe('build', () => {
     expect(html).not.toContain('__ECLIPSA_APP_HOOKS__')
     expect(html).not.toContain('__ECLIPSA_CHUNK_CACHE__')
     expect(html).toContain('"children":"[]"')
-    expect(html).toContain('{\\"client\\":null}')
+    expect(html).toContain('{\\"client\\":null,\\"routeDataEndpoint\\":true}')
     expect(html).toContain('eclipsa-chunk-cache-sw.js')
   })
 
@@ -1000,6 +1000,9 @@ describe('build', () => {
     )
     expect(await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).toContain(
       'const stylesheetUrls = ["/assets/layout.css"];',
+    )
+    expect(await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).toContain(
+      '"routeDataEndpoint":false',
     )
     await expect(fs.stat(path.join(root, 'dist/server'))).rejects.toThrow()
   })

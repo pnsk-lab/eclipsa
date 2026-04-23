@@ -520,6 +520,7 @@ const createDevApp = async (init: DevAppInit) => {
   )) as ServerHooksModule
   const appHooksManifest = {
     client: (await fileExists(appHooksPath)) ? '/app/+hooks.ts' : null,
+    routeDataEndpoint: true,
   }
 
   await serverHooks.init?.()

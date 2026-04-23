@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync, spawn } from 'node:child_process'
@@ -10,6 +10,7 @@ const webdriverRoot = resolve(benchmarkRoot, 'webdriver-ts')
 const benchmarkServerEntry = resolve(benchmarkRoot, 'server/index.ts')
 const eclipsaFrameworkRoot = resolve(benchmarkRoot, 'frameworks/keyed/eclipsa')
 const eclipsaTemplateDir = resolve(__dirname, 'frameworks/keyed/eclipsa')
+const cachedFrameworkDependency = 'file:../../../../../../../packages/eclipsa'
 const defaultChromeBinaryCandidates = [
   '/usr/bin/google-chrome',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -120,7 +121,7 @@ export function shouldCopyEclipsaTemplatePath(sourcePath) {
   return !sourcePath.split(/[\\/]/).some((segment) => excludedTemplateEntries.has(segment))
 }
 
-export function syncFrameworkTemplate(sourceDir, destinationDir) {
+export function syncFrameworkTemplate(sourceDir, destinationDir, options = {}) {
   rmSync(destinationDir, {
     recursive: true,
     force: true,
@@ -130,10 +131,19 @@ export function syncFrameworkTemplate(sourceDir, destinationDir) {
     force: true,
     filter: shouldCopyEclipsaTemplatePath,
   })
+  if (options.frameworkDependency) {
+    const packageJsonPath = resolve(destinationDir, 'package.json')
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+    packageJson.dependencies ??= {}
+    packageJson.dependencies.eclipsa = options.frameworkDependency
+    writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8')
+  }
 }
 
 export function syncEclipsaFramework() {
-  syncFrameworkTemplate(eclipsaTemplateDir, eclipsaFrameworkRoot)
+  syncFrameworkTemplate(eclipsaTemplateDir, eclipsaFrameworkRoot, {
+    frameworkDependency: cachedFrameworkDependency,
+  })
 }
 
 function patchBenchmarkServerEntry() {

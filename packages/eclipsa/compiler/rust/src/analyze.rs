@@ -69,6 +69,22 @@ pub enum SymbolKind {
     Watch,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EventMode {
+    Resumable,
+    Direct,
+}
+
+impl EventMode {
+    pub(crate) fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None | Some("resumable") => Ok(Self::Resumable),
+            Some("direct") => Ok(Self::Direct),
+            Some(other) => Err(format!("unsupported analyze event mode: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[napi(object)]
@@ -1214,7 +1230,11 @@ impl<'a, 's> Visit<'a> for CaptureCollector<'a, 's> {
 }
 
 
-pub(crate) fn transform_analyze(source: &str, id: &str) -> Result<AnalyzeResponse, String> {
+pub(crate) fn transform_analyze(
+    source: &str,
+    id: &str,
+    event_mode: EventMode,
+) -> Result<AnalyzeResponse, String> {
     let allocator = Allocator::default();
     let program = parse_program(&allocator, source, source_type_for(id), id)?;
     let semantic_builder = SemanticBuilder::new().with_check_syntax_error(true).build(&program);
@@ -1229,7 +1249,7 @@ pub(crate) fn transform_analyze(source: &str, id: &str) -> Result<AnalyzeRespons
     }
     let semantic = semantic_builder.semantic;
     let imports = imports_from_eclipsa(&program);
-    let mut visitor = AnalyzeVisitor::new(source, id, &program, &semantic, imports);
+    let mut visitor = AnalyzeVisitor::new(source, id, &program, &semantic, imports, event_mode);
     visitor.visit_program(&program);
     visitor.finish()
 }
@@ -1241,11 +1261,13 @@ struct AnalyzeVisitor<'a, 's> {
     current_functions: Vec<FunctionContext>,
     current_scope_stack: Vec<ScopeId>,
     error: Option<String>,
+    event_mode: EventMode,
     hmr_components: Vec<(String, ResumeHmrComponentEntry)>,
     hmr_key_by_symbol_id: HashMap<String, String>,
     hmr_symbols: Vec<(String, ResumeHmrSymbolEntry)>,
     hook_functions: HashSet<SpanKey>,
     imports: ImportBindings,
+    event_symbol_ids_by_key: HashMap<(SpanKey, String), String>,
     lazy_symbol_ids_by_span: HashMap<SpanKey, String>,
     file_id: String,
     loaders: Vec<(String, SymbolRef)>,
@@ -1266,6 +1288,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         program: &'a Program<'a>,
         semantic: &'s Semantic<'a>,
         imports: ImportBindings,
+        event_mode: EventMode,
     ) -> Self {
         Self {
             actions: Vec::new(),
@@ -1274,11 +1297,13 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             current_functions: Vec::new(),
             current_scope_stack: Vec::new(),
             error: None,
+            event_mode,
             hmr_components: Vec::new(),
             hmr_key_by_symbol_id: HashMap::new(),
             hmr_symbols: Vec::new(),
             hook_functions: HashSet::new(),
             imports,
+            event_symbol_ids_by_key: HashMap::new(),
             lazy_symbol_ids_by_span: HashMap::new(),
             file_id: file_id.to_string(),
             loaders: Vec::new(),
@@ -1458,8 +1483,8 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         ));
     }
 
-    fn build_capture_getter(captures: &[String]) -> String {
-        format!("()=>[{}]", captures.join(", "))
+    fn build_capture_values(captures: &[String]) -> String {
+        format!("[{}]", captures.join(", "))
     }
 
     fn plain_event_handler_error(attribute_name: &str, handler_name: Option<&str>) -> String {
@@ -1506,6 +1531,45 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         symbol_id
     }
 
+    fn ensure_event_symbol_for_function(
+        &mut self,
+        event_name: &str,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        local_definitions: Vec<LocalDefinition>,
+    ) -> String {
+        let key = (SpanKey::from_span(function_span), event_name.to_string());
+        if let Some(symbol_id) = self.event_symbol_ids_by_key.get(&key) {
+            return symbol_id.clone();
+        }
+
+        let raw_code = source_text(self.source, function_span);
+        let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Event, raw_code);
+        let build = self
+            .build_symbol(
+                function_span,
+                captures.clone(),
+                import_spans,
+                local_definitions,
+                false,
+            )
+            .unwrap();
+        let owner = self.current_owner_component_key();
+        let base = format!(
+            "{}:event:{event_name}",
+            owner.clone().unwrap_or_else(|| "file".to_string())
+        );
+        let hmr_key = self.next_owned_symbol_key(base);
+        if owner.is_some() {
+            self.push_owner_local_symbol_key(&hmr_key);
+        }
+        self.used_helpers.insert(HELPER_EVENT.to_string());
+        self.add_resume_symbol(symbol_id.clone(), hmr_key, owner, SymbolKind::Event, build);
+        self.event_symbol_ids_by_key.insert(key, symbol_id.clone());
+        symbol_id
+    }
+
     fn emit_lazy_symbol_from_function(
         &mut self,
         function_span: Span,
@@ -1523,11 +1587,54 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             "{HELPER_LAZY}({}, {}, {})",
             js_string(&symbol_id),
             render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-            Self::build_capture_getter(&captures),
+            Self::build_capture_values(&captures),
         )
     }
 
+    fn emit_event_symbol_from_function(
+        &mut self,
+        event_name: &str,
+        function_span: Span,
+        captures: Vec<String>,
+        import_spans: Vec<Span>,
+        local_definitions: Vec<LocalDefinition>,
+    ) -> String {
+        let symbol_id = self.ensure_event_symbol_for_function(
+            event_name,
+            function_span,
+            captures.clone(),
+            import_spans,
+            local_definitions,
+        );
+        format!(
+            "{HELPER_EVENT}({}, {}, {})",
+            js_string(event_name),
+            js_string(&symbol_id),
+            Self::build_capture_values(&captures),
+        )
+    }
+
+    fn discard_lazy_symbol_for_function_span(&mut self, function_span: Span) {
+        let span_key = SpanKey::from_span(function_span);
+        let Some(symbol_id) = self.lazy_symbol_ids_by_span.remove(&span_key) else {
+            return;
+        };
+
+        let hmr_key = self.hmr_key_by_symbol_id.remove(&symbol_id);
+        self.symbols.retain(|(id, _)| id != &symbol_id);
+        if let Some(hmr_key) = hmr_key {
+            self.hmr_symbols.retain(|(key, _)| key != &hmr_key);
+        }
+
+        if self.lazy_symbol_ids_by_span.is_empty() {
+            self.used_helpers.remove(HELPER_LAZY);
+        }
+    }
+
     fn maybe_emit_local_lazy_symbol(&mut self, expression: &Expression<'a>) {
+        if self.event_mode == EventMode::Direct {
+            return;
+        }
         if self.current_owner_component_key().is_none() {
             return;
         }
@@ -1727,6 +1834,10 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
         container: &oxc_ast::ast::JSXExpressionContainer<'a>,
         identifier: &oxc_ast::ast::IdentifierReference<'a>,
     ) {
+        if self.event_mode == EventMode::Direct {
+            return;
+        }
+        let event_name = to_event_name(attribute_name).unwrap_or_else(|| attribute_name.to_string());
         let reference = self.semantic.scoping().get_reference(identifier.reference_id());
         let Some(symbol_id) = reference.symbol_id() else {
             self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
@@ -1757,6 +1868,9 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.fail(Self::plain_event_handler_error(attribute_name, Some(identifier.name.as_str())));
                     return;
                 }
+                if self.semantic.symbol_references(symbol_id).count() > 1 {
+                    return;
+                }
                 let dependencies = match self.collect_symbol_dependencies_from_expression(init) {
                     Ok(dependencies) => dependencies,
                     Err(error) => {
@@ -1764,7 +1878,9 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                         return;
                     }
                 };
-                let replacement_code = self.emit_lazy_symbol_from_function(
+                self.discard_lazy_symbol_for_function_span(function_span);
+                let replacement_code = self.emit_event_symbol_from_function(
+                    &event_name,
                     function_span,
                     dependencies.captures,
                     dependencies.import_spans,
@@ -1792,7 +1908,8 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                         return;
                     }
                 };
-                let replacement_code = self.emit_lazy_symbol_from_function(
+                let replacement_code = self.emit_event_symbol_from_function(
+                    &event_name,
                     function.span,
                     dependencies.captures,
                     dependencies.import_spans,
@@ -1952,7 +2069,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 "{HELPER_COMPONENT}({}, {}, {}{})",
                 render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
                 js_string(&symbol_id),
-                Self::build_capture_getter(&captures),
+                Self::build_capture_values(&captures),
                 projection_literal,
             ),
         );
@@ -2054,7 +2171,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                     self.push_replacement(
                         captures_argument.span().start as usize,
                         captures_argument.span().end as usize,
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     );
                     self.emit_prewrapped_component_symbol(
                         symbol_literal.value.as_str().to_string(),
@@ -2389,7 +2506,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 "{HELPER_COMPONENT}({}, {}, {}{}, {})",
                 render_span_with_replacements(self.source, expression.span, &self.replacements).unwrap(),
                 js_string(&symbol_id),
-                Self::build_capture_getter(&dependencies.captures),
+                Self::build_capture_values(&dependencies.captures),
                 projection_literal,
                 options_literal,
             ),
@@ -2760,7 +2877,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                 "{HELPER_WATCH}({}, {}, {})",
                 js_string(&symbol_id),
                 render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
-                Self::build_capture_getter(&dependencies.captures),
+                Self::build_capture_values(&dependencies.captures),
             );
             self.push_replacement(function_span.start as usize, function_span.end as usize, replacement_code);
             return;
@@ -3064,6 +3181,9 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
             Some(name) => name,
             None => return,
         };
+        if self.event_mode == EventMode::Direct {
+            return;
+        }
         let Some(value) = &attribute.value else {
             return;
         };
@@ -3119,7 +3239,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                         "{{{HELPER_EVENT}({}, {}, {})}}",
                         js_string(&event_name),
                         js_string(&symbol_id),
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     ),
                 );
             }
@@ -3171,7 +3291,7 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                         "{{{HELPER_EVENT}({}, {}, {})}}",
                         js_string(&event_name),
                         js_string(&symbol_id),
-                        Self::build_capture_getter(&dependencies.captures),
+                        Self::build_capture_values(&dependencies.captures),
                     ),
                 );
             }
