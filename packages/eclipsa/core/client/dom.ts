@@ -58,6 +58,11 @@ import type { ClientElementLike, Insertable } from './types.ts'
 
 const EMPTY_INSERT_COMMENT = 'eclipsa-empty'
 const ATTR_UNSET = Symbol('eclipsa.attr-unset')
+const RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS = { runInContainer: false } as const
+const SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS = {
+  runInContainer: false,
+  skipInitialRun: true,
+} as const
 
 const createActionCsrfInput = (doc: Document, token: string) => {
   const input = doc.createElement('input')
@@ -972,12 +977,9 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   const state = createInsertBindingState(parent, marker, runtimeContainer)
   markInsertBindingVariableNodeCount(state)
 
-  effect(
-    () => {
-      runInsertEffect(state, value)
-    },
-    { runInContainer: false },
-  )
+  effect(() => {
+    runInsertEffect(state, value)
+  }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
 }
 
 export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, marker?: Node) => {
@@ -999,38 +1001,38 @@ export const insertFor = <T>(props: Omit<ForValue<T>, '__e_for'>, parent: Node, 
     !Object.getOwnPropertyDescriptor(props, 'fallback')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'fn')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'key')?.get &&
+    !Object.getOwnPropertyDescriptor(props, 'keyMember')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'reactiveIndex')?.get &&
     !Object.getOwnPropertyDescriptor(props, 'reactiveRows')?.get
 
   if (canUseFixedArrSignal) {
+    value.fallback = props.fallback
+    value.fn = props.fn
+    value.key = props.key
+    value.keyMember = props.keyMember
+    value.reactiveIndex = props.reactiveIndex
+    value.reactiveRows = props.reactiveRows
     createFixedSignalEffect(
       arrSignal,
       (arr) => {
         value.arr = arr
-        value.fallback = props.fallback
-        value.fn = props.fn
-        value.key = props.key
-        value.reactiveIndex = props.reactiveIndex
-        value.reactiveRows = props.reactiveRows
         runForInsertEffect(state, value)
       },
-      { runInContainer: false },
+      RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
 
-  effect(
-    () => {
-      value.arr = props.arr
-      value.fallback = props.fallback
-      value.fn = props.fn
-      value.key = props.key
-      value.reactiveIndex = props.reactiveIndex
-      value.reactiveRows = props.reactiveRows
-      runForInsertEffect(state, value)
-    },
-    { runInContainer: false },
-  )
+  effect(() => {
+    value.arr = props.arr
+    value.fallback = props.fallback
+    value.fn = props.fn
+    value.key = props.key
+    value.keyMember = props.keyMember
+    value.reactiveIndex = props.reactiveIndex
+    value.reactiveRows = props.reactiveRows
+    runForInsertEffect(state, value)
+  }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
 }
 
 export const text = (value: Insertable, parent: Node, marker?: Node) => {
@@ -1042,20 +1044,17 @@ export const text = (value: Insertable, parent: Node, marker?: Node) => {
   const state = createInsertBindingState(parent, marker, runtimeContainer)
   let delegated = false
 
-  effect(
-    () => {
-      if (!delegated && runSimpleTextBindingEffect(state, value)) {
-        return
-      }
+  effect(() => {
+    if (!delegated && runSimpleTextBindingEffect(state, value)) {
+      return
+    }
 
-      if (!delegated) {
-        markInsertBindingVariableNodeCount(state)
-        delegated = true
-      }
-      runInsertEffect(state, value)
-    },
-    { runInContainer: false },
-  )
+    if (!delegated) {
+      markInsertBindingVariableNodeCount(state)
+      delegated = true
+    }
+    runInsertEffect(state, value)
+  }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
 }
 
 export const textSignal = <T>(
@@ -1086,7 +1085,7 @@ export const textSignal = <T>(
       }
       runInsertEffect(state, value)
     },
-    { runInContainer: false },
+    RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
 }
 
@@ -1183,7 +1182,7 @@ export const textNodeSignal = <T>(
             ? state.lastFirstNode
             : null
       },
-      { runInContainer: false },
+      RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
@@ -1251,7 +1250,7 @@ export const textNodeSignal = <T>(
         textNode =
           state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
       },
-      { runInContainer: false },
+      RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
@@ -1365,10 +1364,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
         lastMemberValue = nextMemberValue
         update(nextMemberValue)
       },
-      {
-        runInContainer: false,
-        skipInitialRun: true,
-      },
+      SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
@@ -1379,64 +1375,78 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
     let state: InsertBindingState | null = null
     let textNode = getSingleTextChild(parent)
 
+    const update = (value: Insertable) => {
+      if (!delegated) {
+        const primitiveValue = resolveFastInsertValue(value)
+        if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
+          const currentTextNode =
+            textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+          if (currentTextNode) {
+            if (currentTextNode.data !== primitiveValue) {
+              currentTextNode.data = primitiveValue
+            }
+            textNode = currentTextNode
+            return
+          }
+          if (parent.childNodes.length === 0) {
+            const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
+              primitiveValue,
+            )
+            if (!nextNode) {
+              throw new Error('Client insertions require an active runtime document.')
+            }
+            parent.appendChild(nextNode)
+            textNode = nextNode
+            return
+          }
+        }
+        if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
+          const currentTextNode =
+            textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
+          if (currentTextNode) {
+            removeNodeFromParent(currentTextNode, parent)
+            textNode = null
+            return
+          }
+          if (parent.childNodes.length === 0) {
+            textNode = null
+            return
+          }
+        }
+      }
+
+      if (!state) {
+        state = createInsertBindingState(parent, undefined, runtimeContainer)
+        state.lastFirstNode = parent.firstChild ?? undefined
+        state.lastNodeLength = parent.childNodes.length
+      }
+
+      if (!delegated) {
+        markInsertBindingVariableNodeCount(state)
+        delegated = true
+      }
+      runInsertEffect(state, value)
+      textNode =
+        state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+    }
+
+    let lastMemberValue = signal.value[member as keyof T] as Insertable
+    update(lastMemberValue)
     createFixedSignalEffect(
       signal,
       (signalValue) => {
-        const value = signalValue[member as keyof T] as Insertable
-        if (!delegated) {
-          const primitiveValue = resolveFastInsertValue(value)
-          if (primitiveValue !== null && primitiveValue !== EMPTY_FAST_INSERT_VALUE) {
-            const currentTextNode =
-              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
-            if (currentTextNode) {
-              if (currentTextNode.data !== primitiveValue) {
-                currentTextNode.data = primitiveValue
-              }
-              textNode = currentTextNode
-              return
-            }
-            if (parent.childNodes.length === 0) {
-              const nextNode = (runtimeContainer.doc ?? parent.ownerDocument)?.createTextNode(
-                primitiveValue,
-              )
-              if (!nextNode) {
-                throw new Error('Client insertions require an active runtime document.')
-              }
-              parent.appendChild(nextNode)
-              textNode = nextNode
-              return
-            }
-          }
-          if (primitiveValue === EMPTY_FAST_INSERT_VALUE) {
-            const currentTextNode =
-              textNode && textNode.parentNode === parent ? textNode : getSingleTextChild(parent)
-            if (currentTextNode) {
-              removeNodeFromParent(currentTextNode, parent)
-              textNode = null
-              return
-            }
-            if (parent.childNodes.length === 0) {
-              textNode = null
-              return
-            }
-          }
+        const nextMemberValue = signalValue[member as keyof T] as Insertable
+        if (
+          !delegated &&
+          Object.is(nextMemberValue, lastMemberValue) &&
+          isFastPrimitiveInsertInput(nextMemberValue)
+        ) {
+          return
         }
-
-        if (!state) {
-          state = createInsertBindingState(parent, undefined, runtimeContainer)
-          state.lastFirstNode = parent.firstChild ?? undefined
-          state.lastNodeLength = parent.childNodes.length
-        }
-
-        if (!delegated) {
-          markInsertBindingVariableNodeCount(state)
-          delegated = true
-        }
-        runInsertEffect(state, value)
-        textNode =
-          state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
+        lastMemberValue = nextMemberValue
+        update(nextMemberValue)
       },
-      { runInContainer: false },
+      SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
@@ -1531,10 +1541,11 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
     }
 
     update(signal.value as Insertable)
-    createFixedSignalEffect(signal, (signalValue) => update(signalValue as Insertable), {
-      runInContainer: false,
-      skipInitialRun: true,
-    })
+    createFixedSignalEffect(
+      signal,
+      (signalValue) => update(signalValue as Insertable),
+      SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
+    )
     return
   }
 
@@ -1601,7 +1612,7 @@ export const textNodeSignalValue = <T>(signal: { value: T }, target: Node) => {
         textNode =
           state.lastNodeLength === 1 && isTextNode(state.lastFirstNode) ? state.lastFirstNode : null
       },
-      { runInContainer: false },
+      RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
     )
     return
   }
@@ -1631,7 +1642,7 @@ export const classSignal = <T>(
         lastClassValue = nextClassValue
       }
     },
-    { runInContainer: false, skipInitialRun: true },
+    SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
 }
 
@@ -1653,7 +1664,7 @@ export const classSignalValue = <T>(elem: Element, signal: { value: T }) => {
         lastClassValue = nextClassValue
       }
     },
-    { runInContainer: false, skipInitialRun: true },
+    SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
 }
 
@@ -1679,7 +1690,7 @@ export const classSignalMember = <T extends Record<string, unknown>>(
         lastClassValue = nextClassValue
       }
     },
-    { runInContainer: false, skipInitialRun: true },
+    SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
 }
 
@@ -1731,7 +1742,7 @@ export const classSignalEquals = <T>(
         lastMatch = nextMatch
       }
     },
-    { runInContainer: false, skipInitialRun: true },
+    SKIP_INITIAL_OUTSIDE_CONTAINER_EFFECT_OPTIONS,
   )
 }
 
@@ -2001,16 +2012,13 @@ export const className = (elem: Element, value: () => unknown) => {
   const isSVG = elem.namespaceURI === 'http://www.w3.org/2000/svg'
   let lastClassValue = ATTR_UNSET as string | symbol
 
-  effect(
-    () => {
-      const nextClassValue = String(value())
-      if (lastClassValue !== nextClassValue) {
-        applyClassValue(elem, nextClassValue, isSVG)
-        lastClassValue = nextClassValue
-      }
-    },
-    { runInContainer: false },
-  )
+  effect(() => {
+    const nextClassValue = String(value())
+    if (lastClassValue !== nextClassValue) {
+      applyClassValue(elem, nextClassValue, isSVG)
+      lastClassValue = nextClassValue
+    }
+  }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
 }
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
@@ -2044,20 +2052,17 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     elem.addEventListener('input', syncSignalFromElement)
     elem.addEventListener('change', syncSignalFromElement)
 
-    effect(
-      () => {
-        const binding = readBinding()
-        if (!isBindableSignal(binding)) {
-          return
-        }
-        const input = elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-        const nextValue = String(binding.value ?? '')
-        if (input.value !== nextValue) {
-          input.value = nextValue
-        }
-      },
-      { runInContainer: false },
-    )
+    effect(() => {
+      const binding = readBinding()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      const input = elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      const nextValue = String(binding.value ?? '')
+      if (input.value !== nextValue) {
+        input.value = nextValue
+      }
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
@@ -2093,19 +2098,16 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     elem.addEventListener('input', syncSignalFromElement)
     elem.addEventListener('change', syncSignalFromElement)
 
-    effect(
-      () => {
-        const binding = readBinding()
-        if (!isBindableSignal(binding)) {
-          return
-        }
-        const nextChecked = Boolean(binding.value)
-        if (elem.checked !== nextChecked) {
-          elem.checked = nextChecked
-        }
-      },
-      { runInContainer: false },
-    )
+    effect(() => {
+      const binding = readBinding()
+      if (!isBindableSignal(binding)) {
+        return
+      }
+      const nextChecked = Boolean(binding.value)
+      if (elem.checked !== nextChecked) {
+        elem.checked = nextChecked
+      }
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
@@ -2119,64 +2121,58 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
     let lastStyleMap: Map<string, string> | null = null
     const style = getElementStyleDeclaration(elem)
 
-    effect(
-      () => {
-        const resolved = value()
-        if (style && resolved && typeof resolved === 'object') {
-          const nextStyleMap = new Map(
-            Object.entries(resolved as Record<string, string>).map(([styleName, styleValue]) => [
-              styleName,
-              String(styleValue),
-            ]),
-          )
+    effect(() => {
+      const resolved = value()
+      if (style && resolved && typeof resolved === 'object') {
+        const nextStyleMap = new Map(
+          Object.entries(resolved as Record<string, string>).map(([styleName, styleValue]) => [
+            styleName,
+            String(styleValue),
+          ]),
+        )
 
-          for (const [styleName, styleValue] of nextStyleMap) {
-            if (lastStyleMap?.get(styleName) !== styleValue) {
-              style.setProperty(styleName, styleValue)
-            }
+        for (const [styleName, styleValue] of nextStyleMap) {
+          if (lastStyleMap?.get(styleName) !== styleValue) {
+            style.setProperty(styleName, styleValue)
           }
-
-          if (lastStyleMap) {
-            for (const styleName of lastStyleMap.keys()) {
-              if (!nextStyleMap.has(styleName)) {
-                style.removeProperty(styleName)
-              }
-            }
-          }
-
-          lastStyleMap = nextStyleMap
-          lastStyleString = ATTR_UNSET
-          syncManagedAttributeSnapshot(elem, 'style')
-          return
         }
 
-        lastStyleMap = null
-        const styleValue = serializeStyleValue(resolved)
-        if (lastStyleString === styleValue) {
-          return
+        if (lastStyleMap) {
+          for (const styleName of lastStyleMap.keys()) {
+            if (!nextStyleMap.has(styleName)) {
+              style.removeProperty(styleName)
+            }
+          }
         }
-        elem.setAttribute('style', styleValue)
-        lastStyleString = styleValue
+
+        lastStyleMap = nextStyleMap
+        lastStyleString = ATTR_UNSET
         syncManagedAttributeSnapshot(elem, 'style')
-      },
-      { runInContainer: false },
-    )
+        return
+      }
+
+      lastStyleMap = null
+      const styleValue = serializeStyleValue(resolved)
+      if (lastStyleString === styleValue) {
+        return
+      }
+      elem.setAttribute('style', styleValue)
+      lastStyleString = styleValue
+      syncManagedAttributeSnapshot(elem, 'style')
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
   if (name === 'class') {
     let lastClassValue = ATTR_UNSET as string | symbol
-    effect(
-      () => {
-        const nextClassValue = String(value())
-        if (lastClassValue === nextClassValue) {
-          return
-        }
-        applyClassValue(elem, nextClassValue, isSVG)
-        lastClassValue = nextClassValue
-      },
-      { runInContainer: false },
-    )
+    effect(() => {
+      const nextClassValue = String(value())
+      if (lastClassValue === nextClassValue) {
+        return
+      }
+      applyClassValue(elem, nextClassValue, isSVG)
+      lastClassValue = nextClassValue
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
@@ -2189,68 +2185,57 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
 
   if (name === ACTION_FORM_ATTR) {
     let lastAssignedValue = ATTR_UNSET as string | symbol | null
-    effect(
-      () => {
-        const resolved = value()
-        const nextValue =
-          resolved === false || resolved === undefined || resolved === null
-            ? null
-            : String(resolved)
-        if (lastAssignedValue === nextValue) {
-          return
-        }
-        if (nextValue === null) {
-          elem.removeAttribute(name)
-        } else {
-          elem.setAttribute(name, nextValue)
-        }
-        syncManagedAttributeSnapshot(elem, name)
-        if (nextValue !== null && elem instanceof HTMLFormElement) {
-          ensureActionCsrfInput(elem)
-        }
-        lastAssignedValue = nextValue
-      },
-      { runInContainer: false },
-    )
+    effect(() => {
+      const resolved = value()
+      const nextValue =
+        resolved === false || resolved === undefined || resolved === null ? null : String(resolved)
+      if (lastAssignedValue === nextValue) {
+        return
+      }
+      if (nextValue === null) {
+        elem.removeAttribute(name)
+      } else {
+        elem.setAttribute(name, nextValue)
+      }
+      syncManagedAttributeSnapshot(elem, name)
+      if (nextValue !== null && elem instanceof HTMLFormElement) {
+        ensureActionCsrfInput(elem)
+      }
+      lastAssignedValue = nextValue
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
   if (name === DANGEROUSLY_SET_INNER_HTML_PROP) {
     let lastHTML = ATTR_UNSET as string | symbol
-    effect(
-      () => {
-        const html = value()
-        const nextHTML = html === false || html === undefined || html === null ? '' : String(html)
-        if (lastHTML === nextHTML) {
-          return
-        }
-        ;(elem as Element & { innerHTML: string }).innerHTML = nextHTML
-        lastHTML = nextHTML
-      },
-      { runInContainer: false },
-    )
+    effect(() => {
+      const html = value()
+      const nextHTML = html === false || html === undefined || html === null ? '' : String(html)
+      if (lastHTML === nextHTML) {
+        return
+      }
+      ;(elem as Element & { innerHTML: string }).innerHTML = nextHTML
+      lastHTML = nextHTML
+    }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
     return
   }
 
   let lastAssignedValue = ATTR_UNSET as string | symbol
-  effect(
-    () => {
-      const nextValue = String(value())
-      if (lastAssignedValue === nextValue) {
-        return
-      }
-      if (shouldUseAttributeAssignment(elem, name, isSVG)) {
-        elem.setAttribute(name, nextValue)
-        syncManagedAttributeSnapshot(elem, name)
-      } else {
-        // @ts-expect-error DOM property assignment uses dynamic keys.
-        elem[name] = nextValue
-        syncManagedAttributeSnapshot(elem, name)
-      }
-      lastAssignedValue = nextValue
-    },
-    { runInContainer: false },
-  )
+  effect(() => {
+    const nextValue = String(value())
+    if (lastAssignedValue === nextValue) {
+      return
+    }
+    if (shouldUseAttributeAssignment(elem, name, isSVG)) {
+      elem.setAttribute(name, nextValue)
+      syncManagedAttributeSnapshot(elem, name)
+    } else {
+      // @ts-expect-error DOM property assignment uses dynamic keys.
+      elem[name] = nextValue
+      syncManagedAttributeSnapshot(elem, name)
+    }
+    lastAssignedValue = nextValue
+  }, RUN_OUTSIDE_CONTAINER_EFFECT_OPTIONS)
 }
 
 export const hydrate = (

@@ -383,6 +383,7 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toMatch(/_insertFor\(\{\s*arrSignal: rows/)
     expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
+    expect(resultCode).toContain('keyMember: "id"')
     expect(resultCode).not.toContain('_createComponent(For')
     expect(resultCode).not.toContain('_insertStatic(({ __e_for: true')
   })
@@ -441,6 +442,7 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('_classSignalEquals(')
     expect(resultCode).toContain('_eventStatic(')
     expect(resultCode).toContain('"click", handleClick')
+    expect(resultCode).toContain('keyMember: "id"')
     expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
   })
 
@@ -607,6 +609,7 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
     expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toContain('arr: items')
+    expect(resultCode).not.toContain('keyMember')
     expect(resultCode).not.toContain('=> <li')
   })
 
@@ -622,6 +625,7 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
     expect(resultCode).toContain('__e_for: true')
     expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
+    expect(resultCode).toContain('keyMember: "id"')
   })
 
   it('does not lower non-JSX map expressions to For components', async () => {

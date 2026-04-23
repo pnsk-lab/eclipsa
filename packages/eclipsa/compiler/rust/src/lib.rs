@@ -1386,6 +1386,69 @@ fn signal_handle_from_value_expression(value: &str) -> Option<String> {
     Some(signal.to_string())
 }
 
+fn is_ascii_identifier_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|char| char == '_' || char == '$' || char.is_ascii_alphanumeric())
+}
+
+fn direct_param_member_key_from_static_member(
+    expression: &StaticMemberExpression<'_>,
+    param_name: &str,
+) -> Option<String> {
+    if !is_ascii_identifier_name(param_name) {
+        return None;
+    }
+    if expression.optional {
+        return None;
+    }
+    let Expression::Identifier(identifier) = unwrap_parenthesized_expression(&expression.object)
+    else {
+        return None;
+    };
+    if identifier.name.as_str() != param_name {
+        return None;
+    }
+    let member = expression.property.name.as_str();
+    if is_ascii_identifier_name(member) {
+        Some(member.to_string())
+    } else {
+        None
+    }
+}
+
+fn direct_param_member_key_from_expression(
+    expression: &Expression<'_>,
+    param_name: &str,
+) -> Option<String> {
+    match unwrap_parenthesized_expression(expression) {
+        Expression::StaticMemberExpression(member) => {
+            direct_param_member_key_from_static_member(member, param_name)
+        }
+        _ => None,
+    }
+}
+
+fn direct_param_member_key_from_jsx_expression(
+    expression: &JSXExpression<'_>,
+    param_name: &str,
+) -> Option<String> {
+    match expression {
+        JSXExpression::StaticMemberExpression(member) => {
+            direct_param_member_key_from_static_member(member, param_name)
+        }
+        JSXExpression::ParenthesizedExpression(expression) => {
+            direct_param_member_key_from_expression(&expression.expression, param_name)
+        }
+        _ => None,
+    }
+}
+
 fn get_packed_static_event_call(value: &str) -> Option<(&str, &str)> {
     let trimmed = strip_wrapping_parens(value);
     let rest = trimmed.strip_prefix("__eclipsaEvent.__")?;
@@ -1760,6 +1823,7 @@ impl<'s> ClientCompiler<'s> {
         arr: String,
         callback: String,
         key_callback: Option<String>,
+        key_member: Option<String>,
         reactive_rows: bool,
         reactive_index: bool,
     ) -> String {
@@ -1776,12 +1840,16 @@ impl<'s> ClientCompiler<'s> {
         let arr_signal_prop = signal_handle_from_value_expression(&arr)
             .map(|signal| format!(", arrSignal: {signal}"))
             .unwrap_or_default();
+        let key_member_prop = key_member
+            .as_deref()
+            .map(|member| format!(", keyMember: {}", js_string(member)))
+            .unwrap_or_default();
         match key_callback {
             Some(key_callback) => format!(
-                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}, key: {key_callback}{reactive_rows_prop}{reactive_index_prop} }})"
+                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}, key: {key_callback}{key_member_prop}{reactive_rows_prop}{reactive_index_prop} }})"
             ),
             None => format!(
-                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}{reactive_rows_prop}{reactive_index_prop} }})"
+                "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}{key_member_prop}{reactive_rows_prop}{reactive_index_prop} }})"
             ),
         }
     }
@@ -1811,6 +1879,7 @@ impl<'s> ClientCompiler<'s> {
         let mut props = vec!["__e_for: true".to_string()];
         let mut reactive_rows_enabled = false;
         let mut reactive_index_enabled = true;
+        let mut key_member = None;
 
         for attribute in attributes {
             let JSXAttributeItem::Attribute(attribute) = attribute else {
@@ -1844,6 +1913,8 @@ impl<'s> ClientCompiler<'s> {
                         let reactive_callback = if can_auto_lower_for_callback && name == "fn" {
                             match &container.expression {
                                 JSXExpression::ArrowFunctionExpression(callback) => {
+                                    key_member = self
+                                        .extract_for_callback_stable_key_member(callback, attributes)?;
                                     self.render_reactive_row_callback(
                                         callback,
                                         stable_key_expression.as_deref(),
@@ -1885,6 +1956,9 @@ impl<'s> ClientCompiler<'s> {
             if !reactive_index_enabled {
                 props.push("reactiveIndex: false".to_string());
             }
+        }
+        if let Some(member) = key_member {
+            props.push(format!("keyMember: {}", js_string(&member)));
         }
 
         Ok(Some(format!("({{ {} }})", props.join(", "))))
@@ -1978,10 +2052,12 @@ impl<'s> ClientCompiler<'s> {
         let key_callback = self
             .extract_map_callback_key(callback)?
             .map(|key_expression| format!("{params} => {key_expression}"));
+        let key_member = self.extract_map_callback_stable_key_member(callback)?;
         Ok(Some(self.render_compiler_for(
             arr,
             compiled_callback,
             key_callback,
+            key_member,
             reactive_rows_enabled,
             reactive_index_enabled,
         )))
@@ -2406,6 +2482,52 @@ impl<'s> ClientCompiler<'s> {
         Ok(None)
     }
 
+    fn extract_map_callback_stable_key_member(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+    ) -> Result<Option<String>, String> {
+        let Some(body) = get_arrow_expression_body(callback) else {
+            return Ok(None);
+        };
+        let Expression::JSXElement(element) = unwrap_parenthesized_expression(body) else {
+            return Ok(None);
+        };
+        let Some(param_names) = collect_simple_arrow_param_names(callback) else {
+            return Ok(None);
+        };
+        let Some(item_param) = param_names.first() else {
+            return Ok(None);
+        };
+
+        for attribute in &element.opening_element.attributes {
+            let JSXAttributeItem::Attribute(attribute) = attribute else {
+                continue;
+            };
+            if get_jsx_attribute_name(&attribute.name)? != "key" {
+                continue;
+            }
+            let Some(value) = &attribute.value else {
+                return Ok(None);
+            };
+            let JSXAttributeValue::ExpressionContainer(container) = value else {
+                return Ok(None);
+            };
+            let JSXExpression::EmptyExpression(_) = &container.expression else {
+                if param_names.len() > 1
+                    && jsx_expression_reads_identifier_name(&container.expression, &param_names[1..])
+                {
+                    return Ok(None);
+                }
+                return Ok(direct_param_member_key_from_jsx_expression(
+                    &container.expression,
+                    item_param,
+                ));
+            };
+        }
+
+        Ok(None)
+    }
+
     fn extract_for_callback_stable_key_expression(
         &mut self,
         callback: &ArrowFunctionExpression<'_>,
@@ -2454,6 +2576,54 @@ impl<'s> ClientCompiler<'s> {
         Ok(None)
     }
 
+    fn extract_for_callback_stable_key_member(
+        &mut self,
+        callback: &ArrowFunctionExpression<'_>,
+        attributes: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>,
+    ) -> Result<Option<String>, String> {
+        let Some(param_names) = collect_simple_arrow_param_names(callback) else {
+            return Ok(None);
+        };
+        let Some(item_param) = param_names.first() else {
+            return Ok(None);
+        };
+
+        for attribute in attributes {
+            let JSXAttributeItem::Attribute(attribute) = attribute else {
+                continue;
+            };
+            if get_jsx_attribute_name(&attribute.name)? != "key" {
+                continue;
+            }
+            let Some(value) = &attribute.value else {
+                return Ok(None);
+            };
+            let JSXAttributeValue::ExpressionContainer(container) = value else {
+                return Ok(None);
+            };
+            let JSXExpression::ArrowFunctionExpression(key_callback) = &container.expression else {
+                return Ok(None);
+            };
+            let Some(key_param_names) = collect_simple_arrow_param_names(key_callback) else {
+                return Ok(None);
+            };
+            if key_param_names != param_names {
+                return Ok(None);
+            }
+            let Some(body) = get_arrow_expression_body(key_callback) else {
+                return Ok(None);
+            };
+            if key_param_names.len() > 1
+                && expression_reads_identifier_name(body, &key_param_names[1..])
+            {
+                return Ok(None);
+            }
+            return Ok(direct_param_member_key_from_expression(body, item_param));
+        }
+
+        Ok(None)
+    }
+
     fn render_component_props(
         &mut self,
         component_name: Option<&str>,
@@ -2464,6 +2634,7 @@ impl<'s> ClientCompiler<'s> {
         let mut key = None;
         let mut reactive_rows_enabled = false;
         let mut reactive_index_enabled = true;
+        let mut key_member = None;
         let mut tracked = false;
         let can_auto_lower_for_callback = component_name == Some("For")
             && !attributes.iter().any(|attribute| {
@@ -2517,6 +2688,11 @@ impl<'s> ClientCompiler<'s> {
                                 let reactive_callback = if can_auto_lower_for_callback && name == "fn" {
                                     match &container.expression {
                                         JSXExpression::ArrowFunctionExpression(callback) => {
+                                            key_member = self
+                                                .extract_for_callback_stable_key_member(
+                                                    callback,
+                                                    attributes,
+                                                )?;
                                             self.render_reactive_row_callback(
                                                 callback,
                                                 stable_key_expression.as_deref(),
@@ -2581,6 +2757,11 @@ impl<'s> ClientCompiler<'s> {
             props.push("\"reactiveRows\": true".to_string());
             if !reactive_index_enabled {
                 props.push("\"reactiveIndex\": false".to_string());
+            }
+        }
+        if component_name == Some("For") {
+            if let Some(member) = key_member {
+                props.push(format!("keyMember: {}", js_string(&member)));
             }
         }
 

@@ -9,6 +9,7 @@ interface ForValue<T> {
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => Key
+  keyMember?: string
   reactiveIndex?: boolean
   reactiveRows?: boolean
 }
@@ -34,6 +35,7 @@ export const For = <T>(props: {
     fallback: props.fallback,
     fn: props.fn,
     key: props.key,
+    keyMember: (props as typeof props & { keyMember?: string }).keyMember,
     reactiveIndex: props.reactiveIndex,
     reactiveRows: props.reactiveRows,
   }) as ForValue<T> as unknown as JSX.Element

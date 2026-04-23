@@ -10669,6 +10669,57 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('uses compiler-provided keyed For member keys without calling the key function', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second, third])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      let keyCalls = 0
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { value: { id: string; label: string } }) =>
+                  jsxDEV('li', { children: item.value.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => {
+                  keyCalls += 1
+                  return item.id
+                },
+                keyMember: 'id',
+                reactiveIndex: false,
+                reactiveRows: true,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      expect(keyCalls).toBe(0)
+
+      items.value = [third, second, first]
+      await flushAsync()
+
+      const rows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(rows.map((row) => row.textContent)).toEqual(['C', 'B', 'A'])
+      expect(keyCalls).toBe(0)
+    })
+  })
+
   it('does not reuse keyed ranges across sibling parents with overlapping keys', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
@@ -10932,6 +10983,53 @@ describe('renderClientInsertable', () => {
       })
 
       expect(insertBeforeCount).toBe(1)
+    })
+  })
+
+  it('appends keyed For rows after map-free initial row creation', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const first = { id: 'a', label: 'A' }
+      const second = { id: 'b', label: 'B' }
+      const third = { id: 'c', label: 'C' }
+      const items = createDetachedRuntimeSignal(container, 's0', [first, second])
+      const host = new FakeElement('div')
+      const marker = new FakeComment('marker')
+      host.appendChild(marker)
+
+      withRuntimeContainer(container, () => {
+        insert(
+          (() =>
+            jsxDEV(
+              For as any,
+              {
+                arr: items.value,
+                fn: (item: { id: string; label: string }) =>
+                  jsxDEV('li', { children: item.label }, null, false, {}),
+                key: (item: { id: string; label: string }) => item.id,
+              },
+              null,
+              false,
+              {},
+            )) as Parameters<typeof insert>[0],
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+      })
+
+      const initialRows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      items.value = [first, second, third]
+      await flushAsync()
+
+      const rows = host.childNodes.filter(
+        (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'li',
+      )
+      expect(rows).toHaveLength(3)
+      expect(rows[0]).toBe(initialRows[0])
+      expect(rows[1]).toBe(initialRows[1])
+      expect(rows.map((row) => row.textContent)).toEqual(['A', 'B', 'C'])
     })
   })
 
@@ -11842,25 +11940,34 @@ describe('renderClientInsertable', () => {
       const host = new FakeElement('tbody')
       const marker = new FakeComment('marker')
       let arrGetterReads = 0
+      let staticPropReads = 0
       host.appendChild(marker)
+      const props = new Proxy(
+        {
+          get arr() {
+            arrGetterReads += 1
+            return rows.value
+          },
+          arrSignal: rows,
+          fn: (row: { value: { id: number; label: string } }) =>
+            jsxDEV('tr', { children: row.value.label }, null, false, {}),
+          key: (row: { id: number }) => row.id,
+          reactiveRows: true,
+        },
+        {
+          get(target, prop, receiver) {
+            if (prop === 'fn' || prop === 'key' || prop === 'reactiveRows') {
+              staticPropReads += 1
+            }
+            return Reflect.get(target, prop, receiver)
+          },
+        },
+      )
 
       withRuntimeContainer(container, () => {
-        insertFor(
-          {
-            get arr() {
-              arrGetterReads += 1
-              return rows.value
-            },
-            arrSignal: rows,
-            fn: (row: { value: { id: number; label: string } }) =>
-              jsxDEV('tr', { children: row.value.label }, null, false, {}),
-            key: (row: { id: number }) => row.id,
-            reactiveRows: true,
-          },
-          host as unknown as Node,
-          marker as unknown as Node,
-        )
+        insertFor(props, host as unknown as Node, marker as unknown as Node)
       })
+      expect(staticPropReads).toBe(3)
 
       rows.value = [
         { id: 1, label: 'A' },
@@ -11873,6 +11980,7 @@ describe('renderClientInsertable', () => {
       )
       expect(renderedRows.map((row) => row.textContent)).toEqual(['A', 'B'])
       expect(arrGetterReads).toBe(0)
+      expect(staticPropReads).toBe(3)
     })
   })
 })

@@ -130,7 +130,6 @@ import {
   getContainerStack,
   getContextValueStack,
   getCurrentContainer,
-  getFrameStack,
   getResumeContainers,
   readAsyncSignalSnapshot as readGlobalAsyncSignalSnapshot,
   writeAsyncSignalSnapshot as writeGlobalAsyncSignalSnapshot,
@@ -1821,7 +1820,7 @@ type KeyedForOwnerState<T = unknown> = {
   nextRowOwnerIndex: number
   order: Array<string | number | symbol>
   orderedRows: KeyedForRowState<T>[]
-  rows: Map<string | number | symbol, KeyedForRowState<T>>
+  rows: Map<string | number | symbol, KeyedForRowState<T>> | null
   totalNodeCount: number
 }
 
@@ -1832,6 +1831,18 @@ type KeyedForReconcileResult = {
 }
 
 const keyedForOwnerStates = new WeakMap<ComponentState, KeyedForOwnerState>()
+
+const ensureKeyedForRowMap = <T>(state: KeyedForOwnerState<T>) => {
+  if (state.rows) {
+    return state.rows
+  }
+  const rows = new Map<string | number | symbol, KeyedForRowState<T>>()
+  for (const row of state.orderedRows) {
+    rows.set(row.key, row)
+  }
+  state.rows = rows
+  return rows
+}
 
 const isComputedSignalSnapshot = <T>(value: unknown): value is ComputedSignalSnapshot<T> =>
   !!value &&
@@ -2280,12 +2291,9 @@ const withRuntimeContextValue = <T>(token: RuntimeContextToken, value: unknown, 
 const pushFrame = <T>(frame: RenderFrame, fn: () => T): T => {
   const previousFrame = currentFrame
   currentFrame = frame
-  const stack = getFrameStack()
-  stack.push(frame)
   try {
     return fn()
   } finally {
-    stack.pop()
     currentFrame = previousFrame
     FRAME_POOL.push(frame)
   }
@@ -3429,6 +3437,19 @@ const scheduleExternalHostRebind = (container: RuntimeContainer, host: HTMLEleme
   }
 }
 
+const visitChildNodes = (node: Node, visit: (child: Node) => void) => {
+  const childNodes = (node as { childNodes?: ArrayLike<Node> }).childNodes
+  if (!childNodes) {
+    return
+  }
+  for (let index = 0; index < childNodes.length; index += 1) {
+    const child = childNodes[index]
+    if (child) {
+      visit(child)
+    }
+  }
+}
+
 const collectProjectionSlotRanges = (roots: Node[]) => {
   const starts = new Map<string, Comment>()
   const ranges = new Map<string, { end: Comment; start: Comment }>()
@@ -3448,9 +3469,7 @@ const collectProjectionSlotRanges = (roots: Node[]) => {
         }
       }
     }
-    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
-      visit(child)
-    }
+    visitChildNodes(node, visit)
   }
 
   for (const root of roots) {
@@ -3469,9 +3488,7 @@ const collectComponentBoundaryIds = (roots: Node[]) => {
         ids.add(marker.id)
       }
     }
-    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
-      visit(child)
-    }
+    visitChildNodes(node, visit)
   }
 
   for (const root of roots) {
@@ -3500,9 +3517,7 @@ const collectComponentBoundaryRanges = (roots: Node[]) => {
         }
       }
     }
-    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
-      visit(child)
-    }
+    visitChildNodes(node, visit)
   }
 
   for (const root of roots) {
@@ -3512,7 +3527,7 @@ const collectComponentBoundaryRanges = (roots: Node[]) => {
   return ranges
 }
 
-const createKeyedRangeIdentity = (scope: string, key: string) => JSON.stringify([scope, key])
+const createKeyedRangeIdentity = (scope: string, key: string) => `${scope.length}:${scope}${key}`
 
 const collectKeyedRangeRanges = (roots: Node[]) => {
   const starts = new Map<string, Comment>()
@@ -3534,9 +3549,7 @@ const collectKeyedRangeRanges = (roots: Node[]) => {
         }
       }
     }
-    for (const child of Array.from((node.childNodes ?? []) as unknown as Iterable<Node>)) {
-      visit(child)
-    }
+    visitChildNodes(node, visit)
   }
 
   for (const root of roots) {
@@ -4691,12 +4704,21 @@ const resolveForItemKey = <T>(
   value: ForValue<T>,
   item: T,
   index: number,
-): string | number | symbol =>
-  value.key
+): string | number | symbol => {
+  const keyMember = value.keyMember
+  if (keyMember && item && (typeof item === 'object' || typeof item === 'function')) {
+    const key = (item as Record<string, unknown>)[keyMember]
+    if (typeof key === 'string' || typeof key === 'number' || typeof key === 'symbol') {
+      return key
+    }
+  }
+
+  return value.key
     ? value.key(item, index)
     : typeof item === 'string' || typeof item === 'number' || typeof item === 'symbol'
       ? item
       : index
+}
 
 const createStaticRowSignalHandle = <T>(value: T): { value: T } => ({ value })
 
@@ -4709,19 +4731,17 @@ const createForCallbackArgs = <T>(value: ForValue<T>, item: T, index: number): [
     : [item, index]
 
 const getKeyedForOwnerRange = <T>(state: KeyedForOwnerState<T>) => {
-  const firstKey = state.order[0]
-  const lastKey = state.order[state.order.length - 1]
-  if (firstKey === undefined || lastKey === undefined) {
+  const firstRow = state.orderedRows[0]
+  const lastRow = state.orderedRows[state.orderedRows.length - 1]
+  if (!firstRow || !lastRow) {
     return {
       end: null,
       start: null,
     }
   }
-  const firstRow = state.rows.get(firstKey)
-  const lastRow = state.rows.get(lastKey)
   return {
-    end: lastRow?.end ?? null,
-    start: firstRow?.start ?? null,
+    end: lastRow.end,
+    start: firstRow.start,
   }
 }
 
@@ -4741,8 +4761,7 @@ const countNodesBetween = (start: Node | null, end: Node | null) => {
   return count
 }
 
-const stripForChildRootKey = (value: JSX.Element): JSX.Element => {
-  const resolved = resolveRenderable(value)
+const stripResolvedForChildRootKey = (resolved: JSX.Element): JSX.Element => {
   if (!isRenderObject(resolved) || resolved.key === null || resolved.key === undefined) {
     return resolved
   }
@@ -4750,6 +4769,20 @@ const stripForChildRootKey = (value: JSX.Element): JSX.Element => {
     ...resolved,
     key: undefined,
   }
+}
+
+const stripForChildRootKey = (value: JSX.Element): JSX.Element =>
+  stripResolvedForChildRootKey(resolveRenderable(value))
+
+const renderForCallbackResultNodes = (value: unknown, container: RuntimeContainer): Node[] => {
+  const resolved = resolveRenderable(value as JSX.Element)
+  if (typeof Node !== 'undefined' && resolved instanceof Node) {
+    if (!hasRememberedManagedAttributesForSubtree(resolved)) {
+      rememberManagedAttributesForSubtree(resolved)
+    }
+    return [resolved]
+  }
+  return renderClientInsertable(stripResolvedForChildRootKey(resolved), container)
 }
 
 const resolveShowBranch = <T>(value: ShowValue<T>): JSX.Element => {
@@ -6206,7 +6239,7 @@ const teardownKeyedForOwnerState = (
 ) => {
   const state = keyedForOwnerStates.get(ownerComponent)
   if (state) {
-    for (const row of state.rows.values()) {
+    for (const row of state.orderedRows) {
       removeBoundaryRangeFromParent(row.start, row.end, parent)
       disposeClientInsertOwner(container, row.owner)
     }
@@ -6282,7 +6315,7 @@ export const reconcileClientKeyedForInPlace = (
     nextRowOwnerIndex: 0,
     order: [],
     orderedRows: [],
-    rows: new Map(),
+    rows: null,
     totalNodeCount: 0,
   }
   if (!keyedForOwnerStates.has(ownerComponent)) {
@@ -6305,11 +6338,7 @@ export const reconcileClientKeyedForInPlace = (
       callbackIndex,
     )
 
-  if (state.rows.size === 0) {
-    const nextRows = new Map<
-      string | number | symbol,
-      KeyedForRowState<(typeof resolved.arr)[number]>
-    >()
+  if (state.orderedRows.length === 0) {
     const nextOrder: Array<string | number | symbol> = []
     const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
     let needsRefRestore = false
@@ -6357,7 +6386,6 @@ export const reconcileClientKeyedForInPlace = (
         } satisfies KeyedForRowState<(typeof resolved.arr)[number]>
 
         totalNodeCount += row.nodeCount
-        nextRows.set(key, row)
         nextOrder[index] = key
         nextOrderedRows[index] = row
       }
@@ -6367,7 +6395,7 @@ export const reconcileClientKeyedForInPlace = (
       parent.insertBefore(fragment, marker ?? null)
     }
 
-    state.rows = nextRows
+    state.rows = null
     state.order = nextOrder
     state.orderedRows = nextOrderedRows
     state.totalNodeCount = totalNodeCount
@@ -6384,7 +6412,8 @@ export const reconcileClientKeyedForInPlace = (
     state.orderedRows.length === resolved.arr.length &&
     resolved.reactiveRows &&
     !usesReactiveIndex &&
-    ((resolved.key && resolved.key.length < 2) ||
+    (resolved.keyMember ||
+      (resolved.key && resolved.key.length < 2) ||
       (!resolved.key &&
         resolved.arr.every(
           (item) =>
@@ -6620,7 +6649,7 @@ export const reconcileClientKeyedForInPlace = (
       for (const row of removedRows) {
         removeBoundaryRangeFromParent(row.start, row.end, parent)
         disposeClientInsertOwner(container, row.owner)
-        state.rows.delete(row.key)
+        state.rows?.delete(row.key)
         if (canSkipSurvivingRowUpdates) {
           totalNodeCount -= row.nodeCount
         }
@@ -6640,6 +6669,7 @@ export const reconcileClientKeyedForInPlace = (
     }
 
     const canUseIdentityDeletionScan =
+      resolved.keyMember ||
       (resolved.key && resolved.key.length < 2) ||
       (!resolved.key &&
         resolved.arr.every(
@@ -6785,12 +6815,13 @@ export const reconcileClientKeyedForInPlace = (
   const nextOrderedRows: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
   let needsRefRestore = false
   const reactiveRowsNeedingNodeCountRefresh: KeyedForRowState<(typeof resolved.arr)[number]>[] = []
+  const currentRows = ensureKeyedForRowMap(state)
 
   withBatchedSignalWrites(container, () => {
     for (let index = 0; index < resolved.arr.length; index += 1) {
       const item = resolved.arr[index]!
       const key = resolveForItemKey(resolved, item, index)
-      let row = state.rows.get(key)
+      let row = currentRows.get(key)
 
       if (!row) {
         const rowOwner = createKeyedForRowOwner(owner.componentId, state.nextRowOwnerIndex++)
@@ -6884,7 +6915,7 @@ export const reconcileClientKeyedForInPlace = (
     row.stableNodeCount = false
   }
 
-  for (const [key, row] of state.rows.entries()) {
+  for (const [key, row] of currentRows.entries()) {
     if (nextRows.has(key)) {
       continue
     }
@@ -7002,10 +7033,7 @@ const renderForCallbackNodesForOwner = <TItem, TIndex>(
   index: TIndex,
 ) => {
   if (!owner) {
-    return renderClientInsertable(
-      stripForChildRootKey(callback(item, index) as JSX.Element),
-      container,
-    )
+    return renderForCallbackResultNodes(callback(item, index), container)
   }
 
   const { component, isFresh: isFreshOwner } = getOrCreateClientInsertOwnerComponent(
@@ -7033,9 +7061,7 @@ const renderForCallbackNodesForOwner = <TItem, TIndex>(
     frame.projectionState.counters = new Map(owner.projectionCounters)
   }
   const nodes = pushContainer(container, () =>
-    pushFrame(frame, () =>
-      renderClientInsertable(stripForChildRootKey(callback(item, index) as JSX.Element), container),
-    ),
+    pushFrame(frame, () => renderForCallbackResultNodes(callback(item, index), container)),
   )
   if (isFreshOwner) {
     if (component.registered === true && parentFrame && parentFrame !== frame) {

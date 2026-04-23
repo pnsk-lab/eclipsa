@@ -372,6 +372,7 @@ export interface ForValue<T = unknown> {
   fallback?: JSX.Element
   fn: (e: T, i: number) => JSX.Element
   key?: (e: T, i: number) => string | number | symbol
+  keyMember?: string
   reactiveIndex?: boolean
   reactiveRows?: boolean
 }

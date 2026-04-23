@@ -16,7 +16,7 @@ test('benchmark Vite build compiles TSX through the Eclipsa client compiler', as
   expect(result?.code).toContain('from "eclipsa/client"')
   expect(result?.code).toContain('createTemplate')
   expect(result?.code).toContain('eventStatic')
-  expect(result?.code).toContain('__eclipsaEvent(')
+  expect(result?.code).toContain('_eventStatic.__1(')
 })
 
 test('benchmark Vite build exposes standalone symbol urls for resumable handlers', async () => {
