@@ -114,7 +114,6 @@ import {
   isHTMLSelectElementNode,
   isHTMLTextAreaElementNode,
   listNodeChildren,
-  rememberInsertMarkerRange,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberManagedAttributesForSubtree,
@@ -8381,7 +8380,7 @@ const applyPrefetchedLoaders = (container: RuntimeContainer, url: URL) => {
 }
 
 const extractScriptTextById = (html: string, id: string) => {
-  const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
+  const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
   const idPattern = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/i
 
   for (const match of html.matchAll(scriptPattern)) {
@@ -9514,11 +9513,12 @@ export const flushDirtyComponents = async (container: RuntimeContainer) => {
       }
     })()
 
-    globalRecord[DIRTY_FLUSH_PROMISE_KEY] = flushing
+    const activeFlush: unknown = flushing
+    globalRecord[DIRTY_FLUSH_PROMISE_KEY] = activeFlush
     try {
       await flushing
     } finally {
-      if (globalRecord[DIRTY_FLUSH_PROMISE_KEY] === flushing) {
+      if (globalRecord[DIRTY_FLUSH_PROMISE_KEY] === activeFlush) {
         delete globalRecord[DIRTY_FLUSH_PROMISE_KEY]
       }
     }
@@ -10761,9 +10761,13 @@ const dispatchSubmitActionIfNeeded = (container: RuntimeContainer, event: Event)
     typeof SubmitEvent !== 'undefined' && event instanceof SubmitEvent
       ? (event.submitter ?? undefined)
       : undefined
-  const formData = isHTMLElementNode(submitter)
-    ? new FormData(event.target, submitter)
-    : new FormData(event.target)
+  const formData = new FormData(event.target)
+  if (isHTMLElementNode(submitter) && !submitter.hasAttribute('disabled')) {
+    const name = submitter.getAttribute('name')
+    if (name) {
+      formData.append(name, submitter.getAttribute('value') ?? '')
+    }
+  }
   return Promise.resolve(handle.action(formData)).then(() =>
     flushDirtyComponentsIfNeeded(container),
   )

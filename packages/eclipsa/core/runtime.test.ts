@@ -29,7 +29,7 @@ import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
 import { Link, useLocation, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
-import { CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constants.ts'
+import { ACTION_FORM_ATTR, CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constants.ts'
 import {
   bindPackedRuntimeEvent,
   bindRuntimeEvent,
@@ -2550,6 +2550,72 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('includes successful submitter fields when dispatching action form submissions', async () => {
+    await withFakeNodeGlobal(async () => {
+      const OriginalFormData = globalThis.FormData
+      const OriginalSubmitEvent = globalThis.SubmitEvent
+
+      class CapturedFormData {
+        readonly appended: Array<[string, string]> = []
+
+        constructor(readonly form: unknown) {}
+
+        append(name: string, value: string) {
+          this.appended.push([name, value])
+        }
+      }
+
+      class TargetedSubmitEvent extends Event {
+        constructor(
+          private readonly eventTarget: EventTarget | null,
+          readonly submitter: HTMLElement | null,
+        ) {
+          super('submit', { bubbles: true, cancelable: true })
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      globalThis.FormData = CapturedFormData as unknown as typeof FormData
+      globalThis.SubmitEvent = TargetedSubmitEvent as unknown as typeof SubmitEvent
+
+      try {
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument
+        const form = doc.createElement('form') as unknown as FakeElement
+        const submitter = doc.createElement('button') as unknown as FakeElement
+        let submitted: unknown
+
+        form.setAttribute(ACTION_FORM_ATTR, 'save')
+        submitter.setAttribute('name', 'intent')
+        submitter.setAttribute('value', 'publish')
+        container.actions.set('save', {
+          action: (input: unknown) => {
+            submitted = input
+            return Promise.resolve()
+          },
+        })
+
+        await dispatchDocumentEvent(
+          container,
+          new TargetedSubmitEvent(
+            form as unknown as EventTarget,
+            submitter as unknown as HTMLElement,
+          ),
+        )
+
+        expect(submitted).toBeInstanceOf(CapturedFormData)
+        expect((submitted as CapturedFormData).form).toBe(form)
+        expect((submitted as CapturedFormData).appended).toEqual([['intent', 'publish']])
+      } finally {
+        globalThis.FormData = OriginalFormData
+        globalThis.SubmitEvent = OriginalSubmitEvent
+      }
+    })
+  })
+
   it('dispatches live client event bindings without serializing resumable attrs', async () => {
     await withFakeNodeGlobal(async () => {
       class TargetedClickEvent extends Event {
@@ -3415,7 +3481,7 @@ describe('renderClientInsertable', () => {
             return {
               status: 200,
               text: async () =>
-                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script></body></html>`,
+                `<html><body><script id="eclipsa-resume-final" type="application/eclipsa-resume+json">${htmlPayload}</script ></body></html>`,
               url,
             } as Response
           }
