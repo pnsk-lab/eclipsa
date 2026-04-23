@@ -27,7 +27,7 @@ export default __eclipsaComponent(() => {
     onCleanup(() => {
       console.log(`cleanup:${value}`)
     })
-  }, [value]))
+  }, () => [value]))
 
   return <button>{value}</button>
 }, "pxa3kp", [], undefined, { optimizedRoot: true })

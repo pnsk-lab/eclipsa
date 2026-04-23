@@ -146,6 +146,33 @@ describe('analyzeModule()', () => {
     expect(analyzed.code).toContain('{ children: 1 }, { optimizedRoot: true }')
   })
 
+  it('defers lazy captures so callbacks can reference later local declarations', async () => {
+    const analyzed = await analyzeModule(`
+      export const App = () => {
+        const runLater = () => schedule();
+        const schedule = () => {};
+        return <button onClick={() => runLater()}>Run</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('() => [schedule]')
+    expect(analyzed.code).not.toContain(', [schedule]')
+  })
+
+  it('defers event captures when local handlers reference later declarations', async () => {
+    const analyzed = await analyzeModule(`
+      export const App = () => {
+        const runLater = () => schedule();
+        const schedule = () => {};
+        return <button onClick={runLater}>Run</button>;
+      };
+    `)
+
+    expect(analyzed.code).toContain('__eclipsaEvent("click"')
+    expect(analyzed.code).toContain('() => [schedule]')
+    expect(analyzed.code).not.toContain('__eclipsaEvent.__1("click"')
+  })
+
   it('annotates direct projection slot props on component metadata', async () => {
     const analyzed = await analyzeModule(`
       export const Probe = (props) => (

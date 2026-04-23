@@ -21,7 +21,7 @@ export default __eclipsaComponent(() => {
 
   onVisible(__eclipsaLazy("1s0b9ti", () => {
     console.log(value)
-  }, [value]))
+  }, () => [value]))
 
   return <button>{value}</button>
 }, "11f179", [], undefined, { optimizedRoot: true })
