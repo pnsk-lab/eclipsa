@@ -522,6 +522,7 @@ export const registerRuntimeScopedStyle = (
 }
 
 let currentEffect: ReactiveEffect | null = null
+let currentEffectContainer: RuntimeContainer | null = null
 let currentCleanupSlot: CleanupSlot | null = null
 let currentFrame: RenderFrame | null = null
 const withoutTrackedEffect = <T>(fn: () => T): T => {
@@ -1320,8 +1321,18 @@ const runWithoutDependencyTracking = <T>(fn: () => T): T => {
 
 const runFixedSignalEffect = (effect: FixedSignalEffect) => {
   const container = effect.container
-  if (effect.runInContainer === false || !container) {
+  if (!container) {
     effect.callback(effect.signal.value)
+    return
+  }
+  if (effect.runInContainer === false) {
+    const previousContainer = currentEffectContainer
+    currentEffectContainer = container
+    try {
+      effect.callback(effect.signal.value)
+    } finally {
+      currentEffectContainer = previousContainer
+    }
     return
   }
   pushContainer(container, () => {
@@ -4814,7 +4825,7 @@ export const bindRuntimeEvent = (element: Element, eventName: string, value: unk
     return false
   }
 
-  const container = getCurrentContainer()
+  const container = getRuntimeContainer()
   if (!container) {
     return false
   }
@@ -6147,7 +6158,8 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
   return renderClientNodes(resolved as JSX.Element | JSX.Element[], container)
 }
 
-export const getRuntimeContainer = () => getCurrentContainer() ?? currentEffect?.container ?? null
+export const getRuntimeContainer = () =>
+  getCurrentContainer() ?? currentEffectContainer ?? currentEffect?.container ?? null
 
 export const captureClientInsertOwner = (
   container: RuntimeContainer | null,

@@ -26,6 +26,7 @@ import { ROUTE_LINK_ATTR } from '../router-shared.ts'
 import {
   createDetachedRuntimeContainer,
   createDetachedRuntimeSignal,
+  createFixedSignalEffect,
   type RuntimeContainer,
   withRuntimeContainer,
 } from '../runtime.ts'
@@ -584,6 +585,51 @@ describe('core/client dom attr', () => {
 
     expect(docAddEventListener).toHaveBeenCalledOnce()
     expect(elem.addEventListener).not.toHaveBeenCalled()
+  })
+
+  it('binds packed resumable events while fixed effects run outside the container stack', () => {
+    const runtimeContainer = createContainer()
+    const docAddEventListener = vi.fn()
+    runtimeContainer.doc = {
+      addEventListener: docAddEventListener,
+    } as unknown as Document
+    const visible = createDetachedRuntimeSignal(runtimeContainer, 's0', false)
+    const elem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute: vi.fn(),
+    }
+    const descriptorElem = {
+      addEventListener: vi.fn(),
+      namespaceURI: 'http://www.w3.org/1999/xhtml',
+      setAttribute: vi.fn(),
+    }
+
+    withRuntimeContainer(runtimeContainer, () => {
+      createFixedSignalEffect(
+        visible,
+        (isVisible) => {
+          if (isVisible) {
+            eventStatic.__1(elem as unknown as Element, 'click', 'symbol-click', 'payload')
+            eventStatic(
+              descriptorElem as unknown as Element,
+              'click',
+              __eclipsaEvent.__1('click', 'symbol-click', 'descriptor-payload'),
+            )
+          }
+        },
+        {
+          runInContainer: false,
+          skipInitialRun: true,
+        },
+      )
+    })
+
+    visible.value = true
+
+    expect(docAddEventListener).toHaveBeenCalledWith('click', expect.any(Function), true)
+    expect(elem.addEventListener).not.toHaveBeenCalled()
+    expect(descriptorElem.addEventListener).not.toHaveBeenCalled()
   })
 
   it('installs delegated listeners for packed event descriptors routed through eventStatic', () => {
