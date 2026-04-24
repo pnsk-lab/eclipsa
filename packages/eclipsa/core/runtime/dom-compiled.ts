@@ -308,7 +308,10 @@ export const attr = (elem: Element, name: string, value: () => unknown) => {
 }
 
 export const createComponent = (Component: Component, props: unknown) => {
-  return () => (Component as (props: unknown) => Insertable)(props)
+  return {
+    props: (props ?? {}) as Record<string, unknown>,
+    type: Component as JSX.Type,
+  } as unknown as Insertable
 }
 
 const isRenderObject = (

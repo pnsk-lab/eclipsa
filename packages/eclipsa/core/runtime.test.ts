@@ -1023,6 +1023,100 @@ describe('runtime/dom-compiled', () => {
     })
   })
 
+  it('keeps compiled component calls attached to the active runtime parent frame', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const Child = __eclipsaComponent(
+        () => jsxDEV('span', { children: 'child' }, null, false, {}),
+        'compiled-child-symbol',
+        () => [],
+        undefined,
+        { optimizedRoot: true },
+      )
+      const Parent = __eclipsaComponent(
+        () => {
+          const host = container.doc!.createElement('div')
+          insertCompiledStatic(createCompiledComponent(Child as never, {}), host)
+          return host
+        },
+        'compiled-parent-symbol',
+        () => [],
+        undefined,
+        { optimizedRoot: true },
+      )
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Parent as never, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      expect(nodes[1]?.textContent).toContain('child')
+      expect(container.components.get('c0')?.childComponentIds?.has('c0.0')).toBe(true)
+      expect(container.components.get('c0.0')?.parentId).toBe('c0')
+      expect(container.rootChildComponentIds.has('c0.0')).toBe(false)
+    })
+  })
+
+  it('does not let frame-less compiled effects reuse resumed root component ids', () => {
+    withFakeNodeGlobal(() => {
+      const OriginalDocument = globalThis.Document
+      const doc = new FakeDocument() as unknown as Document
+      ;(doc as unknown as { location: Location }).location = {
+        hash: '',
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+        search: '',
+      } as Location
+      ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
+        FakeDocument as unknown as typeof Document
+      try {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: [],
+              symbol: 'resumed-root-symbol',
+              visibleCount: 0,
+              watchCount: 0,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+          },
+          signals: {},
+          subscriptions: {},
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+        const Child = __eclipsaComponent(
+          () => jsxDEV('span', { children: 'fresh' }, null, false, {}),
+          'fresh-root-symbol',
+          () => [],
+          undefined,
+          { optimizedRoot: true },
+        )
+
+        withRuntimeContainer(container, () => {
+          renderCompiledNodes(createCompiledComponent(Child as never, {}))
+        })
+
+        expect(container.components.get('c0')?.symbol).toBe('resumed-root-symbol')
+        expect(container.components.get('c1')?.symbol).toBe('fresh-root-symbol')
+        expect(container.rootChildComponentIds.has('c0')).toBe(true)
+        expect(container.rootChildComponentIds.has('c1')).toBe(true)
+      } finally {
+        globalThis.Document = OriginalDocument
+      }
+    })
+  })
+
   it('renders compiler-emitted Show and reactive For objects', () => {
     withFakeNodeGlobal(() => {
       const fakeDocument = new FakeDocument()

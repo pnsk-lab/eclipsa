@@ -10135,6 +10135,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
   }
 
   rebuildComponentTopology(container)
+  container.rootChildCursor = findNextNumericId(container.rootChildComponentIds ?? [], 'c')
 
   for (const [signalId, subscribers] of Object.entries(payload.subscriptions)) {
     const record = container.signals.get(signalId)
