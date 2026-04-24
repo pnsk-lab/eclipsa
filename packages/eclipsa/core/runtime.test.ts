@@ -14,10 +14,12 @@ import {
   textNodeSignalMember,
 } from './client/dom.ts'
 import {
+  attrStatic as attrCompiledStatic,
   createComponent as createCompiledComponent,
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
 } from './runtime/dom-compiled.ts'
+import { onMount as onCompiledMount, signal as createCompiledSignal } from './runtime/reactive.ts'
 import {
   createContext,
   getRuntimeContextReference,
@@ -885,6 +887,52 @@ describe('core/runtime dom snapshots', () => {
 })
 
 describe('runtime/dom-compiled', () => {
+  it('assigns static compiled refs instead of stringifying them as attributes', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const canvas = fakeDocument.createElement('canvas') as unknown as FakeElement
+        const ref = { value: undefined as Element | undefined }
+
+        attrCompiledStatic(canvas as unknown as Element, 'ref', ref)
+
+        expect(ref.value).toBe(canvas)
+        expect(canvas.hasAttribute('ref')).toBe(false)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('runs compiled onMount after static refs are assigned', async () => {
+    return withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const canvas = fakeDocument.createElement('canvas') as unknown as FakeElement
+        const ref = createCompiledSignal<Element | undefined>(undefined)
+        let mountedCanvas: Element | undefined
+
+        onCompiledMount(() => {
+          mountedCanvas = ref.value
+        })
+        attrCompiledStatic(canvas as unknown as Element, 'ref', ref)
+
+        expect(mountedCanvas).toBeUndefined()
+        return Promise.resolve().then(() => {
+          expect(mountedCanvas).toBe(canvas)
+        })
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
   it('renders JSX objects returned by component inserts instead of stringifying them', () => {
     withFakeNodeGlobal(() => {
       const fakeDocument = new FakeDocument()

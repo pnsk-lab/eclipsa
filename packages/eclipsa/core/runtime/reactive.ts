@@ -5,6 +5,21 @@ export type Cleanup = () => void
 const signalRecords = new WeakMap<object, { effects: Set<Effect>; value: unknown }>()
 let currentEffect: Effect | null = null
 let currentCleanups: Cleanup[] | null = null
+let runtimeCleanupHandler: ((fn: Cleanup) => boolean) | null = null
+let runtimeEffectWrapper: ((fn: Effect) => Effect) | null = null
+let runtimeMountScheduler: ((fn: () => void) => boolean) | null = null
+
+export const setRuntimeCleanupHandler = (handler: ((fn: Cleanup) => boolean) | null) => {
+  runtimeCleanupHandler = handler
+}
+
+export const setRuntimeEffectWrapper = (wrapper: ((fn: Effect) => Effect) | null) => {
+  runtimeEffectWrapper = wrapper
+}
+
+export const setRuntimeMountScheduler = (scheduler: ((fn: () => void) => boolean) | null) => {
+  runtimeMountScheduler = scheduler
+}
 
 export const isSignal = (value: unknown): value is Signal =>
   !!value && (typeof value === 'object' || typeof value === 'function') && signalRecords.has(value)
@@ -43,7 +58,8 @@ export const useSignal = createSignal
 export const signal = createSignal
 
 export const effect = (fn: () => void) => {
-  const run = () => {
+  let run: Effect
+  const baseRun = () => {
     currentEffect = run
     try {
       fn()
@@ -51,16 +67,33 @@ export const effect = (fn: () => void) => {
       currentEffect = null
     }
   }
+  run = runtimeEffectWrapper?.(baseRun) ?? baseRun
   run()
   return run
 }
 
 export const onCleanup = (fn: Cleanup) => {
+  if (runtimeCleanupHandler?.(fn)) {
+    return
+  }
   currentCleanups?.push(fn)
 }
 
 export const onMount = (fn: () => void) => {
-  fn()
+  const cleanups = currentCleanups
+  const run = () => {
+    const previousCleanups = currentCleanups
+    currentCleanups = cleanups
+    try {
+      fn()
+    } finally {
+      currentCleanups = previousCleanups
+    }
+  }
+  if (runtimeMountScheduler?.(run)) {
+    return
+  }
+  queueMicrotask(run)
 }
 
 export const onVisible = (fn: () => void) => {
@@ -98,7 +131,7 @@ export const createFixedSignalEffect = <T>(
   if (!record) {
     return false
   }
-  const run = () => fn(record.value as T)
+  const run = runtimeEffectWrapper?.(() => fn(record.value as T)) ?? (() => fn(record.value as T))
   record.effects.add(run)
   currentCleanups?.push(() => record.effects.delete(run))
   if (options?.skipInitialRun !== true) {

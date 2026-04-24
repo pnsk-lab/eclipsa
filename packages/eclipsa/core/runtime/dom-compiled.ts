@@ -24,11 +24,28 @@ export type Insertable =
   | (() => Insertable)
 
 type ComplexInsertableRenderer = (value: unknown) => Node[] | null
+type RuntimeRefAssigner = (value: unknown, element: Element) => boolean
 
 let complexInsertableRenderer: ComplexInsertableRenderer | null = null
+let runtimeRefAssigner: RuntimeRefAssigner | null = null
 
 export const setComplexInsertableRenderer = (renderer: ComplexInsertableRenderer | null) => {
   complexInsertableRenderer = renderer
+}
+
+export const setRuntimeRefAssigner = (assigner: RuntimeRefAssigner | null) => {
+  runtimeRefAssigner = assigner
+}
+
+const assignRef = (element: Element, value: unknown) => {
+  if (runtimeRefAssigner?.(value, element)) {
+    return
+  }
+  if (typeof value === 'function') {
+    value(element)
+  } else if (value && typeof value === 'object' && 'value' in value) {
+    ;(value as { value: Element }).value = element
+  }
 }
 
 const EMPTY_INSERT = Symbol('eclipsa.empty')
@@ -279,6 +296,10 @@ export const className = (elem: Element, value: () => unknown) => {
 }
 
 export const attrStatic = (elem: Element, name: string, value: unknown) => {
+  if (name === 'ref') {
+    assignRef(elem, value)
+    return
+  }
   elem.setAttribute(name, String(value))
 }
 
@@ -321,11 +342,7 @@ const setElementProp = (element: Element, name: string, value: unknown) => {
   }
 
   if (name === 'ref') {
-    if (typeof value === 'function') {
-      value(element)
-    } else if (value && typeof value === 'object' && 'value' in value) {
-      ;(value as { value: Element }).value = element
-    }
+    assignRef(element, value)
     return
   }
 

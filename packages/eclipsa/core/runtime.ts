@@ -126,7 +126,7 @@ import {
   syncManagedAttributeSnapshot,
   type PendingFocusRestore,
 } from './runtime/dom.ts'
-import { setComplexInsertableRenderer } from './runtime/dom-compiled.ts'
+import { setComplexInsertableRenderer, setRuntimeRefAssigner } from './runtime/dom-compiled.ts'
 import {
   clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
   getContainerStack,
@@ -136,6 +136,11 @@ import {
   readAsyncSignalSnapshot as readGlobalAsyncSignalSnapshot,
   writeAsyncSignalSnapshot as writeGlobalAsyncSignalSnapshot,
 } from './runtime/globals.ts'
+import {
+  setRuntimeCleanupHandler as setCompiledRuntimeCleanupHandler,
+  setRuntimeEffectWrapper as setCompiledRuntimeEffectWrapper,
+  setRuntimeMountScheduler as setCompiledRuntimeMountScheduler,
+} from './runtime/reactive.ts'
 import {
   EMPTY_ROUTE_PARAMS,
   ROUTE_DOCUMENT_FALLBACK,
@@ -7760,6 +7765,34 @@ export const renderClientInsertable = (
 setComplexInsertableRenderer((value) => {
   const container = getRuntimeContainer()
   return container ? renderClientInsertable(value, container) : null
+})
+
+setRuntimeRefAssigner((value, element) => {
+  syncRuntimeRefMarker(element, value)
+  return assignRuntimeRef(value, element)
+})
+
+setCompiledRuntimeEffectWrapper((fn) => {
+  const container = getRuntimeContainer()
+  return container ? () => pushContainer(container, fn) : fn
+})
+
+setCompiledRuntimeMountScheduler((fn) => {
+  const frame = getCurrentFrame()
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
+    return false
+  }
+  createOnMount(fn)
+  return true
+})
+
+setCompiledRuntimeCleanupHandler((fn) => {
+  try {
+    createOnCleanup(fn)
+    return true
+  } catch {
+    return false
+  }
 })
 
 const resetContainerForRouteRender = (container: RuntimeContainer) => {
