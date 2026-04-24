@@ -48,6 +48,37 @@ const CLIENT_CLASS_SIGNAL_VALUE: &str = "_classSignalValue";
 const CLIENT_EVENT_STATIC: &str = "_eventStatic";
 const CLIENT_LISTENER_STATIC: &str = "_listenerStatic";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
+const CLIENT_RUNTIME_IMPORTS: [(&str, &str); 23] = [
+    ("createTemplate", CLIENT_CREATE_TEMPLATE),
+    ("materializeTemplateRefs", CLIENT_MATERIALIZE_TEMPLATE_REFS),
+    ("insert", CLIENT_INSERT),
+    ("insertFor", CLIENT_INSERT_FOR),
+    ("insertStatic", CLIENT_INSERT_STATIC),
+    ("insertElementStatic", CLIENT_INSERT_ELEMENT_STATIC),
+    ("text", CLIENT_TEXT),
+    ("textSignal", CLIENT_TEXT_SIGNAL),
+    ("textNodeSignal", CLIENT_TEXT_NODE_SIGNAL),
+    ("textNodeSignalMember", CLIENT_TEXT_NODE_SIGNAL_MEMBER),
+    (
+        "textNodeSignalMemberStatic",
+        CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC,
+    ),
+    ("textNodeSignalValue", CLIENT_TEXT_NODE_SIGNAL_VALUE),
+    ("attr", CLIENT_ATTR),
+    ("attrStatic", CLIENT_ATTR_STATIC),
+    ("className", CLIENT_CLASS_NAME),
+    ("classSignal", CLIENT_CLASS_SIGNAL),
+    ("classSignalEquals", CLIENT_CLASS_SIGNAL_EQUALS),
+    (
+        "classSignalEqualsStatic",
+        CLIENT_CLASS_SIGNAL_EQUALS_STATIC,
+    ),
+    ("classSignalMember", CLIENT_CLASS_SIGNAL_MEMBER),
+    ("classSignalValue", CLIENT_CLASS_SIGNAL_VALUE),
+    ("eventStatic", CLIENT_EVENT_STATIC),
+    ("listenerStatic", CLIENT_LISTENER_STATIC),
+    ("createComponent", CLIENT_CREATE_COMPONENT),
+];
 const SSR_JSX_DEV: &str = "_jsxDEV";
 const SSR_RAW: &str = "_ssrRaw";
 const SSR_RENDER_ATTR: &str = "_renderSSRAttr";
@@ -1246,20 +1277,23 @@ fn transform_client(
     let program = parse_program(&allocator, source, source_type, id)?;
     let mut compiler = ClientCompiler::new(source, source_type, event_mode);
     let jsx_source = compiler.apply_root_replacements(&program)?;
-    let with_hmr = if hmr { wrap_hot_components(&jsx_source, id)? } else { jsx_source };
+    let rewritten_imports = rewrite_core_runtime_imports(&jsx_source);
+    let with_hmr = if hmr {
+        wrap_hot_components(&rewritten_imports, id)?
+    } else {
+        rewritten_imports
+    };
 
     let mut prefix = String::new();
-    prefix.push_str(&format!(
-        "import {{ createTemplate as {CLIENT_CREATE_TEMPLATE}, materializeTemplateRefs as {CLIENT_MATERIALIZE_TEMPLATE_REFS}, insert as {CLIENT_INSERT}, insertFor as {CLIENT_INSERT_FOR}, insertStatic as {CLIENT_INSERT_STATIC}, insertElementStatic as {CLIENT_INSERT_ELEMENT_STATIC}, text as {CLIENT_TEXT}, textSignal as {CLIENT_TEXT_SIGNAL}, textNodeSignal as {CLIENT_TEXT_NODE_SIGNAL}, textNodeSignalMember as {CLIENT_TEXT_NODE_SIGNAL_MEMBER}, textNodeSignalMemberStatic as {CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC}, textNodeSignalValue as {CLIENT_TEXT_NODE_SIGNAL_VALUE}, attr as {CLIENT_ATTR}, attrStatic as {CLIENT_ATTR_STATIC}, className as {CLIENT_CLASS_NAME}, classSignal as {CLIENT_CLASS_SIGNAL}, classSignalEquals as {CLIENT_CLASS_SIGNAL_EQUALS}, classSignalEqualsStatic as {CLIENT_CLASS_SIGNAL_EQUALS_STATIC}, classSignalMember as {CLIENT_CLASS_SIGNAL_MEMBER}, classSignalValue as {CLIENT_CLASS_SIGNAL_VALUE}, eventStatic as {CLIENT_EVENT_STATIC}, listenerStatic as {CLIENT_LISTENER_STATIC}, createComponent as {CLIENT_CREATE_COMPONENT} }} from \"eclipsa/client\";\n"
-    ));
+    prefix.push_str(&render_client_runtime_import(&compiler, &with_hmr));
     if compiler.uses_for {
         prefix.push_str(&format!(
-            "import {{ For as {COMPILER_FOR} }} from \"eclipsa\";\n"
+            "import {{ For as {COMPILER_FOR} }} from \"eclipsa/flow\";\n"
         ));
     }
     if compiler.uses_show {
         prefix.push_str(&format!(
-            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa\";\n"
+            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa/flow\";\n"
         ));
     }
     if hmr {
@@ -1278,6 +1312,74 @@ fn transform_client(
     }
 
     strip_typescript_syntax(&format!("{prefix}{with_hmr}"), id)
+}
+
+fn render_client_runtime_import(compiler: &ClientCompiler, transformed: &str) -> String {
+    let mut imports = Vec::new();
+    for (exported, local) in CLIENT_RUNTIME_IMPORTS {
+        let call = format!("{local}(");
+        if (local == CLIENT_CREATE_TEMPLATE && !compiler.templates.is_empty())
+            || transformed.contains(&call)
+        {
+            imports.push(format!("{exported} as {local}"));
+        }
+    }
+
+    if imports.is_empty() {
+        String::new()
+    } else {
+        format!("import {{ {} }} from \"eclipsa/client\";\n", imports.join(", "))
+    }
+}
+
+fn rewrite_core_runtime_imports(source: &str) -> String {
+    let mut rewritten = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let Some(specifiers) = named_eclipsa_import_specifiers(trimmed)
+        else {
+            rewritten.push_str(line);
+            rewritten.push('\n');
+            continue;
+        };
+
+        let mut root_imports = Vec::new();
+        let mut signal_imports = Vec::new();
+        let mut flow_imports = Vec::new();
+        for specifier in specifiers.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+            let imported = specifier.split(" as ").next().unwrap_or(specifier).trim();
+            match imported {
+                "effect" | "onCleanup" | "onMount" | "onVisible" | "signal" | "useComputed"
+                | "useComputed$" | "useSignal" | "useWatch" => signal_imports.push(specifier),
+                "For" | "Show" => flow_imports.push(specifier),
+                _ => root_imports.push(specifier),
+            }
+        }
+
+        let mut push_import = |imports: Vec<&str>, source: &str| {
+            if !imports.is_empty() {
+                rewritten.push_str(&format!(
+                    "import {{ {} }} from \"{source}\";\n",
+                    imports.join(", ")
+                ));
+            }
+        };
+        push_import(root_imports, "eclipsa");
+        push_import(signal_imports, "eclipsa/signal");
+        push_import(flow_imports, "eclipsa/flow");
+    }
+    rewritten
+}
+
+fn named_eclipsa_import_specifiers(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("import {")?;
+    let (specifiers, module) = rest.split_once("} from ")?;
+    let module = module.trim().trim_end_matches(';').trim();
+    if module == "\"eclipsa\"" || module == "'eclipsa'" {
+        Some(specifiers.trim())
+    } else {
+        None
+    }
 }
 
 fn transform_ssr(source: &str, id: &str) -> Result<String, String> {

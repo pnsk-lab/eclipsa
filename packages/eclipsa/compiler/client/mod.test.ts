@@ -6,7 +6,7 @@ import { analyzeModule } from '../analyze/mod.ts'
 import { compileClientModule } from './mod.ts'
 
 describe('compileClientModule', () => {
-  it('injects the shared client runtime imports', async () => {
+  it('injects only the client runtime helpers used by generated code', async () => {
     const resultCode = await compileClientModule(
       `<div a="a">
         <Header a="a" />
@@ -19,8 +19,37 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toContain('from "eclipsa/client"')
     expect(resultCode).not.toContain('from "eclipsa/dev-client"')
-    expect(resultCode).toContain('createTemplate')
-    expect(resultCode).toContain('createComponent')
+    expect(resultCode).toContain('createTemplate as _createTemplate')
+    expect(resultCode).toContain('createComponent as _createComponent')
+    expect(resultCode).not.toContain('attrStatic as _attrStatic')
+    expect(resultCode).not.toContain('eventStatic as _eventStatic')
+  })
+
+  it('omits the client runtime import when no client helper is generated', async () => {
+    const resultCode = await compileClientModule('const value = 1; export { value }', 'mod.ts', {
+      hmr: false,
+    })
+
+    expect(resultCode).not.toContain('from "eclipsa/client"')
+  })
+
+  it('rewrites core runtime imports to narrower subpath exports', async () => {
+    const resultCode = await compileClientModule(
+      `
+        import { useSignal, For, Show, Link } from 'eclipsa'
+        const value = useSignal
+        export { value, For, Show, Link }
+      `,
+      'mod.ts',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Link } from "eclipsa";')
+    expect(resultCode).toContain('import { useSignal } from "eclipsa/signal";')
+    expect(resultCode).toContain('import { For, Show } from "eclipsa/flow";')
+    expect(resultCode).not.toContain('import { useSignal, For, Show, Link } from "eclipsa";')
   })
 
   it('injects HMR helpers only when enabled', async () => {

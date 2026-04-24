@@ -15,6 +15,8 @@ export default defineConfig({
   pack: {
     entry: [
       'mod.ts',
+      'flow.ts',
+      'signal.ts',
       'web-utils/mod.ts',
       'vite/mod.ts',
       'vite/build/runtime.ts',

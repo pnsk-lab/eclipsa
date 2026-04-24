@@ -21,6 +21,14 @@
       "types": "./atom/mod.ts",
       "import": "./atom/mod.ts"
     },
+    "./signal": {
+      "types": "./signal.ts",
+      "import": "./signal.ts"
+    },
+    "./flow": {
+      "types": "./flow.ts",
+      "import": "./flow.ts"
+    },
     "./web-utils": {
       "types": "./web-utils/mod.ts",
       "import": "./web-utils/mod.ts"
@@ -71,6 +79,14 @@
       "./atom": {
         "types": "./atom/mod.d.mts",
         "import": "./atom/mod.mjs"
+      },
+      "./signal": {
+        "types": "./signal.d.mts",
+        "import": "./signal.mjs"
+      },
+      "./flow": {
+        "types": "./flow.d.mts",
+        "import": "./flow.mjs"
       },
       "./web-utils": {
         "types": "./web-utils/mod.d.mts",

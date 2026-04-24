@@ -13,6 +13,14 @@ export const DEV_EXPORTS = {
     types: './atom/mod.ts',
     import: './atom/mod.ts',
   },
+  './signal': {
+    types: './signal.ts',
+    import: './signal.ts',
+  },
+  './flow': {
+    types: './flow.ts',
+    import: './flow.ts',
+  },
   './web-utils': {
     types: './web-utils/mod.ts',
     import: './web-utils/mod.ts',
@@ -63,6 +71,14 @@ export const PUBLISH_EXPORTS = {
   './atom': {
     types: './dist/atom/mod.d.mts',
     import: './dist/atom/mod.mjs',
+  },
+  './signal': {
+    types: './dist/signal.d.mts',
+    import: './dist/signal.mjs',
+  },
+  './flow': {
+    types: './dist/flow.d.mts',
+    import: './dist/flow.mjs',
   },
   './web-utils': {
     types: './dist/web-utils/mod.d.mts',

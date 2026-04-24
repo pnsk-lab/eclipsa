@@ -36,6 +36,14 @@ describe('publish package metadata', () => {
       types: './web-utils/mod.d.mts',
       import: './web-utils/mod.mjs',
     })
+    expect(exportsMap['./signal']).toEqual({
+      types: './signal.d.mts',
+      import: './signal.mjs',
+    })
+    expect(exportsMap['./flow']).toEqual({
+      types: './flow.d.mts',
+      import: './flow.mjs',
+    })
     expect(exportsMap['./vite/build/runtime']).toEqual({
       types: './vite/build/runtime.d.mts',
       import: './vite/build/runtime.mjs',
@@ -50,7 +58,13 @@ describe('publish package metadata', () => {
     const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
 
     expect(packConfig?.entry).toEqual(
-      expect.arrayContaining(['core/internal.ts', 'web-utils/mod.ts', 'vite/build/runtime.ts']),
+      expect.arrayContaining([
+        'core/internal.ts',
+        'flow.ts',
+        'signal.ts',
+        'web-utils/mod.ts',
+        'vite/build/runtime.ts',
+      ]),
     )
   })
 
