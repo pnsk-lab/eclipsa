@@ -389,6 +389,7 @@ export interface ShowValue<T = unknown> {
 }
 
 export interface RouterState {
+  bindLinks?: (root: ParentNode) => void
   currentPath: { value: string }
   currentRoute: LoadedRoute | null
   currentUrl: { value: string }

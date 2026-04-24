@@ -1,24 +1,10 @@
-import type { JSX } from '../../jsx/types.ts'
-import { jsxDEV } from '../../jsx/jsx-dev-runtime.ts'
 import type {
   RouteLocation,
   RouteManifest,
   RouteModuleManifest,
   RouteParams,
 } from '../router-shared.ts'
-import {
-  ROUTE_ERROR_PROP,
-  ROUTE_PARAMS_PROP,
-  ROUTE_SLOT_ROUTE_KEY,
-  ROUTE_SLOT_TYPE,
-} from './constants.ts'
-import type {
-  LoadedRoute,
-  RouteDataResponse,
-  RouteSlotCarrier,
-  RouterState,
-  RuntimeContainer,
-} from './types.ts'
+import type { RouteDataResponse, RouterState } from './types.ts'
 
 export const normalizeRoutePath = (pathname: string) => {
   const normalizedPath = pathname.trim() || '/'
@@ -288,86 +274,6 @@ export const isRouteDataSuccess = (
   (body.kind === 'page' || body.kind === 'not-found') &&
   !!body.loaders &&
   typeof body.loaders === 'object'
-
-export const isRouteSlot = (value: unknown): value is RouteSlotCarrier =>
-  typeof value === 'object' &&
-  value !== null &&
-  '__eclipsa_type' in value &&
-  (value as { __eclipsa_type?: unknown }).__eclipsa_type === ROUTE_SLOT_TYPE
-
-export const createRouteSlot = (route: LoadedRoute, startLayoutIndex: number): RouteSlotCarrier => {
-  const slot: RouteSlotCarrier = {
-    __eclipsa_type: ROUTE_SLOT_TYPE,
-    pathname: route.pathname,
-    startLayoutIndex,
-  }
-  Object.defineProperty(slot, ROUTE_SLOT_ROUTE_KEY, {
-    configurable: true,
-    enumerable: false,
-    value: route,
-    writable: true,
-  })
-  return slot
-}
-
-export const resolveRouteSlot = (container: RuntimeContainer | null, slot: RouteSlotCarrier) => {
-  const route =
-    slot[ROUTE_SLOT_ROUTE_KEY] ??
-    container?.router?.loadedRoutes.get(routeCacheKey(slot.pathname, 'page'))
-  if (!route) {
-    return null
-  }
-  return createRouteElement(route, slot.startLayoutIndex)
-}
-
-const defineHiddenRouteProp = (
-  props: Record<string, unknown>,
-  key: typeof ROUTE_PARAMS_PROP | typeof ROUTE_ERROR_PROP,
-  value: unknown,
-) => {
-  Object.defineProperty(props, key, {
-    configurable: true,
-    enumerable: false,
-    value,
-    writable: true,
-  })
-}
-
-const createRouteRenderProps = (route: LoadedRoute, props: Record<string, unknown>) => {
-  const nextProps = {
-    ...props,
-  }
-  defineHiddenRouteProp(nextProps, ROUTE_PARAMS_PROP, route.params)
-  defineHiddenRouteProp(nextProps, ROUTE_ERROR_PROP, route.error)
-  return nextProps
-}
-
-export const createRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
-  if (startLayoutIndex >= route.layouts.length) {
-    return jsxDEV(
-      route.page.renderer as unknown as JSX.Type,
-      createRouteRenderProps(route, {}),
-      null,
-      false,
-      {},
-    )
-  }
-
-  let children: unknown = null
-  for (let index = route.layouts.length - 1; index >= startLayoutIndex; index -= 1) {
-    const layout = route.layouts[index]!
-    children = jsxDEV(
-      layout.renderer as unknown as JSX.Type,
-      createRouteRenderProps(route, {
-        children: createRouteSlot(route, index + 1),
-      }),
-      null,
-      false,
-      {},
-    )
-  }
-  return children
-}
 
 export const routeCacheKey = (
   pathname: string,

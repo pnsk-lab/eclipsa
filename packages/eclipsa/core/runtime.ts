@@ -1,6 +1,6 @@
 import type { JSX } from '../jsx/types.ts'
 import { FRAGMENT } from '../jsx/shared.ts'
-import { isSSRRawValue, isSSRTemplate } from '../jsx/jsx-dev-runtime.ts'
+import { isSSRRawValue, isSSRTemplate, jsxDEV } from '../jsx/jsx-dev-runtime.ts'
 import {
   createPendingSignalError,
   isPendingSignalError,
@@ -86,6 +86,8 @@ import {
   ROUTE_ERROR_PROP,
   ROUTE_NOT_FOUND_KEY,
   ROUTE_PARAMS_PROP,
+  ROUTE_SLOT_ROUTE_KEY,
+  ROUTE_SLOT_TYPE,
   ROUTER_CURRENT_PATH_SIGNAL_ID,
   ROUTER_CURRENT_URL_SIGNAL_ID,
   ROUTER_EVENT_STATE_KEY,
@@ -136,14 +138,12 @@ import {
 import {
   EMPTY_ROUTE_PARAMS,
   ROUTE_DOCUMENT_FALLBACK,
-  createRouteElement,
   createRouterLocation,
   createStandaloneLocation,
   findSpecialManifestEntry,
   getRouteModuleUrl,
   isRouteDataSuccess,
   isLoaderSignalId,
-  isRouteSlot,
   matchRouteManifest,
   normalizeRoutePath,
   parseLocationHref,
@@ -151,7 +151,6 @@ import {
   resolveNotFoundRouteMatch,
   resolvePageRouteMatch,
   resolveRoutableMatch,
-  resolveRouteSlot,
   routeCacheKey,
   routePrefetchKey,
 } from './runtime/routes.ts'
@@ -1438,6 +1437,81 @@ const createLocalWatchRunner =
 const isProjectionSlot = (value: unknown): value is ProjectionSlotValue =>
   isPlainObject(value) && value.__eclipsa_type === PROJECTION_SLOT_TYPE
 
+const isRouteSlotValue = (value: unknown): value is RouteSlotCarrier =>
+  isPlainObject(value) && value.__eclipsa_type === ROUTE_SLOT_TYPE
+
+const defineHiddenRouteProp = (
+  props: Record<string, unknown>,
+  key: typeof ROUTE_PARAMS_PROP | typeof ROUTE_ERROR_PROP,
+  value: unknown,
+) => {
+  Object.defineProperty(props, key, {
+    configurable: true,
+    enumerable: false,
+    value,
+    writable: true,
+  })
+}
+
+const createRouteRenderProps = (route: LoadedRoute, props: Record<string, unknown>) => {
+  const nextProps = { ...props }
+  defineHiddenRouteProp(nextProps, ROUTE_PARAMS_PROP, route.params)
+  defineHiddenRouteProp(nextProps, ROUTE_ERROR_PROP, route.error)
+  return nextProps
+}
+
+const createRuntimeRouteSlot = (route: LoadedRoute, startLayoutIndex: number): RouteSlotCarrier => {
+  const slot: RouteSlotCarrier = {
+    __eclipsa_type: ROUTE_SLOT_TYPE,
+    pathname: route.pathname,
+    startLayoutIndex,
+  }
+  Object.defineProperty(slot, ROUTE_SLOT_ROUTE_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: route,
+    writable: true,
+  })
+  return slot
+}
+
+const createRuntimeRouteElement = (route: LoadedRoute, startLayoutIndex = 0) => {
+  if (startLayoutIndex >= route.layouts.length) {
+    return jsxDEV(
+      route.page.renderer as unknown as JSX.Type,
+      createRouteRenderProps(route, {}),
+      null,
+      false,
+      {},
+    )
+  }
+
+  let children: unknown = null
+  for (let index = route.layouts.length - 1; index >= startLayoutIndex; index -= 1) {
+    const layout = route.layouts[index]!
+    children = jsxDEV(
+      layout.renderer as unknown as JSX.Type,
+      createRouteRenderProps(route, {
+        children: createRuntimeRouteSlot(route, index + 1),
+      }),
+      null,
+      false,
+      {},
+    )
+  }
+  return children
+}
+
+const resolveRuntimeRouteSlot = (container: RuntimeContainer | null, slot: RouteSlotCarrier) => {
+  const route =
+    slot[ROUTE_SLOT_ROUTE_KEY] ?? container?.router?.loadedRoutes.get(`${slot.pathname}::page`)
+  return route ? createRuntimeRouteElement(route, slot.startLayoutIndex) : null
+}
+
+export const isRouteSlot = isRouteSlotValue
+export const createRouteElement = createRuntimeRouteElement
+export const resolveRouteSlot = resolveRuntimeRouteSlot
+
 const createProjectionSlot = (
   componentId: string,
   name: string,
@@ -1456,7 +1530,6 @@ let runtimeSerialization: ReturnType<typeof createRuntimeSerialization> | null =
 const getRuntimeSerialization = () => {
   runtimeSerialization ??= createRuntimeSerialization({
     createProjectionSlot,
-    ensureRouterState,
     ensureRuntimeElementId,
     evaluateProps,
     findRuntimeElement,
@@ -1464,7 +1537,6 @@ const getRuntimeSerialization = () => {
     isPlainObject,
     isProjectionSlot,
     isRenderObject,
-    isRouteSlot,
     loadSymbol,
     materializeComputedSignalReference,
     materializeScope,
@@ -1678,7 +1750,7 @@ const shouldPreserveProjectionSlotDom = (value: unknown): boolean => {
   if (value === null || value === undefined || value === false) {
     return false
   }
-  if (isProjectionSlot(value) || isRouteSlot(value)) {
+  if (isProjectionSlot(value) || isRouteSlotValue(value)) {
     return false
   }
   if (Array.isArray(value)) {
@@ -2405,6 +2477,7 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
     .handle as { value: boolean }
 
   const router: RouterState = {
+    bindLinks: (root) => bindRouterLinks(container, root),
     currentPath,
     currentRoute: null,
     currentUrl,
@@ -2442,6 +2515,13 @@ const ensureRouterState = (container: RuntimeContainer, manifest?: RouteManifest
   }
 
   return router
+}
+
+const bindActiveRouterLinks = (container: RuntimeContainer, root: ParentNode) => {
+  const bindLinks = container.router?.bindLinks
+  if (typeof bindLinks === 'function') {
+    bindLinks(root)
+  }
 }
 
 const pushContainer = <T>(container: RuntimeContainer, fn: () => T): T => {
@@ -2864,10 +2944,6 @@ const materializeSymbolReference = (
     const module = getResolvedRuntimeSymbols(container).get(symbolId)
     return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
   }
-  Object.defineProperty(fn, 'name', {
-    configurable: true,
-    value: `eclipsa$${symbolId}`,
-  })
   return fn
 }
 
@@ -3646,7 +3722,7 @@ const rebindExternalHost = (container: RuntimeContainer, host: HTMLElement) => {
   }
   bindComponentBoundaries(container, host.parentNode as ParentNode)
   restoreSignalRefs(container, host.parentNode as ParentNode)
-  bindRouterLinks(container, host.parentNode as ParentNode)
+  bindActiveRouterLinks(container, host.parentNode as ParentNode)
 }
 
 const scheduleExternalHostRebind = (container: RuntimeContainer, host: HTMLElement) => {
@@ -4791,12 +4867,12 @@ const getSSRRenderer = () => {
   ssrRenderer ??= createSSRRenderer({
     getCurrentContainer,
     isProjectionSlot: (value) => isProjectionSlot(value),
-    isRouteSlot: (value) => isRouteSlot(value),
+    isRouteSlot: (value) => isRouteSlotValue(value),
     renderProjectionSlotToString: (value) =>
       renderProjectionSlotToString(value as ProjectionSlotValue),
     renderStringNode,
     resolveRouteSlot: (container, slot) =>
-      resolveRouteSlot(container as RuntimeContainer | null, slot as RouteSlotCarrier),
+      resolveRuntimeRouteSlot(container as RuntimeContainer | null, slot as RouteSlotCarrier),
   })
   return ssrRenderer
 }
@@ -5299,7 +5375,7 @@ const syncExternalProjectionSlotDom = (
 
   bindComponentBoundaries(container, host)
   restoreSignalRefs(container, host)
-  bindRouterLinks(container, host)
+  bindActiveRouterLinks(container, host)
 
   const keptDescendants = expandComponentIdsToDescendants(container, [
     ...collectComponentBoundaryIds([host]),
@@ -5511,8 +5587,8 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
   if (isProjectionSlot(resolved)) {
     return renderProjectionSlotToString(resolved)
   }
-  if (isRouteSlot(resolved)) {
-    const routeElement = resolveRouteSlot(getCurrentContainer(), resolved)
+  if (isRouteSlotValue(resolved)) {
+    const routeElement = resolveRuntimeRouteSlot(getCurrentContainer(), resolved)
     return routeElement ? renderStringNode(routeElement as JSX.Element) : ''
   }
   if (!isRenderObject(resolved)) {
@@ -6076,8 +6152,8 @@ export const renderClientNodes = (
   if (isProjectionSlot(resolved)) {
     return renderProjectionSlotToNodes(resolved, container)
   }
-  if (isRouteSlot(resolved)) {
-    const routeElement = resolveRouteSlot(container, resolved)
+  if (isRouteSlotValue(resolved)) {
+    const routeElement = resolveRuntimeRouteSlot(container, resolved)
     return routeElement ? renderClientNodes(routeElement as JSX.Element, container) : []
   }
   if (!isRenderObject(resolved)) {
@@ -7668,8 +7744,8 @@ export const renderClientInsertable = (
       ? renderProjectionSlotToNodes(resolved, container)
       : renderClientInsertable(resolved.source, container)
   }
-  if (isRouteSlot(resolved)) {
-    const routeElement = resolveRouteSlot(container, resolved)
+  if (isRouteSlotValue(resolved)) {
+    const routeElement = resolveRuntimeRouteSlot(container, resolved)
     return routeElement
       ? renderClientInsertable(routeElement, container)
       : [doc.createComment('eclipsa-empty')]
@@ -8068,7 +8144,7 @@ const loadResolvedRoute = async (
     params: matched.params,
     pathname: normalizedPath,
     page,
-    render: () => createRouteElement(route),
+    render: () => createRuntimeRouteElement(route),
   }
 
   router.loadedRoutes.set(cacheKey, route)
@@ -8345,7 +8421,7 @@ const updateSharedLayoutBoundary = async (
     return false
   }
 
-  const nextChildren = createRouteElement(next, sharedLayoutCount)
+  const nextChildren = createRuntimeRouteElement(next, sharedLayoutCount)
   const rerenderSharedLayoutBoundary = async () => {
     const focusSnapshot = captureBoundaryFocus(container.doc!, boundary.start!, boundary.end!)
     const boundaryProps =
@@ -9343,7 +9419,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
         }),
   )
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
-    bindRouterLinks(container, component.start.parentNode as ParentNode)
+    bindActiveRouterLinks(container, component.start.parentNode as ParentNode)
   }
   restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
   if (parentRoot) {
@@ -10110,7 +10186,7 @@ const applyStreamedSuspenseBoundary = (
     bindComponentBoundaries(container, parentRoot)
     restoreSignalRefs(container, parentRoot)
     if ('querySelectorAll' in parentRoot) {
-      bindRouterLinks(container, parentRoot)
+      bindActiveRouterLinks(container, parentRoot)
     }
   }
 
@@ -10828,11 +10904,6 @@ const materializeCapturedEventDescriptor = (
     const module = getResolvedRuntimeSymbols(container).get(descriptor.symbol)
     return module ? runModule(module) : loadSymbol(container, descriptor.symbol).then(runModule)
   }
-
-  Object.defineProperty(fn, 'name', {
-    configurable: true,
-    value: `eclipsa$${descriptor.symbol}`,
-  })
   return fn
 }
 

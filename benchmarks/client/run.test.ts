@@ -39,8 +39,8 @@ test('bench command quotes chrome paths with spaces', () => {
 test('benchmark host helpers handle ipv6 host syntax', () => {
   expect(normalizeListenHost('[::1]')).toBe('::1')
   expect(normalizeListenHost('localhost')).toBe('localhost')
-  expect(getBenchmarkUrl('[::1]')).toBe('http://[::1]:8080')
-  expect(getFrameworkListUrl('[::1]')).toBe('http://[::1]:8080/ls')
+  expect(getBenchmarkUrl('[::1]')).toBe('http://[::1]:8081')
+  expect(getFrameworkListUrl('[::1]')).toBe('http://[::1]:8081/ls')
 })
 
 test('patched benchmark server entry binds to env host', () => {

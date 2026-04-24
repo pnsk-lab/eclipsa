@@ -50,7 +50,7 @@ export function normalizeListenHost(host) {
 }
 
 export function getBenchmarkUrl(host = getBenchmarkHost()) {
-  return `http://${host}:8080`
+  return `http://${host}:8081`
 }
 
 export function getFrameworkListUrl(host = getBenchmarkHost()) {
@@ -68,7 +68,7 @@ export function getBenchCommand(chromeBinary) {
 export function getPatchedBenchmarkServerEntry() {
   return `import { buildServer } from "./app.js";
 
-const PORT = 8080;
+const PORT = 8081;
 const HOST = process.env.HOST ?? "localhost";
 
 const server = buildServer();
