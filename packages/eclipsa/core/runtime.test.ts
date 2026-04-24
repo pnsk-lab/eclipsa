@@ -14,6 +14,11 @@ import {
   textNodeSignalMember,
 } from './client/dom.ts'
 import {
+  createComponent as createCompiledComponent,
+  insertStatic as insertCompiledStatic,
+  renderNodes as renderCompiledNodes,
+} from './runtime/dom-compiled.ts'
+import {
   createContext,
   getRuntimeContextReference,
   materializeRuntimeContext,
@@ -875,6 +880,128 @@ describe('core/runtime dom snapshots', () => {
       ).toBe(true)
       expect(current.textContent).toBe('Quick Start')
       expect(current.getAttribute('data-e-onclick')).toBe(next.getAttribute('data-e-onclick'))
+    })
+  })
+})
+
+describe('runtime/dom-compiled', () => {
+  it('renders JSX objects returned by component inserts instead of stringifying them', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const Icon = () => jsxDEV('span', { class: 'icon', children: 'I' }, null, false, {})
+        const LinkLike = (props: { children: unknown; href: string }) =>
+          ({
+            isStatic: true,
+            props: {
+              'data-e-link': '',
+              children: props.children,
+              href: props.href,
+            },
+            type: 'a',
+          }) as JSX.Element
+        const host = fakeDocument.createElement('nav') as unknown as FakeElement
+
+        insertCompiledStatic(
+          createCompiledComponent(LinkLike as never, {
+            children: [
+              jsxDEV(Icon as never, {}, null, false, {}),
+              jsxDEV('span', { children: 'Docs' }, null, false, {}),
+            ],
+            href: '/docs',
+          }),
+          host as unknown as Node,
+        )
+
+        const anchor = host.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'a',
+        )
+        expect(host.textContent).toBe('IDocs')
+        expect(host.textContent).not.toContain('[object Object]')
+        expect(anchor?.getAttribute('href')).toBe('/docs')
+        expect(anchor?.hasAttribute('data-e-link')).toBe(true)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('delegates complex inserts to the active resume renderer when installed', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const container = createContainer()
+      const Page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
+      container.doc = fakeDocument as unknown as Document
+      container.router = {
+        bindLinks: null,
+        currentPath: createDetachedRuntimeSignal(container, '$router:path', '/'),
+        currentRoute: null,
+        currentUrl: createDetachedRuntimeSignal(container, '$router:url', 'http://localhost/'),
+        isNavigating: createDetachedRuntimeSignal(container, '$router:isNavigating', false),
+        loadedRoutes: new Map([
+          [
+            '/::page',
+            {
+              entry: {} as any,
+              layouts: [],
+              page: { renderer: Page },
+              params: {},
+              pathname: '/',
+              render: () => jsxDEV(Page, {}, null, false, {}),
+            },
+          ],
+        ]),
+        manifest: [],
+        navigate: (async () => {}) as any,
+        routeDataEndpoint: true,
+        sequence: 0,
+      }
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderCompiledNodes({
+          __eclipsa_type: 'route-slot',
+          pathname: '/',
+          startLayoutIndex: 0,
+        } as never),
+      )
+
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0]).toBeInstanceOf(FakeElement)
+      expect((nodes[0] as unknown as FakeElement).tagName).toBe('p')
+      expect(nodes[0]?.textContent).toBe('page content')
+    })
+  })
+
+  it('renders compiler-emitted Show and reactive For objects', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const nodes = renderCompiledNodes([
+          {
+            __e_show: true,
+            children: () => jsxDEV('span', { children: 'shown' }, null, false, {}),
+            fallback: () => jsxDEV('span', { children: 'hidden' }, null, false, {}),
+            when: false,
+          },
+          {
+            __e_for: true,
+            arr: [{ title: 'A' }, { title: 'B' }],
+            fn: (row: { value: { title: string } }, index: { value: number }) =>
+              jsxDEV('p', { children: `${index.value}:${row.value.title}` }, null, false, {}),
+            reactiveRows: true,
+          },
+        ] as never)
+
+        expect(nodes.map((node) => node.textContent)).toEqual(['hidden', '0:A', '1:B'])
+      } finally {
+        globalThis.document = originalDocument
+      }
     })
   })
 })

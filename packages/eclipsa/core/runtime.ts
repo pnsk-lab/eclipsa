@@ -126,6 +126,7 @@ import {
   syncManagedAttributeSnapshot,
   type PendingFocusRestore,
 } from './runtime/dom.ts'
+import { setComplexInsertableRenderer } from './runtime/dom-compiled.ts'
 import {
   clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
   getContainerStack,
@@ -7755,6 +7756,11 @@ export const renderClientInsertable = (
   }
   return [doc.createTextNode(String(resolved))]
 }
+
+setComplexInsertableRenderer((value) => {
+  const container = getRuntimeContainer()
+  return container ? renderClientInsertable(value, container) : null
+})
 
 const resetContainerForRouteRender = (container: RuntimeContainer) => {
   container.rootChildComponentIds ??= new Set()

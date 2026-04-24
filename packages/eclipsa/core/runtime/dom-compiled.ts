@@ -1,4 +1,5 @@
 import type { JSX } from '../../jsx/types.ts'
+import { FRAGMENT } from '../../jsx/shared.ts'
 import type { Component } from '../component.ts'
 import {
   createFixedSignalEffect,
@@ -19,7 +20,16 @@ export type Insertable =
   | null
   | Node
   | Insertable[]
+  | JSX.Element
   | (() => Insertable)
+
+type ComplexInsertableRenderer = (value: unknown) => Node[] | null
+
+let complexInsertableRenderer: ComplexInsertableRenderer | null = null
+
+export const setComplexInsertableRenderer = (renderer: ComplexInsertableRenderer | null) => {
+  complexInsertableRenderer = renderer
+}
 
 const EMPTY_INSERT = Symbol('eclipsa.empty')
 
@@ -49,6 +59,38 @@ export const Show = <T>(props: {
     : typeof props.fallback === 'function'
       ? props.fallback(props.when)
       : props.fallback) as JSX.Element
+
+type ForRuntimeValue<T = unknown> = {
+  __e_for: true
+  arr: readonly T[]
+  arrSignal?: Signal<readonly T[]>
+  fallback?: Insertable
+  fn: (value: T | Signal<T>, index: number | Signal<number>) => Insertable
+  reactiveIndex?: boolean
+  reactiveRows?: boolean
+}
+
+type ShowRuntimeValue<T = unknown> = {
+  __e_show: true
+  children: Insertable | ((value: T) => Insertable)
+  fallback?: Insertable | ((value: T) => Insertable)
+  when: T
+}
+
+const isForValue = (value: unknown): value is ForRuntimeValue =>
+  typeof value === 'object' && value !== null && (value as { __e_for?: unknown }).__e_for === true
+
+const isShowValue = (value: unknown): value is ShowRuntimeValue =>
+  typeof value === 'object' && value !== null && (value as { __e_show?: unknown }).__e_show === true
+
+const resolveShowValue = <T>(value: ShowRuntimeValue<T>) =>
+  value.when
+    ? typeof value.children === 'function'
+      ? value.children(value.when)
+      : value.children
+    : typeof value.fallback === 'function'
+      ? value.fallback(value.when)
+      : value.fallback
 
 export const createTemplate = (html: string) => {
   let root: Node | null = null
@@ -248,6 +290,109 @@ export const createComponent = (Component: Component, props: unknown) => {
   return () => (Component as (props: unknown) => Insertable)(props)
 }
 
+const isRenderObject = (
+  value: unknown,
+): value is {
+  props?: Record<string, unknown>
+  type: JSX.Type
+} => typeof value === 'object' && value !== null && 'type' in value
+
+const isSSRRawLike = (value: unknown): value is { __e_ssr_raw: true; value: string } =>
+  typeof value === 'object' &&
+  value !== null &&
+  (value as { __e_ssr_raw?: unknown }).__e_ssr_raw === true &&
+  typeof (value as { value?: unknown }).value === 'string'
+
+const renderHTMLNodes = (html: string): Node[] => {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  return Array.from(template.content.childNodes)
+}
+
+const setElementProp = (element: Element, name: string, value: unknown) => {
+  if (
+    name === 'children' ||
+    name === 'key' ||
+    value === null ||
+    value === undefined ||
+    value === false
+  ) {
+    return
+  }
+
+  if (name === 'ref') {
+    if (typeof value === 'function') {
+      value(element)
+    } else if (value && typeof value === 'object' && 'value' in value) {
+      ;(value as { value: Element }).value = element
+    }
+    return
+  }
+
+  if (name === 'class' || name === 'className') {
+    applyClass(element, String(value))
+    return
+  }
+
+  if (name === 'style' && value && typeof value === 'object') {
+    const serialized = Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => `${key}: ${String(entry)}`)
+      .join('; ')
+    element.setAttribute('style', serialized)
+    return
+  }
+
+  if (name === 'dangerouslySetInnerHTML') {
+    const html =
+      value && typeof value === 'object' && '__html' in value
+        ? (value as { __html?: unknown }).__html
+        : value
+    ;(element as Element & { innerHTML: string }).innerHTML = String(html ?? '')
+    return
+  }
+
+  if (
+    name.length > 2 &&
+    name[0] === 'o' &&
+    name[1] === 'n' &&
+    name[2] === name[2]?.toUpperCase() &&
+    typeof value === 'function'
+  ) {
+    element.addEventListener(name.slice(2).toLowerCase(), value as EventListener)
+    return
+  }
+
+  element.setAttribute(name, value === true ? '' : String(value))
+}
+
+const renderRenderObjectNodes = (value: {
+  props?: Record<string, unknown>
+  type: JSX.Type
+}): Node[] => {
+  const props = value.props ?? {}
+  if (typeof value.type === 'function') {
+    return renderNodes((value.type as (props: Record<string, unknown>) => Insertable)(props))
+  }
+  if (value.type === FRAGMENT) {
+    return renderNodes(props.children as Insertable)
+  }
+
+  const element = document.createElement(value.type as string)
+  let hasInnerHTML = false
+  for (const name of Object.keys(props)) {
+    if (name === 'dangerouslySetInnerHTML') {
+      hasInnerHTML = true
+    }
+    setElementProp(element, name, props[name])
+  }
+  if (!hasInnerHTML) {
+    for (const node of renderNodes(props.children as Insertable)) {
+      element.appendChild(node)
+    }
+  }
+  return [element]
+}
+
 export const renderNodes = (value: Insertable): Node[] => {
   let resolved = value
   while (typeof resolved === 'function') {
@@ -261,6 +406,30 @@ export const renderNodes = (value: Insertable): Node[] => {
   }
   if (resolved instanceof Node) {
     return [resolved]
+  }
+  if (isSSRRawLike(resolved)) {
+    return renderHTMLNodes(resolved.value)
+  }
+  if (isShowValue(resolved)) {
+    return renderNodes(resolveShowValue(resolved) as Insertable)
+  }
+  if (isForValue(resolved)) {
+    const items = isSignal(resolved.arrSignal) ? resolved.arrSignal.value : resolved.arr
+    if (items.length === 0) {
+      return renderNodes(resolved.fallback as Insertable)
+    }
+    return items.flatMap((item, index) => {
+      const row = resolved.reactiveRows === true ? createSignal(item) : item
+      const rowIndex = resolved.reactiveIndex === false ? index : createSignal(index)
+      return renderNodes(resolved.fn(row, rowIndex))
+    })
+  }
+  const delegated = complexInsertableRenderer?.(resolved)
+  if (delegated) {
+    return delegated
+  }
+  if (isRenderObject(resolved)) {
+    return renderRenderObjectNodes(resolved)
   }
   return [document.createTextNode(String(resolved))]
 }
