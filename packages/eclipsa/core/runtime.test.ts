@@ -19,6 +19,7 @@ import {
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
 } from './runtime/dom-compiled.ts'
+import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import { onMount as onCompiledMount, signal as createCompiledSignal } from './runtime/reactive.ts'
 import {
   createContext,
@@ -3452,6 +3453,41 @@ describe('renderClientInsertable', () => {
         (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'button',
       )
       expect(button).toBeTruthy()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(clicks.value).toBe(1)
+    })
+  })
+
+  it('dispatches compiled runtime event helpers through the active resume container', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$compiled-clicks', 0)
+      const button = container.doc.createElement('button')
+      container.symbols.set(
+        'compiled-sidebar-click',
+        'data:text/javascript,export default ([clicks]) => { clicks.value += 1 }',
+      )
+
+      withRuntimeContainer(container, () => {
+        runtimeEventStatic.__1(button, 'click', 'compiled-sidebar-click', clicks)
+      })
+
+      expect(button.getAttribute('data-e-onclick')).toBeNull()
 
       await dispatchDocumentEvent(
         container,

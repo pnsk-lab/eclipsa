@@ -259,6 +259,8 @@ describe('compileClientModule', () => {
     })
 
     expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).toContain('eventStatic as _eventStatic')
+    expect(resultCode).toContain('from "eclipsa/runtime/event"')
     expect(resultCode).not.toContain('_eventStatic(_cloned, "click", __eclipsaEvent.__2(')
   })
 

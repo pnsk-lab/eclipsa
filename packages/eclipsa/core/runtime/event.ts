@@ -1,4 +1,10 @@
 import type { EventDescriptor, PackedEventDescriptor } from '../meta.ts'
+import {
+  bindLiveClientListener,
+  bindPackedRuntimeEvent,
+  bindRuntimeEvent,
+  getRuntimeContainer,
+} from '../runtime.ts'
 import { getRuntimeSymbolUrl } from './kernel.ts'
 
 const capturesFor = (descriptor: EventDescriptor) => {
@@ -38,6 +44,14 @@ const isEventDescriptor = (value: unknown): value is EventDescriptor =>
 
 export const eventStatic = Object.assign(
   (elem: Element, eventName: string, value: unknown) => {
+    if (bindRuntimeEvent(elem, eventName, value)) {
+      return
+    }
+    const container = getRuntimeContainer()
+    if (container && typeof value === 'function') {
+      bindLiveClientListener(container, elem, eventName, value as (event: Event) => unknown)
+      return
+    }
     if (typeof value === 'function') {
       elem.addEventListener(eventName, value as EventListener)
       return
@@ -51,12 +65,36 @@ export const eventStatic = Object.assign(
     throw new Error('Resumable event bindings require a function or descriptor.')
   },
   {
-    __0: (elem: Element, eventName: string, symbol: string) =>
-      eventStatic(elem, eventName, { captureCount: 0, symbol }),
-    __1: (elem: Element, eventName: string, symbol: string, capture0: unknown) =>
-      eventStatic(elem, eventName, { capture0, captureCount: 1, symbol }),
-    __2: (elem: Element, eventName: string, symbol: string, capture0: unknown, capture1: unknown) =>
-      eventStatic(elem, eventName, { capture0, capture1, captureCount: 2, symbol }),
+    __0: (elem: Element, eventName: string, symbol: string) => {
+      const container = getRuntimeContainer()
+      if (container) {
+        bindPackedRuntimeEvent(container, elem, eventName, symbol, 0)
+        return
+      }
+      eventStatic(elem, eventName, { captureCount: 0, symbol })
+    },
+    __1: (elem: Element, eventName: string, symbol: string, capture0: unknown) => {
+      const container = getRuntimeContainer()
+      if (container) {
+        bindPackedRuntimeEvent(container, elem, eventName, symbol, 1, capture0)
+        return
+      }
+      eventStatic(elem, eventName, { capture0, captureCount: 1, symbol })
+    },
+    __2: (
+      elem: Element,
+      eventName: string,
+      symbol: string,
+      capture0: unknown,
+      capture1: unknown,
+    ) => {
+      const container = getRuntimeContainer()
+      if (container) {
+        bindPackedRuntimeEvent(container, elem, eventName, symbol, 2, capture0, capture1)
+        return
+      }
+      eventStatic(elem, eventName, { capture0, capture1, captureCount: 2, symbol })
+    },
     __3: (
       elem: Element,
       eventName: string,
@@ -64,7 +102,14 @@ export const eventStatic = Object.assign(
       capture0: unknown,
       capture1: unknown,
       capture2: unknown,
-    ) => eventStatic(elem, eventName, { capture0, capture1, capture2, captureCount: 3, symbol }),
+    ) => {
+      const container = getRuntimeContainer()
+      if (container) {
+        bindPackedRuntimeEvent(container, elem, eventName, symbol, 3, capture0, capture1, capture2)
+        return
+      }
+      eventStatic(elem, eventName, { capture0, capture1, capture2, captureCount: 3, symbol })
+    },
     __4: (
       elem: Element,
       eventName: string,
@@ -73,7 +118,22 @@ export const eventStatic = Object.assign(
       capture1: unknown,
       capture2: unknown,
       capture3: unknown,
-    ) =>
+    ) => {
+      const container = getRuntimeContainer()
+      if (container) {
+        bindPackedRuntimeEvent(
+          container,
+          elem,
+          eventName,
+          symbol,
+          4,
+          capture0,
+          capture1,
+          capture2,
+          capture3,
+        )
+        return
+      }
       eventStatic(elem, eventName, {
         capture0,
         capture1,
@@ -81,7 +141,8 @@ export const eventStatic = Object.assign(
         capture3,
         captureCount: 4,
         symbol,
-      }),
+      })
+    },
   },
 )
 

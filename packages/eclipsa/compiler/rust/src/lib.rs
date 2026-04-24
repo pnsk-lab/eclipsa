@@ -1378,8 +1378,10 @@ fn render_client_runtime_import(compiler: &ClientCompiler, transformed: &str) ->
     let mut imports_by_source: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for (exported, local, source) in CLIENT_RUNTIME_IMPORTS {
         let call = format!("{local}(");
+        let property_access = format!("{local}.");
         if (local == CLIENT_CREATE_TEMPLATE && !compiler.templates.is_empty())
             || transformed.contains(&call)
+            || transformed.contains(&property_access)
         {
             imports_by_source
                 .entry(source)
