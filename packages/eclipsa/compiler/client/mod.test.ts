@@ -17,12 +17,12 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('from "eclipsa/compiled-client"')
+    expect(resultCode).toContain('from "eclipsa/runtime/dom-compiled"')
     expect(resultCode).not.toContain('from "eclipsa/dev-client"')
     expect(resultCode).toContain('createTemplate as _createTemplate')
     expect(resultCode).toContain('createComponent as _createComponent')
     expect(resultCode).not.toContain('attrStatic as _attrStatic')
-    expect(resultCode).not.toContain('eventStatic as _eventStatic')
+    expect(resultCode).not.toContain('from "eclipsa/runtime/event"')
   })
 
   it('omits the client runtime import when no client helper is generated', async () => {
@@ -30,7 +30,7 @@ describe('compileClientModule', () => {
       hmr: false,
     })
 
-    expect(resultCode).not.toContain('from "eclipsa/compiled-client"')
+    expect(resultCode).not.toContain('from "eclipsa/runtime/')
   })
 
   it('rewrites core runtime imports to narrower subpath exports', async () => {
@@ -47,8 +47,8 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain('import { Link } from "eclipsa";')
-    expect(resultCode).toContain('import { useSignal } from "eclipsa/compiled-client";')
-    expect(resultCode).toContain('import { For, Show } from "eclipsa/compiled-client";')
+    expect(resultCode).toContain('import { useSignal } from "eclipsa/runtime/reactive";')
+    expect(resultCode).toContain('import { For, Show } from "eclipsa/runtime/dom-compiled";')
     expect(resultCode).not.toContain('import { useSignal, For, Show, Link } from "eclipsa";')
   })
 
@@ -67,7 +67,7 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('import { hydrate } from "eclipsa/compiled-client";')
+    expect(resultCode).toContain('import { hydrate } from "eclipsa/runtime/hydrate";')
     expect(resultCode).toContain(
       'import { __eclipsaComponent, __eclipsaEvent } from "eclipsa/meta";',
     )

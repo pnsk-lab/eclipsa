@@ -48,36 +48,94 @@ const CLIENT_CLASS_SIGNAL_VALUE: &str = "_classSignalValue";
 const CLIENT_EVENT_STATIC: &str = "_eventStatic";
 const CLIENT_LISTENER_STATIC: &str = "_listenerStatic";
 const CLIENT_CREATE_COMPONENT: &str = "_createComponent";
-const CLIENT_RUNTIME_IMPORTS: [(&str, &str); 23] = [
-    ("createTemplate", CLIENT_CREATE_TEMPLATE),
-    ("materializeTemplateRefs", CLIENT_MATERIALIZE_TEMPLATE_REFS),
-    ("insert", CLIENT_INSERT),
-    ("insertFor", CLIENT_INSERT_FOR),
-    ("insertStatic", CLIENT_INSERT_STATIC),
-    ("insertElementStatic", CLIENT_INSERT_ELEMENT_STATIC),
-    ("text", CLIENT_TEXT),
-    ("textSignal", CLIENT_TEXT_SIGNAL),
-    ("textNodeSignal", CLIENT_TEXT_NODE_SIGNAL),
-    ("textNodeSignalMember", CLIENT_TEXT_NODE_SIGNAL_MEMBER),
+const CLIENT_RUNTIME_DOM_IMPORT_SOURCE: &str = "eclipsa/runtime/dom-compiled";
+const CLIENT_RUNTIME_EVENT_IMPORT_SOURCE: &str = "eclipsa/runtime/event";
+const CLIENT_RUNTIME_REACTIVE_IMPORT_SOURCE: &str = "eclipsa/runtime/reactive";
+const CLIENT_RUNTIME_HYDRATE_IMPORT_SOURCE: &str = "eclipsa/runtime/hydrate";
+const CLIENT_RUNTIME_IMPORTS: [(&str, &str, &str); 23] = [
+    (
+        "createTemplate",
+        CLIENT_CREATE_TEMPLATE,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    (
+        "materializeTemplateRefs",
+        CLIENT_MATERIALIZE_TEMPLATE_REFS,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    ("insert", CLIENT_INSERT, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    ("insertFor", CLIENT_INSERT_FOR, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    (
+        "insertStatic",
+        CLIENT_INSERT_STATIC,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    (
+        "insertElementStatic",
+        CLIENT_INSERT_ELEMENT_STATIC,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    ("text", CLIENT_TEXT, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    ("textSignal", CLIENT_TEXT_SIGNAL, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    (
+        "textNodeSignal",
+        CLIENT_TEXT_NODE_SIGNAL,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    (
+        "textNodeSignalMember",
+        CLIENT_TEXT_NODE_SIGNAL_MEMBER,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
     (
         "textNodeSignalMemberStatic",
         CLIENT_TEXT_NODE_SIGNAL_MEMBER_STATIC,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
     ),
-    ("textNodeSignalValue", CLIENT_TEXT_NODE_SIGNAL_VALUE),
-    ("attr", CLIENT_ATTR),
-    ("attrStatic", CLIENT_ATTR_STATIC),
-    ("className", CLIENT_CLASS_NAME),
-    ("classSignal", CLIENT_CLASS_SIGNAL),
-    ("classSignalEquals", CLIENT_CLASS_SIGNAL_EQUALS),
+    (
+        "textNodeSignalValue",
+        CLIENT_TEXT_NODE_SIGNAL_VALUE,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    ("attr", CLIENT_ATTR, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    ("attrStatic", CLIENT_ATTR_STATIC, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    ("className", CLIENT_CLASS_NAME, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    ("classSignal", CLIENT_CLASS_SIGNAL, CLIENT_RUNTIME_DOM_IMPORT_SOURCE),
+    (
+        "classSignalEquals",
+        CLIENT_CLASS_SIGNAL_EQUALS,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
     (
         "classSignalEqualsStatic",
         CLIENT_CLASS_SIGNAL_EQUALS_STATIC,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
     ),
-    ("classSignalMember", CLIENT_CLASS_SIGNAL_MEMBER),
-    ("classSignalValue", CLIENT_CLASS_SIGNAL_VALUE),
-    ("eventStatic", CLIENT_EVENT_STATIC),
-    ("listenerStatic", CLIENT_LISTENER_STATIC),
-    ("createComponent", CLIENT_CREATE_COMPONENT),
+    (
+        "classSignalMember",
+        CLIENT_CLASS_SIGNAL_MEMBER,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    (
+        "classSignalValue",
+        CLIENT_CLASS_SIGNAL_VALUE,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
+    (
+        "eventStatic",
+        CLIENT_EVENT_STATIC,
+        CLIENT_RUNTIME_EVENT_IMPORT_SOURCE,
+    ),
+    (
+        "listenerStatic",
+        CLIENT_LISTENER_STATIC,
+        CLIENT_RUNTIME_EVENT_IMPORT_SOURCE,
+    ),
+    (
+        "createComponent",
+        CLIENT_CREATE_COMPONENT,
+        CLIENT_RUNTIME_DOM_IMPORT_SOURCE,
+    ),
 ];
 const SSR_JSX_DEV: &str = "_jsxDEV";
 const SSR_RAW: &str = "_ssrRaw";
@@ -1290,12 +1348,12 @@ fn transform_client(
     prefix.push_str(&render_client_runtime_import(&compiler, &with_hmr));
     if compiler.uses_for {
         prefix.push_str(&format!(
-            "import {{ For as {COMPILER_FOR} }} from \"eclipsa/compiled-client\";\n"
+            "import {{ For as {COMPILER_FOR} }} from \"{CLIENT_RUNTIME_DOM_IMPORT_SOURCE}\";\n"
         ));
     }
     if compiler.uses_show {
         prefix.push_str(&format!(
-            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa/compiled-client\";\n"
+            "import {{ Show as {COMPILER_SHOW} }} from \"{CLIENT_RUNTIME_DOM_IMPORT_SOURCE}\";\n"
         ));
     }
     if hmr {
@@ -1317,24 +1375,27 @@ fn transform_client(
 }
 
 fn render_client_runtime_import(compiler: &ClientCompiler, transformed: &str) -> String {
-    let mut imports = Vec::new();
-    for (exported, local) in CLIENT_RUNTIME_IMPORTS {
+    let mut imports_by_source: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (exported, local, source) in CLIENT_RUNTIME_IMPORTS {
         let call = format!("{local}(");
         if (local == CLIENT_CREATE_TEMPLATE && !compiler.templates.is_empty())
             || transformed.contains(&call)
         {
-            imports.push(format!("{exported} as {local}"));
+            imports_by_source
+                .entry(source)
+                .or_default()
+                .push(format!("{exported} as {local}"));
         }
     }
 
-    if imports.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "import {{ {} }} from \"eclipsa/compiled-client\";\n",
+    let mut code = String::new();
+    for (source, imports) in imports_by_source {
+        code.push_str(&format!(
+            "import {{ {} }} from \"{source}\";\n",
             imports.join(", ")
-        )
+        ));
     }
+    code
 }
 
 fn rewrite_core_runtime_imports(source: &str) -> String {
@@ -1370,8 +1431,8 @@ fn rewrite_core_runtime_imports(source: &str) -> String {
             }
         };
         push_import(root_imports, "eclipsa");
-        push_import(signal_imports, "eclipsa/compiled-client");
-        push_import(flow_imports, "eclipsa/compiled-client");
+        push_import(signal_imports, CLIENT_RUNTIME_REACTIVE_IMPORT_SOURCE);
+        push_import(flow_imports, CLIENT_RUNTIME_DOM_IMPORT_SOURCE);
     }
     rewritten
 }
@@ -1405,7 +1466,7 @@ fn rewrite_client_runtime_imports(source: &str) -> String {
             }
         };
         push_import(client_imports, "eclipsa/client");
-        push_import(compiled_imports, "eclipsa/compiled-client");
+        push_import(compiled_imports, CLIENT_RUNTIME_HYDRATE_IMPORT_SOURCE);
     }
     rewritten
 }

@@ -29,6 +29,26 @@ export const DEV_EXPORTS = {
     types: './compiled-client.ts',
     import: './compiled-client.ts',
   },
+  './runtime/dom-compiled': {
+    types: './runtime/dom-compiled.ts',
+    import: './runtime/dom-compiled.ts',
+  },
+  './runtime/event': {
+    types: './runtime/event.ts',
+    import: './runtime/event.ts',
+  },
+  './runtime/hydrate': {
+    types: './runtime/hydrate.ts',
+    import: './runtime/hydrate.ts',
+  },
+  './runtime/reactive': {
+    types: './runtime/reactive.ts',
+    import: './runtime/reactive.ts',
+  },
+  './runtime/resume': {
+    types: './runtime/resume.ts',
+    import: './runtime/resume.ts',
+  },
   './web-utils': {
     types: './web-utils/mod.ts',
     import: './web-utils/mod.ts',
@@ -95,6 +115,26 @@ export const PUBLISH_EXPORTS = {
   './compiled-client': {
     types: './dist/compiled-client.d.mts',
     import: './dist/compiled-client.mjs',
+  },
+  './runtime/dom-compiled': {
+    types: './dist/runtime/dom-compiled.d.mts',
+    import: './dist/runtime/dom-compiled.mjs',
+  },
+  './runtime/event': {
+    types: './dist/runtime/event.d.mts',
+    import: './dist/runtime/event.mjs',
+  },
+  './runtime/hydrate': {
+    types: './dist/runtime/hydrate.d.mts',
+    import: './dist/runtime/hydrate.mjs',
+  },
+  './runtime/reactive': {
+    types: './dist/runtime/reactive.d.mts',
+    import: './dist/runtime/reactive.mjs',
+  },
+  './runtime/resume': {
+    types: './dist/runtime/resume.d.mts',
+    import: './dist/runtime/resume.mjs',
   },
   './web-utils': {
     types: './dist/web-utils/mod.d.mts',

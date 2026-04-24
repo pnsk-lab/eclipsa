@@ -52,6 +52,26 @@ describe('publish package metadata', () => {
       types: './compiled-client.d.mts',
       import: './compiled-client.mjs',
     })
+    expect(exportsMap['./runtime/dom-compiled']).toEqual({
+      types: './runtime/dom-compiled.d.mts',
+      import: './runtime/dom-compiled.mjs',
+    })
+    expect(exportsMap['./runtime/event']).toEqual({
+      types: './runtime/event.d.mts',
+      import: './runtime/event.mjs',
+    })
+    expect(exportsMap['./runtime/hydrate']).toEqual({
+      types: './runtime/hydrate.d.mts',
+      import: './runtime/hydrate.mjs',
+    })
+    expect(exportsMap['./runtime/reactive']).toEqual({
+      types: './runtime/reactive.d.mts',
+      import: './runtime/reactive.mjs',
+    })
+    expect(exportsMap['./runtime/resume']).toEqual({
+      types: './runtime/resume.d.mts',
+      import: './runtime/resume.mjs',
+    })
     expect(exportsMap['./vite/build/runtime']).toEqual({
       types: './vite/build/runtime.d.mts',
       import: './vite/build/runtime.mjs',
@@ -71,6 +91,11 @@ describe('publish package metadata', () => {
         'compiled-client.ts',
         'flow.ts',
         'meta.ts',
+        'runtime/dom-compiled.ts',
+        'runtime/event.ts',
+        'runtime/hydrate.ts',
+        'runtime/reactive.ts',
+        'runtime/resume.ts',
         'signal.ts',
         'web-utils/mod.ts',
         'vite/build/runtime.ts',
