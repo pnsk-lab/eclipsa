@@ -21,6 +21,14 @@ export const DEV_EXPORTS = {
     types: './flow.ts',
     import: './flow.ts',
   },
+  './meta': {
+    types: './meta.ts',
+    import: './meta.ts',
+  },
+  './compiled-client': {
+    types: './compiled-client.ts',
+    import: './compiled-client.ts',
+  },
   './web-utils': {
     types: './web-utils/mod.ts',
     import: './web-utils/mod.ts',
@@ -79,6 +87,14 @@ export const PUBLISH_EXPORTS = {
   './flow': {
     types: './dist/flow.d.mts',
     import: './dist/flow.mjs',
+  },
+  './meta': {
+    types: './dist/meta.d.mts',
+    import: './dist/meta.mjs',
+  },
+  './compiled-client': {
+    types: './dist/compiled-client.d.mts',
+    import: './dist/compiled-client.mjs',
   },
   './web-utils': {
     types: './dist/web-utils/mod.d.mts',

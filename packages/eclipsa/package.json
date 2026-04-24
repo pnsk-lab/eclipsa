@@ -29,6 +29,14 @@
       "types": "./flow.ts",
       "import": "./flow.ts"
     },
+    "./meta": {
+      "types": "./meta.ts",
+      "import": "./meta.ts"
+    },
+    "./compiled-client": {
+      "types": "./compiled-client.ts",
+      "import": "./compiled-client.ts"
+    },
     "./web-utils": {
       "types": "./web-utils/mod.ts",
       "import": "./web-utils/mod.ts"
@@ -87,6 +95,14 @@
       "./flow": {
         "types": "./flow.d.mts",
         "import": "./flow.mjs"
+      },
+      "./meta": {
+        "types": "./meta.d.mts",
+        "import": "./meta.mjs"
+      },
+      "./compiled-client": {
+        "types": "./compiled-client.d.mts",
+        "import": "./compiled-client.mjs"
       },
       "./web-utils": {
         "types": "./web-utils/mod.d.mts",

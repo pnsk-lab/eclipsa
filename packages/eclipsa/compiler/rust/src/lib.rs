@@ -1277,7 +1277,9 @@ fn transform_client(
     let program = parse_program(&allocator, source, source_type, id)?;
     let mut compiler = ClientCompiler::new(source, source_type, event_mode);
     let jsx_source = compiler.apply_root_replacements(&program)?;
-    let rewritten_imports = rewrite_core_runtime_imports(&jsx_source);
+    let rewritten_imports = rewrite_client_runtime_imports(&rewrite_internal_runtime_imports(
+        &rewrite_core_runtime_imports(&jsx_source),
+    ));
     let with_hmr = if hmr {
         wrap_hot_components(&rewritten_imports, id)?
     } else {
@@ -1288,12 +1290,12 @@ fn transform_client(
     prefix.push_str(&render_client_runtime_import(&compiler, &with_hmr));
     if compiler.uses_for {
         prefix.push_str(&format!(
-            "import {{ For as {COMPILER_FOR} }} from \"eclipsa/flow\";\n"
+            "import {{ For as {COMPILER_FOR} }} from \"eclipsa/compiled-client\";\n"
         ));
     }
     if compiler.uses_show {
         prefix.push_str(&format!(
-            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa/flow\";\n"
+            "import {{ Show as {COMPILER_SHOW} }} from \"eclipsa/compiled-client\";\n"
         ));
     }
     if hmr {
@@ -1328,7 +1330,10 @@ fn render_client_runtime_import(compiler: &ClientCompiler, transformed: &str) ->
     if imports.is_empty() {
         String::new()
     } else {
-        format!("import {{ {} }} from \"eclipsa/client\";\n", imports.join(", "))
+        format!(
+            "import {{ {} }} from \"eclipsa/compiled-client\";\n",
+            imports.join(", ")
+        )
     }
 }
 
@@ -1365,17 +1370,92 @@ fn rewrite_core_runtime_imports(source: &str) -> String {
             }
         };
         push_import(root_imports, "eclipsa");
-        push_import(signal_imports, "eclipsa/signal");
-        push_import(flow_imports, "eclipsa/flow");
+        push_import(signal_imports, "eclipsa/compiled-client");
+        push_import(flow_imports, "eclipsa/compiled-client");
+    }
+    rewritten
+}
+
+fn rewrite_client_runtime_imports(source: &str) -> String {
+    let mut rewritten = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let Some(specifiers) = named_import_specifiers(trimmed, "eclipsa/client") else {
+            rewritten.push_str(line);
+            rewritten.push('\n');
+            continue;
+        };
+
+        let mut client_imports = Vec::new();
+        let mut compiled_imports = Vec::new();
+        for specifier in specifiers.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+            let imported = specifier.split(" as ").next().unwrap_or(specifier).trim();
+            match imported {
+                "hydrate" => compiled_imports.push(specifier),
+                _ => client_imports.push(specifier),
+            }
+        }
+
+        let mut push_import = |imports: Vec<&str>, source: &str| {
+            if !imports.is_empty() {
+                rewritten.push_str(&format!(
+                    "import {{ {} }} from \"{source}\";\n",
+                    imports.join(", ")
+                ));
+            }
+        };
+        push_import(client_imports, "eclipsa/client");
+        push_import(compiled_imports, "eclipsa/compiled-client");
+    }
+    rewritten
+}
+
+fn rewrite_internal_runtime_imports(source: &str) -> String {
+    let mut rewritten = String::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        let Some(specifiers) = named_import_specifiers(trimmed, "eclipsa/internal") else {
+            rewritten.push_str(line);
+            rewritten.push('\n');
+            continue;
+        };
+
+        let mut internal_imports = Vec::new();
+        let mut meta_imports = Vec::new();
+        for specifier in specifiers.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+            let imported = specifier.split(" as ").next().unwrap_or(specifier).trim();
+            match imported {
+                "__eclipsaComponent" | "__eclipsaEvent" | "__eclipsaLazy" | "__eclipsaWatch"
+                | "getSignalMeta" => meta_imports.push(specifier),
+                _ => internal_imports.push(specifier),
+            }
+        }
+
+        let mut push_import = |imports: Vec<&str>, source: &str| {
+            if !imports.is_empty() {
+                rewritten.push_str(&format!(
+                    "import {{ {} }} from \"{source}\";\n",
+                    imports.join(", ")
+                ));
+            }
+        };
+        push_import(internal_imports, "eclipsa/internal");
+        push_import(meta_imports, "eclipsa/meta");
     }
     rewritten
 }
 
 fn named_eclipsa_import_specifiers(line: &str) -> Option<&str> {
+    named_import_specifiers(line, "eclipsa")
+}
+
+fn named_import_specifiers<'a>(line: &'a str, source: &str) -> Option<&'a str> {
     let rest = line.strip_prefix("import {")?;
     let (specifiers, module) = rest.split_once("} from ")?;
     let module = module.trim().trim_end_matches(';').trim();
-    if module == "\"eclipsa\"" || module == "'eclipsa'" {
+    let double_quoted = format!("\"{source}\"");
+    let single_quoted = format!("'{source}'");
+    if module == double_quoted || module == single_quoted {
         Some(specifiers.trim())
     } else {
         None

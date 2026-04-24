@@ -44,6 +44,14 @@ describe('publish package metadata', () => {
       types: './flow.d.mts',
       import: './flow.mjs',
     })
+    expect(exportsMap['./meta']).toEqual({
+      types: './meta.d.mts',
+      import: './meta.mjs',
+    })
+    expect(exportsMap['./compiled-client']).toEqual({
+      types: './compiled-client.d.mts',
+      import: './compiled-client.mjs',
+    })
     expect(exportsMap['./vite/build/runtime']).toEqual({
       types: './vite/build/runtime.d.mts',
       import: './vite/build/runtime.mjs',
@@ -60,7 +68,9 @@ describe('publish package metadata', () => {
     expect(packConfig?.entry).toEqual(
       expect.arrayContaining([
         'core/internal.ts',
+        'compiled-client.ts',
         'flow.ts',
+        'meta.ts',
         'signal.ts',
         'web-utils/mod.ts',
         'vite/build/runtime.ts',

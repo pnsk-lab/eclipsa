@@ -17,7 +17,7 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('from "eclipsa/client"')
+    expect(resultCode).toContain('from "eclipsa/compiled-client"')
     expect(resultCode).not.toContain('from "eclipsa/dev-client"')
     expect(resultCode).toContain('createTemplate as _createTemplate')
     expect(resultCode).toContain('createComponent as _createComponent')
@@ -30,7 +30,7 @@ describe('compileClientModule', () => {
       hmr: false,
     })
 
-    expect(resultCode).not.toContain('from "eclipsa/client"')
+    expect(resultCode).not.toContain('from "eclipsa/compiled-client"')
   })
 
   it('rewrites core runtime imports to narrower subpath exports', async () => {
@@ -47,9 +47,31 @@ describe('compileClientModule', () => {
     )
 
     expect(resultCode).toContain('import { Link } from "eclipsa";')
-    expect(resultCode).toContain('import { useSignal } from "eclipsa/signal";')
-    expect(resultCode).toContain('import { For, Show } from "eclipsa/flow";')
+    expect(resultCode).toContain('import { useSignal } from "eclipsa/compiled-client";')
+    expect(resultCode).toContain('import { For, Show } from "eclipsa/compiled-client";')
     expect(resultCode).not.toContain('import { useSignal, For, Show, Link } from "eclipsa";')
+  })
+
+  it('rewrites compiled hydrate and metadata imports to light client entries', async () => {
+    const resultCode = await compileClientModule(
+      `
+        import { hydrate } from 'eclipsa/client'
+        import { __eclipsaComponent, __eclipsaEvent, __eclipsaAction } from 'eclipsa/internal'
+        hydrate(__eclipsaComponent(() => <button />, 'button', []), document.body)
+        export const click = __eclipsaEvent.__0('click', 'symbol')
+        export const action = __eclipsaAction
+      `,
+      'mod.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { hydrate } from "eclipsa/compiled-client";')
+    expect(resultCode).toContain(
+      'import { __eclipsaComponent, __eclipsaEvent } from "eclipsa/meta";',
+    )
+    expect(resultCode).toContain('import { __eclipsaAction } from "eclipsa/internal";')
   })
 
   it('injects HMR helpers only when enabled', async () => {
