@@ -1,4 +1,4 @@
-import type { ExternalComponentDescriptor } from '../internal.ts'
+import type { ExternalComponentDescriptor } from '../meta.ts'
 
 export const CONTAINER_STACK_KEY = Symbol.for('eclipsa.container-stack')
 export const CONTEXT_VALUE_STACK_KEY = Symbol.for('eclipsa.context-value-stack')

@@ -5,7 +5,7 @@ import {
   readActionCsrfTokenFromDocument,
 } from '../action-csrf.ts'
 import type { Component } from '../component.ts'
-import { getComponentMeta } from '../internal.ts'
+import { getComponentMeta } from '../meta.ts'
 import {
   hasRememberedManagedAttributesForSubtree,
   markManagedAttributesForSubtreeRemembered,

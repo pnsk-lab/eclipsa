@@ -46,7 +46,7 @@ import {
   type EventDescriptor,
   type LazyMeta,
   type SignalMeta,
-} from './internal.ts'
+} from './meta.ts'
 import {
   ROUTE_DATA_ENDPOINT,
   ROUTE_LINK_ATTR,
@@ -1842,13 +1842,20 @@ export const registerResumeContainer = (container: RuntimeContainer) => {
 }
 
 class RuntimeSignalHandle<T> {
-  constructor(
-    readonly __record: SignalRecord<T>,
-    readonly __container: RuntimeContainer | null,
-  ) {}
+  readonly #container: RuntimeContainer | null
+  readonly #record: SignalRecord<T>
+
+  constructor(record: SignalRecord<T>, container: RuntimeContainer | null) {
+    this.#record = record
+    this.#container = container
+  }
+
+  static record<T>(value: RuntimeSignalHandle<T>): SignalRecord<T> {
+    return value.#record
+  }
 
   get value(): T {
-    const record = this.__record
+    const record = this.#record
     if (record.skipComponentSubscription === true && currentEffect === null) {
       return record.value
     }
@@ -1857,7 +1864,7 @@ class RuntimeSignalHandle<T> {
   }
 
   set value(value: T) {
-    writeSignalValue(this.__container, this.__record, value)
+    writeSignalValue(this.#container, this.#record, value)
   }
 }
 
@@ -1865,23 +1872,28 @@ const isRuntimeSignalHandle = (value: unknown): value is RuntimeSignalHandle<unk
   value instanceof RuntimeSignalHandle
 
 const getRuntimeSignalRecordFromValue = <T>(value: unknown): SignalRecord<T> | null =>
-  isRuntimeSignalHandle(value) ? (value.__record as SignalRecord<T>) : null
+  isRuntimeSignalHandle(value) ? RuntimeSignalHandle.record(value as RuntimeSignalHandle<T>) : null
 
 class RuntimeSignalMeta<T> implements SignalMeta<T> {
+  readonly #container: RuntimeContainer | null
+  readonly #record: SignalRecord<T>
   readonly kind = 'signal' as const
 
   constructor(
     public readonly id: string,
-    private readonly record: SignalRecord<T>,
-    private readonly container: RuntimeContainer | null,
-  ) {}
+    record: SignalRecord<T>,
+    container: RuntimeContainer | null,
+  ) {
+    this.#record = record
+    this.#container = container
+  }
 
   get(): T {
-    return this.record.value
+    return this.#record.value
   }
 
   set(value: T): void {
-    writeSignalValue(this.container, this.record, value)
+    writeSignalValue(this.#container, this.#record, value)
   }
 }
 
@@ -2036,23 +2048,30 @@ const readComputedSignalValue = <T>(record: SignalRecord<unknown>) => {
 }
 
 class RuntimeComputedSignalHandle<T> {
-  constructor(readonly __record: SignalRecord<unknown>) {}
+  readonly #record: SignalRecord<unknown>
+
+  constructor(record: SignalRecord<unknown>) {
+    this.#record = record
+  }
 
   get value(): T {
-    return readComputedSignalValue<T>(this.__record)
+    return readComputedSignalValue<T>(this.#record)
   }
 }
 
 class RuntimeComputedSignalMeta<T> implements SignalMeta<T> {
+  readonly #record: SignalRecord<unknown>
   readonly kind = 'computed-signal' as const
 
   constructor(
     public readonly id: string,
-    private readonly record: SignalRecord<unknown>,
-  ) {}
+    record: SignalRecord<unknown>,
+  ) {
+    this.#record = record
+  }
 
   get(): T {
-    return readComputedSignalValue<T>(this.record)
+    return readComputedSignalValue<T>(this.#record)
   }
 
   set(): void {
@@ -11114,6 +11133,61 @@ export const installResumeListeners = (container: RuntimeContainer) => {
     doc.removeEventListener('focusin', onIntent, true)
     doc.defaultView?.removeEventListener('popstate', onPopState)
     cleanupRouteLinks?.()
+    container.visibilityListenersCleanup?.()
+  }
+}
+
+export const installResumeEventListeners = (container: RuntimeContainer) => {
+  const doc = container.doc
+  if (!doc) {
+    return () => {}
+  }
+  installStreamedSuspenseController(container)
+  ensureVisibilityListeners(container)
+  scheduleVisibleCallbacksCheck(container)
+  const listeners = [
+    'cancel',
+    'click',
+    'input',
+    'change',
+    'submit',
+    'keydown',
+    'compositionstart',
+    'compositionend',
+  ] as const
+  const onIntent = (event: Event) => {
+    if (event.type === 'pointerdown') {
+      prefetchInteractiveTargetSymbols(container, event.target, ['click', 'submit'])
+      return
+    }
+    prefetchInteractiveTargetSymbols(container, event.target, INTERACTIVE_PREFETCH_EVENT_NAMES)
+  }
+
+  for (const eventName of listeners) {
+    ensureDelegatedDocumentEventListener(container, eventName)
+  }
+  doc.addEventListener('pointerdown', onIntent, true)
+  doc.addEventListener('focusin', onIntent, true)
+
+  return () => {
+    if (container.delegatedEventListener) {
+      if (container.delegatedEventName) {
+        doc.removeEventListener(
+          container.delegatedEventName,
+          container.delegatedEventListener,
+          true,
+        )
+      }
+      for (const eventName of container.delegatedEventNames ?? []) {
+        doc.removeEventListener(eventName, container.delegatedEventListener, true)
+      }
+    }
+    container.delegatedEventName = null
+    container.delegatedEventNames?.clear()
+    container.delegatedEventNames = null
+    container.delegatedEventListener = null
+    doc.removeEventListener('pointerdown', onIntent, true)
+    doc.removeEventListener('focusin', onIntent, true)
     container.visibilityListenersCleanup?.()
   }
 }

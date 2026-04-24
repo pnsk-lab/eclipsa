@@ -12,6 +12,7 @@
     "directory": "packages/eclipsa"
   },
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./mod.ts",

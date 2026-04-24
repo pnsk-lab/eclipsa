@@ -23,7 +23,7 @@ import {
   getRegisteredLoaderHook,
   resolveCaptureValues,
   getSignalMeta,
-} from '../internal.ts'
+} from '../meta.ts'
 import {
   PROJECTION_SLOT_TYPE,
   RENDER_COMPONENT_TYPE_KEY,

@@ -1,1 +1,1 @@
-export { hydrate } from '../core/client/mod.ts'
+export { hydrate } from '../core/client/resume.ts'

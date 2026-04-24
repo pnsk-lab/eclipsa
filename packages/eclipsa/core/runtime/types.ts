@@ -1,6 +1,6 @@
 import type { JSX } from '../../jsx/types.ts'
 import type { SerializedValue } from '../hooks.ts'
-import type { ExternalComponentDescriptor, ExternalComponentMeta } from '../internal.ts'
+import type { ExternalComponentDescriptor, ExternalComponentMeta } from '../meta.ts'
 import type { RouteMetadataExport } from '../metadata.ts'
 import type {
   Navigate,
