@@ -168,6 +168,15 @@ const insertNode = (parent: Node, marker: Node | undefined, node: Node) => {
   parent.insertBefore(node, marker?.parentNode === parent ? marker : null)
 }
 
+const removeNode = (node: Node) => {
+  const removable = node as Node & { remove?: () => void }
+  if (typeof removable.remove === 'function') {
+    removable.remove()
+    return
+  }
+  node.parentNode?.removeChild(node)
+}
+
 export const insertElementStatic = (value: Insertable, parent: Element) => {
   const primitive = resolvePrimitive(value)
   if (primitive !== null) {
@@ -192,7 +201,7 @@ export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   let currentNodes: Node[] = []
   effect(() => {
     for (const node of currentNodes) {
-      node.parentNode?.removeChild(node)
+      removeNode(node)
     }
     currentNodes = renderNodes(value)
     for (const node of currentNodes) {
@@ -211,9 +220,34 @@ const textUpdate = (target: Node, value: unknown) => {
 }
 
 export const text = (value: Insertable, parent: Node, marker?: Node) => {
-  const node = document.createTextNode('')
-  insertNode(parent, marker, node)
-  effect(() => textUpdate(node, value))
+  let textNode = document.createTextNode('')
+  let currentNodes: Node[] = [textNode]
+  insertNode(parent, marker, textNode)
+
+  effect(() => {
+    const primitive = resolvePrimitive(value)
+    if (primitive !== null) {
+      if (currentNodes.length !== 1 || currentNodes[0] !== textNode) {
+        for (const node of currentNodes) {
+          removeNode(node)
+        }
+        textNode = document.createTextNode('')
+        currentNodes = [textNode]
+        insertNode(parent, marker, textNode)
+      }
+      textNode.textContent = primitive === EMPTY_INSERT ? '' : primitive
+      return
+    }
+
+    const nextNodes = renderNodes(value)
+    for (const node of currentNodes) {
+      removeNode(node)
+    }
+    currentNodes = nextNodes
+    for (const node of currentNodes) {
+      insertNode(parent, marker, node)
+    }
+  })
 }
 
 export const textSignal = <T>(

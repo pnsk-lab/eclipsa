@@ -18,6 +18,7 @@ import {
   createComponent as createCompiledComponent,
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
+  text as textCompiled,
 } from './runtime/dom-compiled.ts'
 import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import { onMount as onCompiledMount, signal as createCompiledSignal } from './runtime/reactive.ts'
@@ -54,6 +55,7 @@ import {
   installResumeListeners,
   primeLocationState,
   preserveReusableContentInRoots,
+  registerResumeContainer,
   rememberInsertMarkerRange,
   renderClientInsertable,
   restoreSignalRefs,
@@ -972,6 +974,31 @@ describe('runtime/dom-compiled', () => {
         expect(host.textContent).not.toContain('[object Object]')
         expect(anchor?.getAttribute('href')).toBe('/docs')
         expect(anchor?.hasAttribute('data-e-link')).toBe(true)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('renders JSX objects returned by dynamic compiled text inserts', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const host = fakeDocument.createElement('div') as unknown as FakeElement
+        const InlineBody = () => jsxDEV('span', { children: 'inline result' }, null, false, {})
+
+        withRuntimeContainer(container, () => {
+          textCompiled(() => InlineBody(), host as unknown as Node)
+        })
+
+        expect(host.textContent).toBe('inline result')
+        expect(host.childNodes).toHaveLength(1)
+        expect(host.childNodes[0]).toBeInstanceOf(FakeElement)
       } finally {
         globalThis.document = originalDocument
       }
@@ -3495,6 +3522,30 @@ describe('renderClientInsertable', () => {
       )
 
       expect(clicks.value).toBe(1)
+    })
+  })
+
+  it('dispatches compiled runtime event helpers through a registered resume container', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$registered-compiled-clicks', 0)
+      const button = container.doc.createElement('button')
+      ;(container.doc.body as unknown as FakeElement).appendChild(button as unknown as FakeNode)
+      container.rootElement = container.doc.body
+      container.symbols.set(
+        'registered-compiled-click',
+        'data:text/javascript,export default ([clicks]) => { clicks.value += 1 }',
+      )
+
+      const unregister = registerResumeContainer(container)
+      try {
+        runtimeEventStatic.__1(button, 'click', 'registered-compiled-click', clicks)
+        ;(button as unknown as FakeElement).dispatchEvent(new Event('click'))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(clicks.value).toBe(1)
+      } finally {
+        unregister()
+      }
     })
   })
 

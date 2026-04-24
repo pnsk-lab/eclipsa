@@ -3,6 +3,8 @@ import {
   bindLiveClientListener,
   bindPackedRuntimeEvent,
   bindRuntimeEvent,
+  dispatchRuntimeEventDescriptor,
+  findRuntimeContainerForEventTarget,
   getRuntimeContainer,
 } from '../runtime.ts'
 import { getRuntimeSymbolUrl } from './kernel.ts'
@@ -26,7 +28,12 @@ const capturesFor = (descriptor: EventDescriptor) => {
   }
 }
 
-const runEventDescriptor = async (descriptor: EventDescriptor, event: Event) => {
+const runEventDescriptor = async (descriptor: EventDescriptor, event: Event, elem: Element) => {
+  const container = findRuntimeContainerForEventTarget(event.target, elem)
+  if (container) {
+    return dispatchRuntimeEventDescriptor(container, descriptor, event, elem)
+  }
+
   const url = getRuntimeSymbolUrl(descriptor.symbol)
   if (!url) {
     throw new Error(`Unknown resumable event symbol "${descriptor.symbol}".`)
@@ -58,7 +65,7 @@ export const eventStatic = Object.assign(
     }
     if (isEventDescriptor(value)) {
       elem.addEventListener(eventName, (event) => {
-        void runEventDescriptor(value, event)
+        void runEventDescriptor(value, event, elem)
       })
       return
     }

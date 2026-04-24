@@ -6325,6 +6325,41 @@ const toMountedNodes = (value: unknown, container: RuntimeContainer): Node[] => 
 export const getRuntimeContainer = () =>
   getCurrentContainer() ?? currentEffectContainer ?? currentEffect?.container ?? null
 
+export const findRuntimeContainerForEventTarget = (
+  target: EventTarget | null,
+  fallbackElement?: Element | null,
+) => {
+  const current = getRuntimeContainer()
+  if (current) {
+    return current
+  }
+
+  const targetElement = isElementNode(target)
+    ? target
+    : typeof Node !== 'undefined' && target instanceof Node
+      ? target.parentElement
+      : null
+  const element = targetElement ?? fallbackElement ?? null
+  const doc =
+    element?.ownerDocument ??
+    (typeof Document !== 'undefined' && target instanceof Document ? target : null)
+
+  for (const container of getResumeContainers()) {
+    if (doc && container.doc !== doc) {
+      continue
+    }
+    if (!element) {
+      return container
+    }
+    const root = container.rootElement
+    if (root === element || root?.contains?.(element)) {
+      return container
+    }
+  }
+
+  return null
+}
+
 export const captureClientInsertOwner = (
   container: RuntimeContainer | null,
   siteKey?: string | null,
@@ -11026,6 +11061,43 @@ const dispatchLiveClientEvent = (
   }
 
   const module = binding.module ?? getResolvedRuntimeSymbols(container).get(symbolId)
+  return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
+}
+
+export const dispatchRuntimeEventDescriptor = (
+  container: RuntimeContainer,
+  descriptor: EventDescriptor,
+  event: Event,
+  currentTarget: Element,
+) => {
+  const symbolId = descriptor.symbol
+  const captures = normalizeCapturedEventValues(
+    container,
+    resolveEventDescriptorCaptures(descriptor),
+  )
+  const runModule = (module: RuntimeSymbolModule) => {
+    try {
+      const result = withClientContainer(container, () =>
+        module.default(
+          captures,
+          module.default.length >= 2 ? createDelegatedEvent(event, currentTarget) : undefined,
+        ),
+      )
+      return finishEventDispatch(container, result, (error) =>
+        wrapGeneratedScopeReferenceError(error, {
+          phase: 'running a compiled runtime event handler for',
+          symbolId,
+        }),
+      )
+    } catch (error) {
+      throw wrapGeneratedScopeReferenceError(error, {
+        phase: 'running a compiled runtime event handler for',
+        symbolId,
+      })
+    }
+  }
+
+  const module = getResolvedRuntimeSymbols(container).get(symbolId)
   return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
 }
 
