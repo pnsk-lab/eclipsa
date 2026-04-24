@@ -24,13 +24,22 @@ export type Insertable =
   | (() => Insertable)
 
 type ComplexInsertableRenderer = (value: unknown) => Node[] | null
+type RuntimeDynamicInsert = {
+  render: (value: unknown, currentNodes: Node[]) => { nodes: Node[]; patched: boolean } | null
+}
+type RuntimeDynamicInsertFactory = (parent: Node, marker?: Node) => RuntimeDynamicInsert | null
 type RuntimeRefAssigner = (value: unknown, element: Element) => boolean
 
 let complexInsertableRenderer: ComplexInsertableRenderer | null = null
+let runtimeDynamicInsertFactory: RuntimeDynamicInsertFactory | null = null
 let runtimeRefAssigner: RuntimeRefAssigner | null = null
 
 export const setComplexInsertableRenderer = (renderer: ComplexInsertableRenderer | null) => {
   complexInsertableRenderer = renderer
+}
+
+export const setRuntimeDynamicInsertFactory = (factory: RuntimeDynamicInsertFactory | null) => {
+  runtimeDynamicInsertFactory = factory
 }
 
 export const setRuntimeRefAssigner = (assigner: RuntimeRefAssigner | null) => {
@@ -199,7 +208,22 @@ export const insertStatic = (value: Insertable, parent: Node, marker?: Node) => 
 
 export const insert = (value: Insertable, parent: Node, marker?: Node) => {
   let currentNodes: Node[] = []
+  const runtimeInsert = runtimeDynamicInsertFactory?.(parent, marker) ?? null
   effect(() => {
+    const runtimeResult = runtimeInsert?.render(value, currentNodes)
+    if (runtimeResult) {
+      if (!runtimeResult.patched) {
+        for (const node of currentNodes) {
+          removeNode(node)
+        }
+        for (const node of runtimeResult.nodes) {
+          insertNode(parent, marker, node)
+        }
+      }
+      currentNodes = runtimeResult.nodes
+      return
+    }
+
     for (const node of currentNodes) {
       removeNode(node)
     }
@@ -222,6 +246,7 @@ const textUpdate = (target: Node, value: unknown) => {
 export const text = (value: Insertable, parent: Node, marker?: Node) => {
   let textNode = document.createTextNode('')
   let currentNodes: Node[] = [textNode]
+  const runtimeInsert = runtimeDynamicInsertFactory?.(parent, marker) ?? null
   insertNode(parent, marker, textNode)
 
   effect(() => {
@@ -236,6 +261,20 @@ export const text = (value: Insertable, parent: Node, marker?: Node) => {
         insertNode(parent, marker, textNode)
       }
       textNode.textContent = primitive === EMPTY_INSERT ? '' : primitive
+      return
+    }
+
+    const runtimeResult = runtimeInsert?.render(value, currentNodes)
+    if (runtimeResult) {
+      if (!runtimeResult.patched) {
+        for (const node of currentNodes) {
+          removeNode(node)
+        }
+        for (const node of runtimeResult.nodes) {
+          insertNode(parent, marker, node)
+        }
+      }
+      currentNodes = runtimeResult.nodes
       return
     }
 

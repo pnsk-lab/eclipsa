@@ -16,6 +16,7 @@ import {
 import {
   attrStatic as attrCompiledStatic,
   createComponent as createCompiledComponent,
+  insert as insertCompiled,
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
   text as textCompiled,
@@ -999,6 +1000,58 @@ describe('runtime/dom-compiled', () => {
         expect(host.textContent).toBe('inline result')
         expect(host.childNodes).toHaveLength(1)
         expect(host.childNodes[0]).toBeInstanceOf(FakeElement)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('patches dynamic compiled component inserts in place so transitions can run', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const host = fakeDocument.createElement('div') as unknown as FakeElement
+        const open = createCompiledSignal(true)
+        const Panel = (props: { open: boolean }) =>
+          jsxDEV(
+            'div',
+            {
+              class: 'overflow-hidden',
+              style: props.open
+                ? 'max-height: 64px; opacity: 1; transition: max-height 0.2s ease, opacity 0.2s ease;'
+                : 'max-height: 0px; opacity: 0; transition: max-height 0.2s ease, opacity 0.2s ease;',
+              children: 'panel',
+            },
+            null,
+            false,
+            {},
+          )
+
+        withRuntimeContainer(container, () => {
+          insertCompiled(
+            () =>
+              createCompiledComponent(Panel as never, {
+                get open() {
+                  return open.value
+                },
+              }),
+            host as unknown as Node,
+          )
+        })
+
+        const panel = host.firstChild as FakeElement | null
+        expect(panel).toBeInstanceOf(FakeElement)
+        expect(panel?.getAttribute('style')).toContain('max-height: 64px')
+
+        open.value = false
+
+        expect(host.firstChild).toBe(panel)
+        expect(panel?.getAttribute('style')).toContain('max-height: 0px')
       } finally {
         globalThis.document = originalDocument
       }

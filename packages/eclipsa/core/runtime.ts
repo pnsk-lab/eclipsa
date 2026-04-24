@@ -116,6 +116,7 @@ import {
   isHTMLSelectElementNode,
   isHTMLTextAreaElementNode,
   listNodeChildren,
+  rememberInsertMarkerRange,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
   rememberManagedAttributesForSubtree,
@@ -126,7 +127,11 @@ import {
   syncManagedAttributeSnapshot,
   type PendingFocusRestore,
 } from './runtime/dom.ts'
-import { setComplexInsertableRenderer, setRuntimeRefAssigner } from './runtime/dom-compiled.ts'
+import {
+  setComplexInsertableRenderer,
+  setRuntimeDynamicInsertFactory,
+  setRuntimeRefAssigner,
+} from './runtime/dom-compiled.ts'
 import {
   clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
   getContainerStack,
@@ -4401,6 +4406,47 @@ const replaceNodeRange = (
   return preservedComponentIds
 }
 
+const parseStyleAttributeEntries = (value: string): Array<[string, string]> => {
+  const entries: Array<[string, string]> = []
+  for (const part of value.split(';')) {
+    const separatorIndex = part.indexOf(':')
+    if (separatorIndex < 0) {
+      continue
+    }
+    const name = part.slice(0, separatorIndex).trim()
+    const styleValue = part.slice(separatorIndex + 1).trim()
+    if (name && styleValue) {
+      entries.push([name, styleValue])
+    }
+  }
+  return entries
+}
+
+const syncStyleAttributeValue = (element: Element, value: string) => {
+  const style = (element as Element & { style?: CSSStyleDeclaration }).style
+  if (
+    !style ||
+    typeof style.setProperty !== 'function' ||
+    typeof style.removeProperty !== 'function'
+  ) {
+    element.setAttribute('style', value)
+    return
+  }
+
+  const nextEntries = parseStyleAttributeEntries(value)
+  const nextNames = new Set(nextEntries.map(([name]) => name))
+  for (const [name] of parseStyleAttributeEntries(element.getAttribute('style') ?? '')) {
+    if (!nextNames.has(name)) {
+      style.removeProperty(name)
+    }
+  }
+  for (const [name, styleValue] of nextEntries) {
+    if (style.getPropertyValue(name) !== styleValue) {
+      style.setProperty(name, styleValue)
+    }
+  }
+}
+
 export const syncManagedElementAttributes = (current: Element, next: Element) => {
   const nextNames = new Set(next.getAttributeNames())
   const nextLiveBindings = getLiveClientEventBindings(next)
@@ -4427,6 +4473,12 @@ export const syncManagedElementAttributes = (current: Element, next: Element) =>
   for (const name of nextNames) {
     const nextValue = next.getAttribute(name)
     if (name === 'data-eid' && nextValue !== null && current.getAttribute(name) !== null) {
+      continue
+    }
+    if (name === 'style') {
+      if (nextValue !== null && current.getAttribute(name) !== nextValue) {
+        syncStyleAttributeValue(current, nextValue)
+      }
       continue
     }
     if (nextValue !== null && current.getAttribute(name) !== nextValue) {
@@ -7800,6 +7852,34 @@ export const renderClientInsertable = (
 setComplexInsertableRenderer((value) => {
   const container = getRuntimeContainer()
   return container ? renderClientInsertable(value, container) : null
+})
+
+setRuntimeDynamicInsertFactory((parent, marker) => {
+  const container = getRuntimeContainer()
+  if (!container) {
+    return null
+  }
+  const ownerSiteKey =
+    marker instanceof Comment && !parseInsertMarker(marker.data) ? marker.data : null
+  const owner =
+    captureClientInsertOwner(container, ownerSiteKey) ?? createDetachedClientInsertOwner(container)
+
+  return {
+    render(value, currentNodes) {
+      const nodes = renderClientInsertableForOwner(value as Insertable, container, owner)
+      if (
+        currentNodes.length !== 0 &&
+        nodes.length !== 0 &&
+        tryPatchNodeSequenceInPlace(currentNodes, nodes)
+      ) {
+        restoreSignalRefs(container, parent as ParentNode)
+        rememberInsertMarkerRange(marker, currentNodes)
+        return { nodes: currentNodes, patched: true }
+      }
+      rememberInsertMarkerRange(marker, nodes)
+      return { nodes, patched: false }
+    },
+  }
 })
 
 setRuntimeRefAssigner((value, element) => {
