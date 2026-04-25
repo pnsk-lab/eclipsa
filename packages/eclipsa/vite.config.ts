@@ -15,6 +15,15 @@ export default defineConfig({
   pack: {
     entry: [
       'mod.ts',
+      'compiled-client.ts',
+      'flow.ts',
+      'meta.ts',
+      'runtime/dom-compiled.ts',
+      'runtime/event.ts',
+      'runtime/hydrate.ts',
+      'runtime/reactive.ts',
+      'runtime/resume.ts',
+      'signal.ts',
       'web-utils/mod.ts',
       'vite/mod.ts',
       'vite/build/runtime.ts',

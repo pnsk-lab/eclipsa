@@ -36,6 +36,42 @@ describe('publish package metadata', () => {
       types: './web-utils/mod.d.mts',
       import: './web-utils/mod.mjs',
     })
+    expect(exportsMap['./signal']).toEqual({
+      types: './signal.d.mts',
+      import: './signal.mjs',
+    })
+    expect(exportsMap['./flow']).toEqual({
+      types: './flow.d.mts',
+      import: './flow.mjs',
+    })
+    expect(exportsMap['./meta']).toEqual({
+      types: './meta.d.mts',
+      import: './meta.mjs',
+    })
+    expect(exportsMap['./compiled-client']).toEqual({
+      types: './compiled-client.d.mts',
+      import: './compiled-client.mjs',
+    })
+    expect(exportsMap['./runtime/dom-compiled']).toEqual({
+      types: './runtime/dom-compiled.d.mts',
+      import: './runtime/dom-compiled.mjs',
+    })
+    expect(exportsMap['./runtime/event']).toEqual({
+      types: './runtime/event.d.mts',
+      import: './runtime/event.mjs',
+    })
+    expect(exportsMap['./runtime/hydrate']).toEqual({
+      types: './runtime/hydrate.d.mts',
+      import: './runtime/hydrate.mjs',
+    })
+    expect(exportsMap['./runtime/reactive']).toEqual({
+      types: './runtime/reactive.d.mts',
+      import: './runtime/reactive.mjs',
+    })
+    expect(exportsMap['./runtime/resume']).toEqual({
+      types: './runtime/resume.d.mts',
+      import: './runtime/resume.mjs',
+    })
     expect(exportsMap['./vite/build/runtime']).toEqual({
       types: './vite/build/runtime.d.mts',
       import: './vite/build/runtime.mjs',
@@ -50,7 +86,20 @@ describe('publish package metadata', () => {
     const packConfig = Array.isArray(rootConfig.pack) ? rootConfig.pack[0] : rootConfig.pack
 
     expect(packConfig?.entry).toEqual(
-      expect.arrayContaining(['core/internal.ts', 'web-utils/mod.ts', 'vite/build/runtime.ts']),
+      expect.arrayContaining([
+        'core/internal.ts',
+        'compiled-client.ts',
+        'flow.ts',
+        'meta.ts',
+        'runtime/dom-compiled.ts',
+        'runtime/event.ts',
+        'runtime/hydrate.ts',
+        'runtime/reactive.ts',
+        'runtime/resume.ts',
+        'signal.ts',
+        'web-utils/mod.ts',
+        'vite/build/runtime.ts',
+      ]),
     )
   })
 

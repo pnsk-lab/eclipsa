@@ -11,7 +11,7 @@ import {
   useRuntimeSignal,
   writeAsyncSignalSnapshot,
 } from './runtime.ts'
-import { setSignalMeta, type SignalMeta } from './internal.ts'
+import { setSignalMeta, type SignalMeta } from './meta.ts'
 import type { EffectOptions } from './runtime/types.ts'
 import { createPendingSignalError, isPendingSignalError } from './suspense.ts'
 

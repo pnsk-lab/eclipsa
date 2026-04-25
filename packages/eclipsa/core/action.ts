@@ -31,7 +31,7 @@ import {
   getRuntimeSignalId,
   type RuntimeContainer,
 } from './runtime.ts'
-import { registerActionHook, setActionHandleMeta, setActionHookMeta } from './internal.ts'
+import { registerActionHook, setActionHandleMeta, setActionHookMeta } from './meta.ts'
 import { ROUTE_RPC_URL_HEADER } from './router-shared.ts'
 
 const ACTION_REGISTRY_KEY = Symbol.for('eclipsa.action-registry')

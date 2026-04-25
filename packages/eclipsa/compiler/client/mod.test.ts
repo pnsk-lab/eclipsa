@@ -6,7 +6,7 @@ import { analyzeModule } from '../analyze/mod.ts'
 import { compileClientModule } from './mod.ts'
 
 describe('compileClientModule', () => {
-  it('injects the shared client runtime imports', async () => {
+  it('injects only the client runtime helpers used by generated code', async () => {
     const resultCode = await compileClientModule(
       `<div a="a">
         <Header a="a" />
@@ -17,10 +17,61 @@ describe('compileClientModule', () => {
       },
     )
 
-    expect(resultCode).toContain('from "eclipsa/client"')
+    expect(resultCode).toContain('from "eclipsa/runtime/dom-compiled"')
     expect(resultCode).not.toContain('from "eclipsa/dev-client"')
-    expect(resultCode).toContain('createTemplate')
-    expect(resultCode).toContain('createComponent')
+    expect(resultCode).toContain('createTemplate as _createTemplate')
+    expect(resultCode).toContain('createComponent as _createComponent')
+    expect(resultCode).not.toContain('attrStatic as _attrStatic')
+    expect(resultCode).not.toContain('from "eclipsa/runtime/event"')
+  })
+
+  it('omits the client runtime import when no client helper is generated', async () => {
+    const resultCode = await compileClientModule('const value = 1; export { value }', 'mod.ts', {
+      hmr: false,
+    })
+
+    expect(resultCode).not.toContain('from "eclipsa/runtime/')
+  })
+
+  it('rewrites core runtime imports to narrower subpath exports', async () => {
+    const resultCode = await compileClientModule(
+      `
+        import { useSignal, For, Show, Link } from 'eclipsa'
+        const value = useSignal
+        export { value, For, Show, Link }
+      `,
+      'mod.ts',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { Link } from "eclipsa";')
+    expect(resultCode).toContain('import { useSignal } from "eclipsa/runtime/reactive";')
+    expect(resultCode).toContain('import { For, Show } from "eclipsa/runtime/dom-compiled";')
+    expect(resultCode).not.toContain('import { useSignal, For, Show, Link } from "eclipsa";')
+  })
+
+  it('rewrites compiled hydrate and metadata imports to light client entries', async () => {
+    const resultCode = await compileClientModule(
+      `
+        import { hydrate } from 'eclipsa/client'
+        import { __eclipsaComponent, __eclipsaEvent, __eclipsaAction } from 'eclipsa/internal'
+        hydrate(__eclipsaComponent(() => <button />, 'button', []), document.body)
+        export const click = __eclipsaEvent.__0('click', 'symbol')
+        export const action = __eclipsaAction
+      `,
+      'mod.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('import { hydrate } from "eclipsa/runtime/hydrate";')
+    expect(resultCode).toContain(
+      'import { __eclipsaComponent, __eclipsaEvent } from "eclipsa/meta";',
+    )
+    expect(resultCode).toContain('import { __eclipsaAction } from "eclipsa/internal";')
   })
 
   it('injects HMR helpers only when enabled', async () => {
@@ -208,6 +259,8 @@ describe('compileClientModule', () => {
     })
 
     expect(resultCode).toContain('_eventStatic.__2(')
+    expect(resultCode).toContain('eventStatic as _eventStatic')
+    expect(resultCode).toContain('from "eclipsa/runtime/event"')
     expect(resultCode).not.toContain('_eventStatic(_cloned, "click", __eclipsaEvent.__2(')
   })
 

@@ -25,6 +25,65 @@ type ManagedAttributeSnapshot = Set<string> | readonly string[]
 const managedElementAttributes = new WeakMap<Element, ManagedAttributeSnapshot>()
 const insertMarkerNodeCounts = new WeakMap<Comment, number>()
 const managedRememberedSubtrees = new WeakSet<Node>()
+const compiledReactiveDomTargets = new WeakSet<Node>()
+const compiledReactiveDynamicDomTargets = new WeakSet<Node>()
+
+export const rememberCompiledReactiveDomTarget = (node: Node | null | undefined) => {
+  if (node) {
+    compiledReactiveDomTargets.add(node)
+  }
+}
+
+export const rememberCompiledReactiveDynamicDomTarget = (node: Node | null | undefined) => {
+  if (node) {
+    compiledReactiveDomTargets.add(node)
+    compiledReactiveDynamicDomTargets.add(node)
+  }
+}
+
+export const hasCompiledReactiveDomTarget = (node: Node | null | undefined) =>
+  !!node && compiledReactiveDomTargets.has(node)
+
+export const hasCompiledReactiveDomTargetInSubtree = (node: Node | null | undefined): boolean => {
+  if (!node) {
+    return false
+  }
+  if (compiledReactiveDomTargets.has(node)) {
+    return true
+  }
+  const stack = listNodeChildren(node)
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (compiledReactiveDomTargets.has(current)) {
+      return true
+    }
+    stack.push(...listNodeChildren(current))
+  }
+  return false
+}
+
+export const hasCompiledReactiveDynamicDomTarget = (node: Node | null | undefined) =>
+  !!node && compiledReactiveDynamicDomTargets.has(node)
+
+export const hasCompiledReactiveDynamicDomTargetInSubtree = (
+  node: Node | null | undefined,
+): boolean => {
+  if (!node) {
+    return false
+  }
+  if (compiledReactiveDynamicDomTargets.has(node)) {
+    return true
+  }
+  const stack = listNodeChildren(node)
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (compiledReactiveDynamicDomTargets.has(current)) {
+      return true
+    }
+    stack.push(...listNodeChildren(current))
+  }
+  return false
+}
 
 const isObjectLike = (value: unknown): value is Record<PropertyKey, unknown> =>
   !!value && (typeof value === 'object' || typeof value === 'function')

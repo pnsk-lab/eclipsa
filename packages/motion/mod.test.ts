@@ -388,6 +388,7 @@ describe('@eclipsa/motion', () => {
     )
     expect(html).toContain('max-height: 160px')
     expect(html).toContain('transition-property: max-height, opacity')
+    expect(html.indexOf('transition-property')).toBeLessThan(html.indexOf('max-height: 160px'))
     expect(html).not.toContain('maxHeight:')
   })
   it('inherits transition config from MotionConfig', () => {

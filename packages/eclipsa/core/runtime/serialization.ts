@@ -23,7 +23,7 @@ import {
   getRegisteredLoaderHook,
   resolveCaptureValues,
   getSignalMeta,
-} from '../internal.ts'
+} from '../meta.ts'
 import {
   PROJECTION_SLOT_TYPE,
   RENDER_COMPONENT_TYPE_KEY,
@@ -46,9 +46,6 @@ interface RuntimeSerializationDependencies {
     occurrence: number,
     source: unknown,
   ) => ProjectionSlotValue
-  ensureRouterState: (container: RuntimeContainer) => {
-    navigate: unknown
-  }
   ensureRuntimeElementId: (container: RuntimeContainer, element: Element) => string
   evaluateProps: (props: Record<string, unknown>) => Record<string, unknown>
   findRuntimeElement: (container: RuntimeContainer, id: string) => Element | null
@@ -56,7 +53,6 @@ interface RuntimeSerializationDependencies {
   isPlainObject: (value: unknown) => value is Record<string, unknown>
   isProjectionSlot: (value: unknown) => value is ProjectionSlotValue
   isRenderObject: (value: unknown) => value is RenderObject
-  isRouteSlot: (value: unknown) => value is RouteSlotValue
   loadSymbol: (container: RuntimeContainer, symbol: string) => Promise<unknown>
   materializeComputedSignalReference: (container: RuntimeContainer, signalId: string) => unknown
   materializeScope: (container: RuntimeContainer, scopeId: string) => unknown[]
@@ -72,7 +68,6 @@ interface RuntimeSerializationDependencies {
 
 export const createRuntimeSerialization = ({
   createProjectionSlot,
-  ensureRouterState,
   ensureRuntimeElementId,
   evaluateProps,
   findRuntimeElement,
@@ -80,7 +75,6 @@ export const createRuntimeSerialization = ({
   isPlainObject,
   isProjectionSlot,
   isRenderObject,
-  isRouteSlot,
   loadSymbol,
   materializeComputedSignalReference,
   materializeScope,
@@ -99,6 +93,11 @@ export const createRuntimeSerialization = ({
         | undefined) ?? null
     )
   }
+
+  const isRouteSlot = (value: unknown): value is RouteSlotValue =>
+    !!value &&
+    typeof value === 'object' &&
+    (value as { __eclipsa_type?: unknown }).__eclipsa_type === ROUTE_SLOT_TYPE
 
   const createMaterializedRenderComponentType = (
     container: RuntimeContainer,
@@ -398,7 +397,11 @@ export const createRuntimeSerialization = ({
     deserializePublicValue(value, {
       deserializeReference(reference) {
         if (reference.kind === 'navigate') {
-          return ensureRouterState(container).navigate
+          const navigate = container.router?.navigate
+          if (!navigate) {
+            throw new Error('Missing router state for navigate reference.')
+          }
+          return navigate
         }
         if (reference.kind === 'action') {
           const action = container.actions.get(reference.token)

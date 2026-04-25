@@ -12,6 +12,7 @@
     "directory": "packages/eclipsa"
   },
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./mod.ts",
@@ -20,6 +21,42 @@
     "./atom": {
       "types": "./atom/mod.ts",
       "import": "./atom/mod.ts"
+    },
+    "./signal": {
+      "types": "./signal.ts",
+      "import": "./signal.ts"
+    },
+    "./flow": {
+      "types": "./flow.ts",
+      "import": "./flow.ts"
+    },
+    "./meta": {
+      "types": "./meta.ts",
+      "import": "./meta.ts"
+    },
+    "./compiled-client": {
+      "types": "./compiled-client.ts",
+      "import": "./compiled-client.ts"
+    },
+    "./runtime/dom-compiled": {
+      "types": "./runtime/dom-compiled.ts",
+      "import": "./runtime/dom-compiled.ts"
+    },
+    "./runtime/event": {
+      "types": "./runtime/event.ts",
+      "import": "./runtime/event.ts"
+    },
+    "./runtime/hydrate": {
+      "types": "./runtime/hydrate.ts",
+      "import": "./runtime/hydrate.ts"
+    },
+    "./runtime/reactive": {
+      "types": "./runtime/reactive.ts",
+      "import": "./runtime/reactive.ts"
+    },
+    "./runtime/resume": {
+      "types": "./runtime/resume.ts",
+      "import": "./runtime/resume.ts"
     },
     "./web-utils": {
       "types": "./web-utils/mod.ts",
@@ -71,6 +108,42 @@
       "./atom": {
         "types": "./atom/mod.d.mts",
         "import": "./atom/mod.mjs"
+      },
+      "./signal": {
+        "types": "./signal.d.mts",
+        "import": "./signal.mjs"
+      },
+      "./flow": {
+        "types": "./flow.d.mts",
+        "import": "./flow.mjs"
+      },
+      "./meta": {
+        "types": "./meta.d.mts",
+        "import": "./meta.mjs"
+      },
+      "./compiled-client": {
+        "types": "./compiled-client.d.mts",
+        "import": "./compiled-client.mjs"
+      },
+      "./runtime/dom-compiled": {
+        "types": "./runtime/dom-compiled.d.mts",
+        "import": "./runtime/dom-compiled.mjs"
+      },
+      "./runtime/event": {
+        "types": "./runtime/event.d.mts",
+        "import": "./runtime/event.mjs"
+      },
+      "./runtime/hydrate": {
+        "types": "./runtime/hydrate.d.mts",
+        "import": "./runtime/hydrate.mjs"
+      },
+      "./runtime/reactive": {
+        "types": "./runtime/reactive.d.mts",
+        "import": "./runtime/reactive.mjs"
+      },
+      "./runtime/resume": {
+        "types": "./runtime/resume.d.mts",
+        "import": "./runtime/resume.mjs"
       },
       "./web-utils": {
         "types": "./web-utils/mod.d.mts",
