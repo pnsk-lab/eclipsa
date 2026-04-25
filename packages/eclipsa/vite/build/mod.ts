@@ -138,6 +138,8 @@ const isCacheableRequest = (request) => {
   return url.origin === self.location.origin && PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix));
 };
 
+const isEntryRequest = (request) => new URL(request.url).pathname.startsWith("/entries/");
+
 const fetchAndCache = async (cache, request) => {
   const response = await fetch(request);
   if (response.ok && (response.type === "basic" || response.type === "cors")) {
@@ -200,6 +202,18 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
+    if (isEntryRequest(event.request)) {
+      try {
+        return await fetchAndCache(cache, event.request);
+      } catch (error) {
+        const fallback = await cache.match(event.request);
+        if (fallback) {
+          return fallback;
+        }
+        throw error;
+      }
+    }
+
     const cached = await cache.match(event.request);
     if (cached) {
       event.waitUntil(fetchAndCache(cache, event.request).catch(() => undefined));

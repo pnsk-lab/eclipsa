@@ -1023,6 +1023,9 @@ describe('build', () => {
     ).resolves.toContain('caches.open(CACHE_NAME)')
     await expect(
       fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
+    ).resolves.toContain('isEntryRequest(event.request)')
+    await expect(
+      fs.readFile(path.join(root, 'dist/client/eclipsa-chunk-cache-sw.js'), 'utf8'),
     ).resolves.toContain('addEventListener("message"')
     await expect(
       fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8'),
