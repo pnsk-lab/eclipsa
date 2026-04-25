@@ -1,12 +1,18 @@
 export type Signal<T = unknown> = { value: T }
 export type Effect = () => void
 export type Cleanup = () => void
+type FixedSignalEffectHandler = <T>(
+  signal: Signal<T>,
+  fn: (value: T) => void,
+  options?: { skipInitialRun?: boolean },
+) => boolean
 
 const signalRecords = new WeakMap<object, { effects: Set<Effect>; value: unknown }>()
 let currentEffect: Effect | null = null
 let currentCleanups: Cleanup[] | null = null
 let runtimeCleanupHandler: ((fn: Cleanup) => boolean) | null = null
 let runtimeEffectWrapper: ((fn: Effect) => Effect) | null = null
+let runtimeFixedSignalEffectHandler: FixedSignalEffectHandler | null = null
 let runtimeMountScheduler: ((fn: () => void) => boolean) | null = null
 
 export const setRuntimeCleanupHandler = (handler: ((fn: Cleanup) => boolean) | null) => {
@@ -15,6 +21,10 @@ export const setRuntimeCleanupHandler = (handler: ((fn: Cleanup) => boolean) | n
 
 export const setRuntimeEffectWrapper = (wrapper: ((fn: Effect) => Effect) | null) => {
   runtimeEffectWrapper = wrapper
+}
+
+export const setRuntimeFixedSignalEffectHandler = (handler: FixedSignalEffectHandler | null) => {
+  runtimeFixedSignalEffectHandler = handler
 }
 
 export const setRuntimeMountScheduler = (scheduler: ((fn: () => void) => boolean) | null) => {
@@ -128,14 +138,20 @@ export const createFixedSignalEffect = <T>(
   options?: { skipInitialRun?: boolean },
 ) => {
   const record = signalRecords.get(signal)
-  if (!record) {
-    return false
+  if (record) {
+    const run = runtimeEffectWrapper?.(() => fn(record.value as T)) ?? (() => fn(record.value as T))
+    record.effects.add(run)
+    currentCleanups?.push(() => record.effects.delete(run))
+    if (options?.skipInitialRun !== true) {
+      run()
+    }
+    return true
   }
-  const run = runtimeEffectWrapper?.(() => fn(record.value as T)) ?? (() => fn(record.value as T))
-  record.effects.add(run)
-  currentCleanups?.push(() => record.effects.delete(run))
+  if (runtimeFixedSignalEffectHandler?.(signal, fn, options)) {
+    return true
+  }
   if (options?.skipInitialRun !== true) {
-    run()
+    fn(signal.value)
   }
-  return true
+  return false
 }

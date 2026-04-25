@@ -143,6 +143,7 @@ import {
 } from './runtime/globals.ts'
 import {
   setRuntimeCleanupHandler as setCompiledRuntimeCleanupHandler,
+  setRuntimeFixedSignalEffectHandler as setCompiledRuntimeFixedSignalEffectHandler,
   setRuntimeEffectWrapper as setCompiledRuntimeEffectWrapper,
   setRuntimeMountScheduler as setCompiledRuntimeMountScheduler,
 } from './runtime/reactive.ts'
@@ -11995,6 +11996,10 @@ export const createFixedSignalEffect = <T>(
 
   return true
 }
+
+setCompiledRuntimeFixedSignalEffectHandler((signal, fn, options) =>
+  createFixedSignalEffect(signal, fn, options),
+)
 
 export const useRuntimeNavigate = (): Navigate => {
   const container = getCurrentContainer()

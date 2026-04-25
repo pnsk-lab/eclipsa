@@ -15,11 +15,13 @@ import {
 } from './client/dom.ts'
 import {
   attrStatic as attrCompiledStatic,
+  classSignal as classCompiledSignal,
   createComponent as createCompiledComponent,
   insert as insertCompiled,
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
   text as textCompiled,
+  textNodeSignalMember as textCompiledNodeSignalMember,
 } from './runtime/dom-compiled.ts'
 import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import { onMount as onCompiledMount, signal as createCompiledSignal } from './runtime/reactive.ts'
@@ -1222,6 +1224,62 @@ describe('runtime/dom-compiled', () => {
         ] as never)
 
         expect(nodes.map((node) => node.textContent)).toEqual(['hidden', '0:A', '1:B'])
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('binds compiled row member helpers to runtime-owned reactive rows', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const parent = fakeDocument.createElement('section')
+
+        withRuntimeContainer(container, () => {
+          insertCompiled(
+            () =>
+              ({
+                __e_for: true,
+                arr: [{ iconClass: 'i-tabler-cpu', id: 1, title: 'Compiler' }],
+                fn: (row: { value: { iconClass: string; title: string } }) => {
+                  const article = fakeDocument.createElement('article')
+                  const icon = fakeDocument.createElement('div')
+                  const title = fakeDocument.createElement('h2')
+                  const titleText = fakeDocument.createTextNode('')
+
+                  title.appendChild(titleText as unknown as FakeNode)
+                  article.appendChild(icon as unknown as FakeNode)
+                  article.appendChild(title as unknown as FakeNode)
+                  classCompiledSignal(
+                    icon as unknown as Element,
+                    row,
+                    (value) => `${value.iconClass} landing-feature-card-icon`,
+                  )
+                  textCompiledNodeSignalMember(row, 'title', titleText as unknown as Node)
+
+                  return article as unknown as JSX.Element
+                },
+                key: (row: { id: number }) => row.id,
+                keyMember: 'id',
+                reactiveRows: true,
+              }) as never,
+            parent as unknown as Node,
+          )
+        })
+
+        const article = parent.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'article',
+        )!
+        const icon = article.firstChild as FakeElement
+
+        expect(parent.textContent).toContain('Compiler')
+        expect(icon.className).toBe('i-tabler-cpu landing-feature-card-icon')
       } finally {
         globalThis.document = originalDocument
       }
