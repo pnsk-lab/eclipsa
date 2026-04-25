@@ -14,6 +14,7 @@ let runtimeCleanupHandler: ((fn: Cleanup) => boolean) | null = null
 let runtimeEffectWrapper: ((fn: Effect) => Effect) | null = null
 let runtimeFixedSignalEffectHandler: FixedSignalEffectHandler | null = null
 let runtimeMountScheduler: ((fn: () => void) => boolean) | null = null
+let runtimeVisibleHandler: ((fn: () => void) => boolean) | null = null
 
 export const setRuntimeCleanupHandler = (handler: ((fn: Cleanup) => boolean) | null) => {
   runtimeCleanupHandler = handler
@@ -29,6 +30,10 @@ export const setRuntimeFixedSignalEffectHandler = (handler: FixedSignalEffectHan
 
 export const setRuntimeMountScheduler = (scheduler: ((fn: () => void) => boolean) | null) => {
   runtimeMountScheduler = scheduler
+}
+
+export const setRuntimeVisibleHandler = (handler: ((fn: () => void) => boolean) | null) => {
+  runtimeVisibleHandler = handler
 }
 
 export const isSignal = (value: unknown): value is Signal =>
@@ -107,6 +112,9 @@ export const onMount = (fn: () => void) => {
 }
 
 export const onVisible = (fn: () => void) => {
+  if (runtimeVisibleHandler?.(fn)) {
+    return
+  }
   fn()
 }
 

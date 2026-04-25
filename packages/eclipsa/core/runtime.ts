@@ -131,6 +131,7 @@ import {
   setComplexInsertableRenderer,
   setRuntimeDynamicInsertFactory,
   setRuntimeRefAssigner,
+  setRuntimeStaticAttributeAssigner,
 } from './runtime/dom-compiled.ts'
 import {
   clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
@@ -146,6 +147,7 @@ import {
   setRuntimeFixedSignalEffectHandler as setCompiledRuntimeFixedSignalEffectHandler,
   setRuntimeEffectWrapper as setCompiledRuntimeEffectWrapper,
   setRuntimeMountScheduler as setCompiledRuntimeMountScheduler,
+  setRuntimeVisibleHandler as setCompiledRuntimeVisibleHandler,
 } from './runtime/reactive.ts'
 import {
   EMPTY_ROUTE_PARAMS,
@@ -6124,12 +6126,25 @@ const applyElementProp = (
     return
   }
 
+  if (name.startsWith('aria-') && typeof value === 'boolean') {
+    element.setAttribute(name, String(value))
+    return
+  }
+
   if (value === false || value === undefined || value === null) {
     return
   }
 
-  if (name === 'class') {
-    element.className = String(value)
+  if (name === 'class' || name === 'className') {
+    const classValue = String(value)
+    if (
+      element.namespaceURI === 'http://www.w3.org/2000/svg' ||
+      typeof (element as Element & { className?: unknown }).className !== 'string'
+    ) {
+      element.setAttribute('class', classValue)
+    } else {
+      element.className = classValue
+    }
     return
   }
 
@@ -6157,6 +6172,43 @@ const applyElementProp = (
 
   element.setAttribute(name, String(value))
 }
+
+setRuntimeStaticAttributeAssigner((element, name, value) => {
+  const container = getRuntimeContainer()
+  if (!container) {
+    return false
+  }
+
+  if (name === BIND_VALUE_PROP || name === BIND_CHECKED_PROP) {
+    if (!getBindableSignalId(value)) {
+      return false
+    }
+  }
+
+  if (name === 'ref' && !getRefSignalId(value)) {
+    return false
+  }
+
+  const eventName = toEventName(name)
+  if (eventName && !getRuntimeEventDescriptor(value)) {
+    return false
+  }
+
+  applyElementProp(element as HTMLElement, name, value, container)
+  if (
+    name === ACTION_FORM_ATTR &&
+    isHTMLFormElementNode(element) &&
+    element.getAttribute(ACTION_FORM_ATTR) !== null &&
+    container.doc
+  ) {
+    const csrfToken = readActionCsrfTokenFromRuntimeDocument(container.doc)
+    if (csrfToken) {
+      element.appendChild(createActionCsrfInputNode(container.doc, csrfToken))
+    }
+  }
+  rememberManagedAttributesForNode(element)
+  return true
+})
 
 export const renderClientNodes = (
   inputElementLike: JSX.Element | JSX.Element[],
@@ -12179,6 +12231,11 @@ export const createOnVisible = (fn: () => void) => {
 
   scheduleVisibleCallbacksCheck(container)
 }
+
+setCompiledRuntimeVisibleHandler((fn) => {
+  createOnVisible(fn)
+  return true
+})
 
 export const createWatch = (fn: () => void, dependencies?: WatchDependency[]) => {
   const container = getCurrentContainer()

@@ -1,6 +1,7 @@
 import type { JSX } from '../../jsx/types.ts'
 import { FRAGMENT } from '../../jsx/shared.ts'
 import type { Component } from '../component.ts'
+import { ACTION_FORM_ATTR, BIND_CHECKED_PROP, BIND_VALUE_PROP } from './constants.ts'
 import {
   createFixedSignalEffect,
   effect,
@@ -29,10 +30,12 @@ type RuntimeDynamicInsert = {
 }
 type RuntimeDynamicInsertFactory = (parent: Node, marker?: Node) => RuntimeDynamicInsert | null
 type RuntimeRefAssigner = (value: unknown, element: Element) => boolean
+type RuntimeStaticAttributeAssigner = (element: Element, name: string, value: unknown) => boolean
 
 let complexInsertableRenderer: ComplexInsertableRenderer | null = null
 let runtimeDynamicInsertFactory: RuntimeDynamicInsertFactory | null = null
 let runtimeRefAssigner: RuntimeRefAssigner | null = null
+let runtimeStaticAttributeAssigner: RuntimeStaticAttributeAssigner | null = null
 
 export const setComplexInsertableRenderer = (renderer: ComplexInsertableRenderer | null) => {
   complexInsertableRenderer = renderer
@@ -44,6 +47,12 @@ export const setRuntimeDynamicInsertFactory = (factory: RuntimeDynamicInsertFact
 
 export const setRuntimeRefAssigner = (assigner: RuntimeRefAssigner | null) => {
   runtimeRefAssigner = assigner
+}
+
+export const setRuntimeStaticAttributeAssigner = (
+  assigner: RuntimeStaticAttributeAssigner | null,
+) => {
+  runtimeStaticAttributeAssigner = assigner
 }
 
 const assignRef = (element: Element, value: unknown) => {
@@ -327,7 +336,177 @@ const applyClass = (elem: Element, value: string) => {
     elem.removeAttribute('class')
     return
   }
+  if (
+    elem.namespaceURI === 'http://www.w3.org/2000/svg' ||
+    typeof (elem as Element & { className?: unknown }).className !== 'string'
+  ) {
+    elem.setAttribute('class', value)
+    return
+  }
   ;(elem as Element & { className: string }).className = value
+}
+
+const isBindableSignal = <T>(value: unknown): value is Signal<T> =>
+  !!value && (typeof value === 'object' || typeof value === 'function') && 'value' in value
+
+const readValueBinding = (elem: Element, currentValue: unknown) => {
+  if (
+    elem instanceof HTMLInputElement &&
+    typeof currentValue === 'number' &&
+    (elem.type === 'number' || elem.type === 'range') &&
+    !Number.isNaN(elem.valueAsNumber)
+  ) {
+    return elem.valueAsNumber
+  }
+
+  return (elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value
+}
+
+const applyStyle = (elem: Element, value: unknown) => {
+  if (value && typeof value === 'object') {
+    const style = (elem as HTMLElement).style
+    if (style && typeof style.setProperty === 'function') {
+      for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+        style.setProperty(name, String(entry))
+      }
+      return
+    }
+    elem.setAttribute(
+      'style',
+      Object.entries(value as Record<string, unknown>)
+        .map(([name, entry]) => `${name}: ${String(entry)}`)
+        .join('; '),
+    )
+    return
+  }
+
+  elem.setAttribute('style', String(value ?? ''))
+}
+
+const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolean) =>
+  isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
+
+const bindValueSignal = (elem: Element, signal: Signal<unknown>) => {
+  const input = elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  const syncFromSignal = (value: unknown) => {
+    const nextValue = String(value ?? '')
+    if (input.value !== nextValue) {
+      input.value = nextValue
+    }
+  }
+  const syncFromElement = () => {
+    signal.value = readValueBinding(elem, signal.value)
+  }
+
+  syncFromSignal(signal.value)
+  elem.addEventListener('input', syncFromElement)
+  elem.addEventListener('change', syncFromElement)
+  createFixedSignalEffect(signal, syncFromSignal, { skipInitialRun: true })
+}
+
+const bindCheckedSignal = (elem: Element, signal: Signal<unknown>) => {
+  if (!(elem instanceof HTMLInputElement)) {
+    return
+  }
+  const syncFromSignal = (value: unknown) => {
+    const nextChecked = Boolean(value)
+    if (elem.checked !== nextChecked) {
+      elem.checked = nextChecked
+    }
+  }
+  const syncFromElement = () => {
+    signal.value = elem.checked
+  }
+
+  syncFromSignal(signal.value)
+  elem.addEventListener('input', syncFromElement)
+  elem.addEventListener('change', syncFromElement)
+  createFixedSignalEffect(signal, syncFromSignal, { skipInitialRun: true })
+}
+
+const applyStaticElementProp = (elem: Element, name: string, value: unknown) => {
+  if (name === 'children' || name === 'key' || value === null || value === undefined) {
+    return
+  }
+
+  if (name.startsWith('aria-') && typeof value === 'boolean') {
+    elem.setAttribute(name, String(value))
+    return
+  }
+
+  if (value === false) {
+    return
+  }
+
+  if (name === 'ref') {
+    assignRef(elem, value)
+    return
+  }
+
+  if (name === BIND_VALUE_PROP) {
+    if (isBindableSignal(value)) {
+      bindValueSignal(elem, value)
+    }
+    return
+  }
+
+  if (name === BIND_CHECKED_PROP) {
+    if (isBindableSignal(value)) {
+      bindCheckedSignal(elem, value)
+    }
+    return
+  }
+
+  if (name.length > 2 && name[0] === 'o' && name[1] === 'n' && name[2] === name[2]?.toUpperCase()) {
+    if (typeof value === 'function') {
+      elem.addEventListener(name.slice(2).toLowerCase(), value as EventListener)
+    }
+    return
+  }
+
+  if (name === 'class' || name === 'className') {
+    applyClass(elem, String(value))
+    return
+  }
+
+  if (name === 'style') {
+    applyStyle(elem, value)
+    return
+  }
+
+  if (name === 'dangerouslySetInnerHTML') {
+    const html =
+      value && typeof value === 'object' && '__html' in value
+        ? (value as { __html?: unknown }).__html
+        : value
+    ;(elem as Element & { innerHTML: string }).innerHTML = String(html ?? '')
+    return
+  }
+
+  if (name === 'value' && 'value' in elem) {
+    ;(elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value = String(value)
+    return
+  }
+
+  if (name === 'checked' && elem instanceof HTMLInputElement) {
+    elem.checked = Boolean(value)
+    return
+  }
+
+  if (value === true) {
+    elem.setAttribute(name, '')
+    return
+  }
+
+  if (
+    name === ACTION_FORM_ATTR ||
+    shouldUseAttributeAssignment(elem, name, elem.namespaceURI === 'http://www.w3.org/2000/svg')
+  ) {
+    elem.setAttribute(name, String(value))
+    return
+  }
+
+  ;(elem as unknown as Record<string, unknown>)[name] = value
 }
 
 export const classSignalEqualsStatic = <T>(
@@ -369,11 +548,10 @@ export const className = (elem: Element, value: () => unknown) => {
 }
 
 export const attrStatic = (elem: Element, name: string, value: unknown) => {
-  if (name === 'ref') {
-    assignRef(elem, value)
+  if (runtimeStaticAttributeAssigner?.(elem, name, value)) {
     return
   }
-  elem.setAttribute(name, String(value))
+  applyStaticElementProp(elem, name, value)
 }
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
@@ -407,55 +585,7 @@ const renderHTMLNodes = (html: string): Node[] => {
 }
 
 const setElementProp = (element: Element, name: string, value: unknown) => {
-  if (
-    name === 'children' ||
-    name === 'key' ||
-    value === null ||
-    value === undefined ||
-    value === false
-  ) {
-    return
-  }
-
-  if (name === 'ref') {
-    assignRef(element, value)
-    return
-  }
-
-  if (name === 'class' || name === 'className') {
-    applyClass(element, String(value))
-    return
-  }
-
-  if (name === 'style' && value && typeof value === 'object') {
-    const serialized = Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => `${key}: ${String(entry)}`)
-      .join('; ')
-    element.setAttribute('style', serialized)
-    return
-  }
-
-  if (name === 'dangerouslySetInnerHTML') {
-    const html =
-      value && typeof value === 'object' && '__html' in value
-        ? (value as { __html?: unknown }).__html
-        : value
-    ;(element as Element & { innerHTML: string }).innerHTML = String(html ?? '')
-    return
-  }
-
-  if (
-    name.length > 2 &&
-    name[0] === 'o' &&
-    name[1] === 'n' &&
-    name[2] === name[2]?.toUpperCase() &&
-    typeof value === 'function'
-  ) {
-    element.addEventListener(name.slice(2).toLowerCase(), value as EventListener)
-    return
-  }
-
-  element.setAttribute(name, value === true ? '' : String(value))
+  attrStatic(element, name, value)
 }
 
 const renderRenderObjectNodes = (value: {
@@ -530,8 +660,44 @@ export const renderNodes = (value: Insertable): Node[] => {
 type RowState<T> = {
   cleanups: Cleanup[]
   key: string | number | symbol
-  node: Node
+  nodes: Node[]
   signal: Signal<T>
+}
+
+const renderScopedNodes = (value: Insertable, cleanups: Cleanup[]) => {
+  const previousCleanups = pushCleanupScope(cleanups)
+  try {
+    const nodes = renderNodes(value)
+    return nodes.length === 0 ? [document.createTextNode('')] : nodes
+  } finally {
+    popCleanupScope(previousCleanups)
+  }
+}
+
+const removeNodes = (nodes: readonly Node[]) => {
+  for (const node of nodes) {
+    removeNode(node)
+  }
+}
+
+const runCleanups = (cleanups: readonly Cleanup[]) => {
+  for (const cleanup of cleanups) {
+    cleanup()
+  }
+}
+
+const insertNodeGroups = (parent: Node, marker: Node | undefined, groups: readonly Node[][]) => {
+  let cursor = marker?.parentNode === parent ? marker : null
+  for (let groupIndex = groups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+    const nodes = groups[groupIndex]!
+    for (let nodeIndex = nodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
+      const node = nodes[nodeIndex]!
+      if (node.nextSibling !== cursor) {
+        parent.insertBefore(node, cursor)
+      }
+      cursor = node
+    }
+  }
 }
 
 export const insertFor = <T>(
@@ -548,8 +714,41 @@ export const insertFor = <T>(
 ) => {
   const rows = new Map<string | number | symbol, RowState<T>>()
   const indexSignals = new Map<string | number | symbol, Signal<number>>()
+  let fallbackCleanups: Cleanup[] = []
+  let fallbackNodes: Node[] = []
+
+  const clearFallback = () => {
+    if (fallbackNodes.length === 0 && fallbackCleanups.length === 0) {
+      return
+    }
+    removeNodes(fallbackNodes)
+    runCleanups(fallbackCleanups)
+    fallbackCleanups = []
+    fallbackNodes = []
+  }
+
+  const clearRows = () => {
+    for (const row of rows.values()) {
+      runCleanups(row.cleanups)
+      removeNodes(row.nodes)
+    }
+    rows.clear()
+    indexSignals.clear()
+  }
 
   const render = (items: readonly T[]) => {
+    if (items.length === 0) {
+      clearRows()
+      if (fallbackNodes.length === 0) {
+        fallbackCleanups = []
+        fallbackNodes = renderScopedNodes((props.fallback ?? null) as Insertable, fallbackCleanups)
+      }
+      insertNodeGroups(parent, marker, [fallbackNodes])
+      return
+    }
+
+    clearFallback()
+
     const used = new Set<string | number | symbol>()
     const ordered: RowState<T>[] = []
     for (let index = 0; index < items.length; index += 1) {
@@ -564,19 +763,13 @@ export const insertFor = <T>(
         indexSignals.get(key)!.value = index
       } else {
         const cleanups: Cleanup[] = []
-        const previousCleanups = pushCleanupScope(cleanups)
         const rowSignal = createSignal(item)
         const indexSignal = createSignal(index)
-        let node: Node
-        try {
-          node = renderNodes(props.fn(rowSignal, indexSignal))[0] ?? document.createTextNode('')
-        } finally {
-          popCleanupScope(previousCleanups)
-        }
+        const nodes = renderScopedNodes(props.fn(rowSignal, indexSignal), cleanups)
         row = {
           cleanups,
           key,
-          node,
+          nodes,
           signal: rowSignal,
         }
         rows.set(key, row)
@@ -589,22 +782,17 @@ export const insertFor = <T>(
       if (used.has(key)) {
         continue
       }
-      for (const cleanup of row.cleanups) {
-        cleanup()
-      }
-      row.node.parentNode?.removeChild(row.node)
+      runCleanups(row.cleanups)
+      removeNodes(row.nodes)
       rows.delete(key)
       indexSignals.delete(key)
     }
 
-    let cursor = marker?.parentNode === parent ? marker : null
-    for (let index = ordered.length - 1; index >= 0; index -= 1) {
-      const node = ordered[index]!.node
-      if (node.nextSibling !== cursor) {
-        parent.insertBefore(node, cursor)
-      }
-      cursor = node
-    }
+    insertNodeGroups(
+      parent,
+      marker,
+      ordered.map((row) => row.nodes),
+    )
   }
 
   if (props.arrSignal && isSignal(props.arrSignal)) {

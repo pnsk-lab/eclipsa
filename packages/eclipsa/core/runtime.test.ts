@@ -18,13 +18,18 @@ import {
   classSignal as classCompiledSignal,
   createComponent as createCompiledComponent,
   insert as insertCompiled,
+  insertFor as insertCompiledFor,
   insertStatic as insertCompiledStatic,
   renderNodes as renderCompiledNodes,
   text as textCompiled,
   textNodeSignalMember as textCompiledNodeSignalMember,
 } from './runtime/dom-compiled.ts'
 import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
-import { onMount as onCompiledMount, signal as createCompiledSignal } from './runtime/reactive.ts'
+import {
+  onMount as onCompiledMount,
+  onVisible as onCompiledVisible,
+  signal as createCompiledSignal,
+} from './runtime/reactive.ts'
 import {
   createContext,
   getRuntimeContextReference,
@@ -407,7 +412,11 @@ class FakeElement extends FakeNode {
 
   setAttribute(name: string, value: string) {
     if (name === 'class') {
-      this.className = value
+      if (typeof this.className === 'string') {
+        this.className = value
+      } else {
+        this.attributes.set('class', value)
+      }
       return
     }
     if (name === 'open') {
@@ -418,7 +427,11 @@ class FakeElement extends FakeNode {
 
   removeAttribute(name: string) {
     if (name === 'class') {
-      this.className = ''
+      if (typeof this.className === 'string') {
+        this.className = ''
+      } else {
+        this.attributes.delete('class')
+      }
       return
     }
     if (name === 'open') {
@@ -1284,6 +1297,168 @@ describe('runtime/dom-compiled', () => {
         globalThis.document = originalDocument
       }
     })
+  })
+
+  it('applies compiled static special attributes without stringifying them', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const html = fakeDocument.createElement('div') as unknown as FakeElement & {
+          innerHTML?: string
+        }
+        const input = fakeDocument.createElement('input') as unknown as FakeElement
+        const checkbox = fakeDocument.createElement('input') as unknown as FakeElement
+        const button = fakeDocument.createElement('button') as unknown as FakeElement
+        const svg = fakeDocument.createElement('svg') as unknown as FakeElement
+        const value = createCompiledSignal('alpha')
+        const checked = createCompiledSignal(false)
+        let clicked = 0
+
+        checkbox.type = 'checkbox'
+        svg.namespaceURI = 'http://www.w3.org/2000/svg'
+        Object.defineProperty(svg, 'className', {
+          configurable: true,
+          get() {
+            return { baseVal: svg.getAttribute('class') ?? '' }
+          },
+        })
+        attrCompiledStatic(
+          html as unknown as Element,
+          'dangerouslySetInnerHTML',
+          '<span>raw</span>',
+        )
+        attrCompiledStatic(input as unknown as Element, 'bind:value', value)
+        attrCompiledStatic(checkbox as unknown as Element, 'bind:checked', checked)
+        attrCompiledStatic(input as unknown as Element, 'style', { color: 'red' })
+        attrCompiledStatic(svg as unknown as Element, 'class', 'icon')
+        attrCompiledStatic(button as unknown as Element, 'aria-expanded', false)
+        attrCompiledStatic(input as unknown as Element, 'onClick', () => {
+          clicked++
+        })
+
+        expect(html.innerHTML).toBe('<span>raw</span>')
+        expect(html.getAttribute('dangerouslySetInnerHTML')).toBeNull()
+        expect(input.value).toBe('alpha')
+        expect(input.getAttribute('style')).toBe('color: red')
+        expect(svg.getAttribute('class')).toBe('icon')
+        expect(button.getAttribute('aria-expanded')).toBe('false')
+
+        input.value = 'beta'
+        input.dispatchEvent(new Event('input'))
+        expect(value.value).toBe('beta')
+
+        checkbox.checked = true
+        checkbox.dispatchEvent(new Event('change'))
+        expect(checked.value).toBe(true)
+
+        input.dispatchEvent(new Event('click'))
+        expect(clicked).toBe(1)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('applies compiled static svg class through the active runtime', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const svg = container.doc.createElement('svg') as unknown as FakeElement
+      const button = container.doc.createElement('button') as unknown as FakeElement
+      svg.namespaceURI = 'http://www.w3.org/2000/svg'
+      Object.defineProperty(svg, 'className', {
+        configurable: true,
+        get() {
+          return { baseVal: svg.getAttribute('class') ?? '' }
+        },
+      })
+
+      withRuntimeContainer(container, () => {
+        attrCompiledStatic(svg as unknown as Element, 'className', 'icon')
+        attrCompiledStatic(button as unknown as Element, 'aria-expanded', false)
+        attrCompiledStatic(button as unknown as Element, 'aria-pressed', true)
+      })
+
+      expect(svg.getAttribute('class')).toBe('icon')
+      expect(svg.getAttribute('className')).toBeNull()
+      expect(button.getAttribute('aria-expanded')).toBe('false')
+      expect(button.getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  it('renders compiled For fallback and preserves multi-node rows', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const host = fakeDocument.createElement('dl') as unknown as FakeElement
+        const marker = fakeDocument.createComment('marker') as unknown as FakeComment
+        const rows = createCompiledSignal<readonly { id: number; label: string }[]>([])
+        host.appendChild(marker)
+
+        insertCompiledFor(
+          {
+            arr: rows.value,
+            arrSignal: rows,
+            fallback: () => {
+              const empty = fakeDocument.createElement('p')
+              empty.appendChild(fakeDocument.createTextNode('empty') as unknown as FakeNode)
+              return empty as unknown as JSX.Element
+            },
+            fn: (row: { value: { id: number; label: string } }) => {
+              const term = fakeDocument.createElement('dt')
+              const description = fakeDocument.createElement('dd')
+              term.appendChild(fakeDocument.createTextNode(row.value.label) as unknown as FakeNode)
+              description.appendChild(
+                fakeDocument.createTextNode(`detail:${row.value.id}`) as unknown as FakeNode,
+              )
+              return [term, description] as unknown as JSX.Element
+            },
+            key: (row: { id: number }) => row.id,
+            keyMember: 'id',
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+
+        expect(host.textContent).toBe('emptymarker')
+
+        rows.value = [
+          { id: 1, label: 'A' },
+          { id: 2, label: 'B' },
+        ]
+        expect(host.textContent).toBe('Adetail:1Bdetail:2marker')
+        expect(host.childNodes.map((node) => node instanceof FakeElement && node.tagName)).toEqual([
+          'dt',
+          'dd',
+          'dt',
+          'dd',
+          false,
+        ])
+
+        rows.value = []
+        expect(host.textContent).toBe('emptymarker')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('delegates compiled onVisible to the active runtime instead of running immediately', () => {
+    const container = createContainer()
+    let visibleRuns = 0
+
+    withRuntimeContainer(container, () => {
+      onCompiledVisible(() => {
+        visibleRuns++
+      })
+    })
+
+    expect(visibleRuns).toBe(0)
   })
 })
 
