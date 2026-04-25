@@ -3,6 +3,10 @@ import { FRAGMENT } from '../../jsx/shared.ts'
 import type { Component } from '../component.ts'
 import { ACTION_FORM_ATTR, BIND_CHECKED_PROP, BIND_VALUE_PROP } from './constants.ts'
 import {
+  rememberCompiledReactiveDomTarget,
+  rememberCompiledReactiveDynamicDomTarget,
+} from './dom.ts'
+import {
   createFixedSignalEffect,
   effect,
   isSignal,
@@ -216,6 +220,7 @@ export const insertStatic = (value: Insertable, parent: Node, marker?: Node) => 
 }
 
 export const insert = (value: Insertable, parent: Node, marker?: Node) => {
+  rememberCompiledReactiveDynamicDomTarget(marker)
   let currentNodes: Node[] = []
   const runtimeInsert = runtimeDynamicInsertFactory?.(parent, marker) ?? null
   effect(() => {
@@ -254,6 +259,8 @@ const textUpdate = (target: Node, value: unknown) => {
 
 export const text = (value: Insertable, parent: Node, marker?: Node) => {
   let textNode = document.createTextNode('')
+  rememberCompiledReactiveDynamicDomTarget(marker)
+  rememberCompiledReactiveDynamicDomTarget(textNode)
   let currentNodes: Node[] = [textNode]
   const runtimeInsert = runtimeDynamicInsertFactory?.(parent, marker) ?? null
   insertNode(parent, marker, textNode)
@@ -266,6 +273,7 @@ export const text = (value: Insertable, parent: Node, marker?: Node) => {
           removeNode(node)
         }
         textNode = document.createTextNode('')
+        rememberCompiledReactiveDynamicDomTarget(textNode)
         currentNodes = [textNode]
         insertNode(parent, marker, textNode)
       }
@@ -305,6 +313,7 @@ export const textSignal = <T>(
   marker?: Node,
 ) => {
   const node = document.createTextNode('')
+  rememberCompiledReactiveDynamicDomTarget(node)
   insertNode(parent, marker, node)
   createFixedSignalEffect(signal, (value) => textUpdate(node, project(value)))
 }
@@ -314,10 +323,12 @@ export const textNodeSignal = <T>(
   project: (value: T) => Insertable,
   target: Node,
 ) => {
+  rememberCompiledReactiveDynamicDomTarget(target)
   createFixedSignalEffect(signal, (value) => textUpdate(target, project(value)))
 }
 
 export const textNodeSignalValue = <T>(signal: Signal<T>, target: Node) => {
+  rememberCompiledReactiveDynamicDomTarget(target)
   createFixedSignalEffect(signal, (value) => textUpdate(target, value))
 }
 
@@ -326,6 +337,7 @@ export const textNodeSignalMember = <T extends Record<string, unknown>>(
   member: string,
   target: Node,
 ) => {
+  rememberCompiledReactiveDynamicDomTarget(target)
   createFixedSignalEffect(signal, (value) => textUpdate(target, value[member]))
 }
 
@@ -387,6 +399,7 @@ const shouldUseAttributeAssignment = (elem: Element, name: string, isSVG: boolea
   isSVG || name.startsWith('data-') || name.startsWith('aria-') || !(name in elem)
 
 const bindValueSignal = (elem: Element, signal: Signal<unknown>) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   const input = elem as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
   const syncFromSignal = (value: unknown) => {
     const nextValue = String(value ?? '')
@@ -408,6 +421,7 @@ const bindCheckedSignal = (elem: Element, signal: Signal<unknown>) => {
   if (!(elem instanceof HTMLInputElement)) {
     return
   }
+  rememberCompiledReactiveDynamicDomTarget(elem)
   const syncFromSignal = (value: unknown) => {
     const nextChecked = Boolean(value)
     if (elem.checked !== nextChecked) {
@@ -458,6 +472,7 @@ const applyStaticElementProp = (elem: Element, name: string, value: unknown) => 
   }
 
   if (name.length > 2 && name[0] === 'o' && name[1] === 'n' && name[2] === name[2]?.toUpperCase()) {
+    rememberCompiledReactiveDomTarget(elem)
     if (typeof value === 'function') {
       elem.addEventListener(name.slice(2).toLowerCase(), value as EventListener)
     }
@@ -518,12 +533,14 @@ export const classSignalEqualsStatic = <T>(
 ) => {
   const truthy = String(truthyValue)
   const falsy = String(falsyValue)
+  rememberCompiledReactiveDynamicDomTarget(elem)
   createFixedSignalEffect(signal, (value) => applyClass(elem, value === expected ? truthy : falsy))
 }
 
 export const classSignalEquals = classSignalEqualsStatic
 
 export const classSignalValue = <T>(elem: Element, signal: Signal<T>) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   createFixedSignalEffect(signal, (value) => applyClass(elem, String(value)))
 }
 
@@ -532,6 +549,7 @@ export const classSignalMember = <T extends Record<string, unknown>>(
   signal: Signal<T>,
   member: string,
 ) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   createFixedSignalEffect(signal, (value) => applyClass(elem, String(value[member])))
 }
 
@@ -540,10 +558,12 @@ export const classSignal = <T>(
   signal: Signal<T>,
   project: (value: T) => unknown,
 ) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   createFixedSignalEffect(signal, (value) => applyClass(elem, String(project(value))))
 }
 
 export const className = (elem: Element, value: () => unknown) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   effect(() => applyClass(elem, String(value())))
 }
 
@@ -555,6 +575,7 @@ export const attrStatic = (elem: Element, name: string, value: unknown) => {
 }
 
 export const attr = (elem: Element, name: string, value: () => unknown) => {
+  rememberCompiledReactiveDynamicDomTarget(elem)
   effect(() => attrStatic(elem, name, value()))
 }
 
@@ -712,6 +733,7 @@ export const insertFor = <T>(
   parent: Node,
   marker?: Node,
 ) => {
+  rememberCompiledReactiveDynamicDomTarget(marker)
   const rows = new Map<string | number | symbol, RowState<T>>()
   const indexSignals = new Map<string | number | symbol, Signal<number>>()
   let fallbackCleanups: Cleanup[] = []

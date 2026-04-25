@@ -104,6 +104,10 @@ import {
   captureBoundaryFocus,
   captureDocumentFocus,
   getBoundaryChildren,
+  hasCompiledReactiveDomTarget,
+  hasCompiledReactiveDynamicDomTarget,
+  hasCompiledReactiveDynamicDomTargetInSubtree,
+  hasCompiledReactiveDomTargetInSubtree,
   getManagedAttributeSnapshotValues,
   getRememberedInsertMarkerNodeCount,
   hasRememberedManagedAttributesForSubtree,
@@ -116,6 +120,7 @@ import {
   isHTMLSelectElementNode,
   isHTMLTextAreaElementNode,
   listNodeChildren,
+  rememberCompiledReactiveDomTarget,
   rememberInsertMarkerRange,
   rememberManagedAttributesForNode,
   rememberManagedAttributesForNodes,
@@ -2405,6 +2410,10 @@ const notifySignalWrite = (container: RuntimeContainer | null, record: SignalRec
     }
     component.reuseExistingDomOnActivate = !hasProjectionSlotDom
     component.reuseProjectionSlotDomOnActivate = !hasProjectionSlotDom
+    component.preserveCompiledReactiveTargetsOnActivate =
+      record.id === ROUTER_CURRENT_URL_SIGNAL_ID ||
+      record.id === ROUTER_CURRENT_PATH_SIGNAL_ID ||
+      record.id === ROUTER_IS_NAVIGATING_SIGNAL_ID
     container.dirty.add(component.id)
   }
   scheduleDirtyFlush(container)
@@ -2697,6 +2706,7 @@ const getLiveClientEventBinding = (
 }
 
 const storeLiveClientEventBinding = (element: Element, nextBinding: LiveClientEventBinding) => {
+  rememberCompiledReactiveDomTarget(element)
   const existing = getLiveClientEventBindings(element)
   if (!existing) {
     setLiveClientEventBindings(element, nextBinding)
@@ -3894,7 +3904,41 @@ const collectBoundaryRangeNodes = (start: Node, end: Node) => {
   return []
 }
 
+let preserveCompiledReactiveTargetsInPatch = false
+
+const withCompiledReactiveTargetPatchPreservation = <T>(preserve: boolean, fn: () => T) => {
+  const previous = preserveCompiledReactiveTargetsInPatch
+  preserveCompiledReactiveTargetsInPatch = preserve
+  try {
+    return fn()
+  } finally {
+    preserveCompiledReactiveTargetsInPatch = previous
+  }
+}
+
+const canPreserveCompiledReactiveNodeShell = (current: Node, next: Node) => {
+  if (current.nodeType !== next.nodeType) {
+    return false
+  }
+  if (current.nodeType === DOM_TEXT_NODE || current.nodeType === DOM_COMMENT_NODE) {
+    return true
+  }
+  return isElementNode(current) && isElementNode(next) && current.tagName === next.tagName
+}
+
 const canReuseNodeAsIs = (current: Node, next: Node): boolean => {
+  if (
+    preserveCompiledReactiveTargetsInPatch &&
+    (hasCompiledReactiveDomTarget(current) || hasCompiledReactiveDomTarget(next))
+  ) {
+    return canPreserveCompiledReactiveNodeShell(current, next)
+  }
+  if (!preserveCompiledReactiveTargetsInPatch) {
+    if (hasCompiledReactiveDynamicDomTarget(current) || hasCompiledReactiveDynamicDomTarget(next)) {
+      return false
+    }
+  }
+
   if (current.nodeType !== next.nodeType) {
     return false
   }
@@ -4169,6 +4213,20 @@ const preserveKeyedRangeContentsInRoots = (currentRoots: Node[], nextRoots: Node
 }
 
 const canMatchReusableRoot = (current: Node, next: Node) => {
+  if (
+    preserveCompiledReactiveTargetsInPatch &&
+    (hasCompiledReactiveDomTargetInSubtree(current) || hasCompiledReactiveDomTargetInSubtree(next))
+  ) {
+    return canPreserveCompiledReactiveNodeShell(current, next)
+  }
+  if (
+    !preserveCompiledReactiveTargetsInPatch &&
+    (hasCompiledReactiveDynamicDomTargetInSubtree(current) ||
+      hasCompiledReactiveDynamicDomTargetInSubtree(next))
+  ) {
+    return false
+  }
+
   if (current.nodeType !== next.nodeType) {
     return false
   }
@@ -4252,6 +4310,13 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
             ? markerIndex - explicitCount
             : currentIndex
         const movedRoots = currentChildren.slice(ownedStartIndex, markerIndex)
+        if (
+          !preserveCompiledReactiveTargetsInPatch &&
+          movedRoots.some((node) => hasCompiledReactiveDynamicDomTargetInSubtree(node))
+        ) {
+          currentIndex = markerIndex + 1
+          continue
+        }
         if (collectComponentBoundaryIds(movedRoots).size > 0) {
           currentIndex = markerIndex + 1
           continue
@@ -4778,6 +4843,18 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
 const patchNodeInPlace = (current: Node, next: Node): boolean => {
   if (current === next) {
     return true
+  }
+
+  if (
+    preserveCompiledReactiveTargetsInPatch &&
+    (hasCompiledReactiveDomTarget(current) || hasCompiledReactiveDomTarget(next))
+  ) {
+    return canPreserveCompiledReactiveNodeShell(current, next)
+  }
+  if (!preserveCompiledReactiveTargetsInPatch) {
+    if (hasCompiledReactiveDynamicDomTarget(current) || hasCompiledReactiveDynamicDomTarget(next)) {
+      return false
+    }
   }
 
   if (current.nodeType !== next.nodeType) {
@@ -8561,9 +8638,13 @@ const clearSharedLayoutDescendantDirtyStates = (
     if (!component) {
       continue
     }
+    if (component.start?.parentNode && component.end?.parentNode) {
+      continue
+    }
     component.activateModeOnFlush = undefined
     component.reuseExistingDomOnActivate = true
     component.reuseProjectionSlotDomOnActivate = false
+    component.preserveCompiledReactiveTargetsOnActivate = false
   }
 }
 
@@ -8643,6 +8724,7 @@ const updateSharedLayoutBoundary = async (
     boundary.activateModeOnFlush = 'replace'
     boundary.reuseExistingDomOnActivate = false
     boundary.reuseProjectionSlotDomOnActivate = false
+    boundary.preserveCompiledReactiveTargetsOnActivate = false
     container.dirty.add(boundaryId)
     if (boundary.start?.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
       bindRouterLinks(container, boundary.start.parentNode as ParentNode)
@@ -8693,6 +8775,7 @@ const updateSharedLayoutBoundary = async (
     boundary.activateModeOnFlush = 'patch'
     boundary.reuseExistingDomOnActivate = true
     boundary.reuseProjectionSlotDomOnActivate = true
+    boundary.preserveCompiledReactiveTargetsOnActivate = true
     container.dirty.add(boundaryId)
     if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
       bindRouterLinks(container, boundary.start.parentNode as ParentNode)
@@ -8730,6 +8813,7 @@ const updateSharedLayoutBoundary = async (
   boundary.activateModeOnFlush = 'patch'
   boundary.reuseExistingDomOnActivate = true
   boundary.reuseProjectionSlotDomOnActivate = true
+  boundary.preserveCompiledReactiveTargetsOnActivate = true
   container.dirty.add(boundaryId)
   if (boundary.start.parentNode && 'querySelectorAll' in boundary.start.parentNode) {
     bindRouterLinks(container, boundary.start.parentNode as ParentNode)
@@ -9426,10 +9510,14 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
       reuseProjectionSlotDom: component.reuseProjectionSlotDomOnActivate ?? false,
     })
+    const preserveCompiledTargets = component.preserveCompiledReactiveTargetsOnActivate === true
     component.reuseExistingDomOnActivate = true
     component.reuseProjectionSlotDomOnActivate = false
-    const parentRoot = component.start.parentNode
-    const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
+    component.preserveCompiledReactiveTargetsOnActivate = false
+    const start = component.start
+    const end = component.end
+    const parentRoot = start.parentNode
+    const focusSnapshot = captureBoundaryFocus(container.doc!, start, end)
     let nodes: Node[]
     try {
       nodes = pushContainer(container, () =>
@@ -9446,18 +9534,22 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     pruneComponentWatches(container, component, frame.watchCursor)
     const patched =
       activateMode === 'patch' &&
-      tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+      withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
+        tryPatchBoundaryContentsInPlace(start, end, nodes),
+      )
     const preservedDescendants = expandComponentIdsToDescendants(
       container,
       patched
         ? frame.projectionState.reuseExistingDom
-          ? collectPreservedProjectionSlotComponentIds(container, component.start, component.end)
+          ? collectPreservedProjectionSlotComponentIds(container, start, end)
           : new Set<string>()
-        : replaceBoundaryContents(component.start, component.end, nodes, {
-            preserveProjectionSlots: frame.projectionState.reuseExistingDom,
-          }),
+        : withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
+            replaceBoundaryContents(start, end, nodes, {
+              preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+            }),
+          ),
     )
-    restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+    restoreBoundaryFocus(container.doc!, start, end, focusSnapshot)
     if (parentRoot) {
       bindComponentBoundaries(container, parentRoot)
       restoreSignalRefs(container, parentRoot)
@@ -9568,10 +9660,14 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     reuseExistingDom: component.reuseExistingDomOnActivate ?? true,
     reuseProjectionSlotDom: component.reuseProjectionSlotDomOnActivate ?? false,
   })
+  const preserveCompiledTargets = component.preserveCompiledReactiveTargetsOnActivate === true
   component.reuseExistingDomOnActivate = true
   component.reuseProjectionSlotDomOnActivate = false
-  const parentRoot = component.start.parentNode
-  const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
+  component.preserveCompiledReactiveTargetsOnActivate = false
+  const start = component.start
+  const end = component.end
+  const parentRoot = start.parentNode
+  const focusSnapshot = captureBoundaryFocus(container.doc!, start, end)
   let nodes: Node[]
   try {
     nodes = pushContainer(container, () =>
@@ -9614,21 +9710,25 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   pruneComponentWatches(container, component, frame.watchCursor)
   const patched =
     activateMode === 'patch' &&
-    tryPatchBoundaryContentsInPlace(component.start, component.end, nodes)
+    withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
+      tryPatchBoundaryContentsInPlace(start, end, nodes),
+    )
   const preservedDescendants = expandComponentIdsToDescendants(
     container,
     patched
       ? frame.projectionState.reuseExistingDom
-        ? collectPreservedProjectionSlotComponentIds(container, component.start, component.end)
+        ? collectPreservedProjectionSlotComponentIds(container, start, end)
         : new Set<string>()
-      : replaceBoundaryContents(component.start, component.end, nodes, {
-          preserveProjectionSlots: frame.projectionState.reuseExistingDom,
-        }),
+      : withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
+          replaceBoundaryContents(start, end, nodes, {
+            preserveProjectionSlots: frame.projectionState.reuseExistingDom,
+          }),
+        ),
   )
   if (component.start.parentNode && 'querySelectorAll' in component.start.parentNode) {
     bindActiveRouterLinks(container, component.start.parentNode as ParentNode)
   }
-  restoreBoundaryFocus(container.doc!, component.start, component.end, focusSnapshot)
+  restoreBoundaryFocus(container.doc!, start, end, focusSnapshot)
   if (parentRoot) {
     bindComponentBoundaries(container, parentRoot)
     restoreSignalRefs(container, parentRoot)
@@ -9839,6 +9939,7 @@ export const markResumeHmrBoundaryDirty = (container: RuntimeContainer, boundary
   component.activateModeOnFlush = 'replace'
   component.reuseExistingDomOnActivate = false
   component.reuseProjectionSlotDomOnActivate = false
+  component.preserveCompiledReactiveTargetsOnActivate = false
   container.dirty.add(boundaryId)
   return true
 }
@@ -10557,6 +10658,7 @@ export const restoreResumedLocalSignalEffects = async (container: RuntimeContain
     component.activateModeOnFlush = 'replace'
     component.reuseExistingDomOnActivate = false
     component.reuseProjectionSlotDomOnActivate = false
+    component.preserveCompiledReactiveTargetsOnActivate = false
     container.dirty.add(component.id)
     restoredIds.push(component.id)
     queued = true

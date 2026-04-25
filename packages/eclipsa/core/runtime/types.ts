@@ -173,6 +173,7 @@ export interface ComponentState {
   optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
+  preserveCompiledReactiveTargetsOnActivate?: boolean
   props: unknown
   projectionSlots: Record<string, number> | null
   rawProps?: Record<string, unknown> | null

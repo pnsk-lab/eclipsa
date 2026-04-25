@@ -536,6 +536,33 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('slot-motion-nav-overview-link')).toHaveClass(/active/)
   })
 
+  test('keeps declarative motion sidebar toggles wired after shared layout navigation', async ({
+    page,
+  }) => {
+    await page.goto('/slot-motion-nav/overview')
+    await waitForResumedRoute(page)
+
+    const toggle = page.getByTestId('slot-motion-nav-toggle')
+    const state = page.getByTestId('slot-motion-nav-toggle-state')
+    const panel = page.getByTestId('slot-motion-nav-panel')
+
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+
+    await page.getByTestId('slot-motion-nav-quick-start-link').click()
+    await expect(page).toHaveURL(/\/slot-motion-nav\/quick-start$/)
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+
+    await toggle.click()
+    await expect(state).toHaveText('closed')
+    await expect(panel).toHaveCSS('max-height', '0px')
+
+    await toggle.click()
+    await expect(state).toHaveText('open')
+    await expect(panel).toHaveCSS('max-height', '96px')
+    await expect(page.getByTestId('slot-motion-nav-quick-start-link')).toHaveClass(/active/)
+  })
+
   test('keeps motion section titles when sidebar links patch a shared layout shell', async ({
     page,
   }) => {

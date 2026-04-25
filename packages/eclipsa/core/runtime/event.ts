@@ -7,6 +7,7 @@ import {
   findRuntimeContainerForEventTarget,
   getRuntimeContainer,
 } from '../runtime.ts'
+import { rememberCompiledReactiveDomTarget } from './dom.ts'
 import { getRuntimeSymbolUrl } from './kernel.ts'
 
 const capturesFor = (descriptor: EventDescriptor) => {
@@ -51,6 +52,7 @@ const isEventDescriptor = (value: unknown): value is EventDescriptor =>
 
 export const eventStatic = Object.assign(
   (elem: Element, eventName: string, value: unknown) => {
+    rememberCompiledReactiveDomTarget(elem)
     if (bindRuntimeEvent(elem, eventName, value)) {
       return
     }
@@ -73,6 +75,7 @@ export const eventStatic = Object.assign(
   },
   {
     __0: (elem: Element, eventName: string, symbol: string) => {
+      rememberCompiledReactiveDomTarget(elem)
       const container = getRuntimeContainer()
       if (container) {
         bindPackedRuntimeEvent(container, elem, eventName, symbol, 0)
@@ -81,6 +84,7 @@ export const eventStatic = Object.assign(
       eventStatic(elem, eventName, { captureCount: 0, symbol })
     },
     __1: (elem: Element, eventName: string, symbol: string, capture0: unknown) => {
+      rememberCompiledReactiveDomTarget(elem)
       const container = getRuntimeContainer()
       if (container) {
         bindPackedRuntimeEvent(container, elem, eventName, symbol, 1, capture0)
@@ -95,6 +99,7 @@ export const eventStatic = Object.assign(
       capture0: unknown,
       capture1: unknown,
     ) => {
+      rememberCompiledReactiveDomTarget(elem)
       const container = getRuntimeContainer()
       if (container) {
         bindPackedRuntimeEvent(container, elem, eventName, symbol, 2, capture0, capture1)
@@ -110,6 +115,7 @@ export const eventStatic = Object.assign(
       capture1: unknown,
       capture2: unknown,
     ) => {
+      rememberCompiledReactiveDomTarget(elem)
       const container = getRuntimeContainer()
       if (container) {
         bindPackedRuntimeEvent(container, elem, eventName, symbol, 3, capture0, capture1, capture2)
@@ -126,6 +132,7 @@ export const eventStatic = Object.assign(
       capture2: unknown,
       capture3: unknown,
     ) => {
+      rememberCompiledReactiveDomTarget(elem)
       const container = getRuntimeContainer()
       if (container) {
         bindPackedRuntimeEvent(
