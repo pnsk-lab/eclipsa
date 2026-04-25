@@ -1611,6 +1611,7 @@ const getBindableSignalId = (value: unknown) => {
 export const syncRuntimeRefMarker = (element: Element, value: unknown) => {
   const signalId = getRefSignalId(value)
   if (signalId) {
+    rememberCompiledReactiveDomTarget(element)
     const container = getCurrentContainer()
     if (container) {
       container.hasRuntimeRefMarkers = true
@@ -3678,6 +3679,15 @@ const ensureVisibilityListeners = (container: RuntimeContainer) => {
   }
 }
 
+const schedulePostCommitTask = (container: RuntimeContainer, callback: () => void) => {
+  const win = container.doc?.defaultView
+  if (win && typeof win.setTimeout === 'function') {
+    win.setTimeout(callback, 0)
+    return
+  }
+  scheduleMicrotask(callback)
+}
+
 const scheduleMountCallbacks = (
   container: RuntimeContainer,
   component: ComponentState,
@@ -3687,14 +3697,17 @@ const scheduleMountCallbacks = (
     return
   }
   component.didMount = true
-  scheduleMicrotask(() => {
-    const afterCallbacks = () => {
-      const pendingFlush = flushDirtyComponentsIfNeeded(container)
-      if (pendingFlush) {
-        return pendingFlush.then(() => {
-          scheduleVisibleCallbacksCheck(container)
-        })
+  const runWhenCommitted = (attempt = 0) => {
+    if (container.rootElement && container.doc && component.start && !component.start.isConnected) {
+      if (component.active && attempt < 10) {
+        schedulePostCommitTask(container, () => runWhenCommitted(attempt + 1))
+        return
       }
+      component.didMount = false
+      return
+    }
+
+    const afterCallbacks = () => {
       scheduleVisibleCallbacksCheck(container)
       return undefined
     }
@@ -3710,7 +3723,8 @@ const scheduleMountCallbacks = (
       return
     }
     void afterCallbacks()
-  })
+  }
+  schedulePostCommitTask(container, runWhenCommitted)
 }
 
 const scheduleExternalComponentMount = (
@@ -4266,6 +4280,26 @@ const preserveExternalRootContents = (current: Node, next: Node) => {
   return collectComponentBoundaryIds(movedRoots)
 }
 
+const preserveCompiledReactiveElementShell = (current: Node, next: Node) => {
+  if (
+    !preserveCompiledReactiveTargetsInPatch ||
+    !isElementNode(current) ||
+    !isElementNode(next) ||
+    current.tagName !== next.tagName ||
+    (!hasCompiledReactiveDomTarget(current) && !hasCompiledReactiveDomTarget(next))
+  ) {
+    return null
+  }
+  if (current.childNodes.length > 0 || next.childNodes.length > 0) {
+    return null
+  }
+
+  syncManagedElementAttributes(current, next)
+  next.parentNode?.insertBefore(current, next)
+  next.parentNode?.removeChild(next)
+  return collectComponentBoundaryIds([current])
+}
+
 const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: Node[]) => {
   const preservedComponentIds = new Set<string>()
 
@@ -4348,6 +4382,14 @@ const preserveInsertMarkerContentsInRoots = (currentRoots: Node[], nextRoots: No
 
       const currentChild = currentChildren[matchedIndex]!
       if (isElementNode(currentChild) && isElementNode(nextChild)) {
+        const preservedShellIds = preserveCompiledReactiveElementShell(currentChild, nextChild)
+        if (preservedShellIds) {
+          for (const componentId of preservedShellIds) {
+            preservedComponentIds.add(componentId)
+          }
+          currentIndex = matchedIndex + 1
+          continue
+        }
         const preservedExternalRootIds = preserveExternalRootContents(currentChild, nextChild)
         if (preservedExternalRootIds) {
           for (const componentId of preservedExternalRootIds) {

@@ -563,6 +563,21 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('slot-motion-nav-quick-start-link')).toHaveClass(/active/)
   })
 
+  test('runs onMount for Link navigation targets after refs are connected', async ({ page }) => {
+    await page.goto('/mount-connected-start')
+
+    await page.getByRole('link', { name: 'Open mount connected target' }).click()
+
+    await expect(page).toHaveURL(/\/mount-connected-target$/)
+    await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveAttribute(
+      'data-mounted-canvas',
+      'true',
+    )
+  })
+
   test('keeps motion section titles when sidebar links patch a shared layout shell', async ({
     page,
   }) => {

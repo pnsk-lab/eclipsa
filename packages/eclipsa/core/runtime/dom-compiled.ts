@@ -60,6 +60,7 @@ export const setRuntimeStaticAttributeAssigner = (
 }
 
 const assignRef = (element: Element, value: unknown) => {
+  rememberCompiledReactiveDomTarget(element)
   if (runtimeRefAssigner?.(value, element)) {
     return
   }
