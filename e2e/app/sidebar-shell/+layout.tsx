@@ -51,6 +51,7 @@ const SidebarSection = (props: {
       </button>
       <motion.div
         data-testid={`sidebar-shell-section-links-${props.id}`}
+        style={{ overflow: 'hidden' }}
         initial={false}
         animate={{
           maxHeight: open.value ? 96 : 0,

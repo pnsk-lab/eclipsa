@@ -53,6 +53,7 @@ import {
   tryPatchNodeSequenceInPlace,
   withRuntimeContainer,
 } from '../runtime.ts'
+import { registerRuntimeSymbols } from '../runtime/kernel.ts'
 import { effect } from '../signal.ts'
 import { isSuspenseType } from '../suspense.ts'
 import { withSignalSnapshot } from '../snapshot.ts'
@@ -2374,6 +2375,7 @@ export const hydrate = (
   const canUseClientMountFastPath = targetWasEmpty && !hasSnapshot
   runtimeContainer.doc = target.ownerDocument
   runtimeContainer.rootElement = target
+  registerRuntimeSymbols(options?.symbols)
   for (const [symbolId, url] of Object.entries(options?.symbols ?? {})) {
     runtimeContainer.symbols.set(symbolId, url)
   }

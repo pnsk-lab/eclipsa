@@ -3631,6 +3631,70 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('keeps packed event captures attached to retained DOM effects during in-place patches', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument
+      const currentOpen = createDetachedRuntimeSignal(container, 's-current', true)
+      const detachedOpen = createDetachedRuntimeSignal(container, 's-detached', true)
+      const currentButton = doc.createElement('button') as unknown as Element
+      const nextButton = doc.createElement('button') as unknown as Element
+      const toggleModule = Promise.resolve({
+        default: ([open]: Array<{ value: boolean }>) => {
+          open.value = !open.value
+        },
+      })
+
+      container.imports.set('patch-capture-toggle', toggleModule)
+      withRuntimeContainer(container, () => {
+        createFixedSignalEffect(currentOpen, (open) => {
+          currentButton.setAttribute('aria-expanded', String(open))
+        })
+        bindPackedRuntimeEvent(
+          container,
+          currentButton,
+          'click',
+          'patch-capture-toggle',
+          1,
+          currentOpen,
+        )
+        bindPackedRuntimeEvent(
+          container,
+          nextButton,
+          'click',
+          'patch-capture-toggle',
+          1,
+          detachedOpen,
+        )
+      })
+      ;(doc.body as unknown as FakeElement).appendChild(currentButton as unknown as FakeNode)
+
+      expect(currentButton.getAttribute('aria-expanded')).toBe('true')
+      expect(tryPatchNodeSequenceInPlace([currentButton as unknown as Node], [nextButton])).toBe(
+        true,
+      )
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(currentButton as unknown as EventTarget),
+      )
+
+      expect(currentOpen.value).toBe(false)
+      expect(detachedOpen.value).toBe(true)
+      expect(currentButton.getAttribute('aria-expanded')).toBe('false')
+    })
+  })
+
   it('skips the initial fixed-signal callback run when requested', () => {
     const container = createContainer()
     const value = createDetachedRuntimeSignal(container, 's0', 1)
@@ -11439,6 +11503,217 @@ describe('renderClientInsertable', () => {
       expect(getLine('Routing')?.getAttribute('class')).toBe('line active-line')
       expect(getSectionButton('Getting Started')?.textContent).toContain('Getting Started')
       expect(getSectionButton('Materials')?.textContent).toContain('Materials')
+    })
+  })
+
+  it('keeps local signal-driven sidebar toggles live after shared layout route patches', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      container.imports.set(
+        'shared-layout-toggle-open',
+        Promise.resolve({
+          default: ([open]: Array<{ value: boolean }>) => {
+            open.value = !open.value
+          },
+        }),
+      )
+
+      const doc = container.doc
+      const DirBody = (props: { activeHref: string; title: string }) => {
+        const open = useSignal(true)
+        const root = doc.createElement('section')
+        const button = doc.createElement('button')
+        const panel = doc.createElement('div')
+        const link = doc.createElement('a')
+
+        button.setAttribute('data-doc-section', props.title)
+        button.appendChild(doc.createTextNode(props.title))
+        bindRuntimeEvent(
+          button,
+          'click',
+          __eclipsaEvent('click', 'shared-layout-toggle-open', () => [open]),
+        )
+        createFixedSignalEffect(open, (value) => {
+          button.setAttribute('aria-expanded', String(value))
+          panel.setAttribute('data-open', String(value))
+        })
+
+        link.setAttribute('data-doc-link', props.title)
+        link.setAttribute(
+          'class',
+          props.activeHref === '/docs/materials/routing' ? 'active' : 'inactive',
+        )
+        link.appendChild(doc.createTextNode(props.title))
+        panel.appendChild(link)
+        root.appendChild(button)
+        root.appendChild(panel)
+        return root as unknown as JSX.Element
+      }
+
+      const Dir = __eclipsaComponent(DirBody, 'shared-layout-toggle-dir', () => [])
+
+      const LayoutBody = (props: { children?: JSX.Element }) => {
+        const location = useLocation()
+        return jsxDEV(
+          'div',
+          {
+            children: [
+              jsxDEV(
+                Dir as any,
+                {
+                  activeHref: location.pathname,
+                  title: 'Materials',
+                },
+                null,
+                false,
+                {},
+              ),
+              props.children ?? null,
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(LayoutBody, 'shared-layout-toggle-layout', () => [], {
+        children: 1,
+      })
+
+      container.imports.set(
+        'shared-layout-toggle-layout',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            LayoutBody((propsOrArg as { children?: JSX.Element }) ?? {}),
+        }),
+      )
+      container.imports.set(
+        'shared-layout-toggle-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            DirBody(
+              (propsOrArg as { activeHref: string; title: string }) ?? {
+                activeHref: '',
+                title: '',
+              },
+            ),
+        }),
+      )
+
+      const host = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Layout as any,
+            {
+              children: jsxDEV('main', { children: 'overview' }, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        host.appendChild(node)
+      }
+
+      const getButton = () =>
+        queryFakeElements(host as unknown as FakeNode, 'button[data-doc-section]')[0] ?? null
+      const getPanel = () =>
+        queryFakeElements(host as unknown as FakeNode, 'div[data-open]')[0] ?? null
+      const getLink = () =>
+        queryFakeElements(host as unknown as FakeNode, 'a[data-doc-link]')[0] ?? null
+
+      expect(getButton()?.getAttribute('aria-expanded')).toBe('true')
+      expect(getPanel()?.getAttribute('data-open')).toBe('true')
+
+      const layout = container.components.get('c0')
+      expect(layout).toBeTruthy()
+      const nextProps = Object.create(null) as Record<string, unknown>
+      Object.defineProperties(
+        nextProps,
+        Object.getOwnPropertyDescriptors((layout!.props as Record<string, unknown>) ?? {}),
+      )
+      Object.defineProperty(nextProps, 'children', {
+        configurable: true,
+        enumerable: true,
+        value: jsxDEV('main', { children: 'routing' }, null, false, {}),
+        writable: true,
+      })
+      layout!.props = nextProps
+      layout!.rawProps = nextProps
+      layout!.active = false
+      layout!.activateModeOnFlush = 'patch'
+      layout!.reuseExistingDomOnActivate = true
+      layout!.reuseProjectionSlotDomOnActivate = true
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      container.dirty.add('c0')
+      await flushDirtyComponents(container)
+
+      expect(getLink()?.getAttribute('class')).toBe('active')
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(getButton() as unknown as EventTarget),
+      )
+
+      expect(getButton()?.getAttribute('aria-expanded')).toBe('false')
+      expect(getPanel()?.getAttribute('data-open')).toBe('false')
     })
   })
 

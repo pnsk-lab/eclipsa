@@ -147,6 +147,7 @@ import {
   readAsyncSignalSnapshot as readGlobalAsyncSignalSnapshot,
   writeAsyncSignalSnapshot as writeGlobalAsyncSignalSnapshot,
 } from './runtime/globals.ts'
+import { setRuntimeSymbolUrl } from './runtime/kernel.ts'
 import {
   setRuntimeCleanupHandler as setCompiledRuntimeCleanupHandler,
   setRuntimeFixedSignalEffectHandler as setCompiledRuntimeFixedSignalEffectHandler,
@@ -408,7 +409,9 @@ export const bustRuntimeSymbolUrls = (
     if (!current || !canBustRuntimeSymbolUrl(current)) {
       continue
     }
-    container.symbols.set(symbolId, withResumeHmrTimestamp(current, timestamp))
+    const next = withResumeHmrTimestamp(current, timestamp)
+    container.symbols.set(symbolId, next)
+    setRuntimeSymbolUrl(symbolId, next)
   }
 }
 
@@ -2655,6 +2658,32 @@ const cloneLiveClientEventBinding = (binding: LiveClientEventBinding): LiveClien
   symbol: binding.symbol,
 })
 
+const shouldPreserveLiveClientEventBindingCaptures = (
+  current: LiveClientEventBinding,
+  next: LiveClientEventBinding,
+) =>
+  !!current.symbol &&
+  current.containerId === next.containerId &&
+  current.eventName === next.eventName &&
+  current.symbol === next.symbol &&
+  current.captureCount === next.captureCount
+
+const syncLiveClientEventBinding = (
+  current: LiveClientEventBinding | null,
+  next: LiveClientEventBinding,
+) => {
+  if (!current || !shouldPreserveLiveClientEventBindingCaptures(current, next)) {
+    return cloneLiveClientEventBinding(next)
+  }
+  return {
+    ...cloneLiveClientEventBinding(next),
+    capture0: current.capture0,
+    capture1: current.capture1,
+    capture2: current.capture2,
+    capture3: current.capture3,
+  }
+}
+
 const forEachLiveClientEventBindingName = (
   bindings: LiveClientEventBindingStore | null,
   visit: (eventName: string) => void,
@@ -2852,11 +2881,31 @@ const syncLiveClientEventBindings = (current: Element, next: Element) => {
     setLiveClientEventBindings(current, null)
     return
   }
+  const currentBindings = getLiveClientEventBindings(current)
   if (nextBindings instanceof Map) {
-    setLiveClientEventBindings(current, new Map(nextBindings))
+    const synced = new Map<string, LiveClientEventBinding>()
+    for (const [eventName, nextBinding] of nextBindings) {
+      const currentBinding =
+        currentBindings instanceof Map
+          ? currentBindings.get(eventName)
+          : currentBindings?.eventName === eventName
+            ? currentBindings
+            : null
+      synced.set(eventName, syncLiveClientEventBinding(currentBinding ?? null, nextBinding))
+    }
+    setLiveClientEventBindings(current, synced)
     return
   }
-  setLiveClientEventBindings(current, cloneLiveClientEventBinding(nextBindings))
+  const currentBinding =
+    currentBindings instanceof Map
+      ? currentBindings.get(nextBindings.eventName)
+      : currentBindings?.eventName === nextBindings.eventName
+        ? currentBindings
+        : null
+  setLiveClientEventBindings(
+    current,
+    syncLiveClientEventBinding(currentBinding ?? null, nextBindings),
+  )
 }
 
 export const ensureRuntimeElementId = (container: RuntimeContainer, element: Element) => {
@@ -9934,6 +9983,7 @@ export const applyResumeHmrSymbolReplacements = (
 
     for (const affectedId of affectedIds) {
       container.symbols.set(affectedId, url)
+      setRuntimeSymbolUrl(affectedId, url)
     }
     invalidateRuntimeSymbolCaches(container, affectedIds)
 
@@ -9967,6 +10017,7 @@ export const applyResumeHmrSymbolReplacements = (
     }
 
     container.symbols.set(nextSymbolId, url)
+    setRuntimeSymbolUrl(nextSymbolId, url)
     invalidateRuntimeSymbolCaches(container, [nextSymbolId])
   }
 }

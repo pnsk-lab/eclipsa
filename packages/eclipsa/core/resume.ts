@@ -20,6 +20,7 @@ import {
 } from './hooks.ts'
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from './resume-hmr.ts'
 import { ROUTE_MANIFEST_ELEMENT_ID, type RouteManifest } from './router-shared.ts'
+import { registerRuntimeSymbols } from './runtime/kernel.ts'
 
 const CONTENT_HMR_EVENT = 'eclipsa:content-update'
 
@@ -87,6 +88,7 @@ export const resumeContainer = async (source: Document | HTMLElement = document)
   if (!payload) {
     return
   }
+  registerRuntimeSymbols(payload.symbols)
 
   const appHooksManifest = getAppHooksManifest(doc)
   const container = createResumeContainer(root, payload, {
