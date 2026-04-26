@@ -496,11 +496,11 @@ const MotionRenderer = __eclipsaComponent(
         const resolvedStyle = typeof document !== 'undefined' ? animateTarget : renderInitialStyle
         const mergedStyle = serializeStyle({
           ...parseStyle(getLiveStyle()),
-          ...resolvedStyle,
           ...createTransitionCss(
             animateTarget,
             resolveTransition(getResolvedMotionProps(), config),
           ),
+          ...resolvedStyle,
         })
         return mergedStyle === '' ? undefined : mergedStyle
       },

@@ -1,6 +1,7 @@
 import { createContext, useContext } from './context.ts'
 import { createNativeRoot, type NativeRendererAbi } from './renderer.ts'
 import { createElement as h } from './component.ts'
+import { createRouteElement } from 'eclipsa/internal'
 import { describe, expect, it } from 'vitest'
 
 interface MockNode {
@@ -138,5 +139,26 @@ describe('native-core renderer', () => {
     root.update(h(ThemeContext.Provider, { value: 'swiftui' }, h(Label, {})))
 
     expect(container.children[0]?.props.value).toBe('swiftui')
+  })
+
+  it('resolves route slots inside native component children', () => {
+    const { container, renderer } = createRenderer()
+    const root = createNativeRoot(renderer, container)
+    const Layout = ({ children }: { children?: unknown }) => h('Stack', null, children as never)
+    const Page = () => h('Text', { value: 'page' })
+
+    root.update(
+      createRouteElement({
+        error: undefined,
+        layouts: [{ renderer: Layout }],
+        page: { renderer: Page },
+        params: {},
+        pathname: '/native',
+      } as never) as never,
+    )
+
+    expect(container.children[0]?.type).toBe('Stack')
+    expect(container.children[0]?.children[0]?.type).toBe('Text')
+    expect(container.children[0]?.children[0]?.props.value).toBe('page')
   })
 })

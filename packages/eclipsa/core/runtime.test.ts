@@ -14,6 +14,23 @@ import {
   textNodeSignalMember,
 } from './client/dom.ts'
 import {
+  attrStatic as attrCompiledStatic,
+  classSignal as classCompiledSignal,
+  createComponent as createCompiledComponent,
+  insert as insertCompiled,
+  insertFor as insertCompiledFor,
+  insertStatic as insertCompiledStatic,
+  renderNodes as renderCompiledNodes,
+  text as textCompiled,
+  textNodeSignalMember as textCompiledNodeSignalMember,
+} from './runtime/dom-compiled.ts'
+import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
+import {
+  onMount as onCompiledMount,
+  onVisible as onCompiledVisible,
+  signal as createCompiledSignal,
+} from './runtime/reactive.ts'
+import {
   createContext,
   getRuntimeContextReference,
   materializeRuntimeContext,
@@ -46,6 +63,7 @@ import {
   installResumeListeners,
   primeLocationState,
   preserveReusableContentInRoots,
+  registerResumeContainer,
   rememberInsertMarkerRange,
   renderClientInsertable,
   restoreSignalRefs,
@@ -394,7 +412,11 @@ class FakeElement extends FakeNode {
 
   setAttribute(name: string, value: string) {
     if (name === 'class') {
-      this.className = value
+      if (typeof this.className === 'string') {
+        this.className = value
+      } else {
+        this.attributes.set('class', value)
+      }
       return
     }
     if (name === 'open') {
@@ -405,7 +427,11 @@ class FakeElement extends FakeNode {
 
   removeAttribute(name: string) {
     if (name === 'class') {
-      this.className = ''
+      if (typeof this.className === 'string') {
+        this.className = ''
+      } else {
+        this.attributes.delete('class')
+      }
       return
     }
     if (name === 'open') {
@@ -876,6 +902,563 @@ describe('core/runtime dom snapshots', () => {
       expect(current.textContent).toBe('Quick Start')
       expect(current.getAttribute('data-e-onclick')).toBe(next.getAttribute('data-e-onclick'))
     })
+  })
+})
+
+describe('runtime/dom-compiled', () => {
+  it('assigns static compiled refs instead of stringifying them as attributes', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const canvas = fakeDocument.createElement('canvas') as unknown as FakeElement
+        const ref = { value: undefined as Element | undefined }
+
+        attrCompiledStatic(canvas as unknown as Element, 'ref', ref)
+
+        expect(ref.value).toBe(canvas)
+        expect(canvas.hasAttribute('ref')).toBe(false)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('runs compiled onMount after static refs are assigned', async () => {
+    return withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const canvas = fakeDocument.createElement('canvas') as unknown as FakeElement
+        const ref = createCompiledSignal<Element | undefined>(undefined)
+        let mountedCanvas: Element | undefined
+
+        onCompiledMount(() => {
+          mountedCanvas = ref.value
+        })
+        attrCompiledStatic(canvas as unknown as Element, 'ref', ref)
+
+        expect(mountedCanvas).toBeUndefined()
+        return Promise.resolve().then(() => {
+          expect(mountedCanvas).toBe(canvas)
+        })
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('renders JSX objects returned by component inserts instead of stringifying them', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const Icon = () => jsxDEV('span', { class: 'icon', children: 'I' }, null, false, {})
+        const LinkLike = (props: { children: unknown; href: string }) =>
+          ({
+            isStatic: true,
+            props: {
+              'data-e-link': '',
+              children: props.children,
+              href: props.href,
+            },
+            type: 'a',
+          }) as JSX.Element
+        const host = fakeDocument.createElement('nav') as unknown as FakeElement
+
+        insertCompiledStatic(
+          createCompiledComponent(LinkLike as never, {
+            children: [
+              jsxDEV(Icon as never, {}, null, false, {}),
+              jsxDEV('span', { children: 'Docs' }, null, false, {}),
+            ],
+            href: '/docs',
+          }),
+          host as unknown as Node,
+        )
+
+        const anchor = host.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'a',
+        )
+        expect(host.textContent).toBe('IDocs')
+        expect(host.textContent).not.toContain('[object Object]')
+        expect(anchor?.getAttribute('href')).toBe('/docs')
+        expect(anchor?.hasAttribute('data-e-link')).toBe(true)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('renders JSX objects returned by dynamic compiled text inserts', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const host = fakeDocument.createElement('div') as unknown as FakeElement
+        const InlineBody = () => jsxDEV('span', { children: 'inline result' }, null, false, {})
+
+        withRuntimeContainer(container, () => {
+          textCompiled(() => InlineBody(), host as unknown as Node)
+        })
+
+        expect(host.textContent).toBe('inline result')
+        expect(host.childNodes).toHaveLength(1)
+        expect(host.childNodes[0]).toBeInstanceOf(FakeElement)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('patches dynamic compiled component inserts in place so transitions can run', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const host = fakeDocument.createElement('div') as unknown as FakeElement
+        const open = createCompiledSignal(true)
+        const Panel = (props: { open: boolean }) =>
+          jsxDEV(
+            'div',
+            {
+              class: 'overflow-hidden',
+              style: props.open
+                ? 'max-height: 64px; opacity: 1; transition: max-height 0.2s ease, opacity 0.2s ease;'
+                : 'max-height: 0px; opacity: 0; transition: max-height 0.2s ease, opacity 0.2s ease;',
+              children: 'panel',
+            },
+            null,
+            false,
+            {},
+          )
+
+        withRuntimeContainer(container, () => {
+          insertCompiled(
+            () =>
+              createCompiledComponent(Panel as never, {
+                get open() {
+                  return open.value
+                },
+              }),
+            host as unknown as Node,
+          )
+        })
+
+        const panel = host.firstChild as FakeElement | null
+        expect(panel).toBeInstanceOf(FakeElement)
+        expect(panel?.getAttribute('style')).toContain('max-height: 64px')
+
+        open.value = false
+
+        expect(host.firstChild).toBe(panel)
+        expect(panel?.getAttribute('style')).toContain('max-height: 0px')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('delegates complex inserts to the active resume renderer when installed', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const container = createContainer()
+      const Page = () => jsxDEV('p', { children: 'page content' }, null, false, {})
+      container.doc = fakeDocument as unknown as Document
+      container.router = {
+        bindLinks: null,
+        currentPath: createDetachedRuntimeSignal(container, '$router:path', '/'),
+        currentRoute: null,
+        currentUrl: createDetachedRuntimeSignal(container, '$router:url', 'http://localhost/'),
+        isNavigating: createDetachedRuntimeSignal(container, '$router:isNavigating', false),
+        loadedRoutes: new Map([
+          [
+            '/::page',
+            {
+              entry: {} as any,
+              layouts: [],
+              page: { renderer: Page },
+              params: {},
+              pathname: '/',
+              render: () => jsxDEV(Page, {}, null, false, {}),
+            },
+          ],
+        ]),
+        manifest: [],
+        navigate: (async () => {}) as any,
+        routeDataEndpoint: true,
+        sequence: 0,
+      }
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderCompiledNodes({
+          __eclipsa_type: 'route-slot',
+          pathname: '/',
+          startLayoutIndex: 0,
+        } as never),
+      )
+
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0]).toBeInstanceOf(FakeElement)
+      expect((nodes[0] as unknown as FakeElement).tagName).toBe('p')
+      expect(nodes[0]?.textContent).toBe('page content')
+    })
+  })
+
+  it('keeps compiled component calls attached to the active runtime parent frame', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const Child = __eclipsaComponent(
+        () => jsxDEV('span', { children: 'child' }, null, false, {}),
+        'compiled-child-symbol',
+        () => [],
+        undefined,
+        { optimizedRoot: true },
+      )
+      const Parent = __eclipsaComponent(
+        () => {
+          const host = container.doc!.createElement('div')
+          insertCompiledStatic(createCompiledComponent(Child as never, {}), host)
+          return host
+        },
+        'compiled-parent-symbol',
+        () => [],
+        undefined,
+        { optimizedRoot: true },
+      )
+
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Parent as never, {}, null, false, {}), container),
+      ) as unknown as FakeNode[]
+
+      expect(nodes[1]?.textContent).toContain('child')
+      expect(container.components.get('c0')?.childComponentIds?.has('c0.0')).toBe(true)
+      expect(container.components.get('c0.0')?.parentId).toBe('c0')
+      expect(container.rootChildComponentIds.has('c0.0')).toBe(false)
+    })
+  })
+
+  it('does not let frame-less compiled effects reuse resumed root component ids', () => {
+    withFakeNodeGlobal(() => {
+      const OriginalDocument = globalThis.Document
+      const doc = new FakeDocument() as unknown as Document
+      ;(doc as unknown as { location: Location }).location = {
+        hash: '',
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+        search: '',
+      } as Location
+      ;(globalThis as typeof globalThis & { Document: typeof Document }).Document =
+        FakeDocument as unknown as typeof Document
+      try {
+        const container = createResumeContainer(doc, {
+          actions: {},
+          components: {
+            c0: {
+              props: {
+                __eclipsa_type: 'object',
+                entries: [],
+              },
+              scope: 'sc0',
+              signalIds: [],
+              symbol: 'resumed-root-symbol',
+              visibleCount: 0,
+              watchCount: 0,
+            },
+          },
+          loaders: {},
+          scopes: {
+            sc0: [],
+          },
+          signals: {},
+          subscriptions: {},
+          symbols: {},
+          visibles: {},
+          watches: {},
+        })
+        const Child = __eclipsaComponent(
+          () => jsxDEV('span', { children: 'fresh' }, null, false, {}),
+          'fresh-root-symbol',
+          () => [],
+          undefined,
+          { optimizedRoot: true },
+        )
+
+        withRuntimeContainer(container, () => {
+          renderCompiledNodes(createCompiledComponent(Child as never, {}))
+        })
+
+        expect(container.components.get('c0')?.symbol).toBe('resumed-root-symbol')
+        expect(container.components.get('c1')?.symbol).toBe('fresh-root-symbol')
+        expect(container.rootChildComponentIds.has('c0')).toBe(true)
+        expect(container.rootChildComponentIds.has('c1')).toBe(true)
+      } finally {
+        globalThis.Document = OriginalDocument
+      }
+    })
+  })
+
+  it('renders compiler-emitted Show and reactive For objects', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const nodes = renderCompiledNodes([
+          {
+            __e_show: true,
+            children: () => jsxDEV('span', { children: 'shown' }, null, false, {}),
+            fallback: () => jsxDEV('span', { children: 'hidden' }, null, false, {}),
+            when: false,
+          },
+          {
+            __e_for: true,
+            arr: [{ title: 'A' }, { title: 'B' }],
+            fn: (row: { value: { title: string } }, index: { value: number }) =>
+              jsxDEV('p', { children: `${index.value}:${row.value.title}` }, null, false, {}),
+            reactiveRows: true,
+          },
+        ] as never)
+
+        expect(nodes.map((node) => node.textContent)).toEqual(['hidden', '0:A', '1:B'])
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('binds compiled row member helpers to runtime-owned reactive rows', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const container = createContainer()
+        container.doc = fakeDocument as unknown as Document
+        const parent = fakeDocument.createElement('section')
+
+        withRuntimeContainer(container, () => {
+          insertCompiled(
+            () =>
+              ({
+                __e_for: true,
+                arr: [{ iconClass: 'i-tabler-cpu', id: 1, title: 'Compiler' }],
+                fn: (row: { value: { iconClass: string; title: string } }) => {
+                  const article = fakeDocument.createElement('article')
+                  const icon = fakeDocument.createElement('div')
+                  const title = fakeDocument.createElement('h2')
+                  const titleText = fakeDocument.createTextNode('')
+
+                  title.appendChild(titleText as unknown as FakeNode)
+                  article.appendChild(icon as unknown as FakeNode)
+                  article.appendChild(title as unknown as FakeNode)
+                  classCompiledSignal(
+                    icon as unknown as Element,
+                    row,
+                    (value) => `${value.iconClass} landing-feature-card-icon`,
+                  )
+                  textCompiledNodeSignalMember(row, 'title', titleText as unknown as Node)
+
+                  return article as unknown as JSX.Element
+                },
+                key: (row: { id: number }) => row.id,
+                keyMember: 'id',
+                reactiveRows: true,
+              }) as never,
+            parent as unknown as Node,
+          )
+        })
+
+        const article = parent.childNodes.find(
+          (node): node is FakeElement => node instanceof FakeElement && node.tagName === 'article',
+        )!
+        const icon = article.firstChild as FakeElement
+
+        expect(parent.textContent).toContain('Compiler')
+        expect(icon.className).toBe('i-tabler-cpu landing-feature-card-icon')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('applies compiled static special attributes without stringifying them', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const html = fakeDocument.createElement('div') as unknown as FakeElement & {
+          innerHTML?: string
+        }
+        const input = fakeDocument.createElement('input') as unknown as FakeElement
+        const checkbox = fakeDocument.createElement('input') as unknown as FakeElement
+        const button = fakeDocument.createElement('button') as unknown as FakeElement
+        const svg = fakeDocument.createElement('svg') as unknown as FakeElement
+        const value = createCompiledSignal('alpha')
+        const checked = createCompiledSignal(false)
+        let clicked = 0
+
+        checkbox.type = 'checkbox'
+        svg.namespaceURI = 'http://www.w3.org/2000/svg'
+        Object.defineProperty(svg, 'className', {
+          configurable: true,
+          get() {
+            return { baseVal: svg.getAttribute('class') ?? '' }
+          },
+        })
+        attrCompiledStatic(
+          html as unknown as Element,
+          'dangerouslySetInnerHTML',
+          '<span>raw</span>',
+        )
+        attrCompiledStatic(input as unknown as Element, 'bind:value', value)
+        attrCompiledStatic(checkbox as unknown as Element, 'bind:checked', checked)
+        attrCompiledStatic(input as unknown as Element, 'style', { color: 'red' })
+        attrCompiledStatic(svg as unknown as Element, 'class', 'icon')
+        attrCompiledStatic(button as unknown as Element, 'aria-expanded', false)
+        attrCompiledStatic(input as unknown as Element, 'onClick', () => {
+          clicked++
+        })
+
+        expect(html.innerHTML).toBe('<span>raw</span>')
+        expect(html.getAttribute('dangerouslySetInnerHTML')).toBeNull()
+        expect(input.value).toBe('alpha')
+        expect(input.getAttribute('style')).toBe('color: red')
+        expect(svg.getAttribute('class')).toBe('icon')
+        expect(button.getAttribute('aria-expanded')).toBe('false')
+
+        input.value = 'beta'
+        input.dispatchEvent(new Event('input'))
+        expect(value.value).toBe('beta')
+
+        checkbox.checked = true
+        checkbox.dispatchEvent(new Event('change'))
+        expect(checked.value).toBe(true)
+
+        input.dispatchEvent(new Event('click'))
+        expect(clicked).toBe(1)
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('applies compiled static svg class through the active runtime', () => {
+    withFakeNodeGlobal(() => {
+      const container = createContainer()
+      const svg = container.doc.createElement('svg') as unknown as FakeElement
+      const button = container.doc.createElement('button') as unknown as FakeElement
+      svg.namespaceURI = 'http://www.w3.org/2000/svg'
+      Object.defineProperty(svg, 'className', {
+        configurable: true,
+        get() {
+          return { baseVal: svg.getAttribute('class') ?? '' }
+        },
+      })
+
+      withRuntimeContainer(container, () => {
+        attrCompiledStatic(svg as unknown as Element, 'className', 'icon')
+        attrCompiledStatic(button as unknown as Element, 'aria-expanded', false)
+        attrCompiledStatic(button as unknown as Element, 'aria-pressed', true)
+      })
+
+      expect(svg.getAttribute('class')).toBe('icon')
+      expect(svg.getAttribute('className')).toBeNull()
+      expect(button.getAttribute('aria-expanded')).toBe('false')
+      expect(button.getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  it('renders compiled For fallback and preserves multi-node rows', () => {
+    withFakeNodeGlobal(() => {
+      const fakeDocument = new FakeDocument()
+      const originalDocument = globalThis.document
+      ;(globalThis as typeof globalThis & { document: Document }).document =
+        fakeDocument as unknown as Document
+      try {
+        const host = fakeDocument.createElement('dl') as unknown as FakeElement
+        const marker = fakeDocument.createComment('marker') as unknown as FakeComment
+        const rows = createCompiledSignal<readonly { id: number; label: string }[]>([])
+        host.appendChild(marker)
+
+        insertCompiledFor(
+          {
+            arr: rows.value,
+            arrSignal: rows,
+            fallback: () => {
+              const empty = fakeDocument.createElement('p')
+              empty.appendChild(fakeDocument.createTextNode('empty') as unknown as FakeNode)
+              return empty as unknown as JSX.Element
+            },
+            fn: (row: { value: { id: number; label: string } }) => {
+              const term = fakeDocument.createElement('dt')
+              const description = fakeDocument.createElement('dd')
+              term.appendChild(fakeDocument.createTextNode(row.value.label) as unknown as FakeNode)
+              description.appendChild(
+                fakeDocument.createTextNode(`detail:${row.value.id}`) as unknown as FakeNode,
+              )
+              return [term, description] as unknown as JSX.Element
+            },
+            key: (row: { id: number }) => row.id,
+            keyMember: 'id',
+          },
+          host as unknown as Node,
+          marker as unknown as Node,
+        )
+
+        expect(host.textContent).toBe('emptymarker')
+
+        rows.value = [
+          { id: 1, label: 'A' },
+          { id: 2, label: 'B' },
+        ]
+        expect(host.textContent).toBe('Adetail:1Bdetail:2marker')
+        expect(host.childNodes.map((node) => node instanceof FakeElement && node.tagName)).toEqual([
+          'dt',
+          'dd',
+          'dt',
+          'dd',
+          false,
+        ])
+
+        rows.value = []
+        expect(host.textContent).toBe('emptymarker')
+      } finally {
+        globalThis.document = originalDocument
+      }
+    })
+  })
+
+  it('delegates compiled onVisible to the active runtime instead of running immediately', () => {
+    const container = createContainer()
+    let visibleRuns = 0
+
+    withRuntimeContainer(container, () => {
+      onCompiledVisible(() => {
+        visibleRuns++
+      })
+    })
+
+    expect(visibleRuns).toBe(0)
   })
 })
 
@@ -3048,6 +3631,70 @@ describe('renderClientInsertable', () => {
     })
   })
 
+  it('keeps packed event captures attached to retained DOM effects during in-place patches', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument
+      const currentOpen = createDetachedRuntimeSignal(container, 's-current', true)
+      const detachedOpen = createDetachedRuntimeSignal(container, 's-detached', true)
+      const currentButton = doc.createElement('button') as unknown as Element
+      const nextButton = doc.createElement('button') as unknown as Element
+      const toggleModule = Promise.resolve({
+        default: ([open]: Array<{ value: boolean }>) => {
+          open.value = !open.value
+        },
+      })
+
+      container.imports.set('patch-capture-toggle', toggleModule)
+      withRuntimeContainer(container, () => {
+        createFixedSignalEffect(currentOpen, (open) => {
+          currentButton.setAttribute('aria-expanded', String(open))
+        })
+        bindPackedRuntimeEvent(
+          container,
+          currentButton,
+          'click',
+          'patch-capture-toggle',
+          1,
+          currentOpen,
+        )
+        bindPackedRuntimeEvent(
+          container,
+          nextButton,
+          'click',
+          'patch-capture-toggle',
+          1,
+          detachedOpen,
+        )
+      })
+      ;(doc.body as unknown as FakeElement).appendChild(currentButton as unknown as FakeNode)
+
+      expect(currentButton.getAttribute('aria-expanded')).toBe('true')
+      expect(tryPatchNodeSequenceInPlace([currentButton as unknown as Node], [nextButton])).toBe(
+        true,
+      )
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(currentButton as unknown as EventTarget),
+      )
+
+      expect(currentOpen.value).toBe(false)
+      expect(detachedOpen.value).toBe(true)
+      expect(currentButton.getAttribute('aria-expanded')).toBe('false')
+    })
+  })
+
   it('skips the initial fixed-signal callback run when requested', () => {
     const container = createContainer()
     const value = createDetachedRuntimeSignal(container, 's0', 1)
@@ -3190,6 +3837,65 @@ describe('renderClientInsertable', () => {
       )
 
       expect(clicks.value).toBe(1)
+    })
+  })
+
+  it('dispatches compiled runtime event helpers through the active resume container', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$compiled-clicks', 0)
+      const button = container.doc.createElement('button')
+      container.symbols.set(
+        'compiled-sidebar-click',
+        'data:text/javascript,export default ([clicks]) => { clicks.value += 1 }',
+      )
+
+      withRuntimeContainer(container, () => {
+        runtimeEventStatic.__1(button, 'click', 'compiled-sidebar-click', clicks)
+      })
+
+      expect(button.getAttribute('data-e-onclick')).toBeNull()
+
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(button as unknown as EventTarget),
+      )
+
+      expect(clicks.value).toBe(1)
+    })
+  })
+
+  it('dispatches compiled runtime event helpers through a registered resume container', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const clicks = createDetachedRuntimeSignal(container, '$registered-compiled-clicks', 0)
+      const button = container.doc.createElement('button')
+      ;(container.doc.body as unknown as FakeElement).appendChild(button as unknown as FakeNode)
+      container.rootElement = container.doc.body
+      container.symbols.set(
+        'registered-compiled-click',
+        'data:text/javascript,export default ([clicks]) => { clicks.value += 1 }',
+      )
+
+      const unregister = registerResumeContainer(container)
+      try {
+        runtimeEventStatic.__1(button, 'click', 'registered-compiled-click', clicks)
+        ;(button as unknown as FakeElement).dispatchEvent(new Event('click'))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(clicks.value).toBe(1)
+      } finally {
+        unregister()
+      }
     })
   })
 
@@ -10797,6 +11503,217 @@ describe('renderClientInsertable', () => {
       expect(getLine('Routing')?.getAttribute('class')).toBe('line active-line')
       expect(getSectionButton('Getting Started')?.textContent).toContain('Getting Started')
       expect(getSectionButton('Materials')?.textContent).toContain('Materials')
+    })
+  })
+
+  it('keeps local signal-driven sidebar toggles live after shared layout route patches', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const container = createContainer()
+      const currentPath = createDetachedRuntimeSignal(
+        container,
+        '$router:path',
+        '/docs/getting-started/overview',
+      )
+      const currentUrl = createDetachedRuntimeSignal(
+        container,
+        '$router:url',
+        'http://local/docs/getting-started/overview',
+      )
+
+      container.router = {
+        currentPath,
+        currentRoute: null,
+        currentUrl,
+        defaultTitle: '',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: {
+          get hash() {
+            return ''
+          },
+          get href() {
+            return currentUrl.value
+          },
+          get pathname() {
+            return new URL(currentUrl.value).pathname
+          },
+          get search() {
+            return ''
+          },
+        },
+        manifest: [],
+        navigate: (async () => {}) as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      } as unknown as RuntimeContainer['router']
+
+      container.imports.set(
+        'shared-layout-toggle-open',
+        Promise.resolve({
+          default: ([open]: Array<{ value: boolean }>) => {
+            open.value = !open.value
+          },
+        }),
+      )
+
+      const doc = container.doc
+      const DirBody = (props: { activeHref: string; title: string }) => {
+        const open = useSignal(true)
+        const root = doc.createElement('section')
+        const button = doc.createElement('button')
+        const panel = doc.createElement('div')
+        const link = doc.createElement('a')
+
+        button.setAttribute('data-doc-section', props.title)
+        button.appendChild(doc.createTextNode(props.title))
+        bindRuntimeEvent(
+          button,
+          'click',
+          __eclipsaEvent('click', 'shared-layout-toggle-open', () => [open]),
+        )
+        createFixedSignalEffect(open, (value) => {
+          button.setAttribute('aria-expanded', String(value))
+          panel.setAttribute('data-open', String(value))
+        })
+
+        link.setAttribute('data-doc-link', props.title)
+        link.setAttribute(
+          'class',
+          props.activeHref === '/docs/materials/routing' ? 'active' : 'inactive',
+        )
+        link.appendChild(doc.createTextNode(props.title))
+        panel.appendChild(link)
+        root.appendChild(button)
+        root.appendChild(panel)
+        return root as unknown as JSX.Element
+      }
+
+      const Dir = __eclipsaComponent(DirBody, 'shared-layout-toggle-dir', () => [])
+
+      const LayoutBody = (props: { children?: JSX.Element }) => {
+        const location = useLocation()
+        return jsxDEV(
+          'div',
+          {
+            children: [
+              jsxDEV(
+                Dir as any,
+                {
+                  activeHref: location.pathname,
+                  title: 'Materials',
+                },
+                null,
+                false,
+                {},
+              ),
+              props.children ?? null,
+            ],
+          },
+          null,
+          false,
+          {},
+        )
+      }
+
+      const Layout = __eclipsaComponent(LayoutBody, 'shared-layout-toggle-layout', () => [], {
+        children: 1,
+      })
+
+      container.imports.set(
+        'shared-layout-toggle-layout',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            LayoutBody((propsOrArg as { children?: JSX.Element }) ?? {}),
+        }),
+      )
+      container.imports.set(
+        'shared-layout-toggle-dir',
+        Promise.resolve({
+          default: (_scope: unknown[], propsOrArg?: unknown) =>
+            DirBody(
+              (propsOrArg as { activeHref: string; title: string }) ?? {
+                activeHref: '',
+                title: '',
+              },
+            ),
+        }),
+      )
+
+      const host = new FakeElement('div')
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(
+          jsxDEV(
+            Layout as any,
+            {
+              children: jsxDEV('main', { children: 'overview' }, null, false, {}),
+            },
+            null,
+            false,
+            {},
+          ),
+          container,
+        ),
+      ) as unknown as FakeNode[]
+
+      for (const node of nodes) {
+        host.appendChild(node)
+      }
+
+      const getButton = () =>
+        queryFakeElements(host as unknown as FakeNode, 'button[data-doc-section]')[0] ?? null
+      const getPanel = () =>
+        queryFakeElements(host as unknown as FakeNode, 'div[data-open]')[0] ?? null
+      const getLink = () =>
+        queryFakeElements(host as unknown as FakeNode, 'a[data-doc-link]')[0] ?? null
+
+      expect(getButton()?.getAttribute('aria-expanded')).toBe('true')
+      expect(getPanel()?.getAttribute('data-open')).toBe('true')
+
+      const layout = container.components.get('c0')
+      expect(layout).toBeTruthy()
+      const nextProps = Object.create(null) as Record<string, unknown>
+      Object.defineProperties(
+        nextProps,
+        Object.getOwnPropertyDescriptors((layout!.props as Record<string, unknown>) ?? {}),
+      )
+      Object.defineProperty(nextProps, 'children', {
+        configurable: true,
+        enumerable: true,
+        value: jsxDEV('main', { children: 'routing' }, null, false, {}),
+        writable: true,
+      })
+      layout!.props = nextProps
+      layout!.rawProps = nextProps
+      layout!.active = false
+      layout!.activateModeOnFlush = 'patch'
+      layout!.reuseExistingDomOnActivate = true
+      layout!.reuseProjectionSlotDomOnActivate = true
+
+      currentPath.value = '/docs/materials/routing'
+      currentUrl.value = 'http://local/docs/materials/routing'
+      container.dirty.add('c0')
+      await flushDirtyComponents(container)
+
+      expect(getLink()?.getAttribute('class')).toBe('active')
+      await dispatchDocumentEvent(
+        container,
+        new TargetedClickEvent(getButton() as unknown as EventTarget),
+      )
+
+      expect(getButton()?.getAttribute('aria-expanded')).toBe('false')
+      expect(getPanel()?.getAttribute('data-open')).toBe('false')
     })
   })
 

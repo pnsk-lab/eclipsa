@@ -17,7 +17,7 @@ import {
   getContextProviderMeta,
   getCurrentRenderContext,
 } from './context.ts'
-import { isRouteSlot, resolveRouteSlot } from 'eclipsa/internal'
+import { resolveRouteSlot } from 'eclipsa/internal'
 
 export type NativeEventHandler = (payload?: unknown) => unknown
 
@@ -52,6 +52,12 @@ type Instance<TNode, TContainer, TSubscription> =
   | ElementInstance<TNode, TContainer, TSubscription>
   | FragmentInstance<TNode, TContainer, TSubscription>
   | TextInstance<TNode>
+
+interface RouteSlotValue {
+  __eclipsa_type: 'route-slot'
+  pathname: string
+  startLayoutIndex: number
+}
 
 interface TextInstance<TNode> {
   handle: TNode
@@ -96,8 +102,13 @@ const isEventProp = (key: string, value: unknown): value is NativeEventHandler =
 
 const toEventName = (key: string) => `${key[2]!.toLowerCase()}${key.slice(3)}`
 
+const isRouteSlotValue = (value: unknown): value is RouteSlotValue =>
+  !!value &&
+  typeof value === 'object' &&
+  (value as { __eclipsa_type?: unknown }).__eclipsa_type === 'route-slot'
+
 const resolveRenderableChild = (value: NativeChild | unknown): NativeChild | unknown =>
-  isRouteSlot(value) ? resolveRouteSlot(null, value) : value
+  isRouteSlotValue(value) ? resolveRouteSlot(null, value) : value
 
 const normalizeRenderableChildren = (value: NativeChild | unknown) =>
   toChildArray(resolveRenderableChild(value) as NativeChild)

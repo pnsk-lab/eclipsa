@@ -7,7 +7,7 @@ import {
   type WithAppEnv,
 } from './hooks.ts'
 import { type SerializedValue } from './serialize.ts'
-import { registerLoaderHook, setLoaderHandleMeta, setLoaderHookMeta } from './internal.ts'
+import { registerLoaderHook, setLoaderHandleMeta, setLoaderHookMeta } from './meta.ts'
 import {
   createDetachedRuntimeSignal,
   getRuntimeContainer,

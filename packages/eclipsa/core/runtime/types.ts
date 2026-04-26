@@ -1,6 +1,6 @@
 import type { JSX } from '../../jsx/types.ts'
 import type { SerializedValue } from '../hooks.ts'
-import type { ExternalComponentDescriptor, ExternalComponentMeta } from '../internal.ts'
+import type { ExternalComponentDescriptor, ExternalComponentMeta } from '../meta.ts'
 import type { RouteMetadataExport } from '../metadata.ts'
 import type {
   Navigate,
@@ -173,6 +173,7 @@ export interface ComponentState {
   optimizedRoot?: boolean
   parentId: string | null
   prefersEffectOnlyLocalSignalWrites?: boolean
+  preserveCompiledReactiveTargetsOnActivate?: boolean
   props: unknown
   projectionSlots: Record<string, number> | null
   rawProps?: Record<string, unknown> | null
@@ -389,6 +390,7 @@ export interface ShowValue<T = unknown> {
 }
 
 export interface RouterState {
+  bindLinks?: (root: ParentNode) => void
   currentPath: { value: string }
   currentRoute: LoadedRoute | null
   currentUrl: { value: string }
