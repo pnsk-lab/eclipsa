@@ -58,3 +58,60 @@ room.connect()
 room.send({ text: 'hello' })
 // @ts-expect-error Client messages keep their declared payload type.
 room.send({ value: 'hello' })
+
+const useGenericRoom = realtime<
+  { roomId: string },
+  { text: string },
+  { text: string; traceId: string }
+>(async (connection) => {
+  type _Input = Expect<Equal<typeof connection.input, { roomId: string }>>
+  type _Message = Expect<
+    Equal<Parameters<Parameters<typeof connection.onMessage>[0]>[0], { text: string }>
+  >
+
+  connection.onMessage((message) => {
+    connection.send({
+      text: message.text,
+      traceId: 'trace',
+    })
+  })
+})
+
+type GenericRoomHandle = ReturnType<typeof useGenericRoom>
+type _GenericHandle = Expect<
+  Equal<
+    GenericRoomHandle,
+    RealtimeHandle<{ roomId: string }, { text: string }, { text: string; traceId: string }>
+  >
+>
+
+declare const genericRoom: GenericRoomHandle
+genericRoom.connect({ roomId: 'main' })
+// @ts-expect-error Generic realtime input remains required.
+genericRoom.connect()
+genericRoom.send({ text: 'hello' })
+// @ts-expect-error Generic realtime client message type is enforced.
+genericRoom.send({ roomId: 'main' })
+
+const useGenericRoomWithMiddleware = realtime<
+  { roomId: string },
+  { text: string },
+  { text: string; traceId: string }
+>(userMiddleware, async (connection) => {
+  type _Input = Expect<Equal<typeof connection.input, { roomId: string }>>
+
+  connection.onMessage((message) => {
+    connection.send({
+      text: message.text,
+      traceId: 'trace',
+    })
+  })
+})
+
+type GenericRoomWithMiddlewareHandle = ReturnType<typeof useGenericRoomWithMiddleware>
+type _GenericMiddlewareHandle = Expect<
+  Equal<
+    GenericRoomWithMiddlewareHandle,
+    RealtimeHandle<{ roomId: string }, { text: string }, { text: string; traceId: string }>
+  >
+>

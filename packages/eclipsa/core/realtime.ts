@@ -56,6 +56,12 @@ type RealtimeUse<Handler extends RealtimeHandler<any, any, any, any>> = () => Re
   HandlerServerMessage<Handler>
 >
 
+type RealtimeUseFor<Input, ClientMessage, ServerMessage> = () => RealtimeHandle<
+  Input,
+  ClientMessage,
+  ServerMessage
+>
+
 export type RealtimeStatus = 'closed' | 'connecting' | 'open'
 
 export interface RealtimeHandle<Input, ClientMessage, ServerMessage> {
@@ -107,62 +113,79 @@ export type RealtimeHandler<
 }
 
 export interface RealtimeFactory {
-  <Handler extends RealtimeHandler<{}, any, any, any>>(handler: Handler): RealtimeUse<Handler>
+  <Input = unknown, ClientMessage = unknown, ServerMessage = unknown>(
+    handler: RealtimeHandler<{}, Input, ClientMessage, ServerMessage>,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
   <
-    M1 extends RealtimeMiddleware<any>,
-    Handler extends RealtimeHandler<RealtimeEnv<[M1]>, any, any, any>,
+    Input = unknown,
+    ClientMessage = unknown,
+    ServerMessage = unknown,
+    M1 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
   >(
     middleware1: M1,
-    handler: Handler,
-  ): RealtimeUse<Handler>
+    handler: RealtimeHandler<RealtimeEnv<[M1]>, Input, ClientMessage, ServerMessage>,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
   <
-    M1 extends RealtimeMiddleware<any>,
-    M2 extends RealtimeMiddleware<any>,
-    Handler extends RealtimeHandler<RealtimeEnv<[M1, M2]>, any, any, any>,
+    Input = unknown,
+    ClientMessage = unknown,
+    ServerMessage = unknown,
+    M1 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M2 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
   >(
     middleware1: M1,
     middleware2: M2,
-    handler: Handler,
-  ): RealtimeUse<Handler>
+    handler: RealtimeHandler<RealtimeEnv<[M1, M2]>, Input, ClientMessage, ServerMessage>,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
   <
-    M1 extends RealtimeMiddleware<any>,
-    M2 extends RealtimeMiddleware<any>,
-    M3 extends RealtimeMiddleware<any>,
-    Handler extends RealtimeHandler<RealtimeEnv<[M1, M2, M3]>, any, any, any>,
+    Input = unknown,
+    ClientMessage = unknown,
+    ServerMessage = unknown,
+    M1 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M2 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M3 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
-    handler: Handler,
-  ): RealtimeUse<Handler>
+    handler: RealtimeHandler<RealtimeEnv<[M1, M2, M3]>, Input, ClientMessage, ServerMessage>,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
   <
-    M1 extends RealtimeMiddleware<any>,
-    M2 extends RealtimeMiddleware<any>,
-    M3 extends RealtimeMiddleware<any>,
-    M4 extends RealtimeMiddleware<any>,
-    Handler extends RealtimeHandler<RealtimeEnv<[M1, M2, M3, M4]>, any, any, any>,
+    Input = unknown,
+    ClientMessage = unknown,
+    ServerMessage = unknown,
+    M1 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M2 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M3 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M4 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
-    handler: Handler,
-  ): RealtimeUse<Handler>
+    handler: RealtimeHandler<RealtimeEnv<[M1, M2, M3, M4]>, Input, ClientMessage, ServerMessage>,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
   <
-    M1 extends RealtimeMiddleware<any>,
-    M2 extends RealtimeMiddleware<any>,
-    M3 extends RealtimeMiddleware<any>,
-    M4 extends RealtimeMiddleware<any>,
-    M5 extends RealtimeMiddleware<any>,
-    Handler extends RealtimeHandler<RealtimeEnv<[M1, M2, M3, M4, M5]>, any, any, any>,
+    Input = unknown,
+    ClientMessage = unknown,
+    ServerMessage = unknown,
+    M1 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M2 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M3 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M4 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
+    M5 extends RealtimeMiddleware<any> = RealtimeMiddleware<any>,
   >(
     middleware1: M1,
     middleware2: M2,
     middleware3: M3,
     middleware4: M4,
     middleware5: M5,
-    handler: Handler,
-  ): RealtimeUse<Handler>
+    handler: RealtimeHandler<
+      RealtimeEnv<[M1, M2, M3, M4, M5]>,
+      Input,
+      ClientMessage,
+      ServerMessage
+    >,
+  ): RealtimeUseFor<Input, ClientMessage, ServerMessage>
 }
 
 export interface RealtimeSocketLike {

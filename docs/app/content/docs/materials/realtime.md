@@ -14,16 +14,10 @@ Use it when the client should open a WebSocket connection, send multiple message
 Declare realtime handlers at module scope. The compiler rewrites each handler into a registered server symbol and returns a hook for components.
 
 ```tsx
-import { realtime, type RealtimeConnection } from 'eclipsa'
+import { realtime } from 'eclipsa'
 
-const useRoom = realtime(
-  async (
-    connection: RealtimeConnection<
-      { roomId: string },
-      { text: string },
-      { from: string; text: string }
-    >,
-  ) => {
+const useRoom = realtime<{ roomId: string }, { text: string }, { from: string; text: string }>(
+  async (connection) => {
     connection.send({
       from: 'system',
       text: `Joined ${connection.input.roomId}`,
@@ -73,38 +67,34 @@ A realtime handle such as `useRoom()` exposes:
 
 ## Server connection API
 
-The handler receives a `RealtimeConnection`.
+The handler receives a typed connection based on the generic arguments passed to `realtime()`.
 
 ```tsx
-import { realtime, type RealtimeConnection } from 'eclipsa'
+import { realtime } from 'eclipsa'
 
-const usePresence = realtime(
-  async (
-    connection: RealtimeConnection<
-      { userId: string },
-      { typing: boolean },
-      { online: boolean; userId: string }
-    >,
-  ) => {
-    connection.send({
-      online: true,
-      userId: connection.input.userId,
-    })
+const usePresence = realtime<
+  { userId: string },
+  { typing: boolean },
+  { online: boolean; userId: string }
+>(async (connection) => {
+  connection.send({
+    online: true,
+    userId: connection.input.userId,
+  })
 
-    connection.onMessage((message) => {
-      if (message.typing) {
-        connection.send({
-          online: true,
-          userId: connection.input.userId,
-        })
-      }
-    })
+  connection.onMessage((message) => {
+    if (message.typing) {
+      connection.send({
+        online: true,
+        userId: connection.input.userId,
+      })
+    }
+  })
 
-    connection.onClose(() => {
-      // Release room membership, presence records, or other request-scoped state.
-    })
-  },
-)
+  connection.onClose(() => {
+    // Release room membership, presence records, or other request-scoped state.
+  })
+})
 ```
 
 The connection object exposes:
@@ -122,7 +112,7 @@ The connection object exposes:
 Realtime handlers use the same Hono-style middleware shape as loaders and actions.
 
 ```tsx
-import { realtime, type RealtimeMiddleware } from 'eclipsa'
+import { realtime, type RealtimeConnection, type RealtimeMiddleware } from 'eclipsa'
 
 const requestMeta: RealtimeMiddleware<{
   Variables: {
@@ -133,11 +123,25 @@ const requestMeta: RealtimeMiddleware<{
   await next()
 }
 
-const useRoom = realtime(requestMeta, async (connection) => {
-  connection.send({
-    traceId: connection.c.var.traceId,
-  })
-})
+const useRoom = realtime(
+  requestMeta,
+  async (
+    connection: RealtimeConnection<
+      { roomId: string },
+      { text: string },
+      { traceId: string },
+      {
+        Variables: {
+          traceId: string
+        }
+      }
+    >,
+  ) => {
+    connection.send({
+      traceId: connection.c.var.traceId,
+    })
+  },
+)
 ```
 
 Values written with `c.set()` in middleware are available as `connection.c.var` inside the handler.

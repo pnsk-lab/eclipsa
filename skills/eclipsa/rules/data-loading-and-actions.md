@@ -167,16 +167,10 @@ export default function ProfileEditor() {
 Declare realtime handlers at module scope:
 
 ```tsx
-import { realtime, type RealtimeConnection } from 'eclipsa'
+import { realtime } from 'eclipsa'
 
-const useRoom = realtime(
-  async (
-    connection: RealtimeConnection<
-      { roomId: string },
-      { text: string },
-      { from: string; text: string }
-    >,
-  ) => {
+const useRoom = realtime<{ roomId: string }, { text: string }, { from: string; text: string }>(
+  async (connection) => {
     connection.send({
       from: 'system',
       text: `Joined ${connection.input.roomId}`,
