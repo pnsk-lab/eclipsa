@@ -134,3 +134,17 @@ const realtimeWebSocket = defineRealtimeWebSocketAdapter({
 type _RealtimeWebSocket = Expect<
   typeof realtimeWebSocket extends RealtimeWebSocketAdapter ? true : false
 >
+
+const realtimeWebSocketFactory = defineRealtimeWebSocketAdapter((_app) => ({
+  injectWebSocket(_server: unknown) {},
+  upgradeWebSocket(createEvents) {
+    return async (c) => {
+      createEvents(c)
+      return c.text('ok')
+    }
+  },
+}))
+
+type _RealtimeWebSocketFactory = Expect<
+  ReturnType<typeof realtimeWebSocketFactory> extends RealtimeWebSocketAdapter ? true : false
+>

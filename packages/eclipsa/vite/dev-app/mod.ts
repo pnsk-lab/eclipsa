@@ -58,6 +58,7 @@ import {
 import {
   createRealtimeHonoUpgradeHandler,
   type RealtimeWebSocketAdapter,
+  type RealtimeWebSocketAdapterConfig,
 } from '../../core/realtime.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
@@ -74,14 +75,22 @@ interface DevAppDeps {
 
 interface DevAppInit {
   deps?: DevAppDeps
+  getRealtimeWebSocket?: () => Promise<RealtimeWebSocketAdapter | null>
+  loadServerEntry?: () => Promise<DevServerEntry>
   resolvedConfig: ResolvedConfig
   devServer: ViteDevServer
   runner: ModuleRunner
   ssrEnv: DevEnvironment
 }
 
+interface DevServerEntry {
+  default: Hono
+  realtimeWebSocket?: RealtimeWebSocketAdapterConfig<Hono>
+}
+
 export interface DevFetchController {
   fetch(req: Request): Promise<Response | undefined>
+  installWebSocket(): Promise<void>
   invalidate(): void
 }
 
@@ -483,6 +492,11 @@ const isRedirectResponse = (
   (response as { status: number }).status < 400 &&
   !!(response as { headers: { get(name: string): string | null } }).headers.get('location')
 
+const resolveRealtimeWebSocketAdapter = (
+  config: RealtimeWebSocketAdapterConfig<Hono> | undefined,
+  app: Hono,
+) => (typeof config === 'function' ? config(app) : (config ?? null))
+
 const createDevApp = async (init: DevAppInit) => {
   const deps = init.deps ?? {
     collectAppActions,
@@ -493,13 +507,15 @@ const createDevApp = async (init: DevAppInit) => {
     createDevSymbolUrl,
     createRoutes,
   }
-  const serverEntry = (await init.runner.import('/app/+server-entry.ts')) as {
-    default: Hono
-    realtimeWebSocket?: RealtimeWebSocketAdapter
-  }
+  const serverEntry = init.loadServerEntry
+    ? await init.loadServerEntry()
+    : ((await init.runner.import('/app/+server-entry.ts')) as DevServerEntry)
   const userApp = serverEntry.default
   const app = new Hono()
   app.route('/', userApp)
+  const realtimeWebSocket =
+    (await init.getRealtimeWebSocket?.()) ??
+    resolveRealtimeWebSocketAdapter(serverEntry.realtimeWebSocket, app)
   const actions = await deps.collectAppActions(init.resolvedConfig.root)
   const loaders = await deps.collectAppLoaders(init.resolvedConfig.root)
   const realtimes = await (deps.collectAppRealtimes?.(init.resolvedConfig.root) ?? [])
@@ -1179,7 +1195,7 @@ const createDevApp = async (init: DevAppInit) => {
     }),
   )
 
-  if (serverEntry.realtimeWebSocket?.upgradeWebSocket) {
+  if (realtimeWebSocket?.upgradeWebSocket) {
     app.get(
       '/__eclipsa/realtime/:id',
       async (c, next) => {
@@ -1197,17 +1213,14 @@ const createDevApp = async (init: DevAppInit) => {
         }
         await next()
       },
-      createRealtimeHonoUpgradeHandler(
-        serverEntry.realtimeWebSocket.upgradeWebSocket,
-        async (c, socket) => {
-          await resolveRequest(c, async (requestContext) => {
-            const { executeRealtime } = await init.runner.import('eclipsa')
-            const id = requestContext.req.param('id')
-            await executeRealtime(id, requestContext, socket)
-            return requestContext.body(null, 204)
-          })
-        },
-      ),
+      createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
+        await resolveRequest(c, async (requestContext) => {
+          const { executeRealtime } = await init.runner.import('eclipsa')
+          const id = requestContext.req.param('id')
+          await executeRealtime(id, requestContext, socket)
+          return requestContext.body(null, 204)
+        })
+      }),
     )
   }
 
@@ -1363,14 +1376,58 @@ const createDevApp = async (init: DevAppInit) => {
 
 export const createDevFetch = (init: DevAppInit): DevFetchController => {
   let app: ReturnType<typeof createDevApp> | null = null
+  let realtimeWebSocketInstalled = false
+  let realtimeWebSocketPromise: Promise<RealtimeWebSocketAdapter | null> | null = null
+  let serverEntryPromise: Promise<DevServerEntry> | null = null
+  const webSocketApp = new Hono()
+
+  const loadServerEntry = () => {
+    serverEntryPromise ??= init.runner.import('/app/+server-entry.ts') as Promise<DevServerEntry>
+    return serverEntryPromise
+  }
+
+  const getRealtimeWebSocket = () => {
+    realtimeWebSocketPromise ??= loadServerEntry().then((serverEntry) =>
+      resolveRealtimeWebSocketAdapter(serverEntry.realtimeWebSocket, webSocketApp),
+    )
+    return realtimeWebSocketPromise
+  }
+
+  const devAppInit = {
+    ...init,
+    getRealtimeWebSocket,
+    loadServerEntry,
+  } satisfies DevAppInit
+
   const getApp = () => {
-    app ??= createDevApp(init)
+    app ??= createDevApp(devAppInit)
     return app
   }
 
+  webSocketApp.all('*', async (c) => (await getApp()).fetch(c.req.raw))
+
   return {
+    async installWebSocket() {
+      if (realtimeWebSocketInstalled) {
+        return
+      }
+      const httpServer = init.devServer.httpServer
+      if (!httpServer) {
+        return
+      }
+      const realtimeWebSocket = await getRealtimeWebSocket()
+      if (!realtimeWebSocket?.injectWebSocket) {
+        return
+      }
+      realtimeWebSocket.injectWebSocket(httpServer)
+      realtimeWebSocketInstalled = true
+    },
     invalidate() {
       app = null
+      serverEntryPromise = null
+      if (!realtimeWebSocketInstalled) {
+        realtimeWebSocketPromise = null
+      }
     },
     async fetch(req) {
       const fetched = await (await getApp()).fetch(req)

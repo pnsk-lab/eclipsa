@@ -1,4 +1,4 @@
-import type { Context } from 'hono'
+import type { Context, Hono } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
   type AppContext,
@@ -231,12 +231,27 @@ export type RealtimeHonoUpgradeWebSocket = (
 ) => MiddlewareHandler
 
 export interface RealtimeWebSocketAdapter {
+  injectWebSocket?: (server: unknown) => void
   upgradeWebSocket: RealtimeHonoUpgradeWebSocket
 }
 
-export const defineRealtimeWebSocketAdapter = <Adapter extends RealtimeWebSocketAdapter>(
+export type RealtimeWebSocketAdapterFactory<App = Hono> = (app: App) => RealtimeWebSocketAdapter
+
+export type RealtimeWebSocketAdapterConfig<App = Hono> =
+  | RealtimeWebSocketAdapter
+  | RealtimeWebSocketAdapterFactory<App>
+
+export function defineRealtimeWebSocketAdapter<Adapter extends RealtimeWebSocketAdapter>(
   adapter: Adapter,
-) => adapter
+): Adapter
+export function defineRealtimeWebSocketAdapter<Factory extends RealtimeWebSocketAdapterFactory>(
+  factory: Factory,
+): Factory
+export function defineRealtimeWebSocketAdapter(
+  adapter: RealtimeWebSocketAdapterConfig,
+): RealtimeWebSocketAdapterConfig {
+  return adapter
+}
 
 interface RegisteredRealtime {
   handler: RealtimeHandler<any, any, any, any>

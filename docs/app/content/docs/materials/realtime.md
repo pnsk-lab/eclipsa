@@ -169,6 +169,25 @@ export default app
 
 Eclipsa reads the `realtimeWebSocket` export and mounts `GET /__eclipsa/realtime/:id` with the supplied `upgradeWebSocket` handler.
 
+During Vite development, Node WebSocket adapters should be configured as a factory so Eclipsa can pass its internal Hono app and inject the adapter into Vite's HTTP server:
+
+```ts
+import { Hono } from 'hono'
+import { defineRealtimeWebSocketAdapter } from 'eclipsa'
+import { createNodeRealtimeWebSocket } from './node-realtime-websocket'
+
+const app = new Hono()
+
+export const realtimeWebSocket = defineRealtimeWebSocketAdapter((realtimeApp) => {
+  const { injectWebSocket, upgradeWebSocket } = createNodeRealtimeWebSocket(realtimeApp)
+  return { injectWebSocket, upgradeWebSocket }
+})
+
+export default app
+```
+
+The factory form is the important part. It lets Node adapters, including wrappers around Hono's Node adapter, bind the generated realtime routes to Vite's active HTTP server instead of creating a separate server.
+
 The adapter must follow Hono's WebSocket helper shape:
 
 ```ts

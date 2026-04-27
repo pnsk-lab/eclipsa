@@ -163,6 +163,8 @@ describe('createDevFetch', () => {
       onOpen?: (event: unknown, ws: { close(): void; send(data: string): void }) => void
     } | null = null
     const hasRealtime = vi.fn(() => false)
+    const httpServer = {}
+    const injectWebSocket = vi.fn()
     const executeRealtime = vi.fn()
     const moduleImports: string[] = []
     const upgradeWebSocket = vi.fn((createEvents: (c: any) => NonNullable<typeof events>) => {
@@ -171,13 +173,17 @@ describe('createDevFetch', () => {
         return c.text('upgraded')
       }
     })
+    const realtimeWebSocket = vi.fn((_app: Hono) => ({
+      injectWebSocket,
+      upgradeWebSocket,
+    }))
     collectAppRealtimes.mockResolvedValue([{ filePath: '/tmp/app/room.ts', id: 'room' }])
 
     const devFetch = createDevFetch({
       resolvedConfig: {
         root: '/tmp',
       } as any,
-      devServer: {} as any,
+      devServer: { httpServer } as any,
       deps: {
         collectAppActions,
         collectAppLoaders,
@@ -192,9 +198,7 @@ describe('createDevFetch', () => {
           if (id === '/app/+server-entry.ts') {
             return {
               default: userApp,
-              realtimeWebSocket: {
-                upgradeWebSocket,
-              },
+              realtimeWebSocket,
             }
           }
           if (id === 'eclipsa') {
@@ -210,9 +214,14 @@ describe('createDevFetch', () => {
       ssrEnv: {} as any,
     })
 
+    await devFetch.installWebSocket()
     const response = await devFetch.fetch(new Request('http://localhost/__eclipsa/realtime/room'))
 
     expect(response?.status).toBe(200)
+    expect(realtimeWebSocket).toHaveBeenCalledWith(
+      expect.objectContaining({ fetch: expect.any(Function) }),
+    )
+    expect(injectWebSocket).toHaveBeenCalledWith(httpServer)
     expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
     expect(moduleImports).toContain('/tmp/app/room.ts')
     await Promise.resolve()

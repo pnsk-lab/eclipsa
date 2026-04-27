@@ -622,7 +622,9 @@ import SSRRoot from "./entries/ssr_root.mjs";
 import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRealtimeHonoUpgradeHandler, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, executeRealtime, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, hasRealtime, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
-const realtimeWebSocket = serverEntry.realtimeWebSocket;
+const realtimeWebSocket = typeof serverEntry.realtimeWebSocket === "function"
+  ? serverEntry.realtimeWebSocket(app)
+  : serverEntry.realtimeWebSocket;
 const actions = {
 ${actionTable}
 };
@@ -1723,11 +1725,15 @@ app.all("*", async (c) =>
 );
 
 export const pageRoutePatterns = [...new Set(pageRouteEntries.map((entry) => entry.path))];
+export const injectRealtimeWebSocket = (server) => {
+  realtimeWebSocket?.injectWebSocket?.(server);
+};
 export default app;
 `
 }
 
-const renderNodeServer = () => `import app from "../ssr/eclipsa_app.mjs";
+const renderNodeServer =
+  () => `import app, { injectRealtimeWebSocket } from "../ssr/eclipsa_app.mjs";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -1807,7 +1813,7 @@ const serveStatic = async (pathname) => {
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const staticResponse = await serveStatic(url.pathname);
   if (staticResponse) {
@@ -1817,7 +1823,11 @@ createServer(async (req, res) => {
 
   const response = await app.fetch(toRequest(req));
   await sendResponse(response, res);
-}).listen(port, () => {
+});
+
+injectRealtimeWebSocket(server);
+
+server.listen(port, () => {
   console.log("Eclipsa server listening on http://localhost:" + port);
 });
 `

@@ -269,7 +269,8 @@ describe('build', () => {
     await build(builder, { root }, { output: 'node' })
 
     const appSource = await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')
-    expect(appSource).toContain('const realtimeWebSocket = serverEntry.realtimeWebSocket;')
+    expect(appSource).toContain('typeof serverEntry.realtimeWebSocket === "function"')
+    expect(appSource).toContain('export const injectRealtimeWebSocket = (server) => {')
     expect(appSource).toContain('"/__eclipsa/realtime/:id"')
     expect(appSource).toContain('createRealtimeHonoUpgradeHandler')
     expect(appSource).toContain('await executeRealtime(id, requestContext, socket);')
