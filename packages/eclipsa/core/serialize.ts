@@ -54,8 +54,6 @@ export interface DeserializeValueOptions {
 const DEFAULT_MAX_DEPTH = 64
 const DEFAULT_MAX_ENTRIES = 10_000
 
-const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
-
 const getSerializedObjectTag = (value: object) => Object.prototype.toString.call(value)
 
 const getSerializedConstructorName = (value: object) => {
@@ -105,15 +103,6 @@ const assertSafeObject = (value: Record<string, unknown>) => {
       throw new TypeError(`Objects with accessors cannot be serialized (${key}).`)
     }
   }
-}
-
-const defineDecodedProperty = (target: Record<string, unknown>, key: string, value: unknown) => {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: true,
-  })
 }
 
 const assertReferenceShape = (value: SerializedReference) => {
@@ -311,18 +300,16 @@ const deserializeUnknown = (
       }
       state.entryCount += value.entries.length + 1
       assertSafeEntryBudget(state.entryCount, state.maxEntries)
-      const result: Record<string, unknown> = Object.create(null)
+      const entries: Array<[string, unknown]> = []
       for (const entry of value.entries) {
         if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string') {
           throw new TypeError('Malformed serialized object entry.')
         }
         const [key, child] = entry
-        if (RESERVED_KEYS.has(key)) {
-          defineDecodedProperty(result, key, deserializeUnknown(child, state, depth + 1))
-          continue
-        }
-        defineDecodedProperty(result, key, deserializeUnknown(child, state, depth + 1))
+        entries.push([key, deserializeUnknown(child, state, depth + 1)])
       }
+      const result = Object.fromEntries(entries) as Record<string, unknown>
+      Object.setPrototypeOf(result, null)
       return result
     }
     case 'map': {
