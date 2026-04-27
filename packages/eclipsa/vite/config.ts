@@ -8,6 +8,7 @@ import { build } from './build/mod.ts'
 import {
   collectAppActions,
   collectAppLoaders,
+  collectAppRealtimes,
   collectAppSymbols,
   createBuildSymbolEntryName,
   createSymbolRequestId,
@@ -40,6 +41,7 @@ export const createConfig =
     const routeServerModules = collectRouteServerModules(routes)
     const actions = await collectAppActions(root)
     const loaders = await collectAppLoaders(root)
+    const realtimes = await collectAppRealtimes(root)
     const symbols = await collectAppSymbols(root)
 
     const clientInput = Object.fromEntries([
@@ -60,6 +62,7 @@ export const createConfig =
       ...(hasServerHooks ? [['server_hooks', serverHooksPath] as const] : []),
       ...actions.map((action) => [`action__${action.id}`, action.filePath]),
       ...loaders.map((loader) => [`loader__${loader.id}`, loader.filePath]),
+      ...realtimes.map((realtime) => [`realtime__${realtime.id}`, realtime.filePath]),
       ...routeModules.map((entry) => [entry.entryName, entry.filePath]),
       ...routeServerModules.map((entry) => [entry.entryName, entry.filePath]),
     ])

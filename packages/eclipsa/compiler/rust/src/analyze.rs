@@ -32,15 +32,17 @@ const HELPER_COMPONENT: &str = "__eclipsaComponent";
 const HELPER_EVENT: &str = "__eclipsaEvent";
 const HELPER_LAZY: &str = "__eclipsaLazy";
 const HELPER_LOADER: &str = "__eclipsaLoader";
+const HELPER_REALTIME: &str = "__eclipsaRealtime";
 const HELPER_WATCH: &str = "__eclipsaWatch";
 const HELPER_SIGNAL_META: &str = "getSignalMeta";
 
-const INTERNAL_HELPERS: [&str; 7] = [
+const INTERNAL_HELPERS: [&str; 8] = [
     HELPER_ACTION,
     HELPER_COMPONENT,
     HELPER_EVENT,
     HELPER_LAZY,
     HELPER_LOADER,
+    HELPER_REALTIME,
     HELPER_WATCH,
     HELPER_SIGNAL_META,
 ];
@@ -66,6 +68,7 @@ pub enum SymbolKind {
     Event,
     Lazy,
     Loader,
+    Realtime,
     Watch,
 }
 
@@ -143,6 +146,7 @@ pub struct AnalyzeResponse {
     pub code: String,
     pub hmr_manifest: ResumeHmrManifest,
     pub loaders: Vec<(String, SymbolRef)>,
+    pub realtimes: Vec<(String, SymbolRef)>,
     pub symbols: Vec<(String, ResumeSymbol)>,
 }
 
@@ -155,6 +159,7 @@ struct ImportBindings {
     deprecated_loader_identifier: Option<String>,
     loader_identifier: Option<String>,
     react_island_identifier: Option<String>,
+    realtime_identifier: Option<String>,
     signal_identifier: Option<String>,
     vue_island_identifier: Option<String>,
     visible_identifier: Option<String>,
@@ -236,6 +241,7 @@ fn create_symbol_id(file_path: &str, kind: &SymbolKind, code: &str) -> String {
         SymbolKind::Event => "event",
         SymbolKind::Lazy => "lazy",
         SymbolKind::Loader => "loader",
+        SymbolKind::Realtime => "realtime",
         SymbolKind::Watch => "watch",
     };
     base36(xxh32(format!("{file_path}:{kind_name}:{code}").as_bytes(), 0))
@@ -248,6 +254,7 @@ fn create_symbol_signature(kind: &SymbolKind, code: &str) -> String {
         SymbolKind::Event => "event",
         SymbolKind::Lazy => "lazy",
         SymbolKind::Loader => "loader",
+        SymbolKind::Realtime => "realtime",
         SymbolKind::Watch => "watch",
     };
     base36(xxh32(format!("{kind_name}:{code}").as_bytes(), 0))
@@ -312,6 +319,7 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
         deprecated_loader_identifier: None,
         loader_identifier: None,
         react_island_identifier: None,
+        realtime_identifier: None,
         signal_identifier: None,
         vue_island_identifier: None,
         visible_identifier: None,
@@ -344,6 +352,7 @@ fn imports_from_eclipsa(program: &Program<'_>) -> ImportBindings {
                     "loader" => bindings.loader_identifier = Some(local),
                     "loader$" => bindings.deprecated_loader_identifier = Some(local),
                     "onVisible" => bindings.visible_identifier = Some(local),
+                    "realtime" => bindings.realtime_identifier = Some(local),
                     "useSignal" => bindings.signal_identifier = Some(local),
                     "useWatch" => bindings.watch_identifier = Some(local),
                     _ => {}
@@ -1274,6 +1283,7 @@ struct AnalyzeVisitor<'a, 's> {
     node_stack: Vec<NodeMarker>,
     owner_symbol_counts: HashMap<String, usize>,
     program: &'a Program<'a>,
+    realtimes: Vec<(String, SymbolRef)>,
     replacements: Vec<Replacement>,
     semantic: &'s Semantic<'a>,
     source: &'s str,
@@ -1310,6 +1320,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
             node_stack: Vec::new(),
             owner_symbol_counts: HashMap::new(),
             program,
+            realtimes: Vec::new(),
             replacements: Vec::new(),
             semantic,
             source,
@@ -1340,6 +1351,7 @@ impl<'a, 's> AnalyzeVisitor<'a, 's> {
                 symbols: self.hmr_symbols,
             },
             loaders: self.loaders,
+            realtimes: self.realtimes,
             symbols: self.symbols,
         })
     }
@@ -3051,6 +3063,84 @@ impl<'a, 's> Visit<'a> for AnalyzeVisitor<'a, 's> {
                 expression.span.end as usize,
                 format!(
                     "{HELPER_LOADER}({}, [{}], {})",
+                    js_string(&symbol_id),
+                    leading_args.join(", "),
+                    render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),
+                ),
+            );
+            return;
+        }
+
+        if self
+            .imports
+            .realtime_identifier
+            .as_deref()
+            .is_some_and(|identifier| identifier == callee_name)
+        {
+            if !self.current_functions.is_empty() {
+                self.fail("realtime() must be declared at module scope so the server can register it exactly once.");
+                return;
+            }
+            let Some(argument) = expression.arguments.last() else {
+                self.fail("realtime() expects the last argument to be a function.");
+                return;
+            };
+            if !is_function_argument(argument) {
+                self.fail("realtime() expects the last argument to be a function.");
+                return;
+            }
+            let Some(function_span) = function_argument_span(argument) else {
+                self.fail("realtime() expects the last argument to be a function.");
+                return;
+            };
+            let symbol_id = create_symbol_id(&self.file_id, &SymbolKind::Realtime, source_text(self.source, function_span));
+            let dependencies = match self.collect_symbol_dependencies(argument) {
+                Ok(dependencies) => dependencies,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
+            let build = match self.build_symbol(
+                function_span,
+                dependencies.captures,
+                dependencies.import_spans,
+                dependencies.local_definitions,
+                false,
+            ) {
+                Ok(build) => build,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            };
+            self.symbols.push((
+                symbol_id.clone(),
+                ResumeSymbol {
+                    captures: build.captures.clone(),
+                    code: build.code,
+                    file_path: self.file_id.clone(),
+                    id: symbol_id.clone(),
+                    kind: SymbolKind::Realtime,
+                },
+            ));
+            self.realtimes.push((
+                symbol_id.clone(),
+                SymbolRef {
+                    file_path: self.file_id.clone(),
+                    id: symbol_id.clone(),
+                },
+            ));
+            self.used_helpers.insert(HELPER_REALTIME.to_string());
+            let mut leading_args = Vec::new();
+            for value in expression.arguments.iter().take(expression.arguments.len().saturating_sub(1)) {
+                leading_args.push(render_span_with_replacements(self.source, value.span(), &self.replacements).unwrap());
+            }
+            self.push_replacement(
+                expression.span.start as usize,
+                expression.span.end as usize,
+                format!(
+                    "{HELPER_REALTIME}({}, [{}], {})",
                     js_string(&symbol_id),
                     leading_args.join(", "),
                     render_span_with_replacements(self.source, function_span, &self.replacements).unwrap(),

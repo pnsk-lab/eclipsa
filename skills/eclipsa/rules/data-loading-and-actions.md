@@ -147,3 +147,76 @@ export default function ProfileEditor() {
 ## Streaming
 
 - Actions may return async generators or readable streams when the UI should consume progressive results.
+
+## `realtime()`
+
+- Use `realtime()` for long-lived bidirectional WebSocket sessions.
+- Keep realtime handlers at module scope so the compiler can register them once.
+- A realtime handle exposes:
+  - `connect(input)`
+  - `send(message)`
+  - `close(code?, reason?)`
+  - `status`
+  - `isOpen`
+  - `lastMessage`
+  - `messages`
+  - `error`
+
+## Concrete Realtime Example
+
+Declare realtime handlers at module scope:
+
+```tsx
+import { realtime, type RealtimeConnection } from 'eclipsa'
+
+const useRoom = realtime(
+  async (
+    connection: RealtimeConnection<
+      { roomId: string },
+      { text: string },
+      { from: string; text: string }
+    >,
+  ) => {
+    connection.send({
+      from: 'system',
+      text: `Joined ${connection.input.roomId}`,
+    })
+
+    connection.onMessage((message) => {
+      connection.send({
+        from: 'server',
+        text: message.text,
+      })
+    })
+  },
+)
+```
+
+```tsx
+export default function Room() {
+  const room = useRoom()
+
+  return (
+    <section>
+      <button onClick={() => room.connect({ roomId: 'general' })} type="button">
+        Connect
+      </button>
+      <button disabled={!room.isOpen} onClick={() => room.send({ text: 'Hello' })} type="button">
+        Send
+      </button>
+      <p>Status: {room.status}</p>
+      <p>Latest: {room.lastMessage?.text ?? 'No messages yet'}</p>
+    </section>
+  )
+}
+```
+
+## Realtime Guidance
+
+- Use `connect(input)` to open the WebSocket session.
+- Use `send(message)` only after the handle is open.
+- Read connection input from `connection.input` on the server.
+- Use `connection.onMessage()` for client-to-server messages.
+- Use `connection.send()` for server-to-client messages.
+- Keep input and messages public and serializable.
+- Host integrations that support WebSocket upgrade should route `__eclipsa/realtime/:id` upgrades to `executeRealtime(id, c, socket, input?)`.

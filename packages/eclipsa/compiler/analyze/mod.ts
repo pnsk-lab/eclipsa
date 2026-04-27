@@ -1,7 +1,7 @@
 import ts from 'typescript'
 import { runRustAnalyzeCompiler } from '@eclipsa/optimizer'
 
-type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
+type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'realtime' | 'watch'
 export type AnalyzeEventMode = 'resumable' | 'direct'
 
 export interface ResumeSymbol {
@@ -39,6 +39,7 @@ export interface AnalyzedModule {
   code: string
   hmrManifest: ResumeHmrManifest
   loaders: Map<string, { filePath: string; id: string }>
+  realtimes: Map<string, { filePath: string; id: string }>
   symbols: Map<string, ResumeSymbol>
 }
 
@@ -451,6 +452,7 @@ export const analyzeModule = async (
       symbols: new Map(analyzed.hmrManifest.symbols),
     },
     loaders: new Map(analyzed.loaders),
+    realtimes: new Map(analyzed.realtimes),
     symbols,
   }
 }

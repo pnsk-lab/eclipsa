@@ -2,6 +2,7 @@ import type { Component, EURL } from './component.ts'
 import type { Navigate } from './router-shared.ts'
 
 export { __eclipsaAction } from './action.ts'
+export { __eclipsaRealtime } from './realtime.ts'
 export { __eclipsaLoader } from './loader.ts'
 export {
   createDetachedRuntimeComponent,

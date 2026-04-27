@@ -1,12 +1,13 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from './utils/routing.ts'
 
 const mocks = vi.hoisted(() => ({
   build: vi.fn(),
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppLoaders: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
+  collectAppRealtimes: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppSymbols: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectRouteModules: vi.fn(),
   collectRouteServerModules: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('./build/mod.ts', () => ({
 vi.mock('./compiler.ts', () => ({
   collectAppActions: mocks.collectAppActions,
   collectAppLoaders: mocks.collectAppLoaders,
+  collectAppRealtimes: mocks.collectAppRealtimes,
   collectAppSymbols: mocks.collectAppSymbols,
 }))
 
@@ -32,6 +34,10 @@ vi.mock('./utils/routing.ts', () => ({
 import { createConfig } from './config.ts'
 
 describe('createConfig', () => {
+  beforeEach(() => {
+    mocks.collectAppRealtimes.mockResolvedValue([])
+  })
+
   it('passes the resolved output target through to buildApp', async () => {
     const userConfig = {
       root: '/tmp/app',

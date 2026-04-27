@@ -28,10 +28,12 @@ import {
 import {
   collectAppActions,
   collectAppLoaders,
+  collectAppRealtimes,
   collectAppSymbols,
   collectReachableAnalyzableFiles,
   createBuildServerActionUrl,
   createBuildServerLoaderUrl,
+  createBuildServerRealtimeUrl,
   createBuildSymbolUrl,
 } from '../compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from '../options.ts'
@@ -565,6 +567,14 @@ const createLoaderTable = (loaders: Array<{ filePath: string; id: string }>) =>
     )
     .join('\n')
 
+const createRealtimeTable = (realtimes: Array<{ filePath: string; id: string }>) =>
+  realtimes
+    .map(
+      (realtime) =>
+        `  ${JSON.stringify(realtime.id)}: ${JSON.stringify(createBuildServerRealtimeUrl(realtime.id))},`,
+    )
+    .join('\n')
+
 const createPageRouteEntries = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
   routes.flatMap((route, routeIndex) =>
     route.page
@@ -580,6 +590,7 @@ const renderAppModule = (
   appHooksClientUrl: string | null,
   appHooksServerUrl: string | null,
   loaders: Array<{ filePath: string; id: string }>,
+  realtimes: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
   routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
   routeManifest: RouteManifest,
@@ -593,6 +604,7 @@ const renderAppModule = (
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
   const actionTable = createActionTable(actions)
   const loaderTable = createLoaderTable(loaders)
+  const realtimeTable = createRealtimeTable(realtimes)
   const serializedAppHooksManifest = JSON.stringify({
     client: appHooksClientUrl,
     routeDataEndpoint,
@@ -615,6 +627,9 @@ ${actionTable}
 };
 const loaders = {
 ${loaderTable}
+};
+const realtimes = {
+${realtimeTable}
 };
 const routes = ${serializedRoutes};
 const routeServerAccessEntries = ${serializedRouteServerAccessEntries};
@@ -1789,6 +1804,7 @@ export const build = async (
   const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
+  const realtimes = await collectAppRealtimes(root)
   const routes = await createRoutes(root)
   const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
   const staticPageRoutes = routes.filter(
@@ -1843,6 +1859,7 @@ export const build = async (
       appHooksClientUrl,
       appHooksServerUrl,
       loaders,
+      realtimes,
       routes,
       routeServerAccessEntries,
       routeManifest,

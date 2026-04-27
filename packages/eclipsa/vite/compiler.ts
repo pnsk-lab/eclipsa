@@ -545,6 +545,9 @@ export const createBuildServerActionUrl = (actionId: string) =>
 export const createBuildServerLoaderUrl = (loaderId: string) =>
   `../ssr/entries/loader__${loaderId}.mjs`
 
+export const createBuildServerRealtimeUrl = (realtimeId: string) =>
+  `../ssr/entries/realtime__${realtimeId}.mjs`
+
 const ANALYZABLE_SOURCE_EXTENSIONS = new Set([
   '.cjs',
   '.cts',
@@ -721,6 +724,23 @@ export const collectAppLoaders = async (
   for (const filePath of files) {
     const analyzed = await loadAnalyzedModule(filePath)
     result.push(...[...analyzed.loaders.values()].map((loader) => ({ filePath, id: loader.id })))
+  }
+
+  return result
+}
+
+export const collectAppRealtimes = async (
+  root: string,
+): Promise<Array<{ filePath: string; id: string }>> => {
+  const appDir = path.join(root, 'app')
+  const files = await fg(path.join(appDir, '**/*.{ts,tsx}').replaceAll('\\', '/'))
+  const result: Array<{ filePath: string; id: string }> = []
+
+  for (const filePath of files) {
+    const analyzed = await loadAnalyzedModule(filePath)
+    result.push(
+      ...[...analyzed.realtimes.values()].map((realtime) => ({ filePath, id: realtime.id })),
+    )
   }
 
   return result

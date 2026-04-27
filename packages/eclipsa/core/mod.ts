@@ -8,6 +8,7 @@ export * from './hooks.ts'
 export * from './loader.ts'
 export * from './metadata.ts'
 export * from './no-serialize.ts'
+export * from './realtime.ts'
 export * from './route-middleware.ts'
 export {
   Link,

@@ -42,6 +42,7 @@ const DOC_SECTIONS: DocSection[] = [
       { label: 'Lifecycle', href: '/docs/materials/lifecycle' },
       { label: 'Loader', href: '/docs/materials/loader' },
       { label: 'Action', href: '/docs/materials/action' },
+      { label: 'Realtime', href: '/docs/materials/realtime' },
     ],
     gradientClass: 'bg-linear-to-br from-blue-700 to-cyan-400',
   },

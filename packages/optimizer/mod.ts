@@ -9,7 +9,7 @@ interface SymbolRef {
   id: string
 }
 
-type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'watch'
+type SymbolKind = 'action' | 'component' | 'event' | 'lazy' | 'loader' | 'realtime' | 'watch'
 
 interface ResumeSymbol {
   captures: string[]
@@ -44,6 +44,7 @@ interface AnalyzeResponse {
     symbols: [string, ResumeHmrSymbolEntry][]
   }
   loaders: [string, SymbolRef][]
+  realtimes: [string, SymbolRef][]
   symbols: [string, ResumeSymbol][]
 }
 

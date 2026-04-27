@@ -9,6 +9,7 @@ import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
 const mocks = vi.hoisted(() => ({
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppLoaders: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
+  collectAppRealtimes: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectAppSymbols: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
   collectReachableAnalyzableFiles: vi.fn<(entryFiles: readonly string[]) => Promise<string[]>>(),
   createRouteManifest: vi.fn(),
@@ -39,10 +40,12 @@ vi.mock('../utils/routing.ts', () => ({
 vi.mock('../compiler.ts', () => ({
   collectAppActions: mocks.collectAppActions,
   collectAppLoaders: mocks.collectAppLoaders,
+  collectAppRealtimes: mocks.collectAppRealtimes,
   collectAppSymbols: mocks.collectAppSymbols,
   collectReachableAnalyzableFiles: mocks.collectReachableAnalyzableFiles,
   createBuildServerActionUrl: vi.fn((id: string) => `/__eclipsa/action/${id}`),
   createBuildServerLoaderUrl: vi.fn((id: string) => `/__eclipsa/loader/${id}`),
+  createBuildServerRealtimeUrl: vi.fn((id: string) => `/__eclipsa/realtime/${id}`),
   createBuildSymbolUrl: vi.fn((id: string) => `/entries/symbol__${id}.js`),
 }))
 
@@ -220,6 +223,7 @@ describe('build', () => {
   beforeEach(() => {
     mocks.collectAppActions.mockResolvedValue([])
     mocks.collectAppLoaders.mockResolvedValue([])
+    mocks.collectAppRealtimes.mockResolvedValue([])
     mocks.collectAppSymbols.mockResolvedValue([])
     mocks.collectReachableAnalyzableFiles.mockImplementation(
       async (entryFiles: readonly string[]) => [...entryFiles],

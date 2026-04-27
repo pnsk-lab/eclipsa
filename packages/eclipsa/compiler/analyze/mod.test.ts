@@ -296,6 +296,24 @@ describe('analyzeModule()', () => {
     expect(actionSymbols[0]?.code).toContain('async function*')
   })
 
+  it('analyzes realtime handlers as resumable realtime symbols', async () => {
+    const analyzed = await analyzeModule(`
+      import { realtime } from "eclipsa";
+
+      export const useRoom = realtime(async (connection) => {
+        connection.send({ ready: true });
+      });
+    `)
+
+    expect(analyzed?.code).toContain('__eclipsaRealtime')
+    const realtimeSymbols = [...(analyzed?.symbols.values() ?? [])].filter(
+      (symbol) => symbol.kind === 'realtime',
+    )
+    expect(realtimeSymbols).toHaveLength(1)
+    expect(realtimeSymbols[0]?.code).toContain('connection.send')
+    expect([...(analyzed?.realtimes.values() ?? [])]).toHaveLength(1)
+  })
+
   it('inlines same-file top-level component helpers into resumable symbols', async () => {
     const analyzed = await analyzeModule(`
       const title = "ready";
