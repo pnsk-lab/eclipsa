@@ -7,6 +7,7 @@ import { analyzeModule } from '../compiler/mod.ts'
 import {
   collectAppActions,
   collectAppLoaders,
+  collectAppRealtimes,
   collectAppSymbols,
   createBuildSymbolEntryName,
   createBuildSymbolUrl,
@@ -580,7 +581,7 @@ describe('createResumeHmrUpdate', () => {
     })
   })
 
-  it('returns absolute source file paths for collected actions and loaders', async () => {
+  it('returns absolute source file paths for collected actions, loaders, and realtime handlers', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-entries-'))
     const appDir = path.join(root, 'app')
     const pagePath = path.join(appDir, '+page.tsx')
@@ -591,21 +592,27 @@ describe('createResumeHmrUpdate', () => {
         pagePath,
         [
           'import { action, loader } from "eclipsa";',
+          'import { realtime } from "eclipsa";',
           'export const usePing = action(async () => ({ ok: true }));',
           'export const useStats = loader(async () => ({ ok: true }));',
+          'export const useRoom = realtime(async () => undefined);',
           'export default () => null;',
         ].join('\n'),
       )
 
       const actions = await collectAppActions(root)
       const loaders = await collectAppLoaders(root)
+      const realtimes = await collectAppRealtimes(root)
 
       expect(actions).toHaveLength(1)
       expect(loaders).toHaveLength(1)
+      expect(realtimes).toHaveLength(1)
       expect(actions[0]?.filePath).toBe(pagePath)
       expect(loaders[0]?.filePath).toBe(pagePath)
+      expect(realtimes[0]?.filePath).toBe(pagePath)
       expect(actions[0]?.id).toBeTruthy()
       expect(loaders[0]?.id).toBeTruthy()
+      expect(realtimes[0]?.id).toBeTruthy()
     } finally {
       await fs.rm(root, { force: true, recursive: true })
     }

@@ -28,10 +28,12 @@ import {
 import {
   collectAppActions,
   collectAppLoaders,
+  collectAppRealtimes,
   collectAppSymbols,
   collectReachableAnalyzableFiles,
   createBuildServerActionUrl,
   createBuildServerLoaderUrl,
+  createBuildServerRealtimeUrl,
   createBuildSymbolUrl,
 } from '../compiler.ts'
 import type { ResolvedEclipsaPluginOptions } from '../options.ts'
@@ -579,6 +581,14 @@ const createLoaderTable = (loaders: Array<{ filePath: string; id: string }>) =>
     )
     .join('\n')
 
+const createRealtimeTable = (realtimes: Array<{ filePath: string; id: string }>) =>
+  realtimes
+    .map(
+      (realtime) =>
+        `  ${JSON.stringify(realtime.id)}: ${JSON.stringify(createBuildServerRealtimeUrl(realtime.id))},`,
+    )
+    .join('\n')
+
 const createPageRouteEntries = (routes: Awaited<ReturnType<typeof createRoutes>>) =>
   routes.flatMap((route, routeIndex) =>
     route.page
@@ -594,6 +604,7 @@ const renderAppModule = (
   appHooksClientUrl: string | null,
   appHooksServerUrl: string | null,
   loaders: Array<{ filePath: string; id: string }>,
+  realtimes: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
   routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
   routeManifest: RouteManifest,
@@ -607,6 +618,7 @@ const renderAppModule = (
   const serializedPageRouteEntries = JSON.stringify(createPageRouteEntries(routes))
   const actionTable = createActionTable(actions)
   const loaderTable = createLoaderTable(loaders)
+  const realtimeTable = createRealtimeTable(realtimes)
   const serializedAppHooksManifest = JSON.stringify({
     client: appHooksClientUrl,
     routeDataEndpoint,
@@ -619,16 +631,22 @@ const renderAppModule = (
   const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
   const serializedChunkCacheUrls = JSON.stringify(chunkCacheUrls)
 
-  return `import userApp from "./entries/server_entry.mjs";
+  return `import userApp, * as serverEntry from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRealtimeHonoUpgradeHandler, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, executeRealtime, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, hasRealtime, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
+const realtimeWebSocket = typeof serverEntry.realtimeWebSocket === "function"
+  ? serverEntry.realtimeWebSocket(app)
+  : serverEntry.realtimeWebSocket;
 const actions = {
 ${actionTable}
 };
 const loaders = {
 ${loaderTable}
+};
+const realtimes = {
+${realtimeTable}
 };
 const routes = ${serializedRoutes};
 const routeServerAccessEntries = ${serializedRouteServerAccessEntries};
@@ -1551,6 +1569,33 @@ app.get("/__eclipsa/loader/:id", async (c) =>
   }),
 );
 
+if (realtimeWebSocket?.upgradeWebSocket) {
+  app.get(
+    "/__eclipsa/realtime/:id",
+    async (c, next) => {
+      const id = c.req.param("id");
+      if (!id) {
+        return c.text("Not Found", 404);
+      }
+      const moduleUrl = realtimes[id];
+      if (!moduleUrl) {
+        return c.text("Not Found", 404);
+      }
+      if (!hasRealtime(id)) {
+        await import(moduleUrl);
+      }
+      await next();
+    },
+    createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
+      await resolveRequest(c, async (requestContext) => {
+        const id = requestContext.req.param("id");
+        await executeRealtime(id, requestContext, socket);
+        return requestContext.body(null, 204);
+      });
+    }),
+  );
+}
+
 app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) =>
   resolveRequest(c, async (requestContext) => {
     const href = requestContext.req.query("href");
@@ -1694,11 +1739,15 @@ app.all("*", async (c) =>
 );
 
 export const pageRoutePatterns = [...new Set(pageRouteEntries.map((entry) => entry.path))];
+export const injectRealtimeWebSocket = (server) => {
+  realtimeWebSocket?.injectWebSocket?.(server);
+};
 export default app;
 `
 }
 
-const renderNodeServer = () => `import app from "../ssr/eclipsa_app.mjs";
+const renderNodeServer =
+  () => `import app, { injectRealtimeWebSocket } from "../ssr/eclipsa_app.mjs";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -1778,7 +1827,7 @@ const serveStatic = async (pathname) => {
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const staticResponse = await serveStatic(url.pathname);
   if (staticResponse) {
@@ -1788,7 +1837,11 @@ createServer(async (req, res) => {
 
   const response = await app.fetch(toRequest(req));
   await sendResponse(response, res);
-}).listen(port, () => {
+});
+
+injectRealtimeWebSocket(server);
+
+server.listen(port, () => {
   console.log("Eclipsa server listening on http://localhost:" + port);
 });
 `
@@ -1803,6 +1856,7 @@ export const build = async (
   const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
   const actions = await collectAppActions(root)
   const loaders = await collectAppLoaders(root)
+  const realtimes = await collectAppRealtimes(root)
   const routes = await createRoutes(root)
   const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
   const staticPageRoutes = routes.filter(
@@ -1857,6 +1911,7 @@ export const build = async (
       appHooksClientUrl,
       appHooksServerUrl,
       loaders,
+      realtimes,
       routes,
       routeServerAccessEntries,
       routeManifest,

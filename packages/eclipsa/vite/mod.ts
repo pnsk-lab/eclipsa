@@ -272,9 +272,15 @@ const eclipsaCore = (state: EclipsaPluginState, options: EclipsaPluginOptions = 
         runner,
         ssrEnv,
       })
+      void devApp.installWebSocket().catch((error) => {
+        console.error(error)
+      })
       const invalidateDevApp = (filePath: string, event: 'add' | 'change' | 'unlink') => {
         if (shouldInvalidateDevApp(config.root, filePath, event)) {
           devApp.invalidate()
+          void devApp.installWebSocket().catch((error) => {
+            console.error(error)
+          })
         }
         if (shouldForceFullReloadForWatcherEvent(filePath, event)) {
           server.ws.send({

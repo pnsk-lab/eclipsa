@@ -44,6 +44,11 @@ export {
   primeLoaderState,
   resolvePendingLoaders,
 } from '../../core/loader.ts'
+export {
+  createRealtimeHonoUpgradeHandler,
+  executeRealtime,
+  hasRealtime,
+} from '../../core/realtime.ts'
 export { composeRouteMetadata, renderRouteMetadataHead } from '../../core/metadata.ts'
 export { deserializeValue } from '../../core/serialize.ts'
 export { escapeInlineScriptText, escapeJSONScriptText } from '../../core/serialize.ts'
