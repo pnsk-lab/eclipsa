@@ -148,9 +148,39 @@ Values written with `c.set()` in middleware are available as `connection.c.var` 
 
 ## Host integration
 
-`realtime()` compiles and registers server handlers the same way `action()` and `loader()` do. The core server entry point is `executeRealtime(id, c, socket, input?)`, which accepts a WebSocket-like socket adapter.
+`realtime()` compiles and registers server handlers the same way `action()` and `loader()` do.
 
-Use the generated hook on the client. Host integrations that support WebSocket upgrade should route `__eclipsa/realtime/:id` upgrades to `executeRealtime()`.
+Eclipsa does not choose a WebSocket runtime for you. Configure the Hono-compatible WebSocket adapter exported by your runtime in `app/+server-entry.ts`:
+
+```ts
+import { Hono } from 'hono'
+import { upgradeWebSocket, websocket } from 'hono/bun'
+import { defineRealtimeWebSocketAdapter } from 'eclipsa'
+
+const app = new Hono()
+
+export const realtimeWebSocket = defineRealtimeWebSocketAdapter({
+  upgradeWebSocket,
+})
+
+export { websocket }
+export default app
+```
+
+Eclipsa reads the `realtimeWebSocket` export and mounts `GET /__eclipsa/realtime/:id` with the supplied `upgradeWebSocket` handler.
+
+The adapter must follow Hono's WebSocket helper shape:
+
+```ts
+upgradeWebSocket((c) => ({
+  onOpen(_event, ws) {},
+  onMessage(event, ws) {},
+  onClose(event, ws) {},
+  onError(event, ws) {},
+}))
+```
+
+Use the adapter import for your runtime, such as `hono/bun`, `hono/deno`, `hono/cloudflare-workers`, or `@hono/node-ws`.
 
 ## What realtime messages should contain
 

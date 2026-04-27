@@ -66,8 +66,10 @@ const writeMinimalRuntimeEntry = async (
     applyActionCsrfCookieSource?: string
     attachRequestFetchSource?: string
     createRequestFetchSource?: string
+    createRealtimeHonoUpgradeHandlerSource?: string
     executeActionSource?: string
     executeLoaderSource?: string
+    executeRealtimeSource?: string
     escapeInlineScriptTextSource?: string
     escapeJSONScriptTextSource?: string
     ensureActionCsrfTokenSource?: string
@@ -76,6 +78,7 @@ const writeMinimalRuntimeEntry = async (
     getNormalizedActionInputSource?: string
     hasActionSource?: string
     hasLoaderSource?: string
+    hasRealtimeSource?: string
     jsxDEVSource?: string
     renderSSRAsyncSource?: string
     renderSSRStreamSource?: string
@@ -92,10 +95,13 @@ const writeMinimalRuntimeEntry = async (
         'export const applyActionCsrfCookie = (response) => response;',
       options?.attachRequestFetchSource ?? 'export const attachRequestFetch = () => undefined;',
       options?.createRequestFetchSource ?? 'export const createRequestFetch = () => undefined;',
+      options?.createRealtimeHonoUpgradeHandlerSource ??
+        'export const createRealtimeHonoUpgradeHandler = () => () => new Response(null, { status: 404 });',
       options?.executeActionSource ??
         'export const executeAction = async () => new Response(null, { status: 204 });',
       options?.executeLoaderSource ??
         'export const executeLoader = async () => new Response(null, { status: 204 });',
+      options?.executeRealtimeSource ?? 'export const executeRealtime = async () => undefined;',
       options?.escapeInlineScriptTextSource ??
         'export const escapeInlineScriptText = (value) => value;',
       options?.escapeJSONScriptTextSource ??
@@ -105,6 +111,7 @@ const writeMinimalRuntimeEntry = async (
         'export const injectMissingActionCsrfInputs = (html) => html;',
       options?.hasActionSource ?? 'export const hasAction = () => false;',
       options?.hasLoaderSource ?? 'export const hasLoader = () => false;',
+      options?.hasRealtimeSource ?? 'export const hasRealtime = () => false;',
       options?.jsxDEVSource ?? 'export const jsxDEV = () => ({});',
       options?.renderSSRAsyncSource ??
         'export const renderSSRAsync = async () => ({ html: "<html><head></head><body></body></html>", payload: {} });',
@@ -247,6 +254,25 @@ describe('build', () => {
       'const pageRouteEntries = [{"path":"/","routeIndex":0}];',
     )
     expect(mocks.toSSG).not.toHaveBeenCalled()
+  })
+
+  it('emits a realtime websocket route when server-entry exports an adapter', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-realtime-ws-'))
+    const builder = createBuilder()
+    mocks.collectAppRealtimes.mockResolvedValue([
+      {
+        filePath: path.join(root, 'app/room.ts'),
+        id: 'room',
+      },
+    ])
+
+    await build(builder, { root }, { output: 'node' })
+
+    const appSource = await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')
+    expect(appSource).toContain('const realtimeWebSocket = serverEntry.realtimeWebSocket;')
+    expect(appSource).toContain('"/__eclipsa/realtime/:id"')
+    expect(appSource).toContain('createRealtimeHonoUpgradeHandler')
+    expect(appSource).toContain('await executeRealtime(id, requestContext, socket);')
   })
 
   it('renders the built SSR root through jsxDEV instead of calling the component directly', async () => {

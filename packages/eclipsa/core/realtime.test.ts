@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AppContext } from './hooks.ts'
 import {
   __eclipsaRealtime,
+  createRealtimeHonoUpgradeHandler,
   executeRealtime,
   registerRealtime,
   type RealtimeConnection,
+  type RealtimeHonoWebSocketEvents,
   type RealtimeSocketLike,
 } from './realtime.ts'
 import type { RuntimeContainer } from './runtime.ts'
@@ -117,6 +119,71 @@ describe('realtime runtime', () => {
 
     expect(received).toEqual([{ text: 'hello' }])
     expect(JSON.parse(socket.sent[1] ?? '')).toMatchObject({ type: 'message' })
+  })
+
+  it('adapts Hono WebSocket event handlers into realtime sockets', async () => {
+    const app = new Hono()
+    let events: RealtimeHonoWebSocketEvents | null = null
+    const ws = {
+      close: vi.fn(),
+      sent: [] as string[],
+      send(data: string) {
+        this.sent.push(data)
+      },
+    }
+
+    registerRealtime(
+      'hono-room',
+      [],
+      async (
+        connection: RealtimeConnection<{ room: string }, { text: string }, { text: string }>,
+      ) => {
+        connection.send({ text: `joined ${connection.input.room}` })
+        connection.onMessage((message) => {
+          connection.send(message)
+        })
+      },
+    )
+
+    app.get(
+      '/realtime/:id',
+      createRealtimeHonoUpgradeHandler(
+        (createEvents) => (c) => {
+          events = createEvents(c)
+          return c.text('upgraded')
+        },
+        async (c, socket) => {
+          await executeRealtime(c.req.param('id'), c as unknown as AppContext, socket, {
+            room: 'main',
+          })
+        },
+      ),
+    )
+
+    const response = await app.request('http://localhost/realtime/hono-room')
+    expect(response.status).toBe(200)
+    expect(events).toBeTruthy()
+
+    await Promise.resolve()
+    expect(ws.sent).toEqual([])
+
+    await events!.onOpen?.(new Event('open'), ws)
+    expect(JSON.parse(ws.sent[0] ?? '')).toMatchObject({ type: 'message' })
+
+    await events!.onMessage?.(
+      {
+        data: JSON.stringify({
+          type: 'message',
+          value: {
+            __eclipsa_type: 'object',
+            entries: [['text', 'hello']],
+          },
+        }),
+      },
+      ws,
+    )
+    await Promise.resolve()
+    expect(JSON.parse(ws.sent[1] ?? '')).toMatchObject({ type: 'message' })
   })
 
   it('connects client handles with WebSocket transport and records messages', () => {

@@ -617,11 +617,12 @@ const renderAppModule = (
   const serializedStylesheetUrls = JSON.stringify(stylesheetUrls)
   const serializedChunkCacheUrls = JSON.stringify(chunkCacheUrls)
 
-  return `import userApp from "./entries/server_entry.mjs";
+  return `import userApp, * as serverEntry from "./entries/server_entry.mjs";
 import SSRRoot from "./entries/ssr_root.mjs";
-import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
+import { ACTION_CONTENT_TYPE, APP_HOOKS_ELEMENT_ID, Fragment, RESUME_FINAL_STATE_ELEMENT_ID, applyActionCsrfCookie, attachRequestFetch, composeRouteMetadata, createRealtimeHonoUpgradeHandler, createRequestFetch, deserializePublicValue, ensureActionCsrfToken, escapeInlineScriptText, escapeJSONScriptText, executeAction, executeLoader, executeRealtime, getActionFormSubmissionId, getNormalizedActionInput, getStreamingResumeBootstrapScriptContent, hasAction, hasLoader, hasRealtime, injectMissingActionCsrfInputs, jsxDEV, markPublicError, primeActionState, primeLocationState, renderRouteMetadataHead, renderSSRAsync, renderSSRStream, resolvePendingLoaders, resolveReroute, runHandleError, serializeResumePayload, withServerRequestContext } from "./entries/eclipsa_runtime.mjs";
 
 const app = userApp;
+const realtimeWebSocket = serverEntry.realtimeWebSocket;
 const actions = {
 ${actionTable}
 };
@@ -1551,6 +1552,33 @@ app.get("/__eclipsa/loader/:id", async (c) =>
     );
   }),
 );
+
+if (realtimeWebSocket?.upgradeWebSocket) {
+  app.get(
+    "/__eclipsa/realtime/:id",
+    async (c, next) => {
+      const id = c.req.param("id");
+      if (!id) {
+        return c.text("Not Found", 404);
+      }
+      const moduleUrl = realtimes[id];
+      if (!moduleUrl) {
+        return c.text("Not Found", 404);
+      }
+      if (!hasRealtime(id)) {
+        await import(moduleUrl);
+      }
+      await next();
+    },
+    createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
+      await resolveRequest(c, async (requestContext) => {
+        const id = requestContext.req.param("id");
+        await executeRealtime(id, requestContext, socket);
+        return requestContext.body(null, 204);
+      });
+    }),
+  );
+}
 
 app.get(${JSON.stringify(ROUTE_PREFLIGHT_ENDPOINT)}, async (c) =>
   resolveRequest(c, async (requestContext) => {

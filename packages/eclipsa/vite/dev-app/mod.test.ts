@@ -9,6 +9,7 @@ import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
 var createRoutes = vi.fn<() => Promise<RouteEntry[]>>()
 var collectAppActions = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
 var collectAppLoaders = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
+var collectAppRealtimes = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
 var collectAppSymbols = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
 var createDevSymbolUrl = vi.fn<(root: string, filePath: string, symbolId: string) => string>()
 
@@ -56,6 +57,7 @@ describe('createDevFetch', () => {
     createRoutes.mockImplementation(async () => routes)
     collectAppActions.mockResolvedValue([])
     collectAppLoaders.mockResolvedValue([])
+    collectAppRealtimes.mockResolvedValue([])
     collectAppSymbols.mockResolvedValue([])
     createDevSymbolUrl.mockReturnValue('/symbol.js')
   })
@@ -69,6 +71,7 @@ describe('createDevFetch', () => {
       deps: {
         collectAppActions,
         collectAppLoaders,
+        collectAppRealtimes,
         collectAppSymbols,
         createDevModuleUrl,
         createDevSymbolUrl,
@@ -149,6 +152,79 @@ describe('createDevFetch', () => {
     expect(serverEntryImports).toBe(2)
     expect(createRoutes).toHaveBeenCalledTimes(2)
     expect(collectAppSymbols).toHaveBeenCalledTimes(2)
+  })
+
+  it('mounts configured Hono-compatible realtime websocket adapters', async () => {
+    let events: {
+      onMessage?: (
+        event: { data: unknown },
+        ws: { close(): void; send(data: string): void },
+      ) => void
+      onOpen?: (event: unknown, ws: { close(): void; send(data: string): void }) => void
+    } | null = null
+    const hasRealtime = vi.fn(() => false)
+    const executeRealtime = vi.fn()
+    const moduleImports: string[] = []
+    const upgradeWebSocket = vi.fn((createEvents: (c: any) => NonNullable<typeof events>) => {
+      return (c: any) => {
+        events = createEvents(c)
+        return c.text('upgraded')
+      }
+    })
+    collectAppRealtimes.mockResolvedValue([{ filePath: '/tmp/app/room.ts', id: 'room' }])
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root: '/tmp',
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppRealtimes,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return {
+              default: userApp,
+              realtimeWebSocket: {
+                upgradeWebSocket,
+              },
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              executeRealtime,
+              hasRealtime,
+            }
+          }
+          moduleImports.push(id)
+          return {}
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(new Request('http://localhost/__eclipsa/realtime/room'))
+
+    expect(response?.status).toBe(200)
+    expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
+    expect(moduleImports).toContain('/tmp/app/room.ts')
+    await Promise.resolve()
+    expect(executeRealtime).toHaveBeenCalledWith(
+      'room',
+      expect.anything(),
+      expect.objectContaining({
+        close: expect.any(Function),
+        send: expect.any(Function),
+      }),
+    )
+    expect(events?.onOpen).toEqual(expect.any(Function))
   })
 
   it('renders ancestor layouts around the page component', async () => {

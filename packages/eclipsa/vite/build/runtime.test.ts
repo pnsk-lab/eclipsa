@@ -7,6 +7,7 @@ describe('vite build runtime exports', () => {
       ACTION_CONTENT_TYPE: expect.any(String),
       Fragment: expect.anything(),
       composeRouteMetadata: expect.any(Function),
+      createRealtimeHonoUpgradeHandler: expect.any(Function),
       deserializeValue: expect.any(Function),
       escapeInlineScriptText: expect.any(Function),
       escapeJSONScriptText: expect.any(Function),

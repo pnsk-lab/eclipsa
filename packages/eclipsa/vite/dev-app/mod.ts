@@ -49,17 +49,23 @@ import * as path from 'node:path'
 import {
   collectAppActions,
   collectAppLoaders,
+  collectAppRealtimes,
   collectAppSymbols,
   collectReachableAnalyzableFiles,
   createDevSymbolUrl,
   primeCompilerCache,
 } from '../compiler.ts'
+import {
+  createRealtimeHonoUpgradeHandler,
+  type RealtimeWebSocketAdapter,
+} from '../../core/realtime.ts'
 
 const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
 const ROUTE_ERROR_PROP = '__eclipsa_route_error'
 interface DevAppDeps {
   collectAppActions(root: string): Promise<{ id: string; filePath: string }[]>
   collectAppLoaders(root: string): Promise<{ id: string; filePath: string }[]>
+  collectAppRealtimes?: (root: string) => Promise<{ id: string; filePath: string }[]>
   collectAppSymbols(root: string): Promise<{ id: string; filePath: string }[]>
   createDevModuleUrl(root: string, entry: { filePath: string }): string
   createDevSymbolUrl(root: string, filePath: string, symbolId: string): string
@@ -481,20 +487,27 @@ const createDevApp = async (init: DevAppInit) => {
   const deps = init.deps ?? {
     collectAppActions,
     collectAppLoaders,
+    collectAppRealtimes,
     collectAppSymbols,
     createDevModuleUrl,
     createDevSymbolUrl,
     createRoutes,
   }
-  const { default: userApp } = await init.runner.import('/app/+server-entry.ts')
+  const serverEntry = (await init.runner.import('/app/+server-entry.ts')) as {
+    default: Hono
+    realtimeWebSocket?: RealtimeWebSocketAdapter
+  }
+  const userApp = serverEntry.default
   const app = new Hono()
   app.route('/', userApp)
   const actions = await deps.collectAppActions(init.resolvedConfig.root)
   const loaders = await deps.collectAppLoaders(init.resolvedConfig.root)
+  const realtimes = await (deps.collectAppRealtimes?.(init.resolvedConfig.root) ?? [])
   const routes = await deps.createRoutes(init.resolvedConfig.root)
   const allSymbols = await deps.collectAppSymbols(init.resolvedConfig.root)
   const actionModules = new Map(actions.map((action) => [action.id, action.filePath]))
   const loaderModules = new Map(loaders.map((loader) => [loader.id, loader.filePath]))
+  const realtimeModules = new Map(realtimes.map((realtime) => [realtime.id, realtime.filePath]))
   const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
   const routeServerAccessByRoute = new Map(
     routeServerAccessEntries.map((entry) => [entry.route, entry] as const),
@@ -1165,6 +1178,38 @@ const createDevApp = async (init: DevAppInit) => {
       ) as Promise<Response>
     }),
   )
+
+  if (serverEntry.realtimeWebSocket?.upgradeWebSocket) {
+    app.get(
+      '/__eclipsa/realtime/:id',
+      async (c, next) => {
+        const id = c.req.param('id')
+        if (!id) {
+          return c.text('Not Found', 404)
+        }
+        const modulePath = realtimeModules.get(id)
+        if (!modulePath) {
+          return c.text('Not Found', 404)
+        }
+        const { hasRealtime } = await init.runner.import('eclipsa')
+        if (!hasRealtime(id)) {
+          await init.runner.import(modulePath)
+        }
+        await next()
+      },
+      createRealtimeHonoUpgradeHandler(
+        serverEntry.realtimeWebSocket.upgradeWebSocket,
+        async (c, socket) => {
+          await resolveRequest(c, async (requestContext) => {
+            const { executeRealtime } = await init.runner.import('eclipsa')
+            const id = requestContext.req.param('id')
+            await executeRealtime(id, requestContext, socket)
+            return requestContext.body(null, 204)
+          })
+        },
+      ),
+    )
+  }
 
   app.get(ROUTE_PREFLIGHT_ENDPOINT, async (c) =>
     resolveRequest(c, async (requestContext) => {

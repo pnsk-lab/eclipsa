@@ -1,8 +1,10 @@
 import {
+  defineRealtimeWebSocketAdapter,
   realtime,
   type RealtimeConnection,
   type RealtimeHandle,
   type RealtimeMiddleware,
+  type RealtimeWebSocketAdapter,
 } from './realtime.ts'
 
 type Equal<Left, Right> =
@@ -114,4 +116,21 @@ type _GenericMiddlewareHandle = Expect<
     GenericRoomWithMiddlewareHandle,
     RealtimeHandle<{ roomId: string }, { text: string }, { text: string; traceId: string }>
   >
+>
+
+const realtimeWebSocket = defineRealtimeWebSocketAdapter({
+  upgradeWebSocket(createEvents) {
+    return async (c) => {
+      const events = createEvents(c)
+      events.onOpen?.(new Event('open'), {
+        close() {},
+        send(_data: string) {},
+      })
+      return c.text('ok')
+    }
+  },
+})
+
+type _RealtimeWebSocket = Expect<
+  typeof realtimeWebSocket extends RealtimeWebSocketAdapter ? true : false
 >

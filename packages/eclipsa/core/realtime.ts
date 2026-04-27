@@ -1,3 +1,4 @@
+import type { Context } from 'hono'
 import type { Env, MiddlewareHandler, Next } from 'hono/types'
 import {
   type AppContext,
@@ -197,6 +198,46 @@ export interface RealtimeSocketLike {
   send: (data: string) => void
 }
 
+export interface RealtimeHonoWebSocketLike {
+  close: (code?: number, reason?: string) => void
+  send: (data: string) => void
+}
+
+export interface RealtimeHonoWebSocketMessageEvent {
+  data: unknown
+}
+
+export interface RealtimeHonoWebSocketCloseEvent {
+  code?: number
+  reason?: string
+  wasClean?: boolean
+}
+
+export interface RealtimeHonoWebSocketEvents {
+  onClose?: (
+    event: RealtimeHonoWebSocketCloseEvent,
+    ws: RealtimeHonoWebSocketLike,
+  ) => void | Promise<void>
+  onError?: (event: unknown, ws: RealtimeHonoWebSocketLike) => void | Promise<void>
+  onMessage?: (
+    event: RealtimeHonoWebSocketMessageEvent,
+    ws: RealtimeHonoWebSocketLike,
+  ) => void | Promise<void>
+  onOpen?: (event: unknown, ws: RealtimeHonoWebSocketLike) => void | Promise<void>
+}
+
+export type RealtimeHonoUpgradeWebSocket = (
+  createEvents: (c: Context) => RealtimeHonoWebSocketEvents,
+) => MiddlewareHandler
+
+export interface RealtimeWebSocketAdapter {
+  upgradeWebSocket: RealtimeHonoUpgradeWebSocket
+}
+
+export const defineRealtimeWebSocketAdapter = <Adapter extends RealtimeWebSocketAdapter>(
+  adapter: Adapter,
+) => adapter
+
 interface RegisteredRealtime {
   handler: RealtimeHandler<any, any, any, any>
   id: string
@@ -293,6 +334,94 @@ const addSocketListener = (
     listener(event)
   }) as never
 }
+
+const createHonoRealtimeSocket = (): RealtimeSocketLike & {
+  bind(ws: RealtimeHonoWebSocketLike): void
+  dispatch(type: 'close' | 'error' | 'message', event: any): void
+} => {
+  const listeners = new Map<string, Set<(event: any) => void>>()
+  const queuedMessages: string[] = []
+  let socket: RealtimeHonoWebSocketLike | null = null
+  let pendingClose: [code?: number, reason?: string] | null = null
+  const adapter = {
+    addEventListener(type: string, listener: (event: any) => void) {
+      const existing = listeners.get(type) ?? new Set()
+      existing.add(listener)
+      listeners.set(type, existing)
+    },
+    bind(ws: RealtimeHonoWebSocketLike) {
+      if (socket === ws) {
+        return
+      }
+      socket = ws
+      while (queuedMessages.length > 0) {
+        ws.send(queuedMessages.shift()!)
+      }
+      if (pendingClose) {
+        const [code, reason] = pendingClose
+        pendingClose = null
+        ws.close(code, reason)
+      }
+    },
+    close(code?: number, reason?: string) {
+      if (!socket) {
+        pendingClose = [code, reason]
+        return
+      }
+      socket.close(code, reason)
+    },
+    dispatch(type: 'close' | 'error' | 'message', event: any) {
+      for (const listener of listeners.get(type) ?? []) {
+        listener(event)
+      }
+    },
+    send(data: string) {
+      if (!socket) {
+        queuedMessages.push(data)
+        return
+      }
+      socket.send(data)
+    },
+  }
+  return adapter
+}
+
+export const createRealtimeHonoUpgradeHandler = (
+  upgradeWebSocket: RealtimeHonoUpgradeWebSocket,
+  connect: (c: AppContext<any>, socket: RealtimeSocketLike) => void | Promise<void>,
+): MiddlewareHandler =>
+  upgradeWebSocket((c) => {
+    const socket = createHonoRealtimeSocket()
+    let started = false
+    const start = () => {
+      if (started) {
+        return
+      }
+      started = true
+      void Promise.resolve(connect(c as unknown as AppContext<any>, socket)).catch((error) => {
+        socket.dispatch('error', error)
+        socket.close(1011, 'Realtime handler failed')
+      })
+    }
+    start()
+    return {
+      onClose(event, ws) {
+        socket.bind(ws)
+        socket.dispatch('close', event)
+      },
+      onError(event, ws) {
+        socket.bind(ws)
+        socket.dispatch('error', event)
+      },
+      onMessage(event, ws) {
+        socket.bind(ws)
+        socket.dispatch('message', event)
+      },
+      onOpen(_event, ws) {
+        socket.bind(ws)
+      },
+    }
+  })
 
 const readRealtimeInput = (c: AppContext<any>, input?: unknown) => {
   if (input !== undefined) {
