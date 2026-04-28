@@ -9965,6 +9965,64 @@ const rewriteSerializedSymbolReferenceToken = (
   }
 }
 
+const rewriteLoadedRouteModuleSymbol = (
+  module: LoadedRouteModule,
+  affectedIds: ReadonlySet<string>,
+  nextSymbolId: string,
+) => {
+  if (module.symbol && affectedIds.has(module.symbol)) {
+    module.symbol = nextSymbolId
+  }
+}
+
+const rewriteLoadedRouteSymbols = (
+  route: LoadedRoute,
+  affectedIds: ReadonlySet<string>,
+  nextSymbolId: string,
+) => {
+  rewriteLoadedRouteModuleSymbol(route.page, affectedIds, nextSymbolId)
+  for (const layout of route.layouts) {
+    rewriteLoadedRouteModuleSymbol(layout, affectedIds, nextSymbolId)
+  }
+}
+
+const clearLiveClientEventBindingModuleForSymbols = (
+  binding: LiveClientEventBinding,
+  affectedIds: ReadonlySet<string>,
+) => {
+  const symbolId =
+    binding.symbol ??
+    (binding.handler && typeof binding.handler === 'object' ? binding.handler.symbol : null)
+  if (symbolId && affectedIds.has(symbolId)) {
+    binding.module = undefined
+  }
+}
+
+const clearLiveClientEventBindingModulesForSymbols = (
+  container: RuntimeContainer,
+  affectedIds: ReadonlySet<string>,
+) => {
+  const root = (container.rootElement ?? container.doc?.body) as Node | undefined
+  if (!root) {
+    return
+  }
+
+  const visit = (node: Node) => {
+    if (isElementNode(node)) {
+      const bindings = getLiveClientEventBindings(node)
+      if (bindings instanceof Map) {
+        for (const binding of bindings.values()) {
+          clearLiveClientEventBindingModuleForSymbols(binding, affectedIds)
+        }
+      } else if (bindings) {
+        clearLiveClientEventBindingModuleForSymbols(bindings, affectedIds)
+      }
+    }
+    visitChildNodes(node, visit)
+  }
+  visit(root)
+}
+
 export const applyResumeHmrSymbolReplacements = (
   container: RuntimeContainer,
   replacements: Record<string, string>,
@@ -9986,6 +10044,7 @@ export const applyResumeHmrSymbolReplacements = (
       setRuntimeSymbolUrl(affectedId, url)
     }
     invalidateRuntimeSymbolCaches(container, affectedIds)
+    clearLiveClientEventBindingModulesForSymbols(container, affectedIds)
 
     const nextSymbolId = parseSymbolIdFromUrl(url)
     if (!nextSymbolId) {
@@ -10014,6 +10073,13 @@ export const applyResumeHmrSymbolReplacements = (
       for (const slot of slots) {
         rewriteSerializedSymbolReferenceToken(slot, affectedIds, nextSymbolId)
       }
+    }
+
+    if (container.router?.currentRoute) {
+      rewriteLoadedRouteSymbols(container.router.currentRoute, affectedIds, nextSymbolId)
+    }
+    for (const route of container.router?.loadedRoutes.values() ?? []) {
+      rewriteLoadedRouteSymbols(route, affectedIds, nextSymbolId)
     }
 
     container.symbols.set(nextSymbolId, url)
@@ -10079,6 +10145,13 @@ export const applyResumeHmrUpdateToRegisteredContainers = async (
   const routeRefreshBustToken = Date.now()
   let handled = false
   for (const container of getResumeContainers()) {
+    if (!payload.fullReload) {
+      const result = await applyResumeHmrUpdate(container, payload)
+      if (result === 'updated') {
+        handled = true
+        continue
+      }
+    }
     const refreshed = await refreshRouteContainerForHmr(
       container,
       payload.fileUrl,
@@ -10087,10 +10160,6 @@ export const applyResumeHmrUpdateToRegisteredContainers = async (
     if (refreshed) {
       handled = true
       continue
-    }
-    const result = await applyResumeHmrUpdate(container, payload)
-    if (result === 'updated') {
-      handled = true
     }
   }
 

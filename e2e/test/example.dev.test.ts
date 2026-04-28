@@ -20,6 +20,9 @@ const contentDescriptionAfterLabel = 'Content description after'
 const homePagePath = path.resolve(testDir, '../app/+page.tsx')
 const homeHmrBeforeLabel = 'Go to counter with navigate()'
 const homeHmrAfterLabel = 'Go to counter with navigate()!'
+const rootLayoutPath = path.resolve(testDir, '../app/+layout.tsx')
+const rootLayoutBeforeLabel = 'Shared layout shell updated'
+const rootLayoutAfterLabel = 'Shared layout shell HMR updated'
 const sidebarShellLayoutPath = path.resolve(testDir, '../app/sidebar-shell/+layout.tsx')
 const sidebarShellBeforeTitle = "title: 'Materials'"
 const sidebarShellAfterTitle = "title: 'Materials HMR'"
@@ -698,6 +701,47 @@ test.describe('example app in dev mode', () => {
         'Materials',
         { timeout: hmrTimeout },
       )
+    }
+  })
+
+  test('keeps the root layout live after layout HMR on a navigated child route', async ({
+    page,
+  }) => {
+    const originalSource = await readFile(rootLayoutPath, 'utf8')
+
+    try {
+      await page.goto('/')
+      await waitForResumedRoute(page)
+
+      await page.getByRole('button', { name: /^Layout count:\s*0$/ }).click()
+      await page.getByRole('button', { name: homeHmrBeforeLabel }).click()
+
+      await expect(page).toHaveURL(/\/counter$/)
+      await expect(page.getByText('Counter page')).toHaveCount(1)
+      await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+
+      const updatedSource = originalSource.replace(rootLayoutBeforeLabel, rootLayoutAfterLabel)
+      expect(updatedSource).not.toBe(originalSource)
+      await writeSourceAtomically(rootLayoutPath, updatedSource)
+
+      await expect(page.getByText(rootLayoutAfterLabel)).toBeVisible({ timeout: hmrTimeout })
+      await expect(page.getByText('Counter page')).toHaveCount(1)
+      await expect(page.getByRole('button', { name: /^Layout count:\s*0$/ })).toBeVisible()
+
+      await page.getByRole('button', { name: /^Layout count:\s*0$/ }).click()
+      await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+
+      await page.getByRole('button', { name: /^Count:\s*0$/ }).click()
+      await expect(page.getByRole('button', { name: /^Count:\s*1$/ })).toBeVisible()
+
+      await page.getByRole('link', { name: 'Back home with Link' }).click()
+      await expect(page).toHaveURL(/\/$/)
+      await expect(page.getByText('Counter page')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
+    } finally {
+      await writeSourceAtomically(rootLayoutPath, originalSource)
+      await page.goto('/')
+      await expect(page.getByText(rootLayoutBeforeLabel)).toBeVisible({ timeout: hmrTimeout })
     }
   })
 

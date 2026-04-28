@@ -141,6 +141,11 @@ const loadAnalyzedModule = async (
   return entry.analyzed
 }
 
+const loadServedAnalyzedModule = async (filePath: string) => {
+  const servedSource = servedSources.get(createAnalyzedCacheKey(filePath))
+  return servedSource ? loadAnalyzedModule(filePath, servedSource) : null
+}
+
 const createAnalyzedEntry = async (
   filePath: string,
   source: string,
@@ -485,6 +490,7 @@ export const loadSymbolModuleForClient = async (id: string) => {
     if (code !== 'ENOENT' && code !== 'ENOTDIR') {
       throw error
     }
+    currentAnalyzed ??= await loadServedAnalyzedModule(parsed.filePath)
     currentAnalyzed ??= await loadAnalyzedModule(parsed.filePath)
   }
   const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)
@@ -515,6 +521,7 @@ export const loadSymbolModuleForSSR = async (id: string) => {
     if (code !== 'ENOENT' && code !== 'ENOTDIR') {
       throw error
     }
+    currentAnalyzed ??= await loadServedAnalyzedModule(parsed.filePath)
     currentAnalyzed ??= await loadAnalyzedModule(parsed.filePath)
   }
   const analyzed = currentAnalyzed.symbols.has(parsed.symbolId)

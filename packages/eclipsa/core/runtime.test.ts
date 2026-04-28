@@ -51,6 +51,7 @@ import { ACTION_FORM_ATTR, CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constant
 import {
   bindPackedRuntimeEvent,
   bindRuntimeEvent,
+  applyResumeHmrSymbolReplacements,
   createFixedSignalEffect,
   createResumeContainer,
   createDelegatedEvent,
@@ -3628,6 +3629,65 @@ describe('renderClientInsertable', () => {
       const imported = container.imports.get('warm-packed-click-symbol')
       expect(imported).toBeTruthy()
       await imported
+    })
+  })
+
+  it('reloads warmed packed event handlers after HMR symbol replacement', async () => {
+    await withFakeNodeGlobal(async () => {
+      class TargetedClickEvent extends Event {
+        constructor(private readonly eventTarget: EventTarget | null) {
+          super('click')
+        }
+
+        override get target() {
+          return this.eventTarget
+        }
+      }
+
+      const globalRecord = globalThis as typeof globalThis & {
+        __eclipsaHmrEventCalls?: string[]
+      }
+      const previousCalls = globalRecord.__eclipsaHmrEventCalls
+      globalRecord.__eclipsaHmrEventCalls = []
+      const oldUrl =
+        'data:text/javascript,export default () => globalThis.__eclipsaHmrEventCalls.push("old")'
+      const newUrl =
+        'data:text/javascript,export default () => globalThis.__eclipsaHmrEventCalls.push("new")'
+
+      try {
+        const container = createContainer()
+        const doc = container.doc as unknown as FakeDocument
+        const button = doc.createElement('button') as unknown as Element
+        ;(doc.body as unknown as FakeElement).appendChild(button as unknown as FakeNode)
+        container.symbols.set('hmr-packed-click-symbol', oldUrl)
+
+        withRuntimeContainer(container, () => {
+          bindPackedRuntimeEvent(container, button, 'click', 'hmr-packed-click-symbol', 0)
+        })
+        await container.imports.get('hmr-packed-click-symbol')
+
+        await dispatchDocumentEvent(
+          container,
+          new TargetedClickEvent(button as unknown as EventTarget),
+        )
+
+        applyResumeHmrSymbolReplacements(container, {
+          'hmr-packed-click-symbol': newUrl,
+        })
+
+        await dispatchDocumentEvent(
+          container,
+          new TargetedClickEvent(button as unknown as EventTarget),
+        )
+
+        expect(globalRecord.__eclipsaHmrEventCalls).toEqual(['old', 'new'])
+      } finally {
+        if (previousCalls) {
+          globalRecord.__eclipsaHmrEventCalls = previousCalls
+        } else {
+          delete globalRecord.__eclipsaHmrEventCalls
+        }
+      }
     })
   })
 
