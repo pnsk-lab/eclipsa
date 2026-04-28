@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
-import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
+import { ROUTE_RPC_URL_HEADER, ROUTE_RPC_URL_QUERY } from '../../core/router-shared.ts'
 
 var createRoutes = vi.fn<() => Promise<RouteEntry[]>>()
 var collectAppActions = vi.fn<() => Promise<{ id: string; filePath: string }[]>>()
@@ -155,6 +155,24 @@ describe('createDevFetch', () => {
   })
 
   it('mounts configured Hono-compatible realtime websocket adapters', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-dev-realtime-'))
+    const pagePath = await writeRouteModule(root, '+page.tsx')
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__page',
+          filePath: pagePath,
+        },
+        routePath: '/',
+        segments: [],
+        server: null,
+      },
+    ]
     let events: {
       onMessage?: (
         event: { data: unknown },
@@ -177,11 +195,11 @@ describe('createDevFetch', () => {
       injectWebSocket,
       upgradeWebSocket,
     }))
-    collectAppRealtimes.mockResolvedValue([{ filePath: '/tmp/app/room.ts', id: 'room' }])
+    collectAppRealtimes.mockResolvedValue([{ filePath: pagePath, id: 'room' }])
 
     const devFetch = createDevFetch({
       resolvedConfig: {
-        root: '/tmp',
+        root,
       } as any,
       devServer: { httpServer } as any,
       deps: {
@@ -215,7 +233,11 @@ describe('createDevFetch', () => {
     })
 
     await devFetch.installWebSocket()
-    const response = await devFetch.fetch(new Request('http://localhost/__eclipsa/realtime/room'))
+    const response = await devFetch.fetch(
+      new Request(
+        `http://localhost/__eclipsa/realtime/room?${ROUTE_RPC_URL_QUERY}=${encodeURIComponent('http://localhost/')}`,
+      ),
+    )
 
     expect(response?.status).toBe(200)
     expect(realtimeWebSocket).toHaveBeenCalledWith(
@@ -223,7 +245,7 @@ describe('createDevFetch', () => {
     )
     expect(injectWebSocket).toHaveBeenCalledWith(httpServer)
     expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
-    expect(moduleImports).toContain('/tmp/app/room.ts')
+    expect(moduleImports).toContain(pagePath)
     await Promise.resolve()
     expect(executeRealtime).toHaveBeenCalledWith(
       'room',
@@ -234,6 +256,190 @@ describe('createDevFetch', () => {
       }),
     )
     expect(events?.onOpen).toEqual(expect.any(Function))
+  })
+
+  it('rejects realtime requests outside the current route graph', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-dev-realtime-graph-'))
+    const securePagePath = await writeRouteModule(root, 'secure/[id]/+page.tsx')
+    const publicPagePath = await writeRouteModule(root, 'public/+page.tsx')
+    const hasRealtime = vi.fn(() => true)
+    const executeRealtime = vi.fn()
+    const upgradeWebSocket = vi.fn((createEvents: (c: any) => any) => (c: any) => {
+      const events = createEvents(c)
+      void events.onOpen?.({}, { close() {}, send() {} })
+      return c.text('upgraded')
+    })
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__secure___id___page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure/[id]',
+        segments: [
+          { kind: 'static', value: 'secure' },
+          { kind: 'required', value: 'id' },
+        ],
+        server: null,
+      },
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [],
+        notFound: null,
+        page: {
+          entryName: 'route__public__page',
+          filePath: publicPagePath,
+        },
+        routePath: '/public',
+        segments: [{ kind: 'static', value: 'public' }],
+        server: null,
+      },
+    ]
+    collectAppRealtimes.mockResolvedValue([{ filePath: securePagePath, id: 'secure-room' }])
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root,
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppRealtimes,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return {
+              default: userApp,
+              realtimeWebSocket: () => ({ upgradeWebSocket }),
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              executeRealtime,
+              hasRealtime,
+            }
+          }
+          return {}
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const allowed = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/realtime/secure-room', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+      }),
+    )
+    expect(allowed?.status).toBe(200)
+
+    const blocked = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/realtime/secure-room', {
+        headers: {
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/public',
+        },
+      }),
+    )
+    expect(blocked).toBeUndefined()
+    expect(executeRealtime).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects realtime upgrades when route middleware short-circuits', async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-dev-realtime-auth-'))
+    const securePagePath = await writeRouteModule(root, 'secure/+page.tsx')
+    const secureMiddlewarePath = await writeRouteModule(
+      root,
+      'secure/+middleware.ts',
+      'export default (c) => c.text("Forbidden", 403);\n',
+    )
+    const executeRealtime = vi.fn()
+    const upgradeHandler = vi.fn((c: any) => c.text('upgraded'))
+    const upgradeWebSocket = vi.fn(() => upgradeHandler)
+    routes = [
+      {
+        error: null,
+        layouts: [],
+        loading: null,
+        middlewares: [
+          {
+            entryName: 'special__secure__middleware',
+            filePath: secureMiddlewarePath,
+          },
+        ],
+        notFound: null,
+        page: {
+          entryName: 'route__secure__page',
+          filePath: securePagePath,
+        },
+        routePath: '/secure',
+        segments: [{ kind: 'static', value: 'secure' }],
+        server: null,
+      },
+    ]
+    collectAppRealtimes.mockResolvedValue([{ filePath: securePagePath, id: 'secure-room' }])
+
+    const devFetch = createDevFetch({
+      resolvedConfig: {
+        root,
+      } as any,
+      devServer: {} as any,
+      deps: {
+        collectAppActions,
+        collectAppLoaders,
+        collectAppRealtimes,
+        collectAppSymbols,
+        createDevModuleUrl,
+        createDevSymbolUrl,
+        createRoutes,
+      },
+      runner: {
+        async import(id: string) {
+          if (id === '/app/+server-entry.ts') {
+            return {
+              default: userApp,
+              realtimeWebSocket: () => ({ upgradeWebSocket }),
+            }
+          }
+          if (id === secureMiddlewarePath) {
+            return {
+              default: (c: any) => c.text('Forbidden', 403),
+            }
+          }
+          if (id === 'eclipsa') {
+            return {
+              executeRealtime,
+              hasRealtime: () => true,
+            }
+          }
+          return {}
+        },
+      } as any,
+      ssrEnv: {} as any,
+    })
+
+    const response = await devFetch.fetch(
+      new Request(
+        `http://localhost/__eclipsa/realtime/secure-room?${ROUTE_RPC_URL_QUERY}=${encodeURIComponent('http://localhost/secure')}`,
+      ),
+    )
+
+    expect(response?.status).toBe(403)
+    expect(upgradeHandler).not.toHaveBeenCalled()
+    expect(executeRealtime).not.toHaveBeenCalled()
   })
 
   it('renders ancestor layouts around the page component', async () => {

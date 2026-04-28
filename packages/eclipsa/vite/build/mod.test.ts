@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
-import { ROUTE_RPC_URL_HEADER } from '../../core/router-shared.ts'
+import { ROUTE_RPC_URL_HEADER, ROUTE_RPC_URL_QUERY } from '../../core/router-shared.ts'
 
 const mocks = vi.hoisted(() => ({
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
@@ -273,6 +273,14 @@ describe('build', () => {
     expect(appSource).toContain('export const injectRealtimeWebSocket = (server) => {')
     expect(appSource).toContain('"/__eclipsa/realtime/:id"')
     expect(appSource).toContain('createRealtimeHonoUpgradeHandler')
+    expect(appSource).toContain('const realtimeRouteMatches = new WeakMap();')
+    expect(appSource).toContain(`c.req.query("${ROUTE_RPC_URL_QUERY}")`)
+    expect(appSource).toContain(
+      'const authorizeResponse = await resolveRequest(c, async (requestContext, appHooks) => {',
+    )
+    expect(appSource).toContain('if (!realtimeRouteMatches.has(c.req.raw)) {')
+    expect(appSource).toContain('if (!routeAccess.realtimeIds.includes(id)) {')
+    expect(appSource).toContain('return composeRouteMiddlewares(')
     expect(appSource).toContain('await executeRealtime(id, requestContext, socket);')
   })
 
