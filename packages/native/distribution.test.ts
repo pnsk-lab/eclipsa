@@ -162,4 +162,26 @@ describe('native distribution packaging', () => {
     expect(publishWorkflow).toContain('ECLIPSA_NATIVE_REQUIRE_HOST_ARTIFACTS=1')
     expect(publishWorkflow).toContain('Verify native host bundle metadata')
   })
+
+  it('keeps native host matrix filtering out of the publish workflow job condition', async () => {
+    const publishWorkflow = await readFile(
+      path.join(import.meta.dirname, '../../.github/workflows/publish.yml'),
+      'utf8',
+    )
+    const jobStart = publishWorkflow.indexOf('  build_native_host_artifacts:')
+    const jobEnd = publishWorkflow.indexOf('  publish_eclipsa:', jobStart)
+    const nativeHostJob = publishWorkflow.slice(jobStart, jobEnd)
+    const jobIfLine = nativeHostJob.match(/\n    if: .+/)?.[0] ?? ''
+
+    expect(jobIfLine).not.toContain('matrix.')
+    expect(jobIfLine).toContain("inputs.package == 'native-swiftui'")
+    expect(nativeHostJob).toContain(
+      'settings: ${{ fromJson(needs.prepare.outputs.native_host_matrix) }}',
+    )
+    expect(nativeHostJob).not.toContain('matrix.settings.package == inputs.package')
+    expect(publishWorkflow).toContain('native_host_matrix:')
+    expect(publishWorkflow).toContain('native_host_matrix="$(node -e "')
+    expect(publishWorkflow).toContain("artifact: 'darwin-arm64'")
+    expect(publishWorkflow).toContain("artifact: 'android-universal'")
+  })
 })
