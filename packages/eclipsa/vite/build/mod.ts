@@ -548,9 +548,11 @@ const createRouteServerAccessEntries = async (
   routes: Awaited<ReturnType<typeof createRoutes>>,
   actions: ReadonlyArray<{ filePath: string; id: string }>,
   loaders: ReadonlyArray<{ filePath: string; id: string }>,
+  realtimes: ReadonlyArray<{ filePath: string; id: string }>,
 ) => {
   const actionIdsByFilePath = toIdsByFilePath(actions)
   const loaderIdsByFilePath = toIdsByFilePath(loaders)
+  const realtimeIdsByFilePath = toIdsByFilePath(realtimes)
 
   return await Promise.all(
     routes.map(async (route) => {
@@ -560,6 +562,7 @@ const createRouteServerAccessEntries = async (
       return {
         actionIds: reachableFiles.flatMap((filePath) => actionIdsByFilePath.get(filePath) ?? []),
         loaderIds: reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),
+        realtimeIds: reachableFiles.flatMap((filePath) => realtimeIdsByFilePath.get(filePath) ?? []),
       }
     }),
   )
@@ -606,7 +609,7 @@ const renderAppModule = (
   loaders: Array<{ filePath: string; id: string }>,
   realtimes: Array<{ filePath: string; id: string }>,
   routes: Awaited<ReturnType<typeof createRoutes>>,
-  routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[] }>,
+  routeServerAccessEntries: Array<{ actionIds: string[]; loaderIds: string[]; realtimeIds: string[] }>,
   routeManifest: RouteManifest,
   routeDataEndpoint: boolean,
   serverHooksUrl: string | null,
@@ -666,6 +669,7 @@ const ROUTE_PARAMS_PROP = "__eclipsa_route_params";
 const ROUTE_ERROR_PROP = "__eclipsa_route_error";
 const ROUTE_DATA_REQUEST_HEADER = ${JSON.stringify(ROUTE_DATA_REQUEST_HEADER)};
 const ROUTE_PREFLIGHT_REQUEST_HEADER = "x-eclipsa-route-preflight";
+const realtimeRouteMatches = new WeakMap();
 const CHUNK_CACHE_MESSAGE_TYPE = "eclipsa:chunk-cache-precache";
 const hooksPromise = (async () => {
   const appHooks = appHooksServerUrl ? await import(appHooksServerUrl) : {};
@@ -932,7 +936,7 @@ const reroutePathname = (hooks, request, pathname, baseUrl) =>
 const getRouteServerAccess = (route) => {
   const routeIndex = routes.indexOf(route);
   const entry = routeIndex >= 0 ? routeServerAccessEntries[routeIndex] : null;
-  return entry ?? { actionIds: [], loaderIds: [] };
+  return entry ?? { actionIds: [], loaderIds: [], realtimeIds: [] };
 };
 
 const resolveRouteForCurrentUrl = (hooks, request, currentUrl) => {
@@ -1577,6 +1581,15 @@ if (realtimeWebSocket?.upgradeWebSocket) {
       if (!id) {
         return c.text("Not Found", 404);
       }
+      const { appHooks } = await hooksPromise;
+      const routeMatch = getRpcCurrentRoute(appHooks, c);
+      if (!routeMatch) {
+        return c.text("Bad Request", 400);
+      }
+      const routeAccess = getRouteServerAccess(routeMatch.route);
+      if (!routeAccess.realtimeIds.includes(id)) {
+        return c.text("Not Found", 404);
+      }
       const moduleUrl = realtimes[id];
       if (!moduleUrl) {
         return c.text("Not Found", 404);
@@ -1584,13 +1597,25 @@ if (realtimeWebSocket?.upgradeWebSocket) {
       if (!hasRealtime(id)) {
         await import(moduleUrl);
       }
+      realtimeRouteMatches.set(c.req.raw, routeMatch);
       await next();
     },
     createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
-      await resolveRequest(c, async (requestContext) => {
+      await resolveRequest(c, async (requestContext, appHooks) => {
         const id = requestContext.req.param("id");
-        await executeRealtime(id, requestContext, socket);
-        return requestContext.body(null, 204);
+        const routeMatch = realtimeRouteMatches.get(requestContext.req.raw) ?? getRpcCurrentRoute(appHooks, requestContext);
+        if (!routeMatch) {
+          return requestContext.text("Bad Request", 400);
+        }
+        return composeRouteMiddlewares(
+          routeMatch.route,
+          requestContext,
+          routeMatch.params,
+          async () => {
+            await executeRealtime(id, requestContext, socket);
+            return requestContext.body(null, 204);
+          },
+        );
       });
     }),
   );
@@ -1858,7 +1883,7 @@ export const build = async (
   const loaders = await collectAppLoaders(root)
   const realtimes = await collectAppRealtimes(root)
   const routes = await createRoutes(root)
-  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
+  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders, realtimes)
   const staticPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'static',
   )

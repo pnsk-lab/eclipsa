@@ -273,6 +273,10 @@ describe('build', () => {
     expect(appSource).toContain('export const injectRealtimeWebSocket = (server) => {')
     expect(appSource).toContain('"/__eclipsa/realtime/:id"')
     expect(appSource).toContain('createRealtimeHonoUpgradeHandler')
+    expect(appSource).toContain('const realtimeRouteMatches = new WeakMap();')
+    expect(appSource).toContain('const routeMatch = getRpcCurrentRoute(appHooks, c);')
+    expect(appSource).toContain('if (!routeAccess.realtimeIds.includes(id)) {')
+    expect(appSource).toContain('return composeRouteMiddlewares(')
     expect(appSource).toContain('await executeRealtime(id, requestContext, socket);')
   })
 

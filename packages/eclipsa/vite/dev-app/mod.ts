@@ -160,6 +160,7 @@ interface RouteDataResponse {
 interface RouteServerAccessEntry {
   actionIds: Set<string>
   loaderIds: Set<string>
+  realtimeIds: Set<string>
   route: RouteEntry
 }
 
@@ -246,9 +247,11 @@ const createRouteServerAccessEntries = async (
   routes: readonly RouteEntry[],
   actions: ReadonlyArray<{ filePath: string; id: string }>,
   loaders: ReadonlyArray<{ filePath: string; id: string }>,
+  realtimes: ReadonlyArray<{ filePath: string; id: string }>,
 ) => {
   const actionIdsByFilePath = toIdsByFilePath(actions)
   const loaderIdsByFilePath = toIdsByFilePath(loaders)
+  const realtimeIdsByFilePath = toIdsByFilePath(realtimes)
 
   return await Promise.all(
     routes.map(async (route) => {
@@ -261,6 +264,9 @@ const createRouteServerAccessEntries = async (
         ),
         loaderIds: new Set(
           reachableFiles.flatMap((filePath) => loaderIdsByFilePath.get(filePath) ?? []),
+        ),
+        realtimeIds: new Set(
+          reachableFiles.flatMap((filePath) => realtimeIdsByFilePath.get(filePath) ?? []),
         ),
         route,
       } satisfies RouteServerAccessEntry
@@ -524,7 +530,12 @@ const createDevApp = async (init: DevAppInit) => {
   const actionModules = new Map(actions.map((action) => [action.id, action.filePath]))
   const loaderModules = new Map(loaders.map((loader) => [loader.id, loader.filePath]))
   const realtimeModules = new Map(realtimes.map((realtime) => [realtime.id, realtime.filePath]))
-  const routeServerAccessEntries = await createRouteServerAccessEntries(routes, actions, loaders)
+  const routeServerAccessEntries = await createRouteServerAccessEntries(
+    routes,
+    actions,
+    loaders,
+    realtimes,
+  )
   const routeServerAccessByRoute = new Map(
     routeServerAccessEntries.map((entry) => [entry.route, entry] as const),
   )
@@ -569,6 +580,7 @@ const createDevApp = async (init: DevAppInit) => {
     routeServerAccessByRoute.get(route) ?? {
       actionIds: new Set<string>(),
       loaderIds: new Set<string>(),
+      realtimeIds: new Set<string>(),
       route,
     }
 
@@ -606,6 +618,10 @@ const createDevApp = async (init: DevAppInit) => {
     }
     return resolveRouteForCurrentUrl(requestContext.req.raw, currentUrl)
   }
+  const realtimeRouteMatches = new WeakMap<
+    Request,
+    ReturnType<typeof resolveRouteForCurrentUrl>
+  >()
 
   const resolveRequest = async <E extends Context>(
     c: E,
@@ -1203,6 +1219,14 @@ const createDevApp = async (init: DevAppInit) => {
         if (!id) {
           return c.text('Not Found', 404)
         }
+        const routeMatch = getRpcCurrentRoute(c as unknown as AppContext)
+        if (!routeMatch) {
+          return c.text('Bad Request', 400)
+        }
+        const routeAccess = getRouteServerAccess(routeMatch.route)
+        if (!routeAccess.realtimeIds.has(id)) {
+          return c.text('Not Found', 404)
+        }
         const modulePath = realtimeModules.get(id)
         if (!modulePath) {
           return c.text('Not Found', 404)
@@ -1211,14 +1235,27 @@ const createDevApp = async (init: DevAppInit) => {
         if (!hasRealtime(id)) {
           await init.runner.import(modulePath)
         }
+        realtimeRouteMatches.set(c.req.raw, routeMatch)
         await next()
       },
       createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
         await resolveRequest(c, async (requestContext) => {
           const { executeRealtime } = await init.runner.import('eclipsa')
           const id = requestContext.req.param('id')
-          await executeRealtime(id, requestContext, socket)
-          return requestContext.body(null, 204)
+          const routeMatch =
+            realtimeRouteMatches.get(requestContext.req.raw) ?? getRpcCurrentRoute(requestContext)
+          if (!routeMatch) {
+            return requestContext.text('Bad Request', 400)
+          }
+          return composeRouteMiddlewares(
+            routeMatch.route,
+            requestContext,
+            routeMatch.params,
+            async () => {
+              await executeRealtime(id, requestContext, socket)
+              return requestContext.body(null, 204)
+            },
+          ) as Promise<Response>
         })
       }),
     )
