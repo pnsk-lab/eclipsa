@@ -79,14 +79,15 @@ const preserveCssHotModules = <
   T extends { file?: string; id?: string; type?: string; url?: string },
 >(
   modules: T[],
+) => modules.filter(isCssHotModule)
+
+const isCssHotModule = <T extends { file?: string; id?: string; type?: string; url?: string }>(
+  module: T,
 ) =>
-  modules.filter(
-    (module) =>
-      module.type === 'css' ||
-      isCssRequest(module.id) ||
-      isCssRequest(module.url) ||
-      isCssRequest(module.file),
-  )
+  module.type === 'css' ||
+  isCssRequest(module.id) ||
+  isCssRequest(module.url) ||
+  isCssRequest(module.file)
 
 const mergeUniqueHotModules = <T extends { file?: string; id?: string; url?: string }>(
   modules: T[],
@@ -151,6 +152,15 @@ const hasClientHotModuleForFile = (options: HotUpdateContext) => {
   return false
 }
 
+const selectSourceHotModule = (
+  pluginContext: PluginContextWithEnvironment,
+  options: HotUpdateContext,
+) =>
+  options.modules.find((module) => !isCssHotModule(module)) ??
+  [...(pluginContext.environment.moduleGraph?.getModulesByFile(options.file) ?? [])].find(
+    (module) => !isCssHotModule(module),
+  )
+
 const shouldForceFullReloadForWatcherEvent = (
   filePath: string,
   event: 'add' | 'change' | 'unlink',
@@ -209,9 +219,7 @@ const handleHotUpdate = async (
     return collectCssHotModules(pluginContext, options)
   }
 
-  const module =
-    options.modules[0] ??
-    [...(pluginContext.environment.moduleGraph?.getModulesByFile(options.file) ?? [])][0]
+  const module = selectSourceHotModule(pluginContext, options)
   pluginContext.environment.hot.send('update-client', {
     url: module?.url ?? createHotTargetUrl(config.root, options.file),
   })

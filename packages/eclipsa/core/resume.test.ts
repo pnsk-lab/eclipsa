@@ -298,6 +298,71 @@ describe('resume HMR runtime helpers', () => {
     expect(container.imports.has('next-symbol')).toBe(false)
   })
 
+  it('updates current and cached route component symbols when applying URL replacements', () => {
+    const route = {
+      entry: {
+        error: null,
+        hasMiddleware: false,
+        layouts: ['/app/+layout.tsx'],
+        loading: null,
+        notFound: null,
+        page: '/app/image/+page.tsx',
+        routePath: '/image',
+        segments: [],
+        server: null,
+      },
+      error: undefined,
+      layouts: [
+        {
+          metadata: null,
+          renderer: () => null,
+          symbol: 'old-layout',
+          url: '/app/+layout.tsx',
+        },
+      ],
+      params: {},
+      pathname: '/image',
+      page: {
+        metadata: null,
+        renderer: () => null,
+        symbol: 'old-page',
+        url: '/app/image/+page.tsx',
+      },
+      render: () => null,
+    }
+    const container = createContainer({
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: route,
+        currentUrl: { value: 'http://example.com/image' },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map([['/image::page', route]]),
+        location: undefined as any,
+        manifest: [route.entry],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      },
+      symbols: new Map([
+        ['old-layout', '/app/+layout.tsx?eclipsa-symbol=old-layout'],
+        ['old-page', '/app/image/+page.tsx?eclipsa-symbol=old-page'],
+      ]),
+    })
+
+    applyResumeHmrSymbolReplacements(container, {
+      'old-layout': '/app/+layout.tsx?eclipsa-symbol=next-layout',
+      'old-page': '/app/image/+page.tsx?eclipsa-symbol=next-page',
+    })
+
+    expect(route.layouts[0]?.symbol).toBe('next-layout')
+    expect(route.page.symbol).toBe('next-page')
+    expect(container.router?.currentRoute?.layouts[0]?.symbol).toBe('next-layout')
+    expect(container.router?.loadedRoutes.get('/image::page')?.page.symbol).toBe('next-page')
+  })
+
   it('rerenders the nearest mounted boundary for nested active components', () => {
     const container = createContainer({
       components: new Map([
@@ -919,6 +984,93 @@ describe('resume HMR runtime helpers', () => {
 
       expect(result).toBe('updated')
       expect(replace).toHaveBeenCalledWith('http://example.com/image')
+    } finally {
+      unregister()
+    }
+  })
+
+  it('applies route symbol replacements without refreshing when no boundary rerender is needed', async () => {
+    resetRegisteredResumeContainers()
+    const replace = vi.fn()
+    const oldEventUrl = '/app/image/+page.tsx?eclipsa-symbol=old-click&lang.js'
+    const newEventUrl = '/app/image/+page.tsx?eclipsa-symbol=new-click&lang.js'
+    const container = createContainer({
+      doc: {
+        defaultView: {
+          location: {
+            assign() {},
+            replace,
+          },
+        },
+        location: {
+          hash: '',
+          href: 'http://example.com/image',
+          origin: 'http://example.com',
+          pathname: '/image',
+          search: '',
+        },
+        title: 'Image',
+      } as unknown as Document,
+      rootElement: {
+        firstChild: null,
+      } as unknown as HTMLElement,
+      router: {
+        currentPath: { value: '/image' },
+        currentRoute: {
+          entry: {
+            error: null,
+            hasMiddleware: false,
+            layouts: [],
+            loading: null,
+            notFound: null,
+            page: '/app/image/+page.tsx',
+            routePath: '/image',
+            segments: [],
+            server: null,
+          },
+          error: undefined,
+          layouts: [],
+          params: {},
+          pathname: '/image',
+          page: {
+            metadata: null,
+            renderer: () => null,
+            symbol: 'page-symbol',
+            url: '/app/image/+page.tsx',
+          },
+          render: () => null,
+        },
+        currentUrl: { value: 'http://example.com/image' },
+        defaultTitle: 'Image',
+        isNavigating: { value: false },
+        loadedRoutes: new Map(),
+        location: undefined as any,
+        manifest: [],
+        navigate: undefined as any,
+        prefetchedLoaders: new Map(),
+        routeModuleBusts: new Map(),
+        routePrefetches: new Map(),
+        sequence: 0,
+      },
+      symbols: new Map([['old-click', oldEventUrl]]),
+    })
+    const unregister = registerResumeContainer(container)
+
+    try {
+      const result = await applyResumeHmrUpdateToRegisteredContainers({
+        fileUrl: '/app/image/+page.tsx',
+        fullReload: false,
+        rerenderComponentSymbols: [],
+        rerenderOwnerSymbols: [],
+        symbolUrlReplacements: {
+          'old-click': newEventUrl,
+        },
+      })
+
+      expect(result).toBe('updated')
+      expect(container.symbols.get('old-click')).toBe(newEventUrl)
+      expect(container.symbols.get('new-click')).toBe(newEventUrl)
+      expect(replace).not.toHaveBeenCalled()
     } finally {
       unregister()
     }

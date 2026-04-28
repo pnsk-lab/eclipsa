@@ -1,5 +1,8 @@
+import * as fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { applyHotUpdate, createHotRegistry, defineHotComponent } from './hot.ts'
+import { applyHotUpdate, createHotRegistry, defineHotComponent, initHot } from './hot.ts'
 import {
   __eclipsaComponent,
   getComponentMeta,
@@ -10,6 +13,62 @@ import {
 const makeComponent = (value: string) => ((_: unknown) => value) as any
 
 describe('core/dev-client hot', () => {
+  it('does not duplicate update-client listeners across repeated direct updates', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-hot-listeners-'))
+    const filePath = path.join(root, 'component.mjs')
+    const moduleUrl = new URL(`file://${filePath}`)
+    const listeners: ((data: { url: string }) => void | Promise<void>)[] = []
+    const hot = {
+      off(event: string, listener: (data: { url: string }) => void | Promise<void>) {
+        if (event === 'update-client') {
+          for (let index = listeners.length - 1; index >= 0; index -= 1) {
+            if (listeners[index] === listener) {
+              listeners.splice(index, 1)
+            }
+          }
+        }
+      },
+      on(event: string, listener: (data: { url: string }) => void | Promise<void>) {
+        if (event === 'update-client') {
+          listeners.push(listener)
+        }
+      },
+    }
+    const registry = createHotRegistry()
+    defineHotComponent(makeComponent('before'), {
+      registry,
+      name: 'default',
+    })
+
+    await fs.writeFile(
+      filePath,
+      [
+        'export const __eclipsa$hotRegistry = {',
+        '  components: new Map([["default", { Component: () => "after", update() {} }]]),',
+        '  setIsChild() {},',
+        '};',
+      ].join('\n'),
+    )
+
+    try {
+      initHot(hot, moduleUrl.href, registry)
+
+      expect(listeners).toHaveLength(1)
+
+      const emit = async () => {
+        await Promise.all(listeners.map((listener) => listener({ url: moduleUrl.pathname })))
+      }
+
+      await emit()
+      expect(listeners).toHaveLength(1)
+
+      await emit()
+      expect(listeners).toHaveLength(1)
+    } finally {
+      await fs.rm(root, { force: true, recursive: true })
+    }
+  })
+
   it('updates wrapped components even when function source is unchanged', () => {
     const registry = createHotRegistry()
     const wrapped = defineHotComponent(makeComponent('before'), {

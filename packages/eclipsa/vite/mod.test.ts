@@ -257,6 +257,49 @@ describe('vite plugin hotUpdate', () => {
     })
   })
 
+  it('emits source-module HMR when css modules precede non-resumable tsx modules', async () => {
+    const [, plugin] = getPlugins()
+    const hotUpdate = getHotUpdate(plugin)
+    const send = vi.fn()
+    const cssModule = {
+      id: '/src/app/style.css',
+      type: 'css',
+      url: '/src/app/style.css',
+    }
+    const tsxModule = {
+      id: '/src/non-resumable.tsx',
+      type: 'js',
+      url: '/src/non-resumable.tsx',
+    }
+
+    const result = await hotUpdate?.call(
+      {
+        environment: {
+          name: 'client',
+          hot: {
+            send,
+          },
+          moduleGraph: {
+            getModulesByFile() {
+              return new Set([tsxModule])
+            },
+          },
+        },
+      } as any,
+      {
+        file: '/tmp/non-resumable.tsx',
+        modules: [cssModule, tsxModule],
+        read: () => 'export const value = <div>plain</div>;',
+        server: {},
+      } as any,
+    )
+
+    expect(result).toEqual([cssModule])
+    expect(send).toHaveBeenCalledWith('update-client', {
+      url: '/src/non-resumable.tsx',
+    })
+  })
+
   it('falls back to the app source url when a non-resumable file is rewritten atomically', async () => {
     const [, plugin] = getPlugins()
     const hotUpdate = getHotUpdate(plugin)

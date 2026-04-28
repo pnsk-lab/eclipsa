@@ -46,6 +46,7 @@ export const initHot = (
         console.info('[Eclipsa HMR]: Component graph changed, reloading page...')
         location.reload()
       }
+      hot.off('update-client', handler)
       hot.on('update-client', handler)
     }
   }

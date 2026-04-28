@@ -4293,6 +4293,21 @@ fn component_expression_span(expression: &Expression<'_>) -> Option<Span> {
     }
 }
 
+fn eclipsa_component_call_span(expression: &Expression<'_>) -> Option<Span> {
+    match expression {
+        Expression::CallExpression(call) => match &call.callee {
+            Expression::Identifier(identifier) if identifier.name.as_str() == "__eclipsaComponent" => {
+                Some(call.span)
+            }
+            _ => None,
+        },
+        Expression::ParenthesizedExpression(expression) => {
+            eclipsa_component_call_span(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
 fn wrap_hot_components(source: &str, id: &str) -> Result<String, String> {
     let allocator = Allocator::default();
     let program = parse_program(&allocator, source, source_type_for(id), id)?;
@@ -4348,16 +4363,23 @@ impl<'a, 's> Visit<'a> for HmrCollector<'s> {
     }
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
-        walk::walk_variable_declarator(self, declarator);
         let oxc_ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+            walk::walk_variable_declarator(self, declarator);
             return;
         };
         if !is_component_name(identifier.name.as_str()) {
+            walk::walk_variable_declarator(self, declarator);
             return;
         }
         let Some(init) = &declarator.init else {
+            walk::walk_variable_declarator(self, declarator);
             return;
         };
+        if let Some(span) = eclipsa_component_call_span(init) {
+            self.push_component_replacement(span, js_string(identifier.name.as_str()));
+            return;
+        }
+        walk::walk_variable_declarator(self, declarator);
         let span = component_expression_span(init);
         if let Some(span) = span {
             self.push_component_replacement(span, js_string(identifier.name.as_str()));

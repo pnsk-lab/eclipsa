@@ -19,6 +19,7 @@ import {
   primeCompilerCache,
   createResumeHmrUpdate,
   inspectResumeHmrUpdate,
+  loadSymbolModuleForClient,
   loadSymbolModuleForSSR,
   resetCompilerCache,
   resolveResumeHmrUpdate,
@@ -731,5 +732,34 @@ describe('createResumeHmrUpdate', () => {
       fileUrl: '/ssr-inspect-then-client-resolve.tsx',
       fullReload: false,
     })
+  })
+
+  it('loads new symbol modules after an SSR-only HMR inspection of app routes', async () => {
+    const previousSource = `
+      export default () => <p>before</p>;
+    `
+    const nextSource = `
+      export default () => <p>after</p>;
+    `
+
+    await primeCompilerCache('/app/+layout.tsx', previousSource)
+
+    const inspected = await inspectResumeHmrUpdate({
+      filePath: '/app/+layout.tsx',
+      root: '/tmp',
+      source: nextSource,
+    })
+    const previousSymbolId = inspected.update?.rerenderComponentSymbols[0]
+    const nextSymbolUrl = previousSymbolId
+      ? inspected.update?.symbolUrlReplacements[previousSymbolId]
+      : null
+    const nextSymbolId = nextSymbolUrl
+      ? new URL(nextSymbolUrl, 'http://localhost').searchParams.get('eclipsa-symbol')
+      : null
+
+    expect(nextSymbolId).toBeTruthy()
+    await expect(
+      loadSymbolModuleForClient(`/app/+layout.tsx?eclipsa-symbol=${nextSymbolId}`),
+    ).resolves.toContain('after')
   })
 })

@@ -91,6 +91,24 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('createHotRegistry')
   })
 
+  it('names hot wrappers for precompiled named components', async () => {
+    const resultCode = await compileClientModule(
+      `
+        import { __eclipsaComponent } from "eclipsa/internal";
+        export const Header = __eclipsaComponent(() => <h1 />, "header", []);
+        export const Footer = __eclipsaComponent(() => <footer />, "footer", []);
+      `,
+      'mod.test.tsx',
+      {
+        hmr: true,
+      },
+    )
+
+    expect(resultCode).toContain('name: "Header"')
+    expect(resultCode).toContain('name: "Footer"')
+    expect(resultCode).not.toContain('name: null')
+  })
+
   it('omits HMR helpers when HMR is disabled', async () => {
     const resultCode = await compileClientModule(`<div />`, 'mod.test.tsx', {
       hmr: false,
