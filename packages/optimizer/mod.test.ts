@@ -21,6 +21,7 @@ import {
   shouldFlattenArtifact,
 } from './scripts/prepare-downloaded-artifacts.ts'
 import { createNpmDirs, parseTargetTriple } from './scripts/create-npm-dirs.ts'
+import { hydrateNpmArtifacts } from './scripts/hydrate-npm-artifacts.ts'
 
 const execFileAsync = promisify(execFile)
 const packageRoot = path.dirname(fileURLToPath(import.meta.url))
@@ -111,7 +112,6 @@ describe('optimizer packaging', () => {
     const publishWorkflow = await readFile(publishWorkflowPath, 'utf8')
 
     for (const scriptName of [
-      'artifacts',
       'build:native:dev',
       'build:native',
       'prepublishOnly',
@@ -120,6 +120,9 @@ describe('optimizer packaging', () => {
       expect(packageJson.scripts?.[scriptName]).toContain('bun ./scripts/run-napi.ts')
       expect(packageJson.scripts?.[scriptName]).not.toContain('bunx @napi-rs/cli')
     }
+
+    expect(packageJson.scripts?.artifacts).toContain('bun ./scripts/hydrate-npm-artifacts.ts')
+    expect(packageJson.scripts?.artifacts).not.toContain('bun ./scripts/run-napi.ts')
 
     expect(packageJson.scripts?.['create:npm-dirs']).toContain('bun ./scripts/create-npm-dirs.ts')
     expect(packageJson.scripts?.['create:npm-dirs']).not.toContain('bun ./scripts/run-napi.ts')
@@ -285,6 +288,108 @@ describe('optimizer packaging', () => {
 
     expect(publishWorkflow).toContain('name: Flatten downloaded binding artifacts')
     expect(publishWorkflow).toContain('run: bun ./scripts/prepare-downloaded-artifacts.ts')
+    expect(publishWorkflow).toContain('name: Hydrate npm package artifacts')
+    expect(publishWorkflow).toContain('run: bun run --filter @eclipsa/optimizer artifacts')
+    expect(publishWorkflow.indexOf('name: Flatten downloaded binding artifacts')).toBeLessThan(
+      publishWorkflow.indexOf('name: Hydrate npm package artifacts'),
+    )
+  })
+
+  it('hydrates every optimizer npm package with its declared files', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-hydrate-npm-'))
+
+    await mkdir(path.join(tempRoot, 'npm/darwin-arm64'), { recursive: true })
+    await mkdir(path.join(tempRoot, 'npm/wasm32-wasi'), { recursive: true })
+    await mkdir(path.join(tempRoot, 'artifacts'), { recursive: true })
+    await mkdir(path.join(tempRoot, 'generated'), { recursive: true })
+    await writeFile(
+      path.join(tempRoot, 'npm/darwin-arm64/package.json'),
+      `${JSON.stringify(
+        {
+          name: '@scope/example-darwin-arm64',
+          files: ['optimizer.darwin-arm64.node'],
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    await writeFile(
+      path.join(tempRoot, 'npm/wasm32-wasi/package.json'),
+      `${JSON.stringify(
+        {
+          name: '@scope/example-wasm32-wasi',
+          files: [
+            'optimizer.wasm32-wasi.wasm',
+            'optimizer.wasi.cjs',
+            'optimizer.wasi-browser.js',
+            'wasi-worker.mjs',
+            'wasi-worker-browser.mjs',
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    await writeFile(
+      path.join(tempRoot, 'artifacts/optimizer.darwin-arm64.node'),
+      new Uint8Array([0x01]),
+    )
+    await writeFile(
+      path.join(tempRoot, 'artifacts/optimizer.wasm32-wasi.wasm'),
+      new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
+    )
+    await writePlaceholder(tempRoot, 'artifacts/optimizer.wasi.cjs', 'module.exports = {}\n')
+    await writePlaceholder(tempRoot, 'generated/optimizer.wasi-browser.js')
+    await writePlaceholder(tempRoot, 'generated/wasi-worker.mjs')
+    await writePlaceholder(tempRoot, 'generated/wasi-worker-browser.mjs')
+
+    await hydrateNpmArtifacts({
+      artifactsDir: './artifacts',
+      cwd: tempRoot,
+      generatedDir: './generated',
+      npmDir: './npm',
+    })
+
+    expect(
+      await readFile(path.join(tempRoot, 'npm/darwin-arm64/optimizer.darwin-arm64.node')),
+    ).toEqual(Buffer.from([0x01]))
+    expect(
+      await readFile(path.join(tempRoot, 'npm/wasm32-wasi/optimizer.wasm32-wasi.wasm')),
+    ).toEqual(Buffer.from([0x00, 0x61, 0x73, 0x6d]))
+    expect(
+      await readFile(path.join(tempRoot, 'npm/wasm32-wasi/optimizer.wasi.cjs'), 'utf8'),
+    ).toContain('module.exports')
+    expect(
+      await readFile(path.join(tempRoot, 'npm/wasm32-wasi/optimizer.wasi-browser.js'), 'utf8'),
+    ).toContain('export {}')
+  })
+
+  it('fails artifact hydration when any declared npm package file is missing', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'optimizer-hydrate-missing-'))
+
+    await mkdir(path.join(tempRoot, 'npm/win32-x64-msvc'), { recursive: true })
+    await mkdir(path.join(tempRoot, 'artifacts'), { recursive: true })
+    await mkdir(path.join(tempRoot, 'generated'), { recursive: true })
+    await writeFile(
+      path.join(tempRoot, 'npm/win32-x64-msvc/package.json'),
+      `${JSON.stringify(
+        {
+          name: '@scope/example-win32-x64-msvc',
+          files: ['optimizer.win32-x64-msvc.node'],
+        },
+        null,
+        2,
+      )}\n`,
+    )
+
+    await expect(
+      hydrateNpmArtifacts({
+        artifactsDir: './artifacts',
+        cwd: tempRoot,
+        generatedDir: './generated',
+        npmDir: './npm',
+      }),
+    ).rejects.toThrow(/@scope\/example-win32-x64-msvc: optimizer\.win32-x64-msvc\.node/)
   })
 
   it('packs only publish artifacts and excludes native binaries', async () => {

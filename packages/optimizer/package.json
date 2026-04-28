@@ -43,7 +43,7 @@
     }
   },
   "scripts": {
-    "artifacts": "bun ./scripts/run-napi.ts artifacts --package-json-path ./package.json --output-dir ./generated --npm-dir ./npm --build-output-dir ./artifacts",
+    "artifacts": "bun ./scripts/hydrate-npm-artifacts.ts --artifacts-dir ./artifacts --generated-dir ./generated --npm-dir ./npm",
     "build": "bun run build:js && bun run build:native",
     "build:js": "vp pack",
     "build:native:dev": "node -e \"require('node:fs').rmSync('./generated', { recursive: true, force: true })\" && bun ./scripts/run-napi.ts build --platform --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer && bun ./scripts/sync-browser-wasm.ts",

@@ -55,6 +55,7 @@ jobs:
       package_json_path: ${{ steps.package.outputs.package_json_path }}
       publish_dir: ${{ steps.package.outputs.publish_dir }}
       publish_package_json_path: ${{ steps.package.outputs.publish_package_json_path }}
+      native_host_matrix: ${{ steps.package.outputs.native_host_matrix }}
       tag: ${{ steps.metadata.outputs.tag }}
       version: ${{ steps.metadata.outputs.version }}
 
@@ -142,6 +143,54 @@ jobs:
           publish_dir="$package_dir/dist"
           publish_package_json_path="$publish_dir/package.json"
           build_command="bun run --filter ./$package_dir build"
+          native_host_matrix="$(node -e "
+          const packageKey = process.argv[1];
+          const matrices = {
+            'native-swiftui': [
+              {
+                package: 'native-swiftui',
+                host: 'macos-14',
+                artifact: 'darwin-arm64',
+                package_dir: 'packages/native-swiftui',
+                build: 'swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS',
+                output: 'artifacts/darwin-arm64/EclipsaNativeMacOS',
+                source: 'macos-swiftui/.build/debug/EclipsaNativeMacOS',
+              },
+              {
+                package: 'native-swiftui',
+                host: 'macos-13',
+                artifact: 'darwin-x64',
+                package_dir: 'packages/native-swiftui',
+                build: 'swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS',
+                output: 'artifacts/darwin-x64/EclipsaNativeMacOS',
+                source: 'macos-swiftui/.build/debug/EclipsaNativeMacOS',
+              },
+            ],
+            'native-android-compose': [
+              {
+                package: 'native-android-compose',
+                host: 'ubuntu-latest',
+                artifact: 'android-universal',
+                package_dir: 'packages/native-android-compose',
+                build: './android-compose/gradlew --project-dir ./android-compose :app:assembleDebug',
+                output: 'artifacts/android-universal/app-debug.apk',
+                source: 'android-compose/app/build/outputs/apk/debug/app-debug.apk',
+              },
+            ],
+            'native-gtk4': [
+              {
+                package: 'native-gtk4',
+                host: 'ubuntu-latest',
+                artifact: 'gtk4-placeholder',
+                package_dir: 'packages/native-gtk4',
+                build: 'mkdir -p artifacts/gtk4-placeholder && touch artifacts/gtk4-placeholder/placeholder.json',
+                output: 'artifacts/gtk4-placeholder/placeholder.json',
+                source: 'artifacts/gtk4-placeholder/placeholder.json',
+              },
+            ],
+          };
+          process.stdout.write(JSON.stringify(matrices[packageKey] ?? []));
+          " "$PACKAGE_KEY")"
 
           if [ ! -r "$package_json_path" ]; then
             echo "package.json not found or not readable: $package_json_path"
@@ -153,6 +202,7 @@ jobs:
           echo "publish_dir=$publish_dir" >> "$GITHUB_OUTPUT"
           echo "publish_package_json_path=$publish_package_json_path" >> "$GITHUB_OUTPUT"
           echo "build_command=$build_command" >> "$GITHUB_OUTPUT"
+          echo "native_host_matrix=$native_host_matrix" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release metadata
         id: metadata
@@ -287,41 +337,13 @@ jobs:
           if-no-files-found: error
 
   build_native_host_artifacts:
-    if: ${{ (inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' || inputs.package == 'native-gtk4') && matrix.settings.package == inputs.package }}
+    if: ${{ inputs.package == 'native-swiftui' || inputs.package == 'native-android-compose' || inputs.package == 'native-gtk4' }}
     needs: prepare
     runs-on: ${{ matrix.settings.host }}
     strategy:
       fail-fast: false
       matrix:
-        settings:
-          - package: native-swiftui
-            host: macos-14
-            artifact: darwin-arm64
-            package_dir: packages/native-swiftui
-            build: swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS
-            output: artifacts/darwin-arm64/EclipsaNativeMacOS
-            source: macos-swiftui/.build/debug/EclipsaNativeMacOS
-          - package: native-swiftui
-            host: macos-13
-            artifact: darwin-x64
-            package_dir: packages/native-swiftui
-            build: swift build --package-path ./macos-swiftui --product EclipsaNativeMacOS
-            output: artifacts/darwin-x64/EclipsaNativeMacOS
-            source: macos-swiftui/.build/debug/EclipsaNativeMacOS
-          - package: native-android-compose
-            host: ubuntu-latest
-            artifact: android-universal
-            package_dir: packages/native-android-compose
-            build: ./android-compose/gradlew --project-dir ./android-compose :app:assembleDebug
-            output: artifacts/android-universal/app-debug.apk
-            source: android-compose/app/build/outputs/apk/debug/app-debug.apk
-          - package: native-gtk4
-            host: ubuntu-latest
-            artifact: gtk4-placeholder
-            package_dir: packages/native-gtk4
-            build: mkdir -p artifacts/gtk4-placeholder && printf '{\"placeholder\":true}\n' > artifacts/gtk4-placeholder/placeholder.json
-            output: artifacts/gtk4-placeholder/placeholder.json
-            source: artifacts/gtk4-placeholder/placeholder.json
+        settings: ${{ fromJson(needs.prepare.outputs.native_host_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -108,7 +108,7 @@ const resolveDefaultGtk4Command = (
     return [bundledHostBinaryPath]
   }
 
-  if (process.platform === 'linux' && existsSync(defaultWorkspaceCargoManifestPath)) {
+  if (existsSync(defaultWorkspaceCargoManifestPath)) {
     return [
       'cargo',
       'run',
