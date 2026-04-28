@@ -8,6 +8,7 @@ import {
   transformCurrentPublicError,
   type WithAppEnv,
 } from './hooks.ts'
+import { ROUTE_RPC_URL_QUERY } from './router-shared.ts'
 import { createDetachedRuntimeSignal, getRuntimeContainer } from './runtime.ts'
 import { onCleanup, onMount } from './signal.ts'
 
@@ -542,6 +543,9 @@ export const executeRealtime = async (
 const createRealtimeUrl = (id: string, input: unknown) => {
   const baseHref = typeof window !== 'undefined' ? window.location.href : 'http://localhost/'
   const url = new URL(`/__eclipsa/realtime/${encodeURIComponent(id)}`, baseHref)
+  if (typeof window !== 'undefined') {
+    url.searchParams.set(ROUTE_RPC_URL_QUERY, window.location.href)
+  }
   if (input !== undefined) {
     url.searchParams.set('input', JSON.stringify(serializePublicValue(input)))
   }

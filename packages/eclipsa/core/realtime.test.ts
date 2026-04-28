@@ -12,6 +12,7 @@ import {
 } from './realtime.ts'
 import type { RuntimeContainer } from './runtime.ts'
 import { withRuntimeContainer } from './runtime.ts'
+import { ROUTE_RPC_URL_QUERY } from './router-shared.ts'
 
 class FakeSocket implements RealtimeSocketLike {
   listeners = new Map<string, Array<(event: any) => void>>()
@@ -189,6 +190,7 @@ describe('realtime runtime', () => {
   it('connects client handles with WebSocket transport and records messages', () => {
     const sockets: FakeBrowserWebSocket[] = []
     const OriginalWebSocket = globalThis.WebSocket
+    const OriginalWindow = (globalThis as { window?: unknown }).window
 
     class FakeBrowserWebSocket extends EventTarget {
       static CONNECTING = 0
@@ -226,6 +228,14 @@ describe('realtime runtime', () => {
     }
 
     globalThis.WebSocket = FakeBrowserWebSocket as unknown as typeof WebSocket
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        location: {
+          href: 'http://localhost/current?tab=chat',
+        },
+      },
+    })
 
     try {
       const container = createRuntimeContainer()
@@ -241,6 +251,9 @@ describe('realtime runtime', () => {
       room.connect({ room: 'main' })
       expect(room.status).toBe('connecting')
       expect(sockets[0]?.url).toContain('/__eclipsa/realtime/client-room')
+      expect(new URL(sockets[0]!.url).searchParams.get(ROUTE_RPC_URL_QUERY)).toBe(
+        'http://localhost/current?tab=chat',
+      )
 
       sockets[0]!.open()
       expect(room.isOpen).toBe(true)
@@ -260,6 +273,10 @@ describe('realtime runtime', () => {
       expect(room.messages).toEqual([{ text: 'world' }])
     } finally {
       globalThis.WebSocket = OriginalWebSocket
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: OriginalWindow,
+      })
     }
   })
 })

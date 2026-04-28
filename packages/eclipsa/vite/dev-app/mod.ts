@@ -10,6 +10,7 @@ import {
   ROUTE_PREFLIGHT_ENDPOINT,
   ROUTE_PREFLIGHT_REQUEST_HEADER,
   ROUTE_RPC_URL_HEADER,
+  ROUTE_RPC_URL_QUERY,
   type RouteParams,
 } from '../../core/router-shared.ts'
 import {
@@ -603,13 +604,15 @@ const createDevApp = async (init: DevAppInit) => {
 
   const getRpcCurrentRoute = (requestContext: AppContext) => {
     const requestUrl = getRequestUrl(requestContext.req.raw)
-    const routeUrlHeader = requestContext.req.header(ROUTE_RPC_URL_HEADER)
-    if (!routeUrlHeader) {
+    const routeUrl =
+      requestContext.req.header(ROUTE_RPC_URL_HEADER) ??
+      requestContext.req.query(ROUTE_RPC_URL_QUERY)
+    if (!routeUrl) {
       return null
     }
     let currentUrl: URL
     try {
-      currentUrl = new URL(routeUrlHeader, requestUrl)
+      currentUrl = new URL(routeUrl, requestUrl)
     } catch {
       return null
     }
@@ -618,10 +621,7 @@ const createDevApp = async (init: DevAppInit) => {
     }
     return resolveRouteForCurrentUrl(requestContext.req.raw, currentUrl)
   }
-  const realtimeRouteMatches = new WeakMap<
-    Request,
-    ReturnType<typeof resolveRouteForCurrentUrl>
-  >()
+  const realtimeRouteMatches = new WeakMap<Request, string>()
 
   const resolveRequest = async <E extends Context>(
     c: E,
@@ -1215,48 +1215,66 @@ const createDevApp = async (init: DevAppInit) => {
     app.get(
       '/__eclipsa/realtime/:id',
       async (c, next) => {
-        const id = c.req.param('id')
-        if (!id) {
-          return c.text('Not Found', 404)
-        }
-        const routeMatch = getRpcCurrentRoute(c as unknown as AppContext)
-        if (!routeMatch) {
-          return c.text('Bad Request', 400)
-        }
-        const routeAccess = getRouteServerAccess(routeMatch.route)
-        if (!routeAccess.realtimeIds.has(id)) {
-          return c.text('Not Found', 404)
-        }
-        const modulePath = realtimeModules.get(id)
-        if (!modulePath) {
-          return c.text('Not Found', 404)
-        }
-        const { hasRealtime } = await init.runner.import('eclipsa')
-        if (!hasRealtime(id)) {
-          await init.runner.import(modulePath)
-        }
-        realtimeRouteMatches.set(c.req.raw, routeMatch)
-        await next()
-      },
-      createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
-        await resolveRequest(c, async (requestContext) => {
-          const { executeRealtime } = await init.runner.import('eclipsa')
+        const authorizeResponse = await resolveRequest(c, async (requestContext) => {
           const id = requestContext.req.param('id')
-          const routeMatch =
-            realtimeRouteMatches.get(requestContext.req.raw) ?? getRpcCurrentRoute(requestContext)
+          if (!id) {
+            return requestContext.text('Not Found', 404)
+          }
+          const routeMatch = getRpcCurrentRoute(requestContext)
           if (!routeMatch) {
             return requestContext.text('Bad Request', 400)
           }
-          return composeRouteMiddlewares(
+          const routeAccess = getRouteServerAccess(routeMatch.route)
+          if (!routeAccess.realtimeIds.has(id)) {
+            return requestContext.text('Not Found', 404)
+          }
+          const modulePath = realtimeModules.get(id)
+          if (!modulePath) {
+            return requestContext.text('Not Found', 404)
+          }
+          const { hasRealtime } = await init.runner.import('eclipsa')
+          if (!hasRealtime(id)) {
+            await init.runner.import(modulePath)
+          }
+          let allowedResponse: Response | null = null
+          const routeMiddlewareResponse = await composeRouteMiddlewares(
             routeMatch.route,
             requestContext,
             routeMatch.params,
             async () => {
-              await executeRealtime(id, requestContext, socket)
-              return requestContext.body(null, 204)
+              allowedResponse = requestContext.body(null, 204)
+              return allowedResponse
             },
-          ) as Promise<Response>
+          )
+          if (routeMiddlewareResponse !== allowedResponse) {
+            return routeMiddlewareResponse as Response
+          }
+          realtimeRouteMatches.set(requestContext.req.raw, id)
+          return allowedResponse
         })
+        if (!realtimeRouteMatches.has(c.req.raw)) {
+          return authorizeResponse
+        }
+        await next()
+      },
+      createRealtimeHonoUpgradeHandler(realtimeWebSocket.upgradeWebSocket, async (c, socket) => {
+        const requestContext = prepareRequestContext(c)
+        await withServerRequestContext(
+          requestContext,
+          {
+            handleError: serverHooks.handleError,
+            transport: appHooks.transport,
+          },
+          async () => {
+            const { executeRealtime } = await init.runner.import('eclipsa')
+            const id = realtimeRouteMatches.get(requestContext.req.raw)
+            if (!id) {
+              return requestContext.text('Bad Request', 400)
+            }
+            await executeRealtime(id, requestContext, socket)
+            return requestContext.body(null, 204)
+          },
+        )
       }),
     )
   }

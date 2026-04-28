@@ -6,6 +6,7 @@ export const ROUTE_PREFETCH_ATTR = 'data-e-link-prefetch'
 export const ROUTE_PREFLIGHT_ENDPOINT = '/__eclipsa/route-preflight'
 export const ROUTE_PREFLIGHT_REQUEST_HEADER = 'x-eclipsa-route-preflight'
 export const ROUTE_RPC_URL_HEADER = 'x-eclipsa-route-url'
+export const ROUTE_RPC_URL_QUERY = '__eclipsa_route_url'
 export const ROUTE_REPLACE_ATTR = 'data-e-link-replace'
 
 export interface NavigateOptions {
