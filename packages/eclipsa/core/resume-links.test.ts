@@ -47,6 +47,11 @@ describe('resumeContainer interactivity bootstrap', () => {
     } as unknown as HTMLElement & { ownerDocument?: Document }
     const doc = Object.assign(new FakeDocument(), {
       body: root,
+      location: {
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+      },
       getElementById(id: string) {
         if (id === 'eclipsa-resume') {
           return { textContent: JSON.stringify(createResumePayload()) }
@@ -104,6 +109,11 @@ describe('resumeContainer interactivity bootstrap', () => {
     } as unknown as HTMLElement & { ownerDocument?: Document }
     const doc = Object.assign(new FakeDocument(), {
       body: root,
+      location: {
+        href: 'http://example.com/',
+        origin: 'http://example.com',
+        pathname: '/',
+      },
       getElementById(id: string) {
         if (id === 'eclipsa-resume') {
           return { textContent: JSON.stringify(createResumePayload()) }

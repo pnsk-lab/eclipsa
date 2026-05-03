@@ -1,14 +1,44 @@
 import type { EventDescriptor, PackedEventDescriptor } from '../meta.ts'
-import {
-  bindLiveClientListener,
-  bindPackedRuntimeEvent,
-  bindRuntimeEvent,
-  dispatchRuntimeEventDescriptor,
-  findRuntimeContainerForEventTarget,
-  getRuntimeContainer,
-} from '../runtime.ts'
 import { rememberCompiledReactiveDomTarget } from './dom.ts'
 import { getRuntimeSymbolUrl } from './kernel.ts'
+
+type RuntimeEventBinder<Container = unknown> = {
+  bindLiveClientListener(
+    container: Container,
+    element: Element,
+    eventName: string,
+    listener: (event: Event) => unknown,
+  ): void
+  bindPackedRuntimeEvent(
+    container: Container,
+    element: Element,
+    eventName: string,
+    symbol: string,
+    captureCount: 0 | 1 | 2 | 3 | 4,
+    capture0?: unknown,
+    capture1?: unknown,
+    capture2?: unknown,
+    capture3?: unknown,
+  ): void
+  bindRuntimeEvent(element: Element, eventName: string, value: unknown): boolean
+  dispatchRuntimeEventDescriptor(
+    container: Container,
+    descriptor: EventDescriptor,
+    event: Event,
+    currentTarget: Element,
+  ): unknown
+  findRuntimeContainerForEventTarget(
+    target: EventTarget | null,
+    fallbackElement?: Element | null,
+  ): unknown | null
+  getRuntimeContainer(): unknown | null
+}
+
+let runtimeEventBinder: RuntimeEventBinder | null = null
+
+export const setRuntimeEventBinder = <Container>(binder: RuntimeEventBinder<Container> | null) => {
+  runtimeEventBinder = binder as RuntimeEventBinder | null
+}
 
 const capturesFor = (descriptor: EventDescriptor) => {
   if ('captures' in descriptor) {
@@ -30,9 +60,12 @@ const capturesFor = (descriptor: EventDescriptor) => {
 }
 
 const runEventDescriptor = async (descriptor: EventDescriptor, event: Event, elem: Element) => {
-  const container = findRuntimeContainerForEventTarget(event.target, elem)
-  if (container) {
-    return dispatchRuntimeEventDescriptor(container, descriptor, event, elem)
+  const binder = runtimeEventBinder
+  if (binder) {
+    const container = binder.findRuntimeContainerForEventTarget(event.target, elem)
+    if (container) {
+      return binder.dispatchRuntimeEventDescriptor(container, descriptor, event, elem)
+    }
   }
 
   const url = getRuntimeSymbolUrl(descriptor.symbol)
@@ -50,16 +83,71 @@ const runEventDescriptor = async (descriptor: EventDescriptor, event: Event, ele
 const isEventDescriptor = (value: unknown): value is EventDescriptor =>
   !!value && typeof value === 'object' && typeof (value as EventDescriptor).symbol === 'string'
 
+const bindPackedEvent = (
+  elem: Element,
+  eventName: string,
+  symbol: string,
+  captureCount: 0 | 1 | 2 | 3 | 4,
+  capture0?: unknown,
+  capture1?: unknown,
+  capture2?: unknown,
+  capture3?: unknown,
+) => {
+  const binder = runtimeEventBinder
+  if (binder) {
+    const container = binder.getRuntimeContainer()
+    if (container) {
+      binder.bindPackedRuntimeEvent(
+        container,
+        elem,
+        eventName,
+        symbol,
+        captureCount,
+        capture0,
+        capture1,
+        capture2,
+        capture3,
+      )
+      return
+    }
+  }
+  switch (captureCount) {
+    case 0:
+      eventStatic(elem, eventName, { captureCount, symbol })
+      return
+    case 1:
+      eventStatic(elem, eventName, { capture0, captureCount, symbol })
+      return
+    case 2:
+      eventStatic(elem, eventName, { capture0, capture1, captureCount, symbol })
+      return
+    case 3:
+      eventStatic(elem, eventName, { capture0, capture1, capture2, captureCount, symbol })
+      return
+    case 4:
+      eventStatic(elem, eventName, { capture0, capture1, capture2, capture3, captureCount, symbol })
+      return
+  }
+}
+
 export const eventStatic = Object.assign(
   (elem: Element, eventName: string, value: unknown) => {
     rememberCompiledReactiveDomTarget(elem)
-    if (bindRuntimeEvent(elem, eventName, value)) {
-      return
-    }
-    const container = getRuntimeContainer()
-    if (container && typeof value === 'function') {
-      bindLiveClientListener(container, elem, eventName, value as (event: Event) => unknown)
-      return
+    const binder = runtimeEventBinder
+    if (binder) {
+      if (binder.bindRuntimeEvent(elem, eventName, value)) {
+        return
+      }
+      const container = binder.getRuntimeContainer()
+      if (container && typeof value === 'function') {
+        binder.bindLiveClientListener(
+          container,
+          elem,
+          eventName,
+          value as (event: Event) => unknown,
+        )
+        return
+      }
     }
     if (typeof value === 'function') {
       elem.addEventListener(eventName, value as EventListener)
@@ -76,21 +164,11 @@ export const eventStatic = Object.assign(
   {
     __0: (elem: Element, eventName: string, symbol: string) => {
       rememberCompiledReactiveDomTarget(elem)
-      const container = getRuntimeContainer()
-      if (container) {
-        bindPackedRuntimeEvent(container, elem, eventName, symbol, 0)
-        return
-      }
-      eventStatic(elem, eventName, { captureCount: 0, symbol })
+      bindPackedEvent(elem, eventName, symbol, 0)
     },
     __1: (elem: Element, eventName: string, symbol: string, capture0: unknown) => {
       rememberCompiledReactiveDomTarget(elem)
-      const container = getRuntimeContainer()
-      if (container) {
-        bindPackedRuntimeEvent(container, elem, eventName, symbol, 1, capture0)
-        return
-      }
-      eventStatic(elem, eventName, { capture0, captureCount: 1, symbol })
+      bindPackedEvent(elem, eventName, symbol, 1, capture0)
     },
     __2: (
       elem: Element,
@@ -100,12 +178,7 @@ export const eventStatic = Object.assign(
       capture1: unknown,
     ) => {
       rememberCompiledReactiveDomTarget(elem)
-      const container = getRuntimeContainer()
-      if (container) {
-        bindPackedRuntimeEvent(container, elem, eventName, symbol, 2, capture0, capture1)
-        return
-      }
-      eventStatic(elem, eventName, { capture0, capture1, captureCount: 2, symbol })
+      bindPackedEvent(elem, eventName, symbol, 2, capture0, capture1)
     },
     __3: (
       elem: Element,
@@ -116,12 +189,7 @@ export const eventStatic = Object.assign(
       capture2: unknown,
     ) => {
       rememberCompiledReactiveDomTarget(elem)
-      const container = getRuntimeContainer()
-      if (container) {
-        bindPackedRuntimeEvent(container, elem, eventName, symbol, 3, capture0, capture1, capture2)
-        return
-      }
-      eventStatic(elem, eventName, { capture0, capture1, capture2, captureCount: 3, symbol })
+      bindPackedEvent(elem, eventName, symbol, 3, capture0, capture1, capture2)
     },
     __4: (
       elem: Element,
@@ -133,29 +201,7 @@ export const eventStatic = Object.assign(
       capture3: unknown,
     ) => {
       rememberCompiledReactiveDomTarget(elem)
-      const container = getRuntimeContainer()
-      if (container) {
-        bindPackedRuntimeEvent(
-          container,
-          elem,
-          eventName,
-          symbol,
-          4,
-          capture0,
-          capture1,
-          capture2,
-          capture3,
-        )
-        return
-      }
-      eventStatic(elem, eventName, {
-        capture0,
-        capture1,
-        capture2,
-        capture3,
-        captureCount: 4,
-        symbol,
-      })
+      bindPackedEvent(elem, eventName, symbol, 4, capture0, capture1, capture2, capture3)
     },
   },
 )

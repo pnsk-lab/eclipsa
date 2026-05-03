@@ -138,6 +138,7 @@ import {
   setRuntimeRefAssigner,
   setRuntimeStaticAttributeAssigner,
 } from './runtime/dom-compiled.ts'
+import { setRuntimeEventBinder } from './runtime/event.ts'
 import {
   clearAsyncSignalSnapshot as clearGlobalAsyncSignalSnapshot,
   getContainerStack,
@@ -11497,6 +11498,15 @@ export const dispatchRuntimeEventDescriptor = (
   const module = getResolvedRuntimeSymbols(container).get(symbolId)
   return module ? runModule(module) : loadSymbol(container, symbolId).then(runModule)
 }
+
+setRuntimeEventBinder({
+  bindLiveClientListener,
+  bindPackedRuntimeEvent,
+  bindRuntimeEvent,
+  dispatchRuntimeEventDescriptor,
+  findRuntimeContainerForEventTarget,
+  getRuntimeContainer,
+})
 
 export const dispatchResumeEvent = (container: RuntimeContainer, event: Event) => {
   const target = findInteractiveDispatchTarget(container, event.target, event.type)
