@@ -1639,10 +1639,6 @@ fn static_jsx_child_text(expression: &JSXExpression<'_>) -> Option<Option<String
     }
 }
 
-fn is_static_jsx_child_text(expression: &JSXExpression<'_>) -> bool {
-    static_jsx_child_text(expression).is_some()
-}
-
 fn get_static_event_name(name: &str) -> Option<String> {
     let mut chars = name.chars();
     if chars.next() != Some('o') || chars.next() != Some('n') {
@@ -3194,7 +3190,10 @@ impl<'s> ClientCompiler<'s> {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
                         continue;
                     }
-                    if is_static_jsx_child_text(&container.expression) {
+                    if let Some(static_text) = static_jsx_child_text(&container.expression) {
+                        if static_text.is_some() {
+                            return Ok(None);
+                        }
                         continue;
                     }
                     if expression.is_some() {

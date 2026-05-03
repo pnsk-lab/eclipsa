@@ -236,6 +236,19 @@ describe('compileClientModule', () => {
     expect(resultCode).not.toContain('_insertStatic')
   })
 
+  it('preserves static primitive JSX children next to dynamic children', async () => {
+    const resultCode = await compileClientModule(
+      `<section>{true}{count}{false}{null}</section>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('<section>true<!-- 1 --></section>')
+    expect(resultCode).toContain('_insertStatic(count, _cloned, _ref0);')
+  })
+
   it('keeps dynamic and runtime-only attributes on the runtime attr path', async () => {
     const resultCode = await compileClientModule(
       `<div class="card" data-id={id} dangerouslySetInnerHTML="<span>raw</span>" />`,
