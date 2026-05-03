@@ -11,23 +11,27 @@ type ResolveNodeBinaryOptions = {
 
 const unique = <T>(values: T[]) => Array.from(new Set(values))
 
+const nodeBinaryNames = ['node', 'node.exe']
+
 export const resolveNodeBinary = (options: ResolveNodeBinaryOptions = {}) => {
   const cwd = options.cwd ?? process.cwd()
   const env = options.env ?? process.env
   const execPath = options.execPath ?? process.execPath
 
-  if (path.basename(execPath) === 'node' && existsSync(execPath)) {
+  if (nodeBinaryNames.includes(path.basename(execPath).toLowerCase()) && existsSync(execPath)) {
     return execPath
   }
 
   const pathCandidates = (env.PATH ?? '')
     .split(path.delimiter)
     .filter(Boolean)
-    .map((dir) => path.join(dir, 'node'))
+    .flatMap((dir) => nodeBinaryNames.map((binaryName) => path.join(dir, binaryName)))
 
   const candidatePaths = unique(
     [
-      env.NVM_BIN ? path.join(env.NVM_BIN, 'node') : null,
+      ...(env.NVM_BIN
+        ? nodeBinaryNames.map((binaryName) => path.join(env.NVM_BIN!, binaryName))
+        : []),
       ...pathCandidates,
       '/usr/bin/node',
       '/usr/local/bin/node',
@@ -49,9 +53,11 @@ export const resolveNodeBinary = (options: ResolveNodeBinaryOptions = {}) => {
       .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }))
 
     for (const versionDir of versionDirs) {
-      const candidatePath = path.join(nvmVersionsDir, versionDir, 'bin/node')
-      if (existsSync(candidatePath)) {
-        return candidatePath
+      for (const binaryName of nodeBinaryNames) {
+        const candidatePath = path.join(nvmVersionsDir, versionDir, 'bin', binaryName)
+        if (existsSync(candidatePath)) {
+          return candidatePath
+        }
       }
     }
   }

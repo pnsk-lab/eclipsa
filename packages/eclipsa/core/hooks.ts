@@ -13,7 +13,7 @@ import { IS_BROWSER, isPlainObject } from './shared.ts'
 
 export type { DeserializeValueOptions, SerializeValueOptions, SerializedReference, SerializedValue }
 
-export const APP_HOOKS_ELEMENT_ID = 'eclipsa-app-hooks'
+export { APP_HOOKS_ELEMENT_ID } from './resume-ids.ts'
 
 export interface AppVariables {}
 

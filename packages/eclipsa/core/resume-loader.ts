@@ -139,6 +139,8 @@ const deserializeLoaderValue = (value: SerializedValue): unknown => {
       return new Set(value.entries.map((entry) => deserializeLoaderValue(entry)))
     case 'ref':
       throw FULL_RESUME_REQUIRED
+    default:
+      throw FULL_RESUME_REQUIRED
   }
 }
 

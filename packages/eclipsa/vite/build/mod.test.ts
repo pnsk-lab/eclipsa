@@ -1,8 +1,8 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
-import { tmpdir } from 'node:os'
-import { pathToFileURL } from 'node:url'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from '../utils/routing.ts'
 import { ROUTE_RPC_URL_HEADER, ROUTE_RPC_URL_QUERY } from '../../core/router-shared.ts'
 
@@ -16,6 +16,25 @@ const mocks = vi.hoisted(() => ({
   createRoutes: vi.fn<() => Promise<RouteEntry[]>>(),
   toSSG: vi.fn(),
 }))
+
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const fixtureRoot = path.join(packageRoot, '.eclipsa-build-fixtures')
+const fixtureRoots = new Set<string>()
+
+const createBuildFixtureRoot = async () => {
+  const root = path.join(fixtureRoot, `${randomUUID()}.tmp`)
+  await fs.mkdir(root, { recursive: true })
+  fixtureRoots.add(root)
+  return root
+}
+
+afterEach(async () => {
+  for (const root of fixtureRoots) {
+    await fs.rm(root, { force: true, recursive: true })
+  }
+  fixtureRoots.clear()
+  await fs.rm(fixtureRoot, { force: true, recursive: true })
+})
 
 vi.mock('hono/ssg', () => ({
   toSSG: mocks.toSSG,
@@ -241,7 +260,7 @@ describe('build', () => {
   })
 
   it('keeps node output on the existing server bundle path', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
 
     await build(builder, { root }, { output: 'node' })
@@ -257,7 +276,7 @@ describe('build', () => {
   })
 
   it('emits a realtime websocket route when server-entry exports an adapter', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-realtime-ws-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     mocks.collectAppRealtimes.mockResolvedValue([
       {
@@ -285,7 +304,7 @@ describe('build', () => {
   })
 
   it('renders the built SSR root through jsxDEV instead of calling the component directly', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-root-jsx-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
 
     await build(builder, { root }, { output: 'node' })
@@ -297,7 +316,7 @@ describe('build', () => {
   })
 
   it('replaces every built app-shell placeholder occurrence before responding', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-placeholder-replace-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -338,7 +357,7 @@ describe('build', () => {
   })
 
   it('replaces finite head placeholders inside serialized built resume payloads', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-payload-placeholder-replace-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -389,7 +408,7 @@ describe('build', () => {
   })
 
   it('serves route-data loader snapshots from the built node app', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -429,7 +448,7 @@ describe('build', () => {
   })
 
   it('returns middleware redirects from the built route-data endpoint', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-redirect-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(root, 'route__guarded__page', 'export default () => null;\n')
@@ -476,7 +495,7 @@ describe('build', () => {
   })
 
   it('keeps built route-preflight dispatches in-process even when the host header is spoofed', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-preflight-ssrf-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     const originalFetch = globalThis.fetch
     const externalFetch = vi.fn(async () => new Response(null, { status: 204 }))
@@ -550,7 +569,7 @@ describe('build', () => {
   })
 
   it('runs server hooks and route middleware for built action and loader rpc requests', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-rpc-route-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     const securePagePath = await writeAppSource(root, 'secure/[id]/+page.tsx')
     const publicPagePath = await writeAppSource(root, 'public/+page.tsx')
@@ -673,7 +692,7 @@ describe('build', () => {
   })
 
   it('runs server hooks for built page route requests', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-page-hooks-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     const secureServerPath = await writeAppSource(root, 'secure/[id]/+server.ts')
     await writeAppSource(
@@ -738,7 +757,7 @@ describe('build', () => {
   })
 
   it('rejects built form posts that target actions outside the current route graph', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-form-action-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     const securePagePath = await writeAppSource(root, 'secure/+page.tsx')
     const publicPagePath = await writeAppSource(root, 'public/+page.tsx')
@@ -799,7 +818,7 @@ describe('build', () => {
   })
 
   it('serves not-found loader snapshots from the built route-data endpoint', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-not-found-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -847,7 +866,7 @@ describe('build', () => {
   })
 
   it('keeps nearest dynamic params when built not-found route-data fallbacks resolve encoded paths', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-not-found-params-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -934,7 +953,7 @@ describe('build', () => {
   })
 
   it('returns document fallback when built route-data rendering throws notFound without a special route', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-route-data-document-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -965,7 +984,7 @@ describe('build', () => {
   })
 
   it('prerenders static routes while keeping the node server bundle for dynamic routes', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-node-hybrid-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     mocks.createRoutes.mockResolvedValue([
@@ -1009,7 +1028,7 @@ describe('build', () => {
   })
 
   it('runs Hono toSSG for ssg output and skips non-page routes', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await fs.writeFile(path.join(root, 'dist/client/assets/layout.css'), 'body { color: white; }\n')
@@ -1047,7 +1066,7 @@ describe('build', () => {
   })
 
   it('emits a chunk cache service worker and registers it from the built app shell', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-sw-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(root, 'route__page', 'export default () => null;\n')
@@ -1078,7 +1097,7 @@ describe('build', () => {
   })
 
   it('escapes chunk cache bootstrap scripts as inline javascript instead of json', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-sw-inline-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeMinimalRuntimeEntry(root, {
@@ -1118,7 +1137,7 @@ describe('build', () => {
   })
 
   it('rejects ssg output when route middleware is present', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-middleware-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     mocks.createRoutes.mockResolvedValue([
       {
@@ -1138,7 +1157,7 @@ describe('build', () => {
   })
 
   it('rejects ssg output when a page is marked dynamic', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-dynamic-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     mocks.createRoutes.mockResolvedValue([
       {
@@ -1153,7 +1172,7 @@ describe('build', () => {
   })
 
   it('prerenders dynamic static routes from getStaticPaths entries', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-ssg-dynamic-static-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(
@@ -1209,7 +1228,7 @@ describe('build', () => {
   })
 
   it('rejects dynamic static routes without getStaticPaths', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-missing-paths-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(root, 'route__docs___slug____page', 'export default () => null;\n')
@@ -1235,7 +1254,7 @@ describe('build', () => {
   })
 
   it('rejects invalid getStaticPaths params', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-invalid-paths-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(
@@ -1269,7 +1288,7 @@ describe('build', () => {
   })
 
   it('rejects duplicate concrete paths across static routes', async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), 'eclipsa-build-static-duplicate-paths-'))
+    const root = await createBuildFixtureRoot()
     const builder = createBuilder()
     await writeMinimalSsrEntries(root)
     await writeBuiltPageModule(

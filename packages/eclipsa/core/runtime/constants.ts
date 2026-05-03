@@ -18,8 +18,7 @@ export const ROUTE_PARAMS_PROP = '__eclipsa_route_params'
 export const ROUTE_ERROR_PROP = '__eclipsa_route_error'
 export const ROUTE_SLOT_ROUTE_KEY = Symbol.for('eclipsa.route-slot-route')
 export const RESUME_CONTAINERS_KEY = Symbol.for('eclipsa.resume-containers')
-export const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
-export const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
+export { RESUME_FINAL_STATE_ELEMENT_ID, RESUME_STATE_ELEMENT_ID } from '../resume-ids.ts'
 export const SCOPED_STYLE_ATTR = 'data-e-scope'
 export const ROOT_COMPONENT_ID = '$root'
 export const SUSPENSE_COMPONENT_SYMBOL = '$suspense'

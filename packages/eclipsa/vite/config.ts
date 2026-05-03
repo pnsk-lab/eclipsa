@@ -30,7 +30,11 @@ const TREE_SHAKEABLE_CLIENT_RUNTIME_MODULES = new Set([
 ])
 
 const hasTreeShakeableClientRuntimeModule = (id: string) => {
-  const normalized = id.split(path.sep).join('/')
+  let normalizedId = id
+  while (normalizedId.charCodeAt(0) === 0) {
+    normalizedId = normalizedId.slice(1)
+  }
+  const normalized = normalizedId.split(/[?#]/, 1)[0]!.split(path.sep).join('/')
   for (const modulePath of TREE_SHAKEABLE_CLIENT_RUNTIME_MODULES) {
     if (normalized.endsWith(modulePath)) {
       return true

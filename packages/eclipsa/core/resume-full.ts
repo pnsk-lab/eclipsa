@@ -1,26 +1,25 @@
 import {
   applyResumeHmrUpdateToRegisteredContainers,
   createResumeContainer,
-  dispatchDocumentEvent,
+  dispatchDocumentEventReady,
   refreshRegisteredRouteContainers,
-  RESUME_FINAL_STATE_ELEMENT_ID,
   installResumeListeners,
   primeRouteModules,
-  RESUME_STATE_ELEMENT_ID,
   restoreRegisteredRpcHandles,
   restoreResumedExternalComponents,
   restoreResumedLocalSignalEffects,
   registerResumeContainer,
   type ResumePayload,
 } from './runtime.ts'
+import { registerClientHooks, type AppHooksManifest, type AppHooksModule } from './hooks.ts'
 import {
   APP_HOOKS_ELEMENT_ID,
-  registerClientHooks,
-  type AppHooksManifest,
-  type AppHooksModule,
-} from './hooks.ts'
+  RESUME_FINAL_STATE_ELEMENT_ID,
+  RESUME_STATE_ELEMENT_ID,
+  ROUTE_MANIFEST_ELEMENT_ID,
+} from './resume-ids.ts'
 import { RESUME_HMR_EVENT, type ResumeHmrUpdatePayload } from './resume-hmr.ts'
-import { ROUTE_MANIFEST_ELEMENT_ID, type RouteManifest } from './router-shared.ts'
+import type { RouteManifest } from './router-shared.ts'
 import { registerRuntimeSymbols } from './runtime/kernel.ts'
 
 const CONTENT_HMR_EVENT = 'eclipsa:content-update'
@@ -126,8 +125,7 @@ export const resumeContainer = async (
     root.setAttribute('data-e-resume', 'resumed')
 
     if (options?.replayEvent) {
-      container.resumeReadyPromise = null
-      await dispatchDocumentEvent(container, options.replayEvent)
+      await dispatchDocumentEventReady(container, options.replayEvent)
     }
   } finally {
     resolveResumeReady()

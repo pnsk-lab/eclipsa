@@ -11610,7 +11610,7 @@ const finishDocumentEventAfterResume = (
   return dispatchSubmitActionIfNeeded(container, event)
 }
 
-const dispatchDocumentEventReady = (container: RuntimeContainer, event: Event) => {
+export const dispatchDocumentEventReady = (container: RuntimeContainer, event: Event) => {
   const didSyncBoundSignal =
     (event.type === 'input' || event.type === 'change') &&
     syncBoundElementSignal(container, event.target)

@@ -1,11 +1,12 @@
 import { installResumeLoader, needsFullResumeOnStart } from './resume-loader.ts'
+import {
+  APP_HOOKS_ELEMENT_ID,
+  RESUME_FINAL_STATE_ELEMENT_ID,
+  RESUME_STATE_ELEMENT_ID,
+  ROUTE_MANIFEST_ELEMENT_ID,
+} from './resume-ids.ts'
 import { registerRuntimeSymbols } from './runtime/kernel.ts'
 import type { ResumePayload } from './runtime/types.ts'
-
-const RESUME_STATE_ELEMENT_ID = 'eclipsa-resume'
-const RESUME_FINAL_STATE_ELEMENT_ID = 'eclipsa-resume-final'
-const ROUTE_MANIFEST_ELEMENT_ID = 'eclipsa-route-manifest'
-const APP_HOOKS_ELEMENT_ID = 'eclipsa-app-hooks'
 
 interface AppHooksManifest {
   client: string | null

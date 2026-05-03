@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { installResumeLoader } from './resume-loader.ts'
+import { installResumeLoader, needsFullResumeOnStart } from './resume-loader.ts'
 import type { ResumePayload } from './runtime/types.ts'
 
 class FakeElement {
@@ -137,6 +137,30 @@ describe('resume loader', () => {
     expect(event.stopImmediatePropagation).toHaveBeenCalled()
   })
 
+  it('promotes to full resume when captured scope uses an unknown serialized type', () => {
+    const doc = new FakeDocument()
+    const button = new FakeElement(doc)
+    button.parentElement = doc.body
+    button.setAttribute('data-e-onclick', 'click-symbol:sc0')
+    const payload = createPayload({
+      scopes: {
+        sc0: [{ __eclipsa_type: 'future-type' } as any],
+      },
+      symbols: {
+        'click-symbol': '/symbol.js',
+      },
+    })
+    const loadFullResume = vi.fn()
+
+    installResumeLoader(doc.body as unknown as HTMLElement, payload, { loadFullResume })
+    const event = createEvent('click', button)
+    doc.dispatch(event)
+
+    expect(loadFullResume).toHaveBeenCalledWith(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(event.stopImmediatePropagation).toHaveBeenCalled()
+  })
+
   it('captures route link navigation before promoting to full resume', () => {
     const previousPending = (globalThis as Record<string, unknown>).__epl
     const doc = new FakeDocument()
@@ -167,5 +191,51 @@ describe('resume loader', () => {
         ;(globalThis as Record<string, unknown>).__epl = previousPending
       }
     }
+  })
+
+  it('keeps startup on the lightweight loader when no full-runtime feature is present', () => {
+    expect(needsFullResumeOnStart(createPayload({}), { client: null })).toBe(false)
+  })
+
+  it('requires full resume when client hooks are present', () => {
+    expect(needsFullResumeOnStart(createPayload({}), { client: '/hooks.js' })).toBe(true)
+  })
+
+  it('requires full resume when visible or watch callbacks are serialized', () => {
+    expect(
+      needsFullResumeOnStart(
+        createPayload({
+          visibles: {
+            v0: {} as any,
+          },
+        }),
+        { client: null },
+      ),
+    ).toBe(true)
+    expect(
+      needsFullResumeOnStart(
+        createPayload({
+          watches: {
+            w0: {} as any,
+          },
+        }),
+        { client: null },
+      ),
+    ).toBe(true)
+  })
+
+  it('requires full resume when external components are serialized', () => {
+    expect(
+      needsFullResumeOnStart(
+        createPayload({
+          components: {
+            c0: {
+              external: {} as any,
+            } as any,
+          },
+        }),
+        { client: null },
+      ),
+    ).toBe(true)
   })
 })

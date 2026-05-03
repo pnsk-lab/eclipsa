@@ -176,6 +176,9 @@ describe('resumeContainer interactivity bootstrap', () => {
         resumeReadyPromise: null,
       })),
       dispatchDocumentEvent: vi.fn(async (_container, event) => {
+        order.push(`queued:${event.type}`)
+      }),
+      dispatchDocumentEventReady: vi.fn(async (_container, event) => {
         expect(event).toBe(replayEvent)
         order.push('replay')
       }),
@@ -192,10 +195,12 @@ describe('resumeContainer interactivity bootstrap', () => {
       restoreResumedLocalSignalEffects: vi.fn(),
     }))
     vi.doMock('./hooks.ts', () => ({
-      APP_HOOKS_ELEMENT_ID: 'eclipsa-app-hooks',
       registerClientHooks: vi.fn(),
     }))
-    vi.doMock('./router-shared.ts', () => ({
+    vi.doMock('./resume-ids.ts', () => ({
+      APP_HOOKS_ELEMENT_ID: 'eclipsa-app-hooks',
+      RESUME_FINAL_STATE_ELEMENT_ID: 'eclipsa-resume-final',
+      RESUME_STATE_ELEMENT_ID: 'eclipsa-resume',
       ROUTE_MANIFEST_ELEMENT_ID: 'eclipsa-route-manifest',
     }))
     vi.doMock('./resume-hmr.ts', () => ({

@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteEntry } from './utils/routing.ts'
 
+const TEST_APP_ROOT = '/workspace/app'
+
 const mocks = vi.hoisted(() => ({
   build: vi.fn(),
   collectAppActions: vi.fn<() => Promise<Array<{ filePath: string; id: string }>>>(),
@@ -40,7 +42,7 @@ describe('createConfig', () => {
 
   it('passes the resolved output target through to buildApp', async () => {
     const userConfig = {
-      root: '/tmp/app',
+      root: TEST_APP_ROOT,
     }
     const builder = {
       environments: {
@@ -75,7 +77,7 @@ describe('createConfig', () => {
   it('injects Nitro entry configuration when a Nitro plugin is present', async () => {
     const userConfig = {
       plugins: [[{ name: 'nitro:main' }]],
-      root: '/tmp/app',
+      root: TEST_APP_ROOT,
     }
 
     mocks.createRoutes.mockResolvedValue([])
@@ -97,7 +99,7 @@ describe('createConfig', () => {
       publicAssets: [
         {
           baseURL: '/',
-          dir: '/tmp/app/dist/client',
+          dir: `${TEST_APP_ROOT}/dist/client`,
         },
       ],
       virtual: {
@@ -108,7 +110,7 @@ describe('createConfig', () => {
 
   it('resolves the SSR runtime entry from the package instead of the app root', async () => {
     const userConfig = {
-      root: '/tmp/app',
+      root: TEST_APP_ROOT,
     }
 
     mocks.createRoutes.mockResolvedValue([])
@@ -136,7 +138,7 @@ describe('createConfig', () => {
 
   it('bundles eclipsa package imports into the SSR environment to avoid split runtimes', async () => {
     const userConfig = {
-      root: '/tmp/app',
+      root: TEST_APP_ROOT,
     }
 
     mocks.createRoutes.mockResolvedValue([])
@@ -155,5 +157,41 @@ describe('createConfig', () => {
     const noExternal = (config as Record<string, any>).environments?.ssr?.resolve?.noExternal
 
     expect(noExternal).toEqual([/^eclipsa(?:\/|$)/])
+  })
+
+  it('treats tree-shakeable runtime modules as side-effect free even with query suffixes', async () => {
+    const userConfig = {
+      root: TEST_APP_ROOT,
+    }
+
+    mocks.createRoutes.mockResolvedValue([])
+    mocks.collectRouteModules.mockReturnValue([])
+    mocks.collectRouteServerModules.mockReturnValue([])
+    mocks.collectAppActions.mockResolvedValue([])
+    mocks.collectAppLoaders.mockResolvedValue([])
+    mocks.collectAppSymbols.mockResolvedValue([])
+
+    const hook = createConfig({ output: 'node' })
+    if (typeof hook !== 'function') {
+      throw new Error('Expected createConfig() to return a config hook function')
+    }
+
+    const config = await hook.call({} as any, userConfig as any, {} as any)
+    const moduleSideEffects = (config as Record<string, any>).environments?.client?.build
+      ?.rollupOptions?.treeshake?.moduleSideEffects
+
+    expect(
+      moduleSideEffects(
+        `${TEST_APP_ROOT}/node_modules/eclipsa/core/runtime/event.ts?import`,
+        false,
+      ),
+    ).toBe(false)
+    expect(
+      moduleSideEffects(`\0${TEST_APP_ROOT}/node_modules/eclipsa/runtime/reactive.ts#hash`, false),
+    ).toBe(false)
+    expect(moduleSideEffects(`${TEST_APP_ROOT}/src/component.tsx?import`, false)).toBe(true)
+    expect(
+      moduleSideEffects(`${TEST_APP_ROOT}/node_modules/eclipsa/core/runtime/event.ts?import`, true),
+    ).toBe(true)
   })
 })
