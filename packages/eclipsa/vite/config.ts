@@ -18,6 +18,27 @@ import { createEclipsaNitroConfig, hasNitroPlugin } from './nitro.ts'
 
 const ECLIPSA_RUNTIME_ENTRY_PATH = fileURLToPath(import.meta.resolve('eclipsa/vite/build/runtime'))
 
+const TREE_SHAKEABLE_CLIENT_RUNTIME_MODULES = new Set([
+  '/core/runtime/dom-compiled.ts',
+  '/core/runtime/event.ts',
+  '/core/runtime/kernel.ts',
+  '/core/runtime/reactive.ts',
+  '/runtime/dom-compiled.ts',
+  '/runtime/event.ts',
+  '/runtime/kernel.ts',
+  '/runtime/reactive.ts',
+])
+
+const hasTreeShakeableClientRuntimeModule = (id: string) => {
+  const normalized = id.split(path.sep).join('/')
+  for (const modulePath of TREE_SHAKEABLE_CLIENT_RUNTIME_MODULES) {
+    if (normalized.endsWith(modulePath)) {
+      return true
+    }
+  }
+  return false
+}
+
 const fileExists = async (filePath: string) => {
   try {
     await fs.access(filePath)
@@ -95,6 +116,10 @@ export const createConfig =
                 entryFileNames: 'entries/[name].js',
               },
               preserveEntrySignatures: 'allow-extension',
+              treeshake: {
+                moduleSideEffects: (id, external) =>
+                  external || !hasTreeShakeableClientRuntimeModule(id),
+              },
             },
           },
         },

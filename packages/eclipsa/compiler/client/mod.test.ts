@@ -205,16 +205,35 @@ describe('compileClientModule', () => {
 
   it('embeds static intrinsic attributes into the template html', async () => {
     const resultCode = await compileClientModule(
-      `<div class="card" data-testid="probe" />`,
+      `<div class="card" data-testid="probe" data-count={1} hidden={true} data-off={false} />`,
       'mod.test.tsx',
       {
         hmr: false,
       },
     )
 
-    expect(resultCode).toContain('<div class=\\"card\\" data-testid=\\"probe\\"></div>')
+    expect(resultCode).toContain(
+      '<div class=\\"card\\" data-testid=\\"probe\\" data-count=\\"1\\" hidden></div>',
+    )
     expect(resultCode).not.toContain('_attr(_cloned, "class"')
     expect(resultCode).not.toContain('_attr(_cloned, "data-testid"')
+    expect(resultCode).not.toContain('_attrStatic(_cloned, "data-count"')
+    expect(resultCode).not.toContain('_attrStatic(_cloned, "hidden"')
+    expect(resultCode).not.toContain('data-off')
+  })
+
+  it('embeds static primitive JSX children into the template html', async () => {
+    const resultCode = await compileClientModule(
+      `<section>{'A&B'}{1}{true}{false}{null}<span>{'tail'}</span></section>`,
+      'mod.test.tsx',
+      {
+        hmr: false,
+      },
+    )
+
+    expect(resultCode).toContain('<section>A&amp;B1true<span>tail</span></section>')
+    expect(resultCode).not.toContain('_insertElementStatic')
+    expect(resultCode).not.toContain('_insertStatic')
   })
 
   it('keeps dynamic and runtime-only attributes on the runtime attr path', async () => {
@@ -461,6 +480,7 @@ describe('compileClientModule', () => {
     expect(resultCode).toMatch(/_insertFor\(\{\s*arrSignal: rows/)
     expect(resultCode).toMatch(/get "arr"\(\)\s*\{\s*return rows\.value;\s*\}/)
     expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).not.toMatch(/"?key"?:\s*\(?row\)?\s*=>\s*row\.id/)
     expect(resultCode).toContain('"directRowUpdates": true')
     expect(resultCode).not.toContain('_createComponent(For')
     expect(resultCode).not.toContain('_insertStatic(({ __e_for: true')
@@ -524,6 +544,7 @@ describe('compileClientModule', () => {
     expect(resultCode).toContain('_eventStatic(')
     expect(resultCode).toContain('"click", handleClick')
     expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).not.toMatch(/"?key"?:\s*\(?row\)?\s*=>\s*row\.id/)
     expect(resultCode).not.toContain('"onClick", () => __eclipsaLazy')
   })
 
@@ -588,6 +609,7 @@ describe('compileClientModule', () => {
 
     expect(resultCode).toContain('arrSignal: rows')
     expect(resultCode).toMatch(/"?domOnlyRows"?: true/)
+    expect(resultCode).not.toMatch(/"?key"?:\s*\(?row\)?\s*=>\s*row\.id/)
   })
 
   it('omits comment markers for tracked single-child text insertions inside nested elements', async () => {
@@ -728,8 +750,8 @@ describe('compileClientModule', () => {
 
     expect(resultCode).not.toContain('import { For as __eclipsaFor } from "eclipsa";')
     expect(resultCode).toContain('__e_for: true')
-    expect(resultCode).toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
     expect(resultCode).toContain('keyMember: "id"')
+    expect(resultCode).not.toMatch(/key:\s*\(?item\)?\s*=>\s*item\.id/)
     expect(resultCode).toContain('domOnlyRows: true')
     expect(resultCode).toContain('directRowUpdates: true')
     expect(resultCode).not.toContain('_attr(_cloned, "key"')

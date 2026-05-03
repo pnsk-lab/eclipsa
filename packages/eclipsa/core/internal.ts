@@ -1,6 +1,6 @@
 export { __eclipsaAction } from './action.ts'
-export { __eclipsaRealtime } from './realtime.ts'
 export { __eclipsaLoader } from './loader.ts'
+export { __eclipsaRealtime } from './realtime.ts'
 export {
   createRouteElement,
   createDetachedRuntimeComponent,

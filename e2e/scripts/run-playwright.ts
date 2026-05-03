@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { homedir } from 'node:os'
 import path from 'node:path'
+import { resolveNodeBinary } from './node-binary.ts'
 
 const host = '127.0.0.1'
 const cwd = process.cwd()
@@ -28,42 +28,7 @@ const resolveWorkspaceBin = (binName: string) => {
 const vpBinPath = resolveWorkspaceBin('vp')
 const playwrightBinPath = resolveWorkspaceBin('playwright')
 
-const resolveNodeBinary = () => {
-  if (path.basename(process.execPath) === 'node' && existsSync(process.execPath)) {
-    return process.execPath
-  }
-
-  const candidatePaths = [
-    process.env.NVM_BIN ? path.join(process.env.NVM_BIN, 'node') : null,
-    '/usr/bin/node',
-    '/usr/local/bin/node',
-  ].filter((candidatePath): candidatePath is string => !!candidatePath)
-
-  for (const candidatePath of candidatePaths) {
-    if (existsSync(candidatePath)) {
-      return candidatePath
-    }
-  }
-
-  const nvmVersionsDir = path.join(homedir(), '.nvm/versions/node')
-  if (existsSync(nvmVersionsDir)) {
-    const versionDirs = readdirSync(nvmVersionsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }))
-
-    for (const versionDir of versionDirs) {
-      const candidatePath = path.join(nvmVersionsDir, versionDir, 'bin/node')
-      if (existsSync(candidatePath)) {
-        return candidatePath
-      }
-    }
-  }
-
-  throw new Error(`Could not resolve a Node.js binary from ${cwd}.`)
-}
-
-const nodeBinaryPath = resolveNodeBinary()
+const nodeBinaryPath = resolveNodeBinary({ cwd })
 
 const getAvailablePort = async () =>
   await new Promise<number>((resolve, reject) => {

@@ -1622,6 +1622,27 @@ fn escape_attr(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+fn static_jsx_child_text(expression: &JSXExpression<'_>) -> Option<Option<String>> {
+    match expression {
+        JSXExpression::BooleanLiteral(value) => {
+            if value.value {
+                Some(Some(escape_text(&value.value.to_string())))
+            } else {
+                Some(None)
+            }
+        }
+        JSXExpression::NullLiteral(_) => Some(None),
+        JSXExpression::NumericLiteral(value) => Some(Some(escape_text(&value.value.to_string()))),
+        JSXExpression::BigIntLiteral(value) => Some(Some(escape_text(value.value.as_str()))),
+        JSXExpression::StringLiteral(value) => Some(Some(escape_text(value.value.as_str()))),
+        _ => None,
+    }
+}
+
+fn is_static_jsx_child_text(expression: &JSXExpression<'_>) -> bool {
+    static_jsx_child_text(expression).is_some()
+}
+
 fn get_static_event_name(name: &str) -> Option<String> {
     let mut chars = name.chars();
     if chars.next() != Some('o') || chars.next() != Some('n') {
@@ -2125,11 +2146,11 @@ impl<'s> ClientCompiler<'s> {
             .as_deref()
             .map(|member| format!(", keyMember: {}", js_string(member)))
             .unwrap_or_default();
-        match key_callback {
-            Some(key_callback) => format!(
+        match (key_callback, key_member.as_deref()) {
+            (Some(key_callback), None) => format!(
                 "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}, key: {key_callback}{key_member_prop}{reactive_rows_prop}{dom_only_rows_prop}{direct_row_updates_prop}{reactive_index_prop} }})"
             ),
-            None => format!(
+            _ => format!(
                 "({{ __e_for: true, arr: {arr}{arr_signal_prop}, fn: {callback}{key_member_prop}{reactive_rows_prop}{dom_only_rows_prop}{direct_row_updates_prop}{reactive_index_prop} }})"
             ),
         }
@@ -2162,6 +2183,7 @@ impl<'s> ClientCompiler<'s> {
         let mut reactive_index_enabled = true;
         let mut dom_only_rows_enabled = false;
         let mut key_member = None;
+        let mut key_prop = None;
 
         for attribute in attributes {
             let JSXAttributeItem::Attribute(attribute) = attribute else {
@@ -2234,7 +2256,12 @@ impl<'s> ClientCompiler<'s> {
                     props.push(format!("arrSignal: {signal}"));
                 }
             }
-            props.push(format!("{property_key}: {expression}"));
+            let prop = format!("{property_key}: {expression}");
+            if name == "key" {
+                key_prop = Some(prop);
+            } else {
+                props.push(prop);
+            }
         }
 
         if reactive_rows_enabled {
@@ -2251,6 +2278,8 @@ impl<'s> ClientCompiler<'s> {
         }
         if let Some(member) = key_member {
             props.push(format!("keyMember: {}", js_string(&member)));
+        } else if let Some(prop) = key_prop {
+            props.push(prop);
         }
 
         Ok(Some(format!("({{ {} }})", props.join(", "))))
@@ -2945,6 +2974,7 @@ impl<'s> ClientCompiler<'s> {
         let mut dom_only_rows_enabled = false;
         let mut key_member = None;
         let mut tracked = false;
+        let mut for_key_prop = None;
         let can_auto_lower_for_callback = component_name == Some("For")
             && !attributes.iter().any(|attribute| {
                 matches!(
@@ -3032,10 +3062,18 @@ impl<'s> ClientCompiler<'s> {
                                         props.push(format!("arrSignal: {signal}"));
                                     }
                                 }
-                                if self.is_static_component_prop(&container.expression) {
-                                    props.push(format!("{property_key}: {expression}"));
+                                let prop = if self.is_static_component_prop(&container.expression) {
+                                    format!("{property_key}: {expression}")
                                 } else {
-                                    props.push(format!("get {property_key}() {{ return {expression}; }}"));
+                                    tracked = true;
+                                    format!("get {property_key}() {{ return {expression}; }}")
+                                };
+                                if component_name == Some("For") && name == "key" {
+                                    for_key_prop = Some(prop);
+                                } else {
+                                    props.push(prop);
+                                }
+                                if !self.is_static_component_prop(&container.expression) {
                                     tracked = true;
                                 }
                                 continue;
@@ -3082,6 +3120,8 @@ impl<'s> ClientCompiler<'s> {
         if component_name == Some("For") {
             if let Some(member) = key_member {
                 props.push(format!("keyMember: {}", js_string(&member)));
+            } else if let Some(prop) = for_key_prop {
+                props.push(prop);
             }
         }
 
@@ -3152,6 +3192,9 @@ impl<'s> ClientCompiler<'s> {
                 }
                 JSXChild::ExpressionContainer(container) => {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
+                        continue;
+                    }
+                    if is_static_jsx_child_text(&container.expression) {
                         continue;
                     }
                     if expression.is_some() {
@@ -3242,6 +3285,13 @@ impl<'s> ClientCompiler<'s> {
                     if let JSXExpression::EmptyExpression(_) = &container.expression {
                         continue;
                     }
+                    if let Some(static_text) = static_jsx_child_text(&container.expression) {
+                        if let Some(static_text) = static_text {
+                            html.push_str(&static_text);
+                            path_index += 1;
+                        }
+                        continue;
+                    }
                     let child_path = path.iter().copied().chain([path_index]).collect::<Vec<_>>();
                     html.push_str(&format!("<!-- {} -->", child_path.iter().map(|part| part.to_string()).collect::<Vec<_>>().join(",")));
                     inserts.push(ClientInsertOp::Apply {
@@ -3321,6 +3371,18 @@ impl<'s> ClientCompiler<'s> {
                                     escape_attr(value.value.as_str())
                                 ));
                                 continue;
+                            }
+                            Some(JSXAttributeValue::ExpressionContainer(container)) => {
+                                if let JSXExpression::EmptyExpression(_) = &container.expression {
+                                    continue;
+                                }
+                                if let Some(static_attr) = try_render_static_attr_expression(
+                                    &attr_name,
+                                    &container.expression.to_expression(),
+                                ) {
+                                    html.push_str(&static_attr);
+                                    continue;
+                                }
                             }
                             _ => {}
                         }
