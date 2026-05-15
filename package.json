@@ -20,7 +20,7 @@
     "benchmark:test": "bun run benchmark:build && bun run --cwd benchmarks client:test && bun run --cwd benchmarks ssr:test",
     "benchmark:client": "bun run --cwd benchmarks client:bench",
     "benchmark:dom-compiled": "bun run --cwd benchmarks dom-compiled:bench",
-    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/optimizer --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/content --filter=./packages/motion --filter=./packages/markdown --filter=./packages/native --filter=./packages/native-core --filter=./packages/native-swiftui --filter=./packages/native-android-compose --filter=./packages/native-gtk4",
+    "pack": "turbo run pack --filter=./packages/eclipsa --filter=./packages/optimizer --filter=./packages/create-eclipsa --filter=./packages/image --filter=./packages/content --filter=./packages/motion --filter=./packages/markdown --filter=./packages/native --filter=./packages/native-core --filter=./packages/native-swiftui --filter=./packages/native-android-compose --filter=./packages/native-gtk4 --filter=./packages/node",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:coverage": "turbo run test:coverage",

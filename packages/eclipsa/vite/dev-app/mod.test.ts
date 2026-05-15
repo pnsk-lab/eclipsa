@@ -177,8 +177,11 @@ describe('createDevFetch', () => {
       onMessage?: (
         event: { data: unknown },
         ws: { close(): void; send(data: string): void },
-      ) => void
-      onOpen?: (event: unknown, ws: { close(): void; send(data: string): void }) => void
+      ) => void | Promise<void>
+      onOpen?: (
+        event: unknown,
+        ws: { close(): void; send(data: string): void },
+      ) => void | Promise<void>
     } | null = null
     const hasRealtime = vi.fn(() => false)
     const httpServer = {}
@@ -247,6 +250,10 @@ describe('createDevFetch', () => {
     expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
     expect(moduleImports).toContain(pagePath)
     await Promise.resolve()
+    expect(executeRealtime).not.toHaveBeenCalled()
+    expect(events?.onOpen).toEqual(expect.any(Function))
+
+    await events?.onOpen?.({}, { close() {}, send() {} })
     expect(executeRealtime).toHaveBeenCalledWith(
       'room',
       expect.anything(),
@@ -255,7 +262,6 @@ describe('createDevFetch', () => {
         send: expect.any(Function),
       }),
     )
-    expect(events?.onOpen).toEqual(expect.any(Function))
   })
 
   it('rejects realtime requests outside the current route graph', async () => {
@@ -355,6 +361,16 @@ describe('createDevFetch', () => {
       }),
     )
     expect(blocked).toBeUndefined()
+
+    const crossOrigin = await devFetch.fetch(
+      new Request('http://localhost/__eclipsa/realtime/secure-room', {
+        headers: {
+          origin: 'http://attacker.test',
+          [ROUTE_RPC_URL_HEADER]: 'http://localhost/secure/123',
+        },
+      }),
+    )
+    expect(crossOrigin?.status).toBe(403)
     expect(executeRealtime).toHaveBeenCalledTimes(1)
   })
 

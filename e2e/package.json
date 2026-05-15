@@ -8,7 +8,7 @@
     "e2e:ui": "bun run --cwd ../packages/optimizer build:native:dev && bun ./scripts/run-playwright.ts --ui",
     "build": "vp build",
     "dev": "vp dev",
-    "start": "bun dist/server/index.mjs",
+    "start": "bun dist/server/node.mjs",
     "test": "bun test ./scripts/*.test.ts",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
@@ -16,6 +16,7 @@
     "@eclipsa/content": "workspace:*",
     "@eclipsa/image": "workspace:*",
     "@eclipsa/motion": "workspace:*",
+    "@eclipsa/node": "workspace:*",
     "@eclipsa/react": "workspace:*",
     "@eclipsa/vue": "workspace:*",
     "eclipsa": "workspace:*",

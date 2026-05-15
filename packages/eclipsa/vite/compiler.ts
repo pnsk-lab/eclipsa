@@ -21,12 +21,16 @@ const SIMPLE_BUILD_SYMBOL_PATTERN = /^[A-Za-z0-9_-]+$/
 
 interface AnalyzedEntry {
   analyzed: AnalyzedModule
+  captureSignatures: CaptureSignatureMap
   previous: {
     analyzed: AnalyzedModule
+    captureSignatures: CaptureSignatureMap
     source: string
   } | null
   source: string
 }
+
+type CaptureSignatureMap = Map<string, string[]>
 
 interface ResumeHmrResolution {
   isResumable: boolean
@@ -128,9 +132,11 @@ const loadAnalyzedModule = async (
 
   const entry = {
     analyzed,
+    captureSignatures: createCaptureSignatureMap(analyzed, resolvedSource, normalizedPath),
     previous: cached
       ? {
           analyzed: cached.analyzed,
+          captureSignatures: cached.captureSignatures,
           source: cached.source,
         }
       : null,
@@ -162,6 +168,7 @@ const createAnalyzedEntry = async (
 
   return {
     analyzed,
+    captureSignatures: createCaptureSignatureMap(analyzed, source, filePath),
     previous: null,
     source,
   }
@@ -187,6 +194,108 @@ const getComponentEntryById = (components: Map<string, ResumeHmrComponentEntry>,
 
 const sameStrings = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index])
+
+const getBindingNames = (name: ts.BindingName): string[] => {
+  if (ts.isIdentifier(name)) {
+    return [name.text]
+  }
+  return name.elements.flatMap((element) => {
+    if (ts.isOmittedExpression(element)) {
+      return []
+    }
+    return getBindingNames(element.name)
+  })
+}
+
+const collectTopLevelBindingTexts = (source: string, filePath: string) => {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const bindings = new Map<string, string>()
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const text = declaration.initializer
+          ? declaration.initializer.getText(sourceFile)
+          : declaration.getText(sourceFile)
+        for (const name of getBindingNames(declaration.name)) {
+          bindings.set(name, text)
+        }
+      }
+      continue
+    }
+
+    if (
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement)
+    ) {
+      if (statement.name) {
+        bindings.set(statement.name.text, statement.getText(sourceFile))
+      }
+      continue
+    }
+
+    if (!ts.isImportDeclaration(statement) || !statement.importClause) {
+      continue
+    }
+
+    const moduleText = statement.moduleSpecifier.getText(sourceFile)
+    const clause = statement.importClause
+    if (clause.name) {
+      bindings.set(clause.name.text, `${moduleText}:${clause.getText(sourceFile)}`)
+    }
+    if (!clause.namedBindings) {
+      continue
+    }
+    if (ts.isNamespaceImport(clause.namedBindings)) {
+      bindings.set(
+        clause.namedBindings.name.text,
+        `${moduleText}:${clause.namedBindings.getText(sourceFile)}`,
+      )
+      continue
+    }
+    for (const element of clause.namedBindings.elements) {
+      bindings.set(element.name.text, `${moduleText}:${element.getText(sourceFile)}`)
+    }
+  }
+
+  return bindings
+}
+
+const createCaptureSignatureMap = (
+  analyzed: AnalyzedModule,
+  source: string,
+  filePath: string,
+): CaptureSignatureMap => {
+  const bindings = collectTopLevelBindingTexts(source, filePath)
+  const signatures: CaptureSignatureMap = new Map()
+
+  for (const [hmrKey, component] of analyzed.hmrManifest.components) {
+    const capturedBindings = component.captures
+      .map((capture) => {
+        const text = bindings.get(capture)
+        return text == null ? null : `${capture}:${text}`
+      })
+      .filter((value): value is string => value != null)
+    if (capturedBindings.length > 0) {
+      signatures.set(hmrKey, capturedBindings)
+    }
+  }
+
+  return signatures
+}
+
+const hasChangedCaptureSignatures = (
+  previous: CaptureSignatureMap | null | undefined,
+  next: CaptureSignatureMap | null | undefined,
+  hmrKey: string,
+) => !sameStrings(previous?.get(hmrKey) ?? [], next?.get(hmrKey) ?? [])
 
 const createDevSourceUrl = (root: string, filePath: string) => {
   const normalizedRoot = root.replaceAll('\\', '/').replace(/\/$/, '')
@@ -219,10 +328,13 @@ const findOwnerComponentForSymbol = (
 export const createResumeHmrUpdate = (options: {
   filePath: string
   next: AnalyzedModule
+  nextCaptureSignatures?: CaptureSignatureMap
   previous: AnalyzedModule | null
+  previousCaptureSignatures?: CaptureSignatureMap | null
   root: string
 }): ResumeHmrUpdatePayload | null => {
-  const { filePath, next, previous, root } = options
+  const { filePath, next, nextCaptureSignatures, previous, previousCaptureSignatures, root } =
+    options
   const fileUrl = createDevSourceUrl(root, filePath)
   if (!previous) {
     return next.symbols.size > 0
@@ -270,6 +382,9 @@ export const createResumeHmrUpdate = (options: {
     }
     if (!sameStrings(previousComponent.captures, nextComponent.captures)) {
       rerenderOwnerSymbols.add(previousComponent.id)
+    }
+    if (hasChangedCaptureSignatures(previousCaptureSignatures, nextCaptureSignatures, hmrKey)) {
+      fullReload = true
     }
   }
 
@@ -408,6 +523,7 @@ export const inspectResumeHmrUpdate = async (options: {
       previous: cached
         ? {
             analyzed: cached.analyzed,
+            captureSignatures: cached.captureSignatures,
             source: cached.source,
           }
         : null,
@@ -427,6 +543,7 @@ export const inspectResumeHmrUpdate = async (options: {
           ...nextEntry,
           previous: {
             analyzed: previousEntry.analyzed,
+            captureSignatures: previousEntry.captureSignatures,
             source: servedSource,
           },
         }
@@ -436,7 +553,9 @@ export const inspectResumeHmrUpdate = async (options: {
   const update = createResumeHmrUpdate({
     filePath: normalizedPath,
     next: nextEntry.analyzed,
+    nextCaptureSignatures: nextEntry.captureSignatures,
     previous,
+    previousCaptureSignatures: nextEntry.previous?.captureSignatures ?? null,
     root: options.root,
   })
   servedSources.set(cacheKey, nextEntry.source)

@@ -53,6 +53,7 @@
         "@eclipsa/content": "workspace:*",
         "@eclipsa/image": "workspace:*",
         "@eclipsa/motion": "workspace:*",
+        "@eclipsa/node": "workspace:*",
         "@eclipsa/react": "workspace:*",
         "@eclipsa/vue": "workspace:*",
         "eclipsa": "workspace:*",
@@ -185,6 +186,16 @@
         "@eclipsa/native-core": "workspace:^",
       },
     },
+    "packages/node": {
+      "name": "@eclipsa/node",
+      "version": "0.0.0",
+      "dependencies": {
+        "eclipsa": "workspace:*",
+      },
+      "peerDependencies": {
+        "vite": "*",
+      },
+    },
     "packages/optimizer": {
       "name": "@eclipsa/optimizer",
       "version": "0.0.0",
@@ -280,6 +291,8 @@
     "@eclipsa/native-host-quickjs": ["@eclipsa/native-host-quickjs@workspace:packages/native-host-quickjs"],
 
     "@eclipsa/native-swiftui": ["@eclipsa/native-swiftui@workspace:packages/native-swiftui"],
+
+    "@eclipsa/node": ["@eclipsa/node@workspace:packages/node"],
 
     "@eclipsa/optimizer": ["@eclipsa/optimizer@workspace:packages/optimizer"],
 

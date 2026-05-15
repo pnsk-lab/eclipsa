@@ -259,20 +259,68 @@ describe('build', () => {
     mocks.toSSG.mockReset()
   })
 
-  it('keeps node output on the existing server bundle path', async () => {
+  it('emits the default server bundle as a fetch handler factory', async () => {
     const root = await createBuildFixtureRoot()
     const builder = createBuilder()
 
     await build(builder, { root }, { output: 'node' })
 
     expect(builder.build).toHaveBeenCalledTimes(2)
-    expect(await fs.readFile(path.join(root, 'dist/server/index.mjs'), 'utf8')).toContain(
-      '../ssr/eclipsa_app.mjs',
-    )
+    const serverSource = await fs.readFile(path.join(root, 'dist/server/index.mjs'), 'utf8')
+    expect(serverSource).toContain('export default (adapters = {}) => {')
+    expect(serverSource).toContain('const { upgradeWebSocket } = adapters;')
+    expect(serverSource).toContain('return (request) => app.fetch(request);')
+    expect(serverSource).not.toContain('createServer')
     expect(await fs.readFile(path.join(root, 'dist/ssr/eclipsa_app.mjs'), 'utf8')).toContain(
       'const pageRouteEntries = [{"path":"/","routeIndex":0}];',
     )
     expect(mocks.toSSG).not.toHaveBeenCalled()
+  })
+
+  it('lets server adapter plugins emit host entry files next to the default handler', async () => {
+    const root = await createBuildFixtureRoot()
+    const builder = createBuilder()
+
+    await build(
+      builder,
+      {
+        root,
+        plugins: [
+          {
+            name: 'test-adapter',
+            eclipsaServerAdapter: {
+              name: 'test-adapter',
+              buildFiles: ({ serverDir }) => [
+                {
+                  path: 'host/entry.mjs',
+                  contents: `export const serverDir = ${JSON.stringify(serverDir)};\n`,
+                },
+              ],
+            },
+          } as any,
+        ],
+      },
+      { output: 'node' },
+    )
+
+    expect(await fs.readFile(path.join(root, 'dist/server/index.mjs'), 'utf8')).toContain(
+      'export default (adapters = {}) => {',
+    )
+    expect(await fs.readFile(path.join(root, 'dist/server/host/entry.mjs'), 'utf8')).toContain(
+      path.join(root, 'dist/server'),
+    )
+  })
+
+  it('does not emit server files when ssg is enabled', async () => {
+    const root = await createBuildFixtureRoot()
+    const builder = createBuilder()
+    await fs.mkdir(path.join(root, 'dist/server'), { recursive: true })
+    await fs.writeFile(path.join(root, 'dist/server/index.mjs'), 'stale')
+    mocks.createRoutes.mockResolvedValue([])
+
+    await build(builder, { root }, { output: 'ssg', ssg: true })
+
+    await expect(fs.stat(path.join(root, 'dist/server'))).rejects.toThrow()
   })
 
   it('emits a realtime websocket route when server-entry exports an adapter', async () => {
@@ -294,9 +342,12 @@ describe('build', () => {
     expect(appSource).toContain('createRealtimeHonoUpgradeHandler')
     expect(appSource).toContain('const realtimeRouteMatches = new WeakMap();')
     expect(appSource).toContain(`c.req.query("${ROUTE_RPC_URL_QUERY}")`)
+    expect(appSource).toContain('const isSameOriginRequestOrigin = (request) => {')
+    expect(appSource).toContain('return new URL(origin).origin === getRequestUrl(request).origin;')
     expect(appSource).toContain(
       'const authorizeResponse = await resolveRequest(c, async (requestContext, appHooks) => {',
     )
+    expect(appSource).toContain('if (!isSameOriginRequestOrigin(requestContext.req.raw)) {')
     expect(appSource).toContain('if (!realtimeRouteMatches.has(c.req.raw)) {')
     expect(appSource).toContain('if (!routeAccess.realtimeIds.includes(id)) {')
     expect(appSource).toContain('return composeRouteMiddlewares(')
