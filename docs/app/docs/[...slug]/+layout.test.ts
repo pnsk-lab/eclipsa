@@ -46,6 +46,7 @@ describe('docs layout', () => {
     expect(result.html).toContain('data-testid="docs-mobile-nav-toggle"')
     expect(result.html).toContain('>Menu</span>')
     expect(result.html).toContain('>Routing</div>')
+    expect(result.html).toContain('>Hosting</div>')
     expect(result.html).toContain('>Action</div>')
     expect(result.html).toContain('>Realtime</div>')
     expect(result.html).toContain('>Native</div>')

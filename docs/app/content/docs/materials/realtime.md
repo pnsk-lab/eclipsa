@@ -150,7 +150,9 @@ Values written with `c.set()` in middleware are available as `connection.c.var` 
 
 `realtime()` compiles and registers server handlers the same way `action()` and `loader()` do.
 
-Eclipsa does not choose a WebSocket runtime for you. Configure the Hono-compatible WebSocket adapter exported by your runtime in `app/+server-entry.ts`:
+Production server adapters receive host capabilities through `dist/server/index.mjs`. The first capability is `upgradeWebSocket`, which Eclipsa uses to mount `GET /__eclipsa/realtime/:id`.
+
+On runtimes that provide a Hono-compatible WebSocket helper directly, configure the helper in `app/+server-entry.ts`:
 
 ```ts
 import { Hono } from 'hono'
@@ -169,7 +171,22 @@ export default app
 
 Eclipsa reads the `realtimeWebSocket` export and mounts `GET /__eclipsa/realtime/:id` with the supplied `upgradeWebSocket` handler.
 
-During Vite development, Node WebSocket adapters should be configured as a factory so Eclipsa can pass its internal Hono app and inject the adapter into Vite's HTTP server:
+During Vite development, Node WebSocket adapters should be configured as a factory so Eclipsa can pass its internal Hono app and inject the adapter into Vite's HTTP server. Production Node output should come from the `@eclipsa/node` Vite plugin:
+
+```ts
+import { defineConfig } from 'vite'
+import { eclipsa } from 'eclipsa/vite'
+import { node } from '@eclipsa/node'
+
+export default defineConfig({
+  appType: 'custom',
+  plugins: [eclipsa(), node()],
+})
+```
+
+The Node adapter writes `dist/server/node.mjs`. It serves `dist/client/` and delegates dynamic requests to the standard server handler.
+
+For custom Node WebSocket adapters, keep the `realtimeWebSocket` export as a factory:
 
 ```ts
 import { Hono } from 'hono'

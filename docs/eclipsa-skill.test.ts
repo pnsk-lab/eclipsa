@@ -37,11 +37,13 @@ describe('eclipsa skill', () => {
     ])
 
     expect(gettingStarted).toContain('<Link href="/dashboard">Open the dashboard</Link>')
+    expect(gettingStarted).toContain('dist/server/node.mjs')
     expect(data).toContain('const useTeamLoader = loader(requestMeta, async (c) => {')
     expect(data).toContain('const useSaveProfile = action(async (c) => {')
     expect(data).toContain('<saveProfile.Form class="stack">')
     expect(metadata).toContain('export const metadata = ({ url }: MetadataContext) => ({')
     expect(metadata).toContain('export default function Root(props: SSRRootProps)')
     expect(metadata).toContain('const app = new Hono()')
+    expect(metadata).toContain('@eclipsa/node')
   })
 })

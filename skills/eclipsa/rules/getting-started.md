@@ -35,7 +35,14 @@ A fresh app includes:
 - `app/+client.dev.tsx`: client resume entry.
 - `app/+server-entry.ts`: Hono server entry.
 - `app/+ssr-root.tsx`: HTML shell used during SSR.
-- `vite.config.ts`: Eclipsa Vite plugin wiring.
+- `vite.config.ts`: Eclipsa Vite plugin wiring plus `@eclipsa/node` for Node production output.
+
+## Production Output
+
+- `eclipsa()` writes `dist/server/index.mjs`, a standard handler factory that returns `Request => Response`.
+- `@eclipsa/node` writes `dist/server/node.mjs`.
+- The starter `bun run start` command runs `dist/server/node.mjs`.
+- `eclipsa({ ssg: true })` writes static output under `dist/client/` and removes `dist/server/`.
 
 ## First Useful Edit
 

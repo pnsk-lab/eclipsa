@@ -66,6 +66,9 @@ export default function Root(props: SSRRootProps) {
 - The generated starter uses Hono.
 - Export a Hono app as the server entry.
 - Put route-scoped request handling in route files before expanding global server complexity.
+- Production builds emit `dist/server/index.mjs` as a standard `Request => Response` handler factory.
+- Add host plugins such as `@eclipsa/node` next to `eclipsa()` to generate host-specific server entry files.
+- With `eclipsa({ ssg: true })`, Eclipsa emits static output under `dist/client/` and does not create `dist/server/`.
 
 ```ts
 import { Hono } from 'hono'
@@ -74,3 +77,10 @@ const app = new Hono()
 
 export default app
 ```
+
+## Node Hosting
+
+- Use `@eclipsa/node` for the default Node server entry.
+- Configure `plugins: [eclipsa(), node()]`.
+- Run `node dist/server/node.mjs` after build.
+- Keep prerendered pages and static endpoint output in `dist/client/`.

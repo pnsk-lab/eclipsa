@@ -29,6 +29,7 @@ const DOC_SECTIONS: DocSection[] = [
     links: [
       { label: 'Overview', href: '/docs/getting-started/overview' },
       { label: 'Quick Start', href: '/docs/getting-started/quick-start' },
+      { label: 'Hosting', href: '/docs/getting-started/hosting' },
     ],
     gradientClass: 'bg-linear-to-br from-emerald-700 to-teal-400',
   },
