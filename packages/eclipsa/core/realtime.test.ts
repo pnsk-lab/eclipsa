@@ -125,6 +125,7 @@ describe('realtime runtime', () => {
   it('adapts Hono WebSocket event handlers into realtime sockets', async () => {
     const app = new Hono()
     let events: RealtimeHonoWebSocketEvents | null = null
+    let handlerStarted = false
     const ws = {
       close: vi.fn(),
       sent: [] as string[],
@@ -139,6 +140,7 @@ describe('realtime runtime', () => {
       async (
         connection: RealtimeConnection<{ room: string }, { text: string }, { text: string }>,
       ) => {
+        handlerStarted = true
         connection.send({ text: `joined ${connection.input.room}` })
         connection.onMessage((message) => {
           connection.send(message)
@@ -166,9 +168,11 @@ describe('realtime runtime', () => {
     expect(events).toBeTruthy()
 
     await Promise.resolve()
+    expect(handlerStarted).toBe(false)
     expect(ws.sent).toEqual([])
 
     await events!.onOpen?.(new Event('open'), ws)
+    expect(handlerStarted).toBe(true)
     expect(JSON.parse(ws.sent[0] ?? '')).toMatchObject({ type: 'message' })
 
     await events!.onMessage?.(

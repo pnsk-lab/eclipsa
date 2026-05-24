@@ -14,6 +14,7 @@ on:
           - content
           - motion
           - markdown
+          - node
           - native-swiftui
           - native-android-compose
           - native-gtk4
@@ -123,6 +124,9 @@ jobs:
               ;;
             markdown)
               package_dir="packages/markdown"
+              ;;
+            node)
+              package_dir="packages/node"
               ;;
             native-swiftui)
               package_dir="packages/native-swiftui"

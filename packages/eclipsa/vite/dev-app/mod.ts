@@ -117,6 +117,18 @@ const getRequestUrl = (request: Request) => {
   return url
 }
 
+const isSameOriginRequestOrigin = (request: Request) => {
+  const origin = request.headers.get('origin')
+  if (!origin) {
+    return true
+  }
+  try {
+    return new URL(origin).origin === getRequestUrl(request).origin
+  } catch {
+    return false
+  }
+}
+
 const createInternalRouteRequestUrl = (request: Request, targetUrl: URL) =>
   new URL(`${targetUrl.pathname}${targetUrl.search}`, request.url).href
 
@@ -1216,6 +1228,9 @@ const createDevApp = async (init: DevAppInit) => {
       '/__eclipsa/realtime/:id',
       async (c, next) => {
         const authorizeResponse = await resolveRequest(c, async (requestContext) => {
+          if (!isSameOriginRequestOrigin(requestContext.req.raw)) {
+            return requestContext.text('Forbidden', 403)
+          }
           const id = requestContext.req.param('id')
           if (!id) {
             return requestContext.text('Not Found', 404)

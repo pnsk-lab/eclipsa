@@ -367,7 +367,13 @@ const eclipsaHot = (state: EclipsaPluginState): Plugin => ({
   },
 })
 
-export type { EclipsaPluginOptions } from './options.ts'
+export type {
+  EclipsaPluginOptions,
+  EclipsaServerAdapter,
+  EclipsaServerAdapterBuildContext,
+  EclipsaServerAdapterFile,
+  EclipsaServerAdapterPlugin,
+} from './options.ts'
 
 export const eclipsa = (options?: EclipsaPluginOptions): PluginOption => {
   const state: EclipsaPluginState = {}

@@ -12,7 +12,8 @@
     "ssr:bench:deno": "bun run --cwd ssr bench:deno",
     "ssr:test": "bun run --cwd ssr test",
     "client:bench": "bun run --cwd client bench",
-    "client:test": "bun run --cwd client test"
+    "client:test": "bun run --cwd client test",
+    "dom-compiled:bench": "bun run dom-compiled/benchmark.ts"
   },
   "packageManager": "bun@1.3.11"
 }

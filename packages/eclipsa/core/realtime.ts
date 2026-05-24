@@ -409,32 +409,37 @@ export const createRealtimeHonoUpgradeHandler = (
   upgradeWebSocket((c) => {
     const socket = createHonoRealtimeSocket()
     let started = false
-    const start = () => {
+    let startPromise: Promise<void> | null = null
+    const start = async () => {
       if (started) {
-        return
+        return startPromise
       }
       started = true
-      void Promise.resolve(connect(c as unknown as AppContext<any>, socket)).catch((error) => {
-        socket.dispatch('error', error)
-        socket.close(1011, 'Realtime handler failed')
-      })
+      startPromise = Promise.resolve(connect(c as unknown as AppContext<any>, socket)).catch(
+        (error) => {
+          socket.dispatch('error', error)
+          socket.close(1011, 'Realtime handler failed')
+        },
+      )
+      return startPromise
     }
-    start()
     return {
-      onClose(event, ws) {
+      async onClose(event, ws) {
         socket.bind(ws)
         socket.dispatch('close', event)
       },
-      onError(event, ws) {
+      async onError(event, ws) {
         socket.bind(ws)
         socket.dispatch('error', event)
       },
-      onMessage(event, ws) {
+      async onMessage(event, ws) {
         socket.bind(ws)
+        await start()
         socket.dispatch('message', event)
       },
-      onOpen(_event, ws) {
+      async onOpen(_event, ws) {
         socket.bind(ws)
+        await start()
       },
     }
   })

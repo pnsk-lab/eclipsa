@@ -582,6 +582,39 @@ describe('createResumeHmrUpdate', () => {
     })
   })
 
+  it('falls back to route refresh when captured module-scope values change', async () => {
+    const filePath = '/tmp/captured-module-value.tsx'
+    const previousSource = `
+      const sections = [{ id: "materials", title: "Materials" }];
+      export default () => {
+        return <nav>{sections.map((section) => <span>{section.title}</span>)}</nav>;
+      };
+    `
+    const nextSource = `
+      const sections = [{ id: "materials", title: "Materials HMR" }];
+      export default () => {
+        return <nav>{sections.map((section) => <span>{section.title}</span>)}</nav>;
+      };
+    `
+
+    await resolveResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: previousSource,
+    })
+
+    const result = await inspectResumeHmrUpdate({
+      filePath,
+      root: '/tmp',
+      source: nextSource,
+    })
+
+    expect(result.update).toMatchObject({
+      fileUrl: '/captured-module-value.tsx',
+      fullReload: true,
+    })
+  })
+
   it('returns absolute source file paths for collected actions, loaders, and realtime handlers', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'eclipsa-vite-entries-'))
     const appDir = path.join(root, 'app')

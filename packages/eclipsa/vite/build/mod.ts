@@ -37,7 +37,7 @@ import {
   createBuildServerRealtimeUrl,
   createBuildSymbolUrl,
 } from '../compiler.ts'
-import type { ResolvedEclipsaPluginOptions } from '../options.ts'
+import { collectEclipsaServerAdapters, type ResolvedEclipsaPluginOptions } from '../options.ts'
 import { xxHash32 } from '../../utils/xxhash32.ts'
 
 const joinHonoPath = (left: string, right: string) => `${left}/${right}`.replaceAll(/\/+/g, '/')
@@ -716,6 +716,18 @@ const getRequestUrl = (request) => {
     url.protocol = proto + ":";
   }
   return url;
+};
+
+const isSameOriginRequestOrigin = (request) => {
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    return true;
+  }
+  try {
+    return new URL(origin).origin === getRequestUrl(request).origin;
+  } catch {
+    return false;
+  }
 };
 
 const createInternalRouteRequestUrl = (request, targetUrl) =>
@@ -1585,6 +1597,9 @@ if (realtimeWebSocket?.upgradeWebSocket) {
     "/__eclipsa/realtime/:id",
     async (c, next) => {
       const authorizeResponse = await resolveRequest(c, async (requestContext, appHooks) => {
+        if (!isSameOriginRequestOrigin(requestContext.req.raw)) {
+          return requestContext.text("Forbidden", 403);
+        }
         const id = requestContext.req.param("id");
         if (!id) {
           return requestContext.text("Not Found", 404);
@@ -1797,104 +1812,16 @@ export default app;
 `
 }
 
-const renderNodeServer =
+const renderFetchServer =
   () => `import app, { injectRealtimeWebSocket } from "../ssr/eclipsa_app.mjs";
-import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const fileTypes = new Map([
-  [".js", "text/javascript; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".css", "text/css; charset=utf-8"],
-  [".html", "text/html; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".svg", "image/svg+xml"],
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-]);
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientDir = path.resolve(__dirname, "../client");
-
-const toRequest = (incomingMessage) => {
-  const body =
-    incomingMessage.method !== "GET" && incomingMessage.method !== "HEAD"
-      ? new ReadableStream({
-          start(controller) {
-            incomingMessage.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
-            incomingMessage.on("end", () => controller.close());
-          },
-        })
-      : null;
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(incomingMessage.headers)) {
-    if (Array.isArray(value)) {
-      value.forEach((entry) => headers.append(key, entry));
-    } else if (value) {
-      headers.append(key, value);
-    }
+export default (adapters = {}) => {
+  const { upgradeWebSocket } = adapters;
+  if (upgradeWebSocket) {
+    injectRealtimeWebSocket(adapters);
   }
-  return new Request(new URL(incomingMessage.url ?? "/", "http://localhost"), {
-    method: incomingMessage.method,
-    headers,
-    body,
-  });
+  return (request) => app.fetch(request);
 };
-
-const sendResponse = async (response, serverResponse) => {
-  for (const [key, value] of response.headers) {
-    serverResponse.setHeader(key, value);
-  }
-  serverResponse.statusCode = response.status;
-  serverResponse.statusMessage = response.statusText;
-  const buffer = Buffer.from(await response.arrayBuffer());
-  serverResponse.end(buffer);
-};
-
-const serveStatic = async (pathname) => {
-  const normalized = pathname.replace(/^\\/+/, "");
-  const filePath = path.join(clientDir, normalized);
-  if (!filePath.startsWith(clientDir)) {
-    return null;
-  }
-
-  try {
-    const info = await stat(filePath);
-    if (!info.isFile()) {
-      return null;
-    }
-    return new Response(await readFile(filePath), {
-      headers: {
-        "content-type": fileTypes.get(path.extname(filePath)) ?? "application/octet-stream",
-      },
-    });
-  } catch {
-    return null;
-  }
-};
-
-const port = Number.parseInt(process.env.PORT ?? "3000", 10);
-
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", "http://localhost");
-  const staticResponse = await serveStatic(url.pathname);
-  if (staticResponse) {
-    await sendResponse(staticResponse, res);
-    return;
-  }
-
-  const response = await app.fetch(toRequest(req));
-  await sendResponse(response, res);
-});
-
-injectRealtimeWebSocket(server);
-
-server.listen(port, () => {
-  console.log("Eclipsa server listening on http://localhost:" + port);
-});
 `
 
 export const build = async (
@@ -1903,6 +1830,7 @@ export const build = async (
   options: ResolvedEclipsaPluginOptions,
 ) => {
   const root = userConfig.root ?? cwd()
+  const ssg = options.ssg ?? options.output === 'ssg'
   const appHooksPath = path.join(root, 'app/+hooks.ts')
   const serverHooksPath = path.join(root, 'app/+hooks.server.ts')
   const actions = await collectAppActions(root)
@@ -1921,7 +1849,7 @@ export const build = async (
   const dynamicPageRoutes = routes.filter(
     (route) => route.page && resolveRouteRenderMode(route, options.output) === 'dynamic',
   )
-  if (options.output === 'ssg') {
+  if (ssg) {
     const dynamicRoute = dynamicPageRoutes[0]
     if (dynamicRoute) {
       throw new Error(
@@ -1971,7 +1899,7 @@ export const build = async (
       routes,
       routeServerAccessEntries,
       routeManifest,
-      options.output !== 'ssg',
+      !ssg,
       serverHooksUrl,
       symbolUrls,
       stylesheetUrls,
@@ -2018,10 +1946,24 @@ export const build = async (
     }
   }
 
-  if (options.output === 'node') {
+  if (!ssg) {
     await prerenderStaticRoutes()
     await fs.mkdir(serverDir, { recursive: true })
-    await fs.writeFile(path.join(serverDir, 'index.mjs'), renderNodeServer())
+    await fs.writeFile(path.join(serverDir, 'index.mjs'), renderFetchServer())
+    const serverAdapters = collectEclipsaServerAdapters(userConfig.plugins)
+    for (const adapter of serverAdapters) {
+      for (const file of adapter.buildFiles({ clientDir, root, serverDir })) {
+        const filePath = path.resolve(serverDir, file.path)
+        const relativePath = path.relative(serverDir, filePath)
+        if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+          throw new Error(
+            `Eclipsa server adapter "${adapter.name}" tried to emit outside dist/server: ${file.path}`,
+          )
+        }
+        await fs.mkdir(path.dirname(filePath), { recursive: true })
+        await fs.writeFile(filePath, file.contents)
+      }
+    }
     return
   }
 

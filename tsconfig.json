@@ -7,7 +7,9 @@
     "verbatimModuleSyntax": true,
     "paths": {
       "eclipsa": ["./packages/eclipsa/mod.ts"],
+      "eclipsa/vite": ["./packages/eclipsa/vite/mod.ts"],
       "eclipsa/internal": ["./packages/eclipsa/core/internal.ts"],
+      "@eclipsa/node": ["./packages/node/mod.ts"],
       "@eclipsa/optimizer/native": ["./packages/optimizer/native.ts"],
       "@eclipsa/native": ["./packages/native/mod.ts"],
       "@eclipsa/native/runtime": ["./packages/native/runtime-api.ts"],
