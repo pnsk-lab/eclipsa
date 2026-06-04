@@ -28,8 +28,8 @@ bun install
 - `app/+client.dev.tsx`: client boot entry; it must call `resumeContainer(document)`.
 - `app/+server-entry.ts`: Hono server entry.
 - `app/+ssr-root.tsx`: HTML shell for SSR.
-- `vite.config.ts`: `appType: 'custom'` and `plugins: [eclipsa()]`.
-- `package.json`: `eclipsa` and `hono` in dependencies, TypeScript and selected toolchain in devDependencies.
+- `vite.config.ts`: `appType: 'custom'` and `plugins: [eclipsa(), node()]`.
+- `package.json`: `eclipsa`, `@eclipsa/node`, and `hono` in dependencies, TypeScript and selected toolchain in devDependencies.
 
 ## Starter Tree
 
@@ -49,6 +49,8 @@ vite.config.ts
 - `bun run dev`
 - `bun run build`
 - `bun run start`
+
+`bun run start` should run the Node adapter output at `dist/server/node.mjs`.
 
 ## Practical Advice
 

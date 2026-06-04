@@ -38,11 +38,20 @@ describe('create-eclipsa', () => {
     await expect(fs.readFile(path.join(target, 'package.json'), 'utf8')).resolves.toContain(
       '"vite": "latest"',
     )
+    await expect(fs.readFile(path.join(target, 'package.json'), 'utf8')).resolves.toContain(
+      '"@eclipsa/node": "latest"',
+    )
+    await expect(fs.readFile(path.join(target, 'package.json'), 'utf8')).resolves.toContain(
+      '"start": "node dist/server/node.mjs"',
+    )
     await expect(fs.readFile(path.join(target, 'vite.config.ts'), 'utf8')).resolves.toContain(
       "from 'vite'",
     )
     await expect(fs.readFile(path.join(target, 'vite.config.ts'), 'utf8')).resolves.toContain(
-      'plugins: [eclipsa()]',
+      "from '@eclipsa/node'",
+    )
+    await expect(fs.readFile(path.join(target, 'vite.config.ts'), 'utf8')).resolves.toContain(
+      'plugins: [eclipsa(), node()]',
     )
     await expect(fs.readFile(path.join(target, 'app/+page.tsx'), 'utf8')).resolves.toContain(
       'Hello from Eclipsa',

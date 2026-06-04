@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "__DEV_COMMAND__",
     "build": "__BUILD_COMMAND__",
-    "start": "node dist/server/index.mjs",
+    "start": "node dist/server/node.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@eclipsa/node": "latest",
     "eclipsa": "latest",
     "hono": "^4.6.4"
   },

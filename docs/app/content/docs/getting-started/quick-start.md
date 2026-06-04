@@ -30,6 +30,17 @@ bun install # or pnpm install, deno task install, yarn install, npm install
 bun dev # or pnpm dev, deno task dev, yarn dev, npm run dev
 ```
 
+## Build and start
+
+The default starter uses `@eclipsa/node` for production Node output.
+
+```bash
+bun run build
+bun run start
+```
+
+`eclipsa()` writes the standard `dist/server/index.mjs` Request handler factory. The `node()` adapter also writes `dist/server/node.mjs`, which is what the starter `start` script runs.
+
 ## Verify search indexing
 
 Use the phrase `stellar-search-probe` if you want to confirm the docs search index is picking up headings, body text, and inline code.
