@@ -304,5 +304,7 @@ export const needsFullResumeOnStart = (
   ) {
     return true
   }
-  return Object.values(payload.components ?? {}).some((component) => !!component.external)
+  return Object.values(payload.components ?? {}).some(
+    (component) => !!component.external || (component.mountCount ?? 0) > 0,
+  )
 }

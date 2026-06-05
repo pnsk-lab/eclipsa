@@ -600,6 +600,19 @@ test.describe('example app in dev mode', () => {
     )
   })
 
+  test('runs onMount for directly loaded routes after refs are connected', async ({ page }) => {
+    await page.goto('/mount-connected-target')
+    await waitForResumedRoute(page)
+
+    await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveAttribute(
+      'data-mounted-canvas',
+      'true',
+    )
+  })
+
   test('keeps motion section titles when sidebar links patch a shared layout shell', async ({
     page,
   }) => {
