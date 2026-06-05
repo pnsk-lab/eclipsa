@@ -8927,8 +8927,17 @@ const commitBrowserNavigation = (doc: Document, url: URL, mode: NavigationMode) 
   doc.defaultView.history.pushState(null, '', url.href)
 }
 
-const scrollToUrlFragment = (doc: Document, url: URL) => {
+const scrollToUrlTarget = (
+  doc: Document,
+  url: URL,
+  options?: {
+    resetScroll?: boolean
+  },
+) => {
   if (!url.hash) {
+    if (options?.resetScroll) {
+      doc.defaultView?.scrollTo(0, 0)
+    }
     return
   }
 
@@ -9224,7 +9233,9 @@ const commitRouteNavigation = (
   if (options?.writeLocation !== false) {
     writeRouterLocation(router, url)
   }
-  scrollToUrlFragment(doc, url)
+  scrollToUrlTarget(doc, url, {
+    resetScroll: mode !== 'pop',
+  })
 }
 
 const renderAndCommitRouteNavigation = (
@@ -9391,7 +9402,9 @@ const navigateContainer = async (
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
       writeRouterLocation(router, url)
-      scrollToUrlFragment(doc, url)
+      scrollToUrlTarget(doc, url, {
+        resetScroll: mode !== 'pop',
+      })
     }
     return
   }

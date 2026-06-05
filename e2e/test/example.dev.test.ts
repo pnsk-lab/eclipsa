@@ -283,6 +283,22 @@ test.describe('example app in dev mode', () => {
       .toBe(true)
   })
 
+  test('resets scroll for client-side Link navigation without a hash target', async ({ page }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+
+    await page.getByRole('link', { name: 'Open counter after deep scroll' }).click()
+
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBe(0)
+    await expect(page.getByText('Counter page')).toBeVisible()
+  })
+
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
     await page.goto('/layout-location/overview')
 
