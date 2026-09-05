@@ -48,11 +48,6 @@ export const isSignal = (value: unknown): value is Signal =>
   (signalRecords.has(value) || ownedSignals.has(value))
 
 const createSignal = <T>(initialValue: T): Signal<T> => {
-  const ownedSignal = runtimeSignalFactory?.(initialValue)
-  if (ownedSignal) {
-    ownedSignals.add(ownedSignal)
-    return ownedSignal
-  }
   const record = {
     effects: new Set<Effect>(),
     value: initialValue as unknown,
@@ -82,7 +77,14 @@ const createSignal = <T>(initialValue: T): Signal<T> => {
   return handle
 }
 
-export const useSignal = createSignal
+export const useSignal = <T>(initialValue: T): Signal<T> => {
+  const ownedSignal = runtimeSignalFactory?.(initialValue)
+  if (ownedSignal) {
+    ownedSignals.add(ownedSignal)
+    return ownedSignal
+  }
+  return createSignal(initialValue)
+}
 export const signal = createSignal
 
 export const effect = (fn: () => void) => {

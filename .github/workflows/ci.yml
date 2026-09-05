@@ -41,7 +41,7 @@ jobs:
         working-directory: e2e
         run: bun x playwright install --with-deps chromium
       - name: Run E2E suite
-        run: bun run test:e2e
+        run: bun run test:e2e --log-order=stream
 
   quality:
     name: Quality

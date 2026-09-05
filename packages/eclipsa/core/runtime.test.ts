@@ -30,7 +30,8 @@ import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import {
   onMount as onCompiledMount,
   onVisible as onCompiledVisible,
-  signal as createCompiledSignal,
+  useSignal as createCompiledSignal,
+  signal as createCompiledRowSignal,
   isSignal as isCompiledSignal,
 } from './runtime/reactive.ts'
 import {
@@ -13817,6 +13818,28 @@ describe('docs navigation regressions', () => {
       count.value = 1
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(input.value).toBe('/second:1')
+    })
+  })
+
+  it('initializes internal compiled row signals from new props on every render', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const source = createDetachedRuntimeSignal(container, 'row-source', 'first')
+      const App = __eclipsaComponent(
+        () => {
+          const row = createCompiledRowSignal(source.value)
+          return jsxDEV('p', { children: row.value }, null, false, {})
+        },
+        'compiled-row-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      source.value = 'second'
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('second')
     })
   })
 
