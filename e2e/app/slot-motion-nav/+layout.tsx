@@ -18,6 +18,17 @@ export default (props: { children?: unknown }) => {
         >
           Toggle nav
         </button>
+        <button
+          type="button"
+          data-testid="slot-motion-nav-async-toggle"
+          onClick={() => {
+            setTimeout(() => {
+              open.value = !open.value
+            }, 0)
+          }}
+        >
+          Toggle nav asynchronously
+        </button>
         <span data-testid="slot-motion-nav-toggle-state">{open.value ? 'open' : 'closed'}</span>
         <motion.div
           data-testid="slot-motion-nav-panel"

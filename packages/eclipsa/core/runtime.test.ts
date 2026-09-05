@@ -13775,6 +13775,57 @@ describe('renderClientInsertable', () => {
 })
 
 describe('docs navigation regressions', () => {
+  it('automatically flushes signal writes in client-created library components', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const label = createDetachedRuntimeSignal(container, 'library-label', 'before')
+      const Library = __eclipsaComponent(
+        () => jsxDEV('p', { children: label.value }, null, false, {}),
+        '@library:scheduled',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Library, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      label.value = 'after'
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(container.doc!.body.textContent).toContain('after')
+      expect(container.dirty.size).toBe(0)
+    })
+  })
+
+  it('restores mount callbacks in resumed components without signals', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const start = container.doc!.createComment('ec:c:c0:start')
+      const end = container.doc!.createComment('ec:c:c0:end')
+      container.doc!.body.appendChild(start)
+      container.doc!.body.appendChild(end)
+      const component = createDetachedRuntimeComponent(container, 'mount-only')
+      component.start = start
+      component.end = end
+      component.mountCount = 1
+      component.active = false
+      let mounts = 0
+      container.imports.set(
+        'mount-only',
+        Promise.resolve({
+          default: () => {
+            onMount(() => {
+              mounts++
+            })
+            return jsxDEV('p', { children: 'mounted' }, null, false, {})
+          },
+        }),
+      )
+      await restoreResumedLocalSignalEffects(container)
+      expect(mounts).toBe(1)
+      await restoreResumedLocalSignalEffects(container)
+      expect(mounts).toBe(1)
+    })
+  })
+
   it('reactivates client-created library components without a generated symbol URL', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()

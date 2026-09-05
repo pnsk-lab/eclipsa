@@ -626,6 +626,22 @@ test.describe('example app in dev mode', () => {
     )
   })
 
+  test('updates motion after an asynchronous signal write on a navigated route', async ({
+    page,
+  }) => {
+    await page.goto('/slot-motion-nav/overview')
+    await page.getByTestId('slot-motion-nav-quick-start-link').click()
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await page.getByTestId('slot-motion-nav-async-toggle').click()
+    await expect(page.getByTestId('slot-motion-nav-toggle-state')).toHaveText('closed')
+    await expect(page.getByTestId('slot-motion-nav-panel')).toHaveCSS('max-height', '0px')
+  })
+
+  test('runs onMount on direct load without signals or external components', async ({ page }) => {
+    await page.goto('/mount-only')
+    await expect(page.getByTestId('mount-only-state')).toHaveText('mounted')
+  })
+
   test('runs onMount for directly loaded routes after refs are connected', async ({ page }) => {
     await page.goto('/mount-connected-target')
     await waitForResumedRoute(page)
