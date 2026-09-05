@@ -13780,6 +13780,46 @@ describe('renderClientInsertable', () => {
 })
 
 describe('docs navigation regressions', () => {
+  it('updates changed child props and keeps their effects after a router update', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      Object.assign(container.doc!, { location: new URL('https://example.com/first') })
+      primeLocationState(container, 'https://example.com/first')
+      let count!: { value: number }
+      const Child = __eclipsaComponent(
+        (props: { label: string }) => {
+          count = createCompiledSignal(0)
+          const input = container.doc!.createElement('input')
+          attrCompiled(input, 'value', () => `${props.label}:${count.value}`)
+          return input
+        },
+        'route-child',
+        () => [],
+      )
+      const Parent = __eclipsaComponent(
+        () => {
+          const location = useLocation()
+          return jsxDEV(Child, { label: location.pathname }, null, false, {})
+        },
+        'route-parent',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Parent, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      primeLocationState(container, 'https://example.com/second')
+      await flushDirtyComponents(container)
+      const input = (container.doc!.body as unknown as FakeElement).childNodes.find(
+        (node) => node instanceof FakeElement && node.tagName === 'input',
+      ) as FakeElement & { value: string }
+      expect(input.value).toBe('/second:0')
+      count.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(input.value).toBe('/second:1')
+    })
+  })
+
   it('updates compiled bindings without rerendering their owner', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()

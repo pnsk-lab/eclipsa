@@ -653,6 +653,19 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('mount-only-state')).toHaveText('mounted')
   })
 
+  test('updates child props and reactive bindings across shared-layout navigation', async ({
+    page,
+  }) => {
+    await page.goto('/route-props/a')
+    await expect(page.getByRole('button', { name: '/route-props/a: 0', exact: true })).toBeVisible()
+    await page.getByRole('link', { name: 'Route B', exact: true }).click()
+    await expect(page.getByText('Route B body', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '/route-props/b: 0', exact: true }).click()
+    await expect(page.getByRole('button', { name: '/route-props/b: 1', exact: true })).toBeVisible()
+    await page.goBack()
+    await expect(page.getByRole('button', { name: '/route-props/a: 1', exact: true })).toBeVisible()
+  })
+
   test('finishes startup restoration before navigating from onVisible', async ({ page }) => {
     await page.goto('/visible-redirect')
     await expect(page).toHaveURL(/\/counter$/)

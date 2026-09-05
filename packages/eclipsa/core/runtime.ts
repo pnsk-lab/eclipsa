@@ -4925,11 +4925,13 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
         }
         if (didComponentBoundaryPropsChange(nextUnit.start)) {
           const nextRangeNodes = nextUnit.bodyNodes
-          if (
-            !tryPatchBoundaryContentsInPlace(currentUnit.start, currentUnit.end, nextRangeNodes)
-          ) {
-            replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
-          }
+          withCompiledReactiveTargetPatchPreservation(false, () => {
+            if (
+              !tryPatchBoundaryContentsInPlace(currentUnit.start, currentUnit.end, nextRangeNodes)
+            ) {
+              replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
+            }
+          })
         }
       } else if (currentUnit.rangeKind === 'keyed') {
         const nextRangeNodes = nextUnit.bodyNodes
@@ -8138,10 +8140,10 @@ setCompiledRuntimeEffectWrapper((fn) => {
   const effect = createRuntimeReactiveEffect(container, true)
   effect.fn = () =>
     runReactiveEffectInContainer(effect, () => collectTrackedDependencies(effect, fn))
-  if (currentClientInsertCleanupSlot) {
-    addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
-  } else if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
+  if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
     addCleanupSlotEffect(ensureFrameEffectCleanupSlot(frame), effect)
+  } else if (currentClientInsertCleanupSlot) {
+    addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
   }
   return () => runEffect(effect)
 })
