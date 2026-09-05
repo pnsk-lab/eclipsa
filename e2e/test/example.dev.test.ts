@@ -283,6 +283,22 @@ test.describe('example app in dev mode', () => {
       .toBe(true)
   })
 
+  test('resets scroll for client-side Link navigation without a hash target', async ({ page }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+
+    await page.getByRole('link', { name: 'Open counter after deep scroll' }).click()
+
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBe(0)
+    await expect(page.getByText('Counter page')).toBeVisible()
+  })
+
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
     await page.goto('/layout-location/overview')
 
@@ -575,6 +591,19 @@ test.describe('example app in dev mode', () => {
     await page.getByRole('link', { name: 'Open mount connected target' }).click()
 
     await expect(page).toHaveURL(/\/mount-connected-target$/)
+    await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveAttribute(
+      'data-mounted-canvas',
+      'true',
+    )
+  })
+
+  test('runs onMount for directly loaded routes after refs are connected', async ({ page }) => {
+    await page.goto('/mount-connected-target')
+    await waitForResumedRoute(page)
+
     await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
     await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
     await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)

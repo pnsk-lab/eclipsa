@@ -44,6 +44,7 @@ export interface ResumeComponentPayload {
   scope: string
   signalIds: string[]
   symbol: string
+  mountCount?: number
   visibleCount: number
   watchCount: number
 }
@@ -187,6 +188,7 @@ export interface ComponentState {
   subscribedSignalIds: Set<string> | null
   symbol: string
   suspensePromise?: Promise<unknown> | null
+  mountCount: number
   visibleCount: number
   watchCount: number
 }
@@ -201,6 +203,7 @@ export interface RenderFrame {
   insertCursor: number
   keyedRangeCursor: number
   keyedRangeScopeStack: string[] | null
+  mountCursor: number
   mountCallbacks: Array<() => void> | null
   nextEffectCursor: number
   nextRenderEffects: RenderEffect[] | null

@@ -589,6 +589,7 @@ const createInactiveComponentState = (
   externalInstance: undefined,
   externalMeta: null,
   id,
+  mountCount: 0,
   mountCleanupSlots: null,
   mayChangeNodeCount: false,
   optimizedRoot: false,
@@ -624,6 +625,7 @@ const materializeComponentStateFields = (component: ComponentState) => {
   component.active ??= false
   component.childComponentIds ??= null
   component.didMount ??= false
+  component.mountCount ??= 0
   component.mountCleanupSlots ??= null
   component.mayChangeNodeCount ??= false
   component.props ??= null
@@ -3077,6 +3079,7 @@ const createFrame = (
     frame.insertCursor = 0
     frame.keyedRangeCursor = 0
     frame.keyedRangeScopeStack = null
+    frame.mountCursor = 0
     frame.mountCallbacks = null
     frame.mode = mode
     frame.nextEffectCursor = 0
@@ -3105,6 +3108,7 @@ const createFrame = (
     insertCursor: 0,
     keyedRangeCursor: 0,
     keyedRangeScopeStack: null,
+    mountCursor: 0,
     mountCallbacks: null,
     mode,
     nextEffectCursor: 0,
@@ -3247,6 +3251,7 @@ const resetComponentForSymbolChange = (
   component.scopeId = captures.length > 0 ? registerScope(container, captures) : null
   component.signalIds = EMPTY_COMPONENT_SIGNAL_IDS
   component.suspensePromise = null
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
 }
@@ -3448,6 +3453,10 @@ const pruneComponentWatches = (
   component.watchCount = nextCount
 }
 
+const pruneComponentMounts = (component: ComponentState, nextCount: number) => {
+  component.mountCount = nextCount
+}
+
 const pruneComponentVisibles = (
   container: RuntimeContainer,
   component: ComponentState,
@@ -3517,6 +3526,7 @@ const pruneRemovedComponents = (
     const descendant = container.components.get(descendantId)
     if (descendant) {
       disposeComponentMountCleanups(descendant)
+      pruneComponentMounts(descendant, 0)
       pruneComponentVisibles(container, descendant, 0)
       pruneComponentWatches(container, descendant, 0)
       descendant.childComponentIds?.clear()
@@ -3530,6 +3540,7 @@ const disposeComponentState = (container: RuntimeContainer, component: Component
   clearComponentSubscriptions(container, component.id)
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   disposeComponentMountCleanups(component)
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
   for (const signalId of component.signalIds) {
@@ -5886,6 +5897,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const renderProps = createRenderProps(componentId, meta, resolved.props)
 
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
+    pruneComponentMounts(component, frame.mountCursor)
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${renderFrameScopedStylesToString(frame)}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
@@ -6168,6 +6180,7 @@ const renderComponentToNodes = (
     throw error
   }
   disposeCleanupSlot(speculativeEffectCleanupSlot)
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const preservedDescendants =
@@ -6919,6 +6932,7 @@ const teardownKeyedForOwnerState = (
   clearComponentSubscriptions(container, ownerComponent.id)
   resetComponentRenderEffects(ownerComponent)
   pruneRemovedComponents(container, ownerComponent.id, new Set())
+  pruneComponentMounts(ownerComponent, 0)
   pruneComponentVisibles(container, ownerComponent, 0)
   pruneComponentWatches(container, ownerComponent, 0)
   removeNodesFromParent(currentNodes, parent)
@@ -8116,7 +8130,7 @@ setCompiledRuntimeEffectWrapper((fn) => {
 
 setCompiledRuntimeMountScheduler((fn) => {
   const frame = getCurrentFrame()
-  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
     return false
   }
   createOnMount(fn)
@@ -8136,6 +8150,7 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
   container.rootChildComponentIds ??= new Set()
   for (const component of container.components.values()) {
     disposeComponentMountCleanups(component)
+    pruneComponentMounts(component, 0)
     pruneComponentVisibles(container, component, 0)
     pruneComponentWatches(container, component, 0)
   }
@@ -8309,6 +8324,7 @@ const renderSuspenseComponentToString = (props: SuspenseProps) => {
   const body = pushFrame(frame, () =>
     renderSuspenseContentToString(component.props as SuspenseProps, container, componentId),
   )
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   return `${createComponentBoundaryHtmlComment(componentId, 'start')}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
@@ -8346,6 +8362,7 @@ const renderSuspenseComponentToNodes = (
   const bodyNodes = pushFrame(frame, () =>
     renderSuspenseContentToNodes(component.props as SuspenseProps, container, componentId),
   )
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
@@ -8927,8 +8944,17 @@ const commitBrowserNavigation = (doc: Document, url: URL, mode: NavigationMode) 
   doc.defaultView.history.pushState(null, '', url.href)
 }
 
-const scrollToUrlFragment = (doc: Document, url: URL) => {
+const scrollToUrlTarget = (
+  doc: Document,
+  url: URL,
+  options?: {
+    resetScroll?: boolean
+  },
+) => {
   if (!url.hash) {
+    if (options?.resetScroll) {
+      doc.defaultView?.scrollTo(0, 0)
+    }
     return
   }
 
@@ -9224,7 +9250,9 @@ const commitRouteNavigation = (
   if (options?.writeLocation !== false) {
     writeRouterLocation(router, url)
   }
-  scrollToUrlFragment(doc, url)
+  scrollToUrlTarget(doc, url, {
+    resetScroll: mode !== 'pop',
+  })
 }
 
 const renderAndCommitRouteNavigation = (
@@ -9391,7 +9419,9 @@ const navigateContainer = async (
     if (nextHref !== currentHref) {
       commitBrowserNavigation(doc, url, mode)
       writeRouterLocation(router, url)
-      scrollToUrlFragment(doc, url)
+      scrollToUrlTarget(doc, url, {
+        resetScroll: mode !== 'pop',
+      })
     }
     return
   }
@@ -9622,6 +9652,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       throw error
     }
     disposeCleanupSlot(suspenseSpeculativeEffectCleanupSlot)
+    pruneComponentMounts(component, frame.mountCursor)
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     const patched =
@@ -9798,6 +9829,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     })
   }
   disposeCleanupSlot(speculativeEffectCleanupSlot)
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const patched =
@@ -10264,6 +10296,7 @@ export const beginSSRContainer = <T>(
     childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCount: 0,
     mountCleanupSlots: [],
     parentId: null,
     props: {},
@@ -10310,6 +10343,7 @@ export const beginAsyncSSRContainer = async <T>(
     childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCount: 0,
     mountCleanupSlots: [],
     parentId: null,
     props: {},
@@ -10357,6 +10391,7 @@ export const disposeDetachedRuntimeComponent = (
 ) => {
   clearComponentSubscriptions(container, component.id)
   disposeComponentMountCleanups(component)
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
   for (const signalId of component.signalIds) {
@@ -10421,6 +10456,7 @@ const createResumePayload = (
           scope: ensureComponentScopeId(container, component),
           signalIds: [...component.signalIds],
           symbol: component.symbol,
+          mountCount: component.mountCount,
           visibleCount: component.visibleCount,
           watchCount: component.watchCount,
         } satisfies ResumeComponentPayload,
@@ -10546,6 +10582,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       externalInstance: undefined,
       externalMeta: null,
       id,
+      mountCount: componentPayload.mountCount ?? 0,
       mountCleanupSlots: null,
       optimizedRoot: componentPayload.optimizedRoot === true,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
@@ -10562,7 +10599,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       subscribedSignalIds: null,
       suspensePromise: null,
       visibleCount: componentPayload.visibleCount ?? 0,
-      watchCount: componentPayload.watchCount,
+      watchCount: componentPayload.watchCount ?? 0,
     })
   }
 
@@ -12473,10 +12510,15 @@ export const createOnCleanup = (fn: () => void) => {
 
 export const createOnMount = (fn: () => void) => {
   const frame = getCurrentFrame()
-  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
     return
   }
   registerComponentState(frame.container, frame.component)
+  frame.mountCursor += 1
+  if (frame.mode !== 'client') {
+    frame.component.mountCount = Math.max(frame.component.mountCount, frame.mountCursor)
+    return
+  }
   ensureFrameMountCallbacks(frame).push(fn)
 }
 
