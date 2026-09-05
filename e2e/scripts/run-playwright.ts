@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { resolveNodeBinary } from './node-binary.ts'
+import { stopChildProcess } from './stop-child-process.ts'
 
 const host = '127.0.0.1'
 const cwd = process.cwd()
@@ -146,11 +147,7 @@ const run = async () => {
       process.exit(exitCode)
     }
   } finally {
-    terminateDevServer()
-    await new Promise((resolve) => {
-      devServer.once('close', resolve)
-      setTimeout(resolve, 5_000)
-    })
+    await stopChildProcess(devServer)
   }
 }
 
