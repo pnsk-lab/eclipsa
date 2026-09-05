@@ -5,7 +5,9 @@ export default () => (
     <h2>Hash Navigation</h2>
     <p>Client-side fragment navigation should preserve native anchor scrolling.</p>
     <p>
-      <Link href="#deep-dive">Jump to deep dive</Link>
+      <Link href="#deep-dive" prefetch="none">
+        Jump to deep dive
+      </Link>
     </p>
     <div style="height: 3000px;" />
     <h3 id="deep-dive" data-testid="hash-nav-target">

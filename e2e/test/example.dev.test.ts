@@ -283,6 +283,32 @@ test.describe('example app in dev mode', () => {
       .toBe(true)
   })
 
+  test('navigates to a fragment without requesting route data', async ({ page }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+    const requests: string[] = []
+    page.on('request', (request) => {
+      if (['fetch', 'xhr', 'document'].includes(request.resourceType())) {
+        requests.push(request.url())
+      }
+    })
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+    expect(requests).toEqual([])
+  })
+
+  test('refreshes loader results on query-only navigation and browser back', async ({ page }) => {
+    await page.goto('/query-nav?q=one')
+    await expect(page.getByTestId('query-result')).toHaveText('one')
+    await page.getByRole('link', { name: 'Load second query' }).click()
+    await expect(page).toHaveURL(/\/query-nav\?q=two$/)
+    await expect(page.getByTestId('query-result')).toHaveText('two')
+    await page.goBack()
+    await expect(page).toHaveURL(/\/query-nav\?q=one$/)
+    await expect(page.getByTestId('query-result')).toHaveText('one')
+  })
+
   test('resets scroll for client-side Link navigation without a hash target', async ({ page }) => {
     await page.goto('/hash-nav')
     await waitForResumedRoute(page)
