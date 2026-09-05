@@ -396,6 +396,17 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('motion-indicator')).toHaveText('Left active')
   })
 
+  test('preserves local counter state after a shared atom update', async ({ page }) => {
+    await page.goto('/atom')
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await page.getByTestId('atom-left').click()
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 2')
+  })
+
   test('shares atom state across components and preserves it across Link navigation', async ({
     page,
   }) => {

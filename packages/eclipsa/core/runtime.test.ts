@@ -29,6 +29,7 @@ import {
   onMount as onCompiledMount,
   onVisible as onCompiledVisible,
   signal as createCompiledSignal,
+  isSignal as isCompiledSignal,
 } from './runtime/reactive.ts'
 import {
   createContext,
@@ -69,7 +70,7 @@ import {
   renderClientInsertable,
   restoreSignalRefs,
   runDetachedRuntimeComponent,
-  restoreResumedLocalSignalEffects,
+  restoreResumedComponentEffects,
   serializeContainerValue,
   syncBoundElementSignal,
   syncManagedElementAttributes,
@@ -78,6 +79,7 @@ import {
   tryPatchNodeSequenceInPlace,
   type RuntimeContainer,
   withRuntimeContainer,
+  useRuntimeAtom,
 } from './runtime.ts'
 import {
   getManagedAttributeSnapshot,
@@ -6192,7 +6194,7 @@ describe('renderClientInsertable', () => {
 
         expect(getEffectCount()).toBe(0)
 
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         const livePanel = parent.childNodes[1] as FakeElement | undefined
         expect(livePanel).toBeInstanceOf(FakeElement)
@@ -6289,7 +6291,7 @@ describe('renderClientInsertable', () => {
       ;(globalThis as typeof globalThis & { document: Document }).document =
         container.doc as Document
       try {
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         const input = findFirst('input')
         const span = findFirst('span')
@@ -6509,7 +6511,7 @@ describe('renderClientInsertable', () => {
         )
 
         ;(globalThis as typeof globalThis & { document: Document }).document = doc
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         expect(events).toEqual([])
 
@@ -13775,6 +13777,33 @@ describe('renderClientInsertable', () => {
 })
 
 describe('docs navigation regressions', () => {
+  it('preserves compiled local signals when an atom rerenders their component', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const atom = {}
+      let local!: { value: number }
+      let shared!: { value: number }
+      const render = () => {
+        shared = useRuntimeAtom(atom, 0)
+        local = createCompiledSignal(0)
+        return jsxDEV('p', { children: `${shared.value}:${local.value}` }, null, false, {})
+      }
+      const App = __eclipsaComponent(render, 'mixed-signals', () => [])
+      container.imports.set('mixed-signals', Promise.resolve({ default: render }))
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      const originalLocal = local
+      expect(isCompiledSignal(local)).toBe(true)
+      local.value = 2
+      shared.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(local).toBe(originalLocal)
+      expect(container.doc!.body.textContent).toContain('1:2')
+    })
+  })
+
   it('automatically flushes signal writes in client-created library components', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
@@ -13819,9 +13848,9 @@ describe('docs navigation regressions', () => {
           },
         }),
       )
-      await restoreResumedLocalSignalEffects(container)
+      await restoreResumedComponentEffects(container)
       expect(mounts).toBe(1)
-      await restoreResumedLocalSignalEffects(container)
+      await restoreResumedComponentEffects(container)
       expect(mounts).toBe(1)
     })
   })

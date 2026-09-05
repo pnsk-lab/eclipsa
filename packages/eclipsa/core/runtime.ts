@@ -151,6 +151,7 @@ import {
 import { setRuntimeSymbolUrl } from './runtime/kernel.ts'
 import {
   setRuntimeCleanupHandler as setCompiledRuntimeCleanupHandler,
+  setRuntimeSignalFactory as setCompiledRuntimeSignalFactory,
   setRuntimeFixedSignalEffectHandler as setCompiledRuntimeFixedSignalEffectHandler,
   setRuntimeEffectWrapper as setCompiledRuntimeEffectWrapper,
   setRuntimeMountScheduler as setCompiledRuntimeMountScheduler,
@@ -2431,7 +2432,9 @@ const canFlushDirtyComponents = (container: RuntimeContainer) =>
     const component = container.components.get(componentId)
     return (
       !!component &&
-      (container.imports.has(component.symbol) || container.symbols.has(component.symbol))
+      (component.clientRenderer ||
+        container.imports.has(component.symbol) ||
+        container.symbols.has(component.symbol))
     )
   })
 
@@ -10836,7 +10839,7 @@ export const createResumeContainer = (
   return container
 }
 
-const canRestoreResumedLocalSignalEffects = (
+const canRestoreResumedComponentEffects = (
   container: RuntimeContainer,
   component: ComponentState,
 ) =>
@@ -10844,18 +10847,18 @@ const canRestoreResumedLocalSignalEffects = (
   !!component.end &&
   !component.active &&
   !component.external &&
-  component.signalIds.length > 0 &&
+  (component.signalIds.length > 0 || (component.mountCount ?? 0) > 0) &&
   (component.symbol === SUSPENSE_COMPONENT_SYMBOL ||
     container.imports.has(component.symbol) ||
     container.symbols.has(component.symbol))
 
-export const restoreResumedLocalSignalEffects = async (container: RuntimeContainer) => {
+export const restoreResumedComponentEffects = async (container: RuntimeContainer) => {
   let queued = false
   const restoredIds: string[] = []
 
   for (const componentId of sortDirtyComponents(
     [...container.components.values()]
-      .filter((component) => canRestoreResumedLocalSignalEffects(container, component))
+      .filter((component) => canRestoreResumedComponentEffects(container, component))
       .map((component) => component.id),
   )) {
     const component = container.components.get(componentId)
@@ -11910,6 +11913,11 @@ export const useRuntimeAtom = <T>(atom: object, fallback: T): { value: T } => {
   }
   return ensureSignalRecord(container, signalId, fallback).handle
 }
+
+setCompiledRuntimeSignalFactory((value) => {
+  const frame = getCurrentFrame()
+  return frame && frame.component.id !== ROOT_COMPONENT_ID ? useRuntimeSignal(value) : null
+})
 
 export const createDetachedRuntimeSignal = <T>(
   container: RuntimeContainer,

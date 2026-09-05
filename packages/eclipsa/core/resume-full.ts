@@ -7,7 +7,7 @@ import {
   primeRouteModules,
   restoreRegisteredRpcHandles,
   restoreResumedExternalComponents,
-  restoreResumedLocalSignalEffects,
+  restoreResumedComponentEffects,
   registerResumeContainer,
   type ResumePayload,
 } from './runtime.ts'
@@ -120,7 +120,7 @@ export const resumeContainer = async (
     await primeRouteModules(container)
     restoreRegisteredRpcHandles(container)
     await restoreResumedExternalComponents(container)
-    await restoreResumedLocalSignalEffects(container)
+    await restoreResumedComponentEffects(container)
     registerResumeContainer(container)
     root.setAttribute('data-e-resume', 'resumed')
 
