@@ -653,6 +653,14 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('mount-only-state')).toHaveText('mounted')
   })
 
+  test('finishes startup restoration before navigating from onVisible', async ({ page }) => {
+    await page.goto('/visible-redirect')
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByText('Counter page')).toHaveCount(1)
+    await page.getByRole('button', { name: /^Count:\s*0$/ }).click()
+    await expect(page.getByRole('button', { name: /^Count:\s*1$/ })).toBeVisible()
+  })
+
   test('runs onMount for directly loaded routes after refs are connected', async ({ page }) => {
     await page.goto('/mount-connected-target')
     await waitForResumedRoute(page)

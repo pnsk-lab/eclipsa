@@ -23,6 +23,7 @@ import {
   renderNodes as renderCompiledNodes,
   text as textCompiled,
   textNodeSignalMember as textCompiledNodeSignalMember,
+  textNodeSignalValue as textCompiledNodeSignalValue,
 } from './runtime/dom-compiled.ts'
 import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import {
@@ -53,6 +54,7 @@ import {
   bindPackedRuntimeEvent,
   bindRuntimeEvent,
   applyResumeHmrSymbolReplacements,
+  markResumeHmrBoundaryDirty,
   createFixedSignalEffect,
   createResumeContainer,
   createDelegatedEvent,
@@ -13777,6 +13779,65 @@ describe('renderClientInsertable', () => {
 })
 
 describe('docs navigation regressions', () => {
+  it('updates compiled bindings without rerendering their owner', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      let count!: { value: number }
+      let renders = 0
+      const App = __eclipsaComponent(
+        () => {
+          renders++
+          count = createCompiledSignal(0)
+          void count.value
+          const node = container.doc!.createTextNode('')
+          textCompiledNodeSignalValue(count, node)
+          return node
+        },
+        'compiled-binding-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      count.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(renders).toBe(1)
+      expect(container.doc!.body.textContent).toContain('1')
+    })
+  })
+
+  it('does not subscribe the rendering component to explicit watch callback reads', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const dependency = createDetachedRuntimeSignal(container, 'dependency', 0)
+      const observed = createDetachedRuntimeSignal(container, 'observed', 0)
+      let renders = 0
+      const values: number[] = []
+      const App = __eclipsaComponent(
+        () => {
+          renders++
+          useWatch(() => {
+            values.push(observed.value)
+          }, [dependency])
+          return jsxDEV('p', { children: 'watch' }, null, false, {})
+        },
+        'watch-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      observed.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(renders).toBe(1)
+      expect(values).toEqual([0])
+      dependency.value = 1
+      expect(values).toEqual([0, 1])
+    })
+  })
+
   it('preserves compiled local signals when an atom rerenders their component', async () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
@@ -13801,6 +13862,12 @@ describe('docs navigation regressions', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(local).toBe(originalLocal)
       expect(container.doc!.body.textContent).toContain('1:2')
+      const component = [...container.components.values()].find(
+        (entry) => entry.symbol === 'mixed-signals',
+      )!
+      markResumeHmrBoundaryDirty(container, component.id)
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('1:0')
     })
   })
 

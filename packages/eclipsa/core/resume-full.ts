@@ -124,6 +124,9 @@ export const resumeContainer = async (
     registerResumeContainer(container)
     root.setAttribute('data-e-resume', 'resumed')
 
+    resolveResumeReady()
+    container.resumeReadyPromise = null
+
     if (options?.replayEvent) {
       await dispatchDocumentEventReady(container, options.replayEvent)
     }

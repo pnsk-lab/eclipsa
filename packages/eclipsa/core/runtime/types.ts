@@ -144,6 +144,7 @@ export interface SignalRecord<T = unknown> {
   }
   id: string
   skipComponentSubscription?: boolean
+  resetCompiledValueOnRead?: boolean
   subscribers: Set<string> | null
   value: T
 }

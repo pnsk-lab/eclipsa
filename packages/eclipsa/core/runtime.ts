@@ -1336,11 +1336,14 @@ const collectTrackedDependencies = (effect: ReactiveEffect, fn: () => void) => {
 
 const runWithoutDependencyTracking = <T>(fn: () => T): T => {
   const previousEffect = currentEffect
+  const previousFrame = currentFrame
   currentEffect = null
+  currentFrame = null
   try {
     return fn()
   } finally {
     currentEffect = previousEffect
+    currentFrame = previousFrame
   }
 }
 
@@ -1446,7 +1449,7 @@ const runWatchCallback = (
   collectTrackedDependencies(effect, () => {
     trackWatchDependencies(dependencies)
   })
-  withCleanupSlot(cleanupSlot, fn)
+  runWithoutDependencyTracking(() => withCleanupSlot(cleanupSlot, fn))
 }
 
 const createLocalWatchRunner =
@@ -9363,6 +9366,7 @@ const navigateContainer = async (
     return
   }
 
+  if (container.resumeReadyPromise) await container.resumeReadyPromise
   await waitForPendingDirtyFlush()
 
   const mode = options?.mode ?? 'push'
@@ -10136,6 +10140,10 @@ export const markResumeHmrBoundaryDirty = (container: RuntimeContainer, boundary
   const component = container.components.get(boundaryId)
   if (!component) {
     return false
+  }
+  for (const signalId of component.signalIds) {
+    const record = container.signals.get(signalId)
+    if (record?.skipComponentSubscription) record.resetCompiledValueOnRead = true
   }
   resetComponentVisibleStates(container, boundaryId)
   component.active = false
@@ -11916,7 +11924,20 @@ export const useRuntimeAtom = <T>(atom: object, fallback: T): { value: T } => {
 
 setCompiledRuntimeSignalFactory((value) => {
   const frame = getCurrentFrame()
-  return frame && frame.component.id !== ROOT_COMPONENT_ID ? useRuntimeSignal(value) : null
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) return null
+  const signal = useRuntimeSignal(value)
+  const meta = getSignalMeta(signal)
+  if (isWritableSignalMeta(meta)) {
+    const record = frame.container.signals.get(meta.id)
+    if (record) {
+      record.skipComponentSubscription = true
+      if (record.resetCompiledValueOnRead) {
+        record.value = value
+        record.resetCompiledValueOnRead = false
+      }
+    }
+  }
+  return signal
 })
 
 export const createDetachedRuntimeSignal = <T>(
