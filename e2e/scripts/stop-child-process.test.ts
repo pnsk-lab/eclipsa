@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { stopChildProcess } from './stop-child-process.ts'
 
 const fakeChild = (graceful: boolean) => {
@@ -39,4 +39,19 @@ test('leaves an already exited child alone', async () => {
   child.exitCode = 0
   await stopChildProcess(child, 10)
   expect(signals).toEqual([])
+})
+
+test('stops descendants even when their launcher has already exited', async () => {
+  const { child } = fakeChild(true)
+  Object.assign(child, { pid: 12345, exitCode: 0 })
+  const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+  try {
+    await stopChildProcess(child, 10, true)
+    expect(kill.mock.calls).toEqual([
+      [-12345, 'SIGTERM'],
+      [-12345, 'SIGKILL'],
+    ])
+  } finally {
+    kill.mockRestore()
+  }
 })

@@ -1196,6 +1196,7 @@ test.describe('example app in dev mode', () => {
 
     try {
       await page.goto('/content')
+      await waitForResumedRoute(page)
       await expect(page.getByTestId('content-description')).toHaveText(
         contentDescriptionBeforeLabel,
       )
