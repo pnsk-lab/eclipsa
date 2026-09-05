@@ -192,7 +192,7 @@ describe('resumeContainer interactivity bootstrap', () => {
       registerResumeContainer: vi.fn(),
       restoreRegisteredRpcHandles: vi.fn(),
       restoreResumedExternalComponents: vi.fn(),
-      restoreResumedLocalSignalEffects: vi.fn(),
+      restoreResumedComponentEffects: vi.fn(),
     }))
     vi.doMock('./hooks.ts', () => ({
       registerClientHooks: vi.fn(),

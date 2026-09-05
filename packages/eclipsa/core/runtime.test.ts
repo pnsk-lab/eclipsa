@@ -14,6 +14,7 @@ import {
   textNodeSignalMember,
 } from './client/dom.ts'
 import {
+  attr as attrCompiled,
   attrStatic as attrCompiledStatic,
   classSignal as classCompiledSignal,
   createComponent as createCompiledComponent,
@@ -23,12 +24,15 @@ import {
   renderNodes as renderCompiledNodes,
   text as textCompiled,
   textNodeSignalMember as textCompiledNodeSignalMember,
+  textNodeSignalValue as textCompiledNodeSignalValue,
 } from './runtime/dom-compiled.ts'
 import { eventStatic as runtimeEventStatic } from './runtime/event.ts'
 import {
   onMount as onCompiledMount,
   onVisible as onCompiledVisible,
-  signal as createCompiledSignal,
+  useSignal as createCompiledSignal,
+  signal as createCompiledRowSignal,
+  isSignal as isCompiledSignal,
 } from './runtime/reactive.ts'
 import {
   createContext,
@@ -45,13 +49,14 @@ import {
 } from './internal.ts'
 import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
-import { Link, useLocation, useRouteParams } from './router.tsx'
+import { Link, useLocation, useNavigate, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
 import { ACTION_FORM_ATTR, CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constants.ts'
 import {
   bindPackedRuntimeEvent,
   bindRuntimeEvent,
   applyResumeHmrSymbolReplacements,
+  markResumeHmrBoundaryDirty,
   createFixedSignalEffect,
   createResumeContainer,
   createDelegatedEvent,
@@ -69,7 +74,7 @@ import {
   renderClientInsertable,
   restoreSignalRefs,
   runDetachedRuntimeComponent,
-  restoreResumedLocalSignalEffects,
+  restoreResumedComponentEffects,
   serializeContainerValue,
   syncBoundElementSignal,
   syncManagedElementAttributes,
@@ -78,6 +83,7 @@ import {
   tryPatchNodeSequenceInPlace,
   type RuntimeContainer,
   withRuntimeContainer,
+  useRuntimeAtom,
 } from './runtime.ts'
 import {
   getManagedAttributeSnapshot,
@@ -6192,7 +6198,7 @@ describe('renderClientInsertable', () => {
 
         expect(getEffectCount()).toBe(0)
 
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         const livePanel = parent.childNodes[1] as FakeElement | undefined
         expect(livePanel).toBeInstanceOf(FakeElement)
@@ -6289,7 +6295,7 @@ describe('renderClientInsertable', () => {
       ;(globalThis as typeof globalThis & { document: Document }).document =
         container.doc as Document
       try {
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         const input = findFirst('input')
         const span = findFirst('span')
@@ -6509,7 +6515,7 @@ describe('renderClientInsertable', () => {
         )
 
         ;(globalThis as typeof globalThis & { document: Document }).document = doc
-        await restoreResumedLocalSignalEffects(container)
+        await restoreResumedComponentEffects(container)
 
         expect(events).toEqual([])
 
@@ -13770,6 +13776,350 @@ describe('renderClientInsertable', () => {
       expect(remainingRows).toHaveLength(1)
       expect(remainingRows[0]?.className).toBe('danger')
       expect(remainingRows[0]?.textContent).toBe('A3')
+    })
+  })
+})
+
+describe('docs navigation regressions', () => {
+  it('updates changed child props and keeps their effects after a router update', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      Object.assign(container.doc!, { location: new URL('https://example.com/first') })
+      primeLocationState(container, 'https://example.com/first')
+      let count!: { value: number }
+      const Child = __eclipsaComponent(
+        (props: { label: string }) => {
+          count = createCompiledSignal(0)
+          const input = container.doc!.createElement('input')
+          attrCompiled(input, 'value', () => `${props.label}:${count.value}`)
+          return input
+        },
+        'route-child',
+        () => [],
+      )
+      const Parent = __eclipsaComponent(
+        () => {
+          const location = useLocation()
+          return jsxDEV(Child, { label: location.pathname }, null, false, {})
+        },
+        'route-parent',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Parent, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      primeLocationState(container, 'https://example.com/second')
+      await flushDirtyComponents(container)
+      const input = (container.doc!.body as unknown as FakeElement).childNodes.find(
+        (node) => node instanceof FakeElement && node.tagName === 'input',
+      ) as FakeElement & { value: string }
+      expect(input.value).toBe('/second:0')
+      count.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(input.value).toBe('/second:1')
+    })
+  })
+
+  it('initializes internal compiled row signals from new props on every render', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const source = createDetachedRuntimeSignal(container, 'row-source', 'first')
+      const App = __eclipsaComponent(
+        () => {
+          const row = createCompiledRowSignal(source.value)
+          return jsxDEV('p', { children: row.value }, null, false, {})
+        },
+        'compiled-row-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      source.value = 'second'
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('second')
+    })
+  })
+
+  it('updates compiled bindings without rerendering their owner', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      let count!: { value: number }
+      let input!: HTMLInputElement
+      let renders = 0
+      const App = __eclipsaComponent(
+        () => {
+          renders++
+          count = createCompiledSignal(0)
+          void count.value
+          const node = container.doc!.createTextNode('')
+          textCompiledNodeSignalValue(count, node)
+          input = container.doc!.createElement('input')
+          attrCompiled(input, 'value', () => String(count.value))
+          return [node, input]
+        },
+        'compiled-binding-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      count.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(renders).toBe(1)
+      expect(container.doc!.body.textContent).toContain('1')
+      expect(input.value).toBe('1')
+    })
+  })
+
+  it('does not subscribe the rendering component to explicit watch callback reads', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const dependency = createDetachedRuntimeSignal(container, 'dependency', 0)
+      const observed = createDetachedRuntimeSignal(container, 'observed', 0)
+      let renders = 0
+      const values: number[] = []
+      const App = __eclipsaComponent(
+        () => {
+          renders++
+          useWatch(() => {
+            values.push(observed.value)
+          }, [dependency])
+          return jsxDEV('p', { children: 'watch' }, null, false, {})
+        },
+        'watch-owner',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      observed.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(renders).toBe(1)
+      expect(values).toEqual([0])
+      dependency.value = 1
+      expect(values).toEqual([0, 1])
+    })
+  })
+
+  it('preserves compiled local signals when an atom rerenders their component', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const atom = {}
+      let local!: { value: number }
+      let shared!: { value: number }
+      const render = () => {
+        shared = useRuntimeAtom(atom, 0)
+        local = createCompiledSignal(0)
+        const text = container.doc!.createTextNode('')
+        textCompiledNodeSignalValue(local, text)
+        return [jsxDEV('span', { children: `${shared.value}:` }, null, false, {}), text]
+      }
+      const App = __eclipsaComponent(render, 'mixed-signals', () => [])
+      container.imports.set('mixed-signals', Promise.resolve({ default: render }))
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(App, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      const originalLocal = local
+      expect(isCompiledSignal(local)).toBe(true)
+      local.value = 2
+      shared.value = 1
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(local).toBe(originalLocal)
+      expect(container.doc!.body.textContent).toContain('1:2')
+      local.value = 3
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(container.doc!.body.textContent).toContain('1:3')
+      const component = [...container.components.values()].find(
+        (entry) => entry.symbol === 'mixed-signals',
+      )!
+      markResumeHmrBoundaryDirty(container, component.id)
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('1:0')
+    })
+  })
+
+  it('automatically flushes signal writes in client-created library components', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const label = createDetachedRuntimeSignal(container, 'library-label', 'before')
+      const Library = __eclipsaComponent(
+        () => jsxDEV('p', { children: label.value }, null, false, {}),
+        '@library:scheduled',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Library, {}, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      label.value = 'after'
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(container.doc!.body.textContent).toContain('after')
+      expect(container.dirty.size).toBe(0)
+    })
+  })
+
+  it('restores mount callbacks in resumed components without signals', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const start = container.doc!.createComment('ec:c:c0:start')
+      const end = container.doc!.createComment('ec:c:c0:end')
+      container.doc!.body.appendChild(start)
+      container.doc!.body.appendChild(end)
+      const component = createDetachedRuntimeComponent(container, 'mount-only')
+      component.start = start
+      component.end = end
+      component.mountCount = 1
+      component.active = false
+      let mounts = 0
+      container.imports.set(
+        'mount-only',
+        Promise.resolve({
+          default: () => {
+            onMount(() => {
+              mounts++
+            })
+            return jsxDEV('p', { children: 'mounted' }, null, false, {})
+          },
+        }),
+      )
+      await restoreResumedComponentEffects(container)
+      expect(mounts).toBe(1)
+      await restoreResumedComponentEffects(container)
+      expect(mounts).toBe(1)
+    })
+  })
+
+  it('reactivates client-created library components without a generated symbol URL', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const Library = __eclipsaComponent(
+        (props: { label: string }) => jsxDEV('p', { children: props.label }, null, false, {}),
+        '@library:component',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Library, { label: 'before' }, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      const component = [...container.components.values()].find(
+        (entry) => entry.symbol === '@library:component',
+      )!
+      component.props = { label: 'after' }
+      component.rawProps = null
+      component.active = false
+      container.dirty.add(component.id)
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('after')
+      expect(container.symbols.has('@library:component')).toBe(false)
+    })
+  })
+
+  it('navigates fragments without requesting route data', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument & { location: Location }
+      doc.location = new URL('http://local/docs/overview') as unknown as Location
+      const navigations: string[] = []
+      Object.assign(doc, { getElementById: () => null })
+      Object.assign(doc.defaultView, {
+        history: {
+          pushState: (_data: unknown, _title: string, href: string) => navigations.push(href),
+        },
+      })
+      primeLocationState(container, doc.location.href)
+      container.router!.manifest = [
+        {
+          error: null,
+          hasMiddleware: false,
+          layouts: [],
+          loading: null,
+          notFound: null,
+          page: '/docs.js',
+          routePath: '/docs/overview',
+          server: null,
+          segments: [
+            { kind: 'static', value: 'docs' },
+            { kind: 'static', value: 'overview' },
+          ],
+        },
+      ]
+      const originalFetch = globalThis.fetch
+      const requests: string[] = []
+      globalThis.fetch = (async (input) => {
+        requests.push(String(input))
+        throw new Error('Fragment navigation must not fetch')
+      }) as typeof fetch
+      try {
+        const navigate = withRuntimeContainer(container, () => useNavigate())
+        await navigate('/docs/overview#heading')
+        expect(requests).toEqual([])
+        expect(navigations).toEqual(['http://local/docs/overview#heading'])
+        expect(container.router!.currentUrl.value).toBe('http://local/docs/overview#heading')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+  })
+})
+
+describe('same-path navigation regressions', () => {
+  it('rerenders the route when only its search parameters change', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument & { location: Location }
+      doc.location = new URL('http://local/docs?q=one') as unknown as Location
+      Object.assign(doc, { head: doc.createElement('head'), title: '' })
+      Object.assign(doc.defaultView, {
+        history: { pushState: () => {}, replaceState: () => {} },
+        scrollTo: () => {},
+      })
+      container.rootElement = container.doc!.body
+      primeLocationState(container, doc.location.href)
+      const router = container.router!
+      const entry = {
+        error: null,
+        hasMiddleware: false,
+        layouts: [],
+        loading: null,
+        notFound: null,
+        page: '/docs.js',
+        routePath: '/docs',
+        server: null,
+        segments: [{ kind: 'static' as const, value: 'docs' }],
+      }
+      const Page = () => jsxDEV('p', { children: useLocation().search }, null, false, {})
+      const route = {
+        entry,
+        error: undefined,
+        layouts: [],
+        params: {},
+        pathname: '/docs',
+        page: { metadata: null, renderer: Page, symbol: null, url: '/docs.js' },
+        render: () => jsxDEV(Page, {}, null, false, {}),
+      }
+      router.manifest = [entry]
+      router.currentRoute = route
+      router.loadedRoutes.set('/docs::page', route)
+      router.routePrefetches.set(
+        '/docs?q=two',
+        Promise.resolve({
+          finalHref: 'http://local/docs?q=two',
+          finalPathname: '/docs',
+          kind: 'page',
+          loaders: {},
+          ok: true,
+        }),
+      )
+      const navigate = withRuntimeContainer(container, () => useNavigate())
+      await navigate('/docs?q=two')
+      expect(doc.body.textContent).toContain('?q=two')
+      expect(router.currentUrl.value).toBe('http://local/docs?q=two')
     })
   })
 })

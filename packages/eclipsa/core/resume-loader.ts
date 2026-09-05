@@ -166,37 +166,43 @@ const shouldPromoteForNativeFeature = (event: Event) => {
   if (event.type === 'submit' && closestWithAttribute(event.target, ACTION_FORM_ATTR)) {
     return true
   }
-  if (event.type === 'click' && closestWithAttribute(event.target, ROUTE_LINK_ATTR)) {
-    return true
+  if (event.type === 'click') {
+    return capturePendingRouteLinkNavigation(event)
   }
   return false
 }
 
 const capturePendingRouteLinkNavigation = (event: Event) => {
-  if (event.type !== 'click') {
-    return
+  if (event.type !== 'click' || event.defaultPrevented) {
+    return false
   }
   if (typeof MouseEvent !== 'undefined' && event instanceof MouseEvent) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-      return
+      return false
     }
   }
   const link = closestWithAttribute(event.target, ROUTE_LINK_ATTR) as HTMLAnchorElement | null
   if (!link || link.hasAttribute('download') || (link.target && link.target !== '_self')) {
-    return
+    return false
   }
   const href = link.getAttribute('href')
   if (!href) {
-    return
+    return false
   }
-  const url = new URL(href, link.ownerDocument.location.href)
+  let url: URL
+  try {
+    url = new URL(href, link.ownerDocument.location.href)
+  } catch {
+    return false
+  }
   if (url.origin !== link.ownerDocument.location.origin) {
-    return
+    return false
   }
   ;(globalThis as Record<string, unknown>)[PENDING_RESUME_LINK_KEY] = {
     href: url.href,
     replace: link.getAttribute(ROUTE_REPLACE_ATTR) === 'true',
   }
+  return true
 }
 
 const createFullResumePromoter = (
@@ -235,7 +241,6 @@ export const installResumeLoader = (
 
   const dispatch = (event: Event) => {
     if (shouldPromoteForNativeFeature(event)) {
-      capturePendingRouteLinkNavigation(event)
       void promoteToFullResume(event)
       return
     }
@@ -304,5 +309,7 @@ export const needsFullResumeOnStart = (
   ) {
     return true
   }
-  return Object.values(payload.components ?? {}).some((component) => !!component.external)
+  return Object.values(payload.components ?? {}).some(
+    (component) => !!component.external || (component.mountCount ?? 0) > 0,
+  )
 }

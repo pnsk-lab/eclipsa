@@ -151,6 +151,7 @@ import {
 import { setRuntimeSymbolUrl } from './runtime/kernel.ts'
 import {
   setRuntimeCleanupHandler as setCompiledRuntimeCleanupHandler,
+  setRuntimeSignalFactory as setCompiledRuntimeSignalFactory,
   setRuntimeFixedSignalEffectHandler as setCompiledRuntimeFixedSignalEffectHandler,
   setRuntimeEffectWrapper as setCompiledRuntimeEffectWrapper,
   setRuntimeMountScheduler as setCompiledRuntimeMountScheduler,
@@ -589,6 +590,7 @@ const createInactiveComponentState = (
   externalInstance: undefined,
   externalMeta: null,
   id,
+  mountCount: 0,
   mountCleanupSlots: null,
   mayChangeNodeCount: false,
   optimizedRoot: false,
@@ -624,6 +626,7 @@ const materializeComponentStateFields = (component: ComponentState) => {
   component.active ??= false
   component.childComponentIds ??= null
   component.didMount ??= false
+  component.mountCount ??= 0
   component.mountCleanupSlots ??= null
   component.mayChangeNodeCount ??= false
   component.props ??= null
@@ -1333,11 +1336,14 @@ const collectTrackedDependencies = (effect: ReactiveEffect, fn: () => void) => {
 
 const runWithoutDependencyTracking = <T>(fn: () => T): T => {
   const previousEffect = currentEffect
+  const previousFrame = currentFrame
   currentEffect = null
+  currentFrame = null
   try {
     return fn()
   } finally {
     currentEffect = previousEffect
+    currentFrame = previousFrame
   }
 }
 
@@ -1443,7 +1449,7 @@ const runWatchCallback = (
   collectTrackedDependencies(effect, () => {
     trackWatchDependencies(dependencies)
   })
-  withCleanupSlot(cleanupSlot, fn)
+  runWithoutDependencyTracking(() => withCleanupSlot(cleanupSlot, fn))
 }
 
 const createLocalWatchRunner =
@@ -2429,7 +2435,9 @@ const canFlushDirtyComponents = (container: RuntimeContainer) =>
     const component = container.components.get(componentId)
     return (
       !!component &&
-      (container.imports.has(component.symbol) || container.symbols.has(component.symbol))
+      (component.clientRenderer ||
+        container.imports.has(component.symbol) ||
+        container.symbols.has(component.symbol))
     )
   })
 
@@ -3077,6 +3085,7 @@ const createFrame = (
     frame.insertCursor = 0
     frame.keyedRangeCursor = 0
     frame.keyedRangeScopeStack = null
+    frame.mountCursor = 0
     frame.mountCallbacks = null
     frame.mode = mode
     frame.nextEffectCursor = 0
@@ -3105,6 +3114,7 @@ const createFrame = (
     insertCursor: 0,
     keyedRangeCursor: 0,
     keyedRangeScopeStack: null,
+    mountCursor: 0,
     mountCallbacks: null,
     mode,
     nextEffectCursor: 0,
@@ -3240,6 +3250,7 @@ const resetComponentForSymbolChange = (
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.rawProps = null
+  component.clientRenderer = null
   component.externalInstance = undefined
   component.externalMeta = null
   component.mayChangeNodeCount = false
@@ -3247,6 +3258,7 @@ const resetComponentForSymbolChange = (
   component.scopeId = captures.length > 0 ? registerScope(container, captures) : null
   component.signalIds = EMPTY_COMPONENT_SIGNAL_IDS
   component.suspensePromise = null
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
 }
@@ -3448,6 +3460,10 @@ const pruneComponentWatches = (
   component.watchCount = nextCount
 }
 
+const pruneComponentMounts = (component: ComponentState, nextCount: number) => {
+  component.mountCount = nextCount
+}
+
 const pruneComponentVisibles = (
   container: RuntimeContainer,
   component: ComponentState,
@@ -3517,6 +3533,7 @@ const pruneRemovedComponents = (
     const descendant = container.components.get(descendantId)
     if (descendant) {
       disposeComponentMountCleanups(descendant)
+      pruneComponentMounts(descendant, 0)
       pruneComponentVisibles(container, descendant, 0)
       pruneComponentWatches(container, descendant, 0)
       descendant.childComponentIds?.clear()
@@ -3530,6 +3547,7 @@ const disposeComponentState = (container: RuntimeContainer, component: Component
   clearComponentSubscriptions(container, component.id)
   disposeCleanupSlot(component.renderEffectCleanupSlot)
   disposeComponentMountCleanups(component)
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
   for (const signalId of component.signalIds) {
@@ -4907,11 +4925,13 @@ export const tryPatchNodeSequenceInPlace = (currentNodes: Node[], nextNodes: Nod
         }
         if (didComponentBoundaryPropsChange(nextUnit.start)) {
           const nextRangeNodes = nextUnit.bodyNodes
-          if (
-            !tryPatchBoundaryContentsInPlace(currentUnit.start, currentUnit.end, nextRangeNodes)
-          ) {
-            replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
-          }
+          withCompiledReactiveTargetPatchPreservation(false, () => {
+            if (
+              !tryPatchBoundaryContentsInPlace(currentUnit.start, currentUnit.end, nextRangeNodes)
+            ) {
+              replaceBoundaryContents(currentUnit.start, currentUnit.end, nextRangeNodes)
+            }
+          })
         }
       } else if (currentUnit.rangeKind === 'keyed') {
         const nextRangeNodes = nextUnit.bodyNodes
@@ -5886,6 +5906,7 @@ const renderStringNode = (inputElementLike: JSX.Element | JSX.Element[]): string
     const renderProps = createRenderProps(componentId, meta, resolved.props)
 
     const body = pushFrame(frame, () => renderStringNode(componentFn(renderProps)))
+    pruneComponentMounts(component, frame.mountCursor)
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     const rendered = `${createComponentBoundaryHtmlComment(componentId, 'start')}${renderFrameScopedStylesToString(frame)}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
@@ -6058,6 +6079,7 @@ const renderComponentToNodes = (
   component.optimizedRoot = meta.optimizedRoot === true
   component.props = props
   component.rawProps = rawProps ?? null
+  component.clientRenderer = mode === 'client' ? componentFn : null
   component.projectionSlots = meta.projectionSlots ?? null
   const externalMeta = getExternalComponentMeta(componentFn)
   const parentFrame = getCurrentFrame()
@@ -6168,6 +6190,7 @@ const renderComponentToNodes = (
     throw error
   }
   disposeCleanupSlot(speculativeEffectCleanupSlot)
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const preservedDescendants =
@@ -6919,6 +6942,7 @@ const teardownKeyedForOwnerState = (
   clearComponentSubscriptions(container, ownerComponent.id)
   resetComponentRenderEffects(ownerComponent)
   pruneRemovedComponents(container, ownerComponent.id, new Set())
+  pruneComponentMounts(ownerComponent, 0)
   pruneComponentVisibles(container, ownerComponent, 0)
   pruneComponentWatches(container, ownerComponent, 0)
   removeNodesFromParent(currentNodes, parent)
@@ -8111,12 +8135,22 @@ setRuntimeRefAssigner((value, element) => {
 
 setCompiledRuntimeEffectWrapper((fn) => {
   const container = getRuntimeContainer()
-  return container ? () => pushContainer(container, fn) : fn
+  if (!container) return fn
+  const frame = getCurrentFrame()
+  const effect = createRuntimeReactiveEffect(container, true)
+  effect.fn = () =>
+    runReactiveEffectInContainer(effect, () => collectTrackedDependencies(effect, fn))
+  if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
+    addCleanupSlotEffect(ensureFrameEffectCleanupSlot(frame), effect)
+  } else if (currentClientInsertCleanupSlot) {
+    addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
+  }
+  return () => runEffect(effect)
 })
 
 setCompiledRuntimeMountScheduler((fn) => {
   const frame = getCurrentFrame()
-  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
     return false
   }
   createOnMount(fn)
@@ -8136,6 +8170,7 @@ const resetContainerForRouteRender = (container: RuntimeContainer) => {
   container.rootChildComponentIds ??= new Set()
   for (const component of container.components.values()) {
     disposeComponentMountCleanups(component)
+    pruneComponentMounts(component, 0)
     pruneComponentVisibles(container, component, 0)
     pruneComponentWatches(container, component, 0)
   }
@@ -8309,6 +8344,7 @@ const renderSuspenseComponentToString = (props: SuspenseProps) => {
   const body = pushFrame(frame, () =>
     renderSuspenseContentToString(component.props as SuspenseProps, container, componentId),
   )
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   return `${createComponentBoundaryHtmlComment(componentId, 'start')}${body}${createComponentBoundaryHtmlComment(componentId, 'end')}`
@@ -8346,6 +8382,7 @@ const renderSuspenseComponentToNodes = (
   const bodyNodes = pushFrame(frame, () =>
     renderSuspenseContentToNodes(component.props as SuspenseProps, container, componentId),
   )
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const parentVisitedDescendants = ensureFrameVisitedDescendants(parentFrame)
@@ -8927,8 +8964,17 @@ const commitBrowserNavigation = (doc: Document, url: URL, mode: NavigationMode) 
   doc.defaultView.history.pushState(null, '', url.href)
 }
 
-const scrollToUrlFragment = (doc: Document, url: URL) => {
+const scrollToUrlTarget = (
+  doc: Document,
+  url: URL,
+  options?: {
+    resetScroll?: boolean
+  },
+) => {
   if (!url.hash) {
+    if (options?.resetScroll) {
+      doc.defaultView?.scrollTo(0, 0)
+    }
     return
   }
 
@@ -9224,7 +9270,9 @@ const commitRouteNavigation = (
   if (options?.writeLocation !== false) {
     writeRouterLocation(router, url)
   }
-  scrollToUrlFragment(doc, url)
+  scrollToUrlTarget(doc, url, {
+    resetScroll: mode !== 'pop',
+  })
 }
 
 const renderAndCommitRouteNavigation = (
@@ -9330,6 +9378,7 @@ const navigateContainer = async (
     return
   }
 
+  if (container.resumeReadyPromise) await container.resumeReadyPromise
   await waitForPendingDirtyFlush()
 
   const mode = options?.mode ?? 'push'
@@ -9349,6 +9398,15 @@ const navigateContainer = async (
   const currentHref = `${currentRouteUrl.pathname}${currentRouteUrl.search}${currentRouteUrl.hash}`
   const nextHref = `${url.pathname}${url.search}${url.hash}`
   if (!force && nextHref === currentHref) {
+    return
+  }
+
+  if (!force && pathname === router.currentPath.value && url.search === currentRouteUrl.search) {
+    commitBrowserNavigation(doc, url, mode)
+    writeRouterLocation(router, url)
+    scrollToUrlTarget(doc, url, {
+      resetScroll: mode !== 'pop',
+    })
     return
   }
 
@@ -9384,15 +9442,6 @@ const navigateContainer = async (
       return
     }
     fallbackDocumentNavigation(doc, url, mode)
-    return
-  }
-
-  if (!force && pathname === router.currentPath.value) {
-    if (nextHref !== currentHref) {
-      commitBrowserNavigation(doc, url, mode)
-      writeRouterLocation(router, url)
-      scrollToUrlFragment(doc, url)
-    }
     return
   }
 
@@ -9622,6 +9671,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
       throw error
     }
     disposeCleanupSlot(suspenseSpeculativeEffectCleanupSlot)
+    pruneComponentMounts(component, frame.mountCursor)
     pruneComponentVisibles(container, component, frame.visibleCursor)
     pruneComponentWatches(container, component, frame.watchCursor)
     const patched =
@@ -9667,13 +9717,21 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, ensureComponentScopeId(container, component))
   await preloadResumableValue(container, scope)
-  const module = await loadSymbol(container, activateSymbol)
+  // Library components created on the client already have an executable renderer,
+  // even when their handwritten symbol has no compiler-generated module URL.
+  const clientRenderer =
+    !container.symbols.has(activateSymbol) && !container.imports.has(activateSymbol)
+      ? component.clientRenderer
+      : null
+  const module: RuntimeSymbolModule = clientRenderer
+    ? { default: (_scope, props) => clientRenderer(props) }
+    : await loadSymbol(container, activateSymbol)
   const rawProps =
     component.rawProps && typeof component.rawProps === 'object' ? component.rawProps : null
   if (rawProps) {
     component.props = evaluateProps(rawProps)
   }
-  const externalMeta = getExternalComponentMeta(module.default)
+  const externalMeta = getExternalComponentMeta(clientRenderer ?? module.default)
   if (externalMeta && component.props && typeof component.props === 'object') {
     component.external = {
       kind: externalMeta.kind,
@@ -9741,9 +9799,11 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     },
     component.props,
   )
-  const speculativeEffectCleanupSlot = component.reuseProjectionSlotDomOnActivate
-    ? createCleanupSlot()
-    : null
+  const speculativeEffectCleanupSlot =
+    component.reuseProjectionSlotDomOnActivate &&
+    component.preserveCompiledReactiveTargetsOnActivate
+      ? createCleanupSlot()
+      : null
   if (!speculativeEffectCleanupSlot) {
     resetComponentRenderEffects(component)
   }
@@ -9798,6 +9858,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     })
   }
   disposeCleanupSlot(speculativeEffectCleanupSlot)
+  pruneComponentMounts(component, frame.mountCursor)
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const patched =
@@ -10094,6 +10155,10 @@ export const markResumeHmrBoundaryDirty = (container: RuntimeContainer, boundary
   if (!component) {
     return false
   }
+  for (const signalId of component.signalIds) {
+    const record = container.signals.get(signalId)
+    if (record?.skipComponentSubscription) record.resetCompiledValueOnRead = true
+  }
   resetComponentVisibleStates(container, boundaryId)
   component.active = false
   component.activateModeOnFlush = 'replace'
@@ -10264,6 +10329,7 @@ export const beginSSRContainer = <T>(
     childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCount: 0,
     mountCleanupSlots: [],
     parentId: null,
     props: {},
@@ -10310,6 +10376,7 @@ export const beginAsyncSSRContainer = async <T>(
     childComponentIds: new Set(),
     didMount: false,
     id: ROOT_COMPONENT_ID,
+    mountCount: 0,
     mountCleanupSlots: [],
     parentId: null,
     props: {},
@@ -10357,6 +10424,7 @@ export const disposeDetachedRuntimeComponent = (
 ) => {
   clearComponentSubscriptions(container, component.id)
   disposeComponentMountCleanups(component)
+  pruneComponentMounts(component, 0)
   pruneComponentVisibles(container, component, 0)
   pruneComponentWatches(container, component, 0)
   for (const signalId of component.signalIds) {
@@ -10421,6 +10489,7 @@ const createResumePayload = (
           scope: ensureComponentScopeId(container, component),
           signalIds: [...component.signalIds],
           symbol: component.symbol,
+          mountCount: component.mountCount,
           visibleCount: component.visibleCount,
           watchCount: component.watchCount,
         } satisfies ResumeComponentPayload,
@@ -10546,6 +10615,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       externalInstance: undefined,
       externalMeta: null,
       id,
+      mountCount: componentPayload.mountCount ?? 0,
       mountCleanupSlots: null,
       optimizedRoot: componentPayload.optimizedRoot === true,
       parentId: id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : ROOT_COMPONENT_ID,
@@ -10562,7 +10632,7 @@ export const mergeResumePayload = (container: RuntimeContainer, payload: ResumeP
       subscribedSignalIds: null,
       suspensePromise: null,
       visibleCount: componentPayload.visibleCount ?? 0,
-      watchCount: componentPayload.watchCount,
+      watchCount: componentPayload.watchCount ?? 0,
     })
   }
 
@@ -10791,7 +10861,7 @@ export const createResumeContainer = (
   return container
 }
 
-const canRestoreResumedLocalSignalEffects = (
+const canRestoreResumedComponentEffects = (
   container: RuntimeContainer,
   component: ComponentState,
 ) =>
@@ -10799,18 +10869,18 @@ const canRestoreResumedLocalSignalEffects = (
   !!component.end &&
   !component.active &&
   !component.external &&
-  component.signalIds.length > 0 &&
+  (component.signalIds.length > 0 || (component.mountCount ?? 0) > 0) &&
   (component.symbol === SUSPENSE_COMPONENT_SYMBOL ||
     container.imports.has(component.symbol) ||
     container.symbols.has(component.symbol))
 
-export const restoreResumedLocalSignalEffects = async (container: RuntimeContainer) => {
+export const restoreResumedComponentEffects = async (container: RuntimeContainer) => {
   let queued = false
   const restoredIds: string[] = []
 
   for (const componentId of sortDirtyComponents(
     [...container.components.values()]
-      .filter((component) => canRestoreResumedLocalSignalEffects(container, component))
+      .filter((component) => canRestoreResumedComponentEffects(container, component))
       .map((component) => component.id),
   )) {
     const component = container.components.get(componentId)
@@ -11866,6 +11936,24 @@ export const useRuntimeAtom = <T>(atom: object, fallback: T): { value: T } => {
   return ensureSignalRecord(container, signalId, fallback).handle
 }
 
+setCompiledRuntimeSignalFactory((value) => {
+  const frame = getCurrentFrame()
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) return null
+  const signal = useRuntimeSignal(value)
+  const meta = getSignalMeta(signal)
+  if (isWritableSignalMeta(meta)) {
+    const record = frame.container.signals.get(meta.id)
+    if (record) {
+      record.skipComponentSubscription = true
+      if (record.resetCompiledValueOnRead) {
+        record.value = value
+        record.resetCompiledValueOnRead = false
+      }
+    }
+  }
+  return signal
+})
+
 export const createDetachedRuntimeSignal = <T>(
   container: RuntimeContainer,
   id: string,
@@ -12473,10 +12561,15 @@ export const createOnCleanup = (fn: () => void) => {
 
 export const createOnMount = (fn: () => void) => {
   const frame = getCurrentFrame()
-  if (!frame || frame.component.id === ROOT_COMPONENT_ID || frame.mode !== 'client') {
+  if (!frame || frame.component.id === ROOT_COMPONENT_ID) {
     return
   }
   registerComponentState(frame.container, frame.component)
+  frame.mountCursor += 1
+  if (frame.mode !== 'client') {
+    frame.component.mountCount = Math.max(frame.component.mountCount, frame.mountCursor)
+    return
+  }
   ensureFrameMountCallbacks(frame).push(fn)
 }
 

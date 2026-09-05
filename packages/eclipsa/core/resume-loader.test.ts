@@ -238,4 +238,72 @@ describe('resume loader', () => {
       ),
     ).toBe(true)
   })
+
+  it('requires full resume when mount callbacks are serialized', () => {
+    expect(
+      needsFullResumeOnStart(
+        createPayload({
+          components: {
+            c0: {
+              mountCount: 1,
+            } as any,
+          },
+        }),
+        { client: null },
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('native link navigation on first interaction', () => {
+  for (const kind of [
+    'external',
+    'download',
+    'target',
+    'prevented',
+    'invalid',
+    'ctrl',
+    'meta',
+    'shift',
+    'alt',
+    'middle',
+  ]) {
+    it(`preserves ${kind} clicks before full resume`, () => {
+      const doc = new FakeDocument()
+      const link = new FakeElement(doc, 'a')
+      link.parentElement = doc.body
+      link.setAttribute('data-e-link', '')
+      link.setAttribute('href', '/docs')
+      if (kind === 'external') link.setAttribute('href', 'https://external.example/docs')
+      if (kind === 'download') link.setAttribute('download', '')
+      if (kind === 'target') link.target = '_blank'
+      if (kind === 'invalid') link.setAttribute('href', 'http://[')
+      const OriginalMouseEvent = globalThis.MouseEvent
+      class LinkMouseEvent extends Event {
+        button = kind === 'middle' ? 1 : 0
+        ctrlKey = kind === 'ctrl'
+        metaKey = kind === 'meta'
+        shiftKey = kind === 'shift'
+        altKey = kind === 'alt'
+        override get target() {
+          return link as unknown as EventTarget
+        }
+      }
+      globalThis.MouseEvent = LinkMouseEvent as unknown as typeof MouseEvent
+      const loadFullResume = vi.fn()
+      const cleanup = installResumeLoader(doc.body as unknown as HTMLElement, createPayload({}), {
+        loadFullResume,
+      })
+      try {
+        const event = new LinkMouseEvent('click', { cancelable: true })
+        if (kind === 'prevented') event.preventDefault()
+        doc.dispatch(event)
+        expect(loadFullResume).not.toHaveBeenCalled()
+        expect(event.defaultPrevented).toBe(kind === 'prevented')
+      } finally {
+        cleanup()
+        globalThis.MouseEvent = OriginalMouseEvent
+      }
+    })
+  }
 })

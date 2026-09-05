@@ -8,6 +8,7 @@ type FixedSignalEffectHandler = <T>(
 ) => boolean
 
 const signalRecords = new WeakMap<object, { effects: Set<Effect>; value: unknown }>()
+const ownedSignals = new WeakSet<object>()
 let currentEffect: Effect | null = null
 let currentCleanups: Cleanup[] | null = null
 let runtimeCleanupHandler: ((fn: Cleanup) => boolean) | null = null
@@ -15,6 +16,11 @@ let runtimeEffectWrapper: ((fn: Effect) => Effect) | null = null
 let runtimeFixedSignalEffectHandler: FixedSignalEffectHandler | null = null
 let runtimeMountScheduler: ((fn: () => void) => boolean) | null = null
 let runtimeVisibleHandler: ((fn: () => void) => boolean) | null = null
+let runtimeSignalFactory: (<T>(value: T) => Signal<T> | null) | null = null
+
+export const setRuntimeSignalFactory = (factory: typeof runtimeSignalFactory) => {
+  runtimeSignalFactory = factory
+}
 
 export const setRuntimeCleanupHandler = (handler: ((fn: Cleanup) => boolean) | null) => {
   runtimeCleanupHandler = handler
@@ -37,7 +43,9 @@ export const setRuntimeVisibleHandler = (handler: ((fn: () => void) => boolean) 
 }
 
 export const isSignal = (value: unknown): value is Signal =>
-  !!value && (typeof value === 'object' || typeof value === 'function') && signalRecords.has(value)
+  !!value &&
+  (typeof value === 'object' || typeof value === 'function') &&
+  (signalRecords.has(value) || ownedSignals.has(value))
 
 const createSignal = <T>(initialValue: T): Signal<T> => {
   const record = {
@@ -69,7 +77,14 @@ const createSignal = <T>(initialValue: T): Signal<T> => {
   return handle
 }
 
-export const useSignal = createSignal
+export const useSignal = <T>(initialValue: T): Signal<T> => {
+  const ownedSignal = runtimeSignalFactory?.(initialValue)
+  if (ownedSignal) {
+    ownedSignals.add(ownedSignal)
+    return ownedSignal
+  }
+  return createSignal(initialValue)
+}
 export const signal = createSignal
 
 export const effect = (fn: () => void) => {

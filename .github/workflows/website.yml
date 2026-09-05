@@ -37,6 +37,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1-threads
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -48,6 +50,13 @@ jobs:
 
       - name: Build optimizer native artifacts
         run: bun run --filter @eclipsa/optimizer build:native:dev
+
+      - name: Build playground browser compiler
+        working-directory: packages/optimizer
+        run: bun ./scripts/run-napi.ts build --platform --release --manifest-path ../eclipsa/compiler/rust/Cargo.toml --package-json-path ./package.json --target-dir ../eclipsa/compiler/rust/target --output-dir ./generated --js-package-name @eclipsa/optimizer --target wasm32-wasip1-threads
+
+      - name: Verify browser compiler artifact
+        run: node --input-type=module -e "import { readFile } from 'node:fs/promises'; await WebAssembly.compile(await readFile('packages/optimizer/generated/optimizer.wasm32-wasi.wasm'));"
 
       - name: Build website
         run: bun run --cwd docs build

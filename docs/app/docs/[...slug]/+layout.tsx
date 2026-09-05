@@ -204,16 +204,6 @@ const OnThisPageNav = (props: {
 
 const OnThisPageLink = (props: { heading: TocHeading }) => {
   const { heading } = props
-  const jumpToHeading = (slug: string) => {
-    if (typeof document === 'undefined') return
-    const target = document.getElementById(slug)
-    if (!(target instanceof HTMLElement)) return
-    target.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    })
-    history.replaceState(null, '', `#${slug}`)
-  }
 
   return (
     <a
@@ -222,10 +212,6 @@ const OnThisPageLink = (props: { heading: TocHeading }) => {
         heading.depth > 2 ? 'ml-4 text-[13px] text-[color:var(--docs-text-soft)]' : '',
       )}
       href={`#${heading.slug}`}
-      onClick={(event) => {
-        event.preventDefault()
-        jumpToHeading(heading.slug)
-      }}
     >
       {heading.text}
     </a>

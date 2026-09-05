@@ -283,6 +283,48 @@ test.describe('example app in dev mode', () => {
       .toBe(true)
   })
 
+  test('navigates to a fragment without requesting route data', async ({ page }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+    const requests: string[] = []
+    page.on('request', (request) => {
+      if (['fetch', 'xhr', 'document'].includes(request.resourceType())) {
+        requests.push(request.url())
+      }
+    })
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+    expect(requests).toEqual([])
+  })
+
+  test('refreshes loader results on query-only navigation and browser back', async ({ page }) => {
+    await page.goto('/query-nav?q=one')
+    await expect(page.getByTestId('query-result')).toHaveText('one')
+    await page.getByRole('link', { name: 'Load second query' }).click()
+    await expect(page).toHaveURL(/\/query-nav\?q=two$/)
+    await expect(page.getByTestId('query-result')).toHaveText('two')
+    await page.goBack()
+    await expect(page).toHaveURL(/\/query-nav\?q=one$/)
+    await expect(page.getByTestId('query-result')).toHaveText('one')
+  })
+
+  test('resets scroll for client-side Link navigation without a hash target', async ({ page }) => {
+    await page.goto('/hash-nav')
+    await waitForResumedRoute(page)
+
+    await page.getByRole('link', { name: 'Jump to deep dive' }).click()
+
+    await expect(page).toHaveURL(/\/hash-nav#deep-dive$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+
+    await page.getByRole('link', { name: 'Open counter after deep scroll' }).click()
+
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBe(0)
+    await expect(page.getByText('Counter page')).toBeVisible()
+  })
+
   test('updates shared layout-owned location state on Link navigation', async ({ page }) => {
     await page.goto('/layout-location/overview')
 
@@ -352,6 +394,17 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByTestId('motion-card')).toHaveCSS('opacity', '1')
 
     await expect(page.getByTestId('motion-indicator')).toHaveText('Left active')
+  })
+
+  test('preserves local counter state after a shared atom update', async ({ page }) => {
+    await page.goto('/atom')
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await page.getByTestId('atom-left').click()
+    await expect(page.getByTestId('atom-summary')).toHaveText('Shared atom count: 1')
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 1')
+    await page.getByTestId('atom-local').click()
+    await expect(page.getByTestId('atom-local')).toHaveText('Local count: 2')
   })
 
   test('shares atom state across components and preserves it across Link navigation', async ({
@@ -575,6 +628,59 @@ test.describe('example app in dev mode', () => {
     await page.getByRole('link', { name: 'Open mount connected target' }).click()
 
     await expect(page).toHaveURL(/\/mount-connected-target$/)
+    await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)
+    await expect(page.getByTestId('mount-connected-canvas')).toHaveAttribute(
+      'data-mounted-canvas',
+      'true',
+    )
+  })
+
+  test('updates motion after an asynchronous signal write on a navigated route', async ({
+    page,
+  }) => {
+    await page.goto('/slot-motion-nav/overview')
+    await page.getByTestId('slot-motion-nav-quick-start-link').click()
+    await expect(page.getByRole('heading', { name: 'quick-start' })).toBeVisible()
+    await page.getByTestId('slot-motion-nav-async-toggle').click()
+    await expect(page.getByTestId('slot-motion-nav-toggle-state')).toHaveText('closed')
+    await expect(page.getByTestId('slot-motion-nav-panel')).toHaveCSS('max-height', '0px')
+  })
+
+  test('runs onMount on direct load without signals or external components', async ({ page }) => {
+    await page.goto('/mount-only')
+    await expect(page.getByTestId('mount-only-state')).toHaveText('mounted')
+  })
+
+  test('updates child props and reactive bindings across shared-layout navigation', async ({
+    page,
+  }) => {
+    await page.goto('/route-props/a')
+    await expect(page.getByRole('button', { name: '/route-props/a: 0', exact: true })).toBeVisible()
+    await page.getByRole('link', { name: 'Route B', exact: true }).click()
+    await expect(page.getByText('Route B body', { exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'First heading', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Second heading', exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Extra heading', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '/route-props/b: 0', exact: true }).click()
+    await expect(page.getByRole('button', { name: '/route-props/b: 1', exact: true })).toBeVisible()
+    await page.goBack()
+    await expect(page.getByRole('button', { name: '/route-props/a: 1', exact: true })).toBeVisible()
+  })
+
+  test('finishes startup restoration before navigating from onVisible', async ({ page }) => {
+    await page.goto('/visible-redirect')
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByText('Counter page')).toHaveCount(1)
+    await page.getByRole('button', { name: /^Count:\s*0$/ }).click()
+    await expect(page.getByRole('button', { name: /^Count:\s*1$/ })).toBeVisible()
+  })
+
+  test('runs onMount for directly loaded routes after refs are connected', async ({ page }) => {
+    await page.goto('/mount-connected-target')
+    await waitForResumedRoute(page)
+
     await expect(page.getByTestId('mount-connected-state')).toHaveText('connected')
     await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('width', 321)
     await expect(page.getByTestId('mount-connected-canvas')).toHaveJSProperty('height', 123)
@@ -1090,6 +1196,7 @@ test.describe('example app in dev mode', () => {
 
     try {
       await page.goto('/content')
+      await waitForResumedRoute(page)
       await expect(page.getByTestId('content-description')).toHaveText(
         contentDescriptionBeforeLabel,
       )

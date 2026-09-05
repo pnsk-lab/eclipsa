@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { resolveNodeBinary } from './node-binary.ts'
+import { stopChildProcess } from './stop-child-process.ts'
 
 const host = '127.0.0.1'
 const cwd = process.cwd()
@@ -91,6 +92,7 @@ const run = async () => {
   const devServer = spawn(nodeBinaryPath, devArgs, {
     cwd,
     env,
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'inherit', 'inherit'],
   })
   const waitForDevServerExit = () =>
@@ -105,17 +107,14 @@ const run = async () => {
       })
     })
 
-  const terminateDevServer = () => {
-    if (!devServer.killed) {
-      devServer.kill('SIGTERM')
-    }
-  }
+  let shutdownPromise: Promise<void> | undefined
+  const terminateDevServer = () =>
+    (shutdownPromise ??= stopChildProcess(devServer, 5_000, process.platform !== 'win32'))
 
   const exitSignals = ['SIGINT', 'SIGTERM'] as const
   for (const signal of exitSignals) {
     process.on(signal, () => {
-      terminateDevServer()
-      process.exit(1)
+      void terminateDevServer().finally(() => process.exit(1))
     })
   }
 
@@ -143,14 +142,10 @@ const run = async () => {
     })
 
     if (exitCode !== 0) {
-      process.exit(exitCode)
+      process.exitCode = exitCode
     }
   } finally {
-    terminateDevServer()
-    await new Promise((resolve) => {
-      devServer.once('close', resolve)
-      setTimeout(resolve, 5_000)
-    })
+    await terminateDevServer()
   }
 }
 
