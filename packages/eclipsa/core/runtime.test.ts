@@ -45,7 +45,7 @@ import {
 } from './internal.ts'
 import { For, Show } from './flow/mod.ts'
 import { __eclipsaLoader } from './loader.ts'
-import { Link, useLocation, useRouteParams } from './router.tsx'
+import { Link, useLocation, useNavigate, useRouteParams } from './router.tsx'
 import { onCleanup, onMount, useComputed, useSignal, useWatch } from './signal.ts'
 import { ACTION_FORM_ATTR, CLIENT_INSERT_OWNER_SYMBOL } from './runtime/constants.ts'
 import {
@@ -13770,6 +13770,136 @@ describe('renderClientInsertable', () => {
       expect(remainingRows).toHaveLength(1)
       expect(remainingRows[0]?.className).toBe('danger')
       expect(remainingRows[0]?.textContent).toBe('A3')
+    })
+  })
+})
+
+describe('docs navigation regressions', () => {
+  it('reactivates client-created library components without a generated symbol URL', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const Library = __eclipsaComponent(
+        (props: { label: string }) => jsxDEV('p', { children: props.label }, null, false, {}),
+        '@library:component',
+        () => [],
+      )
+      const nodes = withRuntimeContainer(container, () =>
+        renderClientInsertable(jsxDEV(Library, { label: 'before' }, null, false, {}), container),
+      )
+      for (const node of nodes) container.doc!.body.appendChild(node)
+      const component = [...container.components.values()].find(
+        (entry) => entry.symbol === '@library:component',
+      )!
+      component.props = { label: 'after' }
+      component.rawProps = null
+      component.active = false
+      container.dirty.add(component.id)
+      await flushDirtyComponents(container)
+      expect(container.doc!.body.textContent).toContain('after')
+      expect(container.symbols.has('@library:component')).toBe(false)
+    })
+  })
+
+  it('navigates fragments without requesting route data', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument & { location: Location }
+      doc.location = new URL('http://local/docs/overview') as unknown as Location
+      const navigations: string[] = []
+      Object.assign(doc, { getElementById: () => null })
+      Object.assign(doc.defaultView, {
+        history: {
+          pushState: (_data: unknown, _title: string, href: string) => navigations.push(href),
+        },
+      })
+      primeLocationState(container, doc.location.href)
+      container.router!.manifest = [
+        {
+          error: null,
+          hasMiddleware: false,
+          layouts: [],
+          loading: null,
+          notFound: null,
+          page: '/docs.js',
+          routePath: '/docs/overview',
+          server: null,
+          segments: [
+            { kind: 'static', value: 'docs' },
+            { kind: 'static', value: 'overview' },
+          ],
+        },
+      ]
+      const originalFetch = globalThis.fetch
+      const requests: string[] = []
+      globalThis.fetch = (async (input) => {
+        requests.push(String(input))
+        throw new Error('Fragment navigation must not fetch')
+      }) as typeof fetch
+      try {
+        const navigate = withRuntimeContainer(container, () => useNavigate())
+        await navigate('/docs/overview#heading')
+        expect(requests).toEqual([])
+        expect(navigations).toEqual(['http://local/docs/overview#heading'])
+        expect(container.router!.currentUrl.value).toBe('http://local/docs/overview#heading')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+  })
+})
+
+describe('same-path navigation regressions', () => {
+  it('rerenders the route when only its search parameters change', async () => {
+    await withFakeNodeGlobal(async () => {
+      const container = createContainer()
+      const doc = container.doc as unknown as FakeDocument & { location: Location }
+      doc.location = new URL('http://local/docs?q=one') as unknown as Location
+      Object.assign(doc, { head: doc.createElement('head'), title: '' })
+      Object.assign(doc.defaultView, {
+        history: { pushState: () => {}, replaceState: () => {} },
+        scrollTo: () => {},
+      })
+      container.rootElement = container.doc!.body
+      primeLocationState(container, doc.location.href)
+      const router = container.router!
+      const entry = {
+        error: null,
+        hasMiddleware: false,
+        layouts: [],
+        loading: null,
+        notFound: null,
+        page: '/docs.js',
+        routePath: '/docs',
+        server: null,
+        segments: [{ kind: 'static' as const, value: 'docs' }],
+      }
+      const Page = () => jsxDEV('p', { children: useLocation().search }, null, false, {})
+      const route = {
+        entry,
+        error: undefined,
+        layouts: [],
+        params: {},
+        pathname: '/docs',
+        page: { metadata: null, renderer: Page, symbol: null, url: '/docs.js' },
+        render: () => jsxDEV(Page, {}, null, false, {}),
+      }
+      router.manifest = [entry]
+      router.currentRoute = route
+      router.loadedRoutes.set('/docs::page', route)
+      router.routePrefetches.set(
+        '/docs?q=two',
+        Promise.resolve({
+          finalHref: 'http://local/docs?q=two',
+          finalPathname: '/docs',
+          kind: 'page',
+          loaders: {},
+          ok: true,
+        }),
+      )
+      const navigate = withRuntimeContainer(container, () => useNavigate())
+      await navigate('/docs?q=two')
+      expect(doc.body.textContent).toContain('?q=two')
+      expect(router.currentUrl.value).toBe('http://local/docs?q=two')
     })
   })
 })

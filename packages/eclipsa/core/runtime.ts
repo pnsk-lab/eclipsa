@@ -3244,6 +3244,7 @@ const resetComponentForSymbolChange = (
   component.prefersEffectOnlyLocalSignalWrites = false
   component.projectionSlots = meta.projectionSlots ?? null
   component.rawProps = null
+  component.clientRenderer = null
   component.externalInstance = undefined
   component.externalMeta = null
   component.mayChangeNodeCount = false
@@ -6070,6 +6071,7 @@ const renderComponentToNodes = (
   component.optimizedRoot = meta.optimizedRoot === true
   component.props = props
   component.rawProps = rawProps ?? null
+  component.clientRenderer = mode === 'client' ? componentFn : null
   component.projectionSlots = meta.projectionSlots ?? null
   const externalMeta = getExternalComponentMeta(componentFn)
   const parentFrame = getCurrentFrame()
@@ -9380,6 +9382,15 @@ const navigateContainer = async (
     return
   }
 
+  if (!force && pathname === router.currentPath.value && url.search === currentRouteUrl.search) {
+    commitBrowserNavigation(doc, url, mode)
+    writeRouterLocation(router, url)
+    scrollToUrlTarget(doc, url, {
+      resetScroll: mode !== 'pop',
+    })
+    return
+  }
+
   const prefetchKey = routePrefetchKey(url)
   let pendingPrefetch = router.routePrefetches.get(prefetchKey)
   if (!pendingPrefetch && routeTarget) {
@@ -9412,17 +9423,6 @@ const navigateContainer = async (
       return
     }
     fallbackDocumentNavigation(doc, url, mode)
-    return
-  }
-
-  if (!force && pathname === router.currentPath.value) {
-    if (nextHref !== currentHref) {
-      commitBrowserNavigation(doc, url, mode)
-      writeRouterLocation(router, url)
-      scrollToUrlTarget(doc, url, {
-        resetScroll: mode !== 'pop',
-      })
-    }
     return
   }
 
@@ -9698,13 +9698,21 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const oldDescendants = collectDescendantIds(container, componentId)
   const scope = materializeScope(container, ensureComponentScopeId(container, component))
   await preloadResumableValue(container, scope)
-  const module = await loadSymbol(container, activateSymbol)
+  // Library components created on the client already have an executable renderer,
+  // even when their handwritten symbol has no compiler-generated module URL.
+  const clientRenderer =
+    !container.symbols.has(activateSymbol) && !container.imports.has(activateSymbol)
+      ? component.clientRenderer
+      : null
+  const module: RuntimeSymbolModule = clientRenderer
+    ? { default: (_scope, props) => clientRenderer(props) }
+    : await loadSymbol(container, activateSymbol)
   const rawProps =
     component.rawProps && typeof component.rawProps === 'object' ? component.rawProps : null
   if (rawProps) {
     component.props = evaluateProps(rawProps)
   }
-  const externalMeta = getExternalComponentMeta(module.default)
+  const externalMeta = getExternalComponentMeta(clientRenderer ?? module.default)
   if (externalMeta && component.props && typeof component.props === 'object') {
     component.external = {
       kind: externalMeta.kind,

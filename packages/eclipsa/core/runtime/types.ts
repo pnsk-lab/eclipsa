@@ -1,3 +1,4 @@
+import type { Component } from '../component.ts'
 import type { JSX } from '../../jsx/types.ts'
 import type { SerializedValue } from '../hooks.ts'
 import type { ExternalComponentDescriptor, ExternalComponentMeta } from '../meta.ts'
@@ -178,6 +179,7 @@ export interface ComponentState {
   props: unknown
   projectionSlots: Record<string, number> | null
   rawProps?: Record<string, unknown> | null
+  clientRenderer?: Component | null
   registered?: boolean
   renderEffectCleanupSlot: CleanupSlot | null
   reuseExistingDomOnActivate?: boolean

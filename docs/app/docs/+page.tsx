@@ -1,4 +1,4 @@
-import { onVisible, useNavigate, type MetadataContext } from 'eclipsa'
+import { Link, onVisible, useNavigate, type MetadataContext } from 'eclipsa'
 
 export const metadata = ({ url }: MetadataContext) => ({
   canonical: url.pathname,
@@ -8,7 +8,11 @@ export const metadata = ({ url }: MetadataContext) => ({
 export default () => {
   const nav = useNavigate()
   onVisible(() => {
-    nav('/docs/getting-started/overview')
+    void nav('/docs/getting-started/overview', { replace: true })
   })
-  return <div />
+  return (
+    <Link href="/docs/getting-started/overview" replace>
+      Open the documentation
+    </Link>
+  )
 }
