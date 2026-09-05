@@ -8133,7 +8133,17 @@ setRuntimeRefAssigner((value, element) => {
 
 setCompiledRuntimeEffectWrapper((fn) => {
   const container = getRuntimeContainer()
-  return container ? () => pushContainer(container, fn) : fn
+  if (!container) return fn
+  const frame = getCurrentFrame()
+  const effect = createRuntimeReactiveEffect(container, true)
+  effect.fn = () =>
+    runReactiveEffectInContainer(effect, () => collectTrackedDependencies(effect, fn))
+  if (currentClientInsertCleanupSlot) {
+    addCleanupSlotEffect(currentClientInsertCleanupSlot, effect)
+  } else if (frame && frame.mode === 'client' && frame.component.id !== ROOT_COMPONENT_ID) {
+    addCleanupSlotEffect(ensureFrameEffectCleanupSlot(frame), effect)
+  }
+  return () => runEffect(effect)
 })
 
 setCompiledRuntimeMountScheduler((fn) => {

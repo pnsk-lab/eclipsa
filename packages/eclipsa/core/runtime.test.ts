@@ -14,6 +14,7 @@ import {
   textNodeSignalMember,
 } from './client/dom.ts'
 import {
+  attr as attrCompiled,
   attrStatic as attrCompiledStatic,
   classSignal as classCompiledSignal,
   createComponent as createCompiledComponent,
@@ -13783,6 +13784,7 @@ describe('docs navigation regressions', () => {
     await withFakeNodeGlobal(async () => {
       const container = createContainer()
       let count!: { value: number }
+      let input!: HTMLInputElement
       let renders = 0
       const App = __eclipsaComponent(
         () => {
@@ -13791,7 +13793,9 @@ describe('docs navigation regressions', () => {
           void count.value
           const node = container.doc!.createTextNode('')
           textCompiledNodeSignalValue(count, node)
-          return node
+          input = container.doc!.createElement('input')
+          attrCompiled(input, 'value', () => String(count.value))
+          return [node, input]
         },
         'compiled-binding-owner',
         () => [],
@@ -13804,6 +13808,7 @@ describe('docs navigation regressions', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(renders).toBe(1)
       expect(container.doc!.body.textContent).toContain('1')
+      expect(input.value).toBe('1')
     })
   })
 
