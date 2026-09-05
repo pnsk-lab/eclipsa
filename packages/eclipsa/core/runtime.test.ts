@@ -13852,7 +13852,9 @@ describe('docs navigation regressions', () => {
       const render = () => {
         shared = useRuntimeAtom(atom, 0)
         local = createCompiledSignal(0)
-        return jsxDEV('p', { children: `${shared.value}:${local.value}` }, null, false, {})
+        const text = container.doc!.createTextNode('')
+        textCompiledNodeSignalValue(local, text)
+        return [jsxDEV('span', { children: `${shared.value}:` }, null, false, {}), text]
       }
       const App = __eclipsaComponent(render, 'mixed-signals', () => [])
       container.imports.set('mixed-signals', Promise.resolve({ default: render }))
@@ -13867,6 +13869,9 @@ describe('docs navigation regressions', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(local).toBe(originalLocal)
       expect(container.doc!.body.textContent).toContain('1:2')
+      local.value = 3
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(container.doc!.body.textContent).toContain('1:3')
       const component = [...container.components.values()].find(
         (entry) => entry.symbol === 'mixed-signals',
       )!

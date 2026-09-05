@@ -9797,9 +9797,11 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     },
     component.props,
   )
-  const speculativeEffectCleanupSlot = component.reuseProjectionSlotDomOnActivate
-    ? createCleanupSlot()
-    : null
+  const speculativeEffectCleanupSlot =
+    component.reuseProjectionSlotDomOnActivate &&
+    component.preserveCompiledReactiveTargetsOnActivate
+      ? createCleanupSlot()
+      : null
   if (!speculativeEffectCleanupSlot) {
     resetComponentRenderEffects(component)
   }
