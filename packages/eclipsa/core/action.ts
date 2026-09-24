@@ -1233,10 +1233,16 @@ export const __eclipsaAction = <
         await flushDirtyComponents(container)
       }
 
+      let latestSubmissionId = 0
+
       const applySubmissionChunk = async (
+        submissionId: number,
         input: ActionInput<Middlewares>,
         value: ActionStreamYield<Output>,
       ) => {
+        if (submissionId !== latestSubmissionId) {
+          return
+        }
         result.value = value
         lastSubmission.value = {
           error: undefined,
@@ -1247,7 +1253,14 @@ export const __eclipsaAction = <
         await flushHandleUpdates()
       }
 
-      const applySubmissionError = async (input: ActionInput<Middlewares>, caught: unknown) => {
+      const applySubmissionError = async (
+        submissionId: number,
+        input: ActionInput<Middlewares>,
+        caught: unknown,
+      ) => {
+        if (submissionId !== latestSubmissionId) {
+          return
+        }
         error.value = caught
         lastSubmission.value = {
           error: caught,
@@ -1258,12 +1271,16 @@ export const __eclipsaAction = <
         await flushHandleUpdates()
       }
 
-      const finalizeSubmission = async () => {
+      const finalizeSubmission = async (submissionId: number) => {
+        if (submissionId !== latestSubmissionId) {
+          return
+        }
         pending.value = false
         await flushHandleUpdates()
       }
 
       const invoke = (input: ActionInput<Middlewares> | FormData) => {
+        const submissionId = ++latestSubmissionId
         pending.value = true
         error.value = undefined
         const normalizedInput = normalizeFormSubmissionInput(input) as ActionInput<Middlewares>
@@ -1276,19 +1293,19 @@ export const __eclipsaAction = <
               if (isAsyncGeneratorValue(value)) {
                 for await (const chunk of value) {
                   const resolved = chunk as ActionStreamYield<Output>
-                  await applySubmissionChunk(normalizedInput, resolved)
+                  await applySubmissionChunk(submissionId, normalizedInput, resolved)
                   yield resolved
                 }
                 return
               }
               const resolved = value as ActionStreamYield<Output>
-              await applySubmissionChunk(normalizedInput, resolved)
+              await applySubmissionChunk(submissionId, normalizedInput, resolved)
               yield resolved
             } catch (caught) {
-              await applySubmissionError(normalizedInput, caught)
+              await applySubmissionError(submissionId, normalizedInput, caught)
               throw caught
             } finally {
-              await finalizeSubmission()
+              await finalizeSubmission(submissionId)
             }
           })() as ActionInvokeResult<Output>
         }
@@ -1296,14 +1313,14 @@ export const __eclipsaAction = <
         return request
           .then(async (value) => {
             const resolved = value as ActionStreamYield<Output>
-            await applySubmissionChunk(normalizedInput, resolved)
+            await applySubmissionChunk(submissionId, normalizedInput, resolved)
             return value as ResolvedActionOutput<Output>
           })
           .catch(async (caught) => {
-            await applySubmissionError(normalizedInput, caught)
+            await applySubmissionError(submissionId, normalizedInput, caught)
             throw caught
           })
-          .finally(finalizeSubmission) as ActionInvokeResult<Output>
+          .finally(() => finalizeSubmission(submissionId)) as ActionInvokeResult<Output>
       }
 
       const Form = (props: ActionFormProps) => {

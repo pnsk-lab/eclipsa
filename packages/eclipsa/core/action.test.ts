@@ -442,6 +442,85 @@ describe('action runtime', () => {
     }
   })
 
+  it('ignores stale out-of-order submissions on client handles', async () => {
+    const container = createRuntimeContainer()
+    const originalFetch = globalThis.fetch
+    const resolvers: Array<(value: string) => void> = []
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push((value) => {
+            resolve(
+              new Response(JSON.stringify({ ok: true, value }), {
+                headers: { 'content-type': 'application/json' },
+              }),
+            )
+          })
+        }),
+    ) as typeof fetch
+
+    try {
+      const useEcho = __eclipsaAction('stale-handle', [], async (input: string) => input)
+      const handle = withRuntimeContainer(container, () => useEcho())
+
+      const first = handle.action('first')
+      const second = handle.action('second')
+      expect(resolvers).toHaveLength(2)
+
+      resolvers[1]!('second')
+      await expect(second).resolves.toBe('second')
+      expect(handle.result).toBe('second')
+      expect(handle.lastSubmission).toEqual({ error: undefined, input: 'second', result: 'second' })
+      expect(handle.isPending).toBe(false)
+
+      resolvers[0]!('first')
+      await expect(first).resolves.toBe('first')
+      expect(handle.result).toBe('second')
+      expect(handle.lastSubmission).toEqual({ error: undefined, input: 'second', result: 'second' })
+      expect(handle.isPending).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('keeps pending while a newer submission is still in flight', async () => {
+    const container = createRuntimeContainer()
+    const originalFetch = globalThis.fetch
+    const resolvers: Array<(value: string) => void> = []
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push((value) => {
+            resolve(
+              new Response(JSON.stringify({ ok: true, value }), {
+                headers: { 'content-type': 'application/json' },
+              }),
+            )
+          })
+        }),
+    ) as typeof fetch
+
+    try {
+      const useEcho = __eclipsaAction('pending-handle', [], async (input: string) => input)
+      const handle = withRuntimeContainer(container, () => useEcho())
+
+      const first = handle.action('first')
+      const second = handle.action('second')
+
+      resolvers[0]!('first')
+      await expect(first).resolves.toBe('first')
+      expect(handle.isPending).toBe(true)
+      expect(handle.result).toBeUndefined()
+
+      resolvers[1]!('second')
+      await expect(second).resolves.toBe('second')
+      expect(handle.isPending).toBe(false)
+      expect(handle.result).toBe('second')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('uses absolute action RPC URLs inside a server request context', async () => {
     const fetchImpl = vi.fn(
       async () =>
