@@ -852,6 +852,28 @@ test.describe('example app in dev mode', () => {
     await expect(childrenComponentContent).toBeVisible()
   })
 
+  test('keeps component-valued props and children rendered after Link navigation round trip', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    const propComponentContent = page.getByText('Prop component content')
+    const childrenComponentContent = page.getByText('Children component content')
+
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(childrenComponentContent).toBeVisible()
+
+    await page.getByRole('link', { name: 'Open counter with Link' }).click()
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByText('Counter page')).toBeVisible()
+
+    await page.getByRole('link', { name: 'Back home with Link' }).click()
+    await expect(page).toHaveURL(/\/$/)
+
+    await expect(propComponentContent).toHaveCount(2)
+    await expect(propComponentContent.first()).toBeVisible()
+    await expect(childrenComponentContent).toBeVisible()
+  })
+
   test('streams suspense fallback before resolved content on direct requests', async ({ page }) => {
     await page.goto('/suspense', { waitUntil: 'commit' })
 

@@ -6071,7 +6071,8 @@ const renderComponentToNodes = (
       ((rawProps ?? props) as Record<string, unknown> | null) ?? null,
     )
   const boundaryContentsChanged = propsChanged || (!wasActive && !!previousStart && !!previousEnd)
-  if (mode === 'client' && externalMeta && previousStart && previousEnd && !symbolChanged) {
+  const previousDomReusable = !!previousStart?.parentNode && !!previousEnd?.parentNode
+  if (mode === 'client' && externalMeta && previousDomReusable && !symbolChanged) {
     const { end, start } = createComponentBoundaryPair(container.doc, componentId)
 
     const host = getExternalRoot(component)
@@ -6096,7 +6097,7 @@ const renderComponentToNodes = (
 
     return [start, end]
   }
-  if (mode === 'client' && wasActive && previousStart && previousEnd && !boundaryContentsChanged) {
+  if (mode === 'client' && wasActive && previousDomReusable && !boundaryContentsChanged) {
     const { end, start } = createComponentBoundaryPair(container.doc, componentId)
 
     if (parentFrame) {
@@ -6115,7 +6116,7 @@ const renderComponentToNodes = (
       propsChanged: true,
       symbolChanged,
     })
-    if (!previousStart || !previousEnd) {
+    if (!previousDomReusable) {
       component.start = start
       component.end = end
     }
@@ -6148,7 +6149,7 @@ const renderComponentToNodes = (
     propsChanged: boundaryContentsChanged,
     symbolChanged,
   })
-  if (!previousStart || !previousEnd) {
+  if (!previousDomReusable) {
     component.start = start
     component.end = end
   }
@@ -6171,7 +6172,7 @@ const renderComponentToNodes = (
   pruneComponentVisibles(container, component, frame.visibleCursor)
   pruneComponentWatches(container, component, frame.watchCursor)
   const preservedDescendants =
-    frame.projectionState.reuseExistingDom && previousStart && previousEnd
+    frame.projectionState.reuseExistingDom && previousDomReusable
       ? collectPreservedProjectionSlotComponentIds(container, previousStart, previousEnd)
       : new Set<string>()
   const keptDescendants = new Set([
