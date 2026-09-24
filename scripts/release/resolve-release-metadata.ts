@@ -226,9 +226,42 @@ function fetchPublishedVersions(packageName: string): string[] {
     }
 
     return []
-  } catch {
-    return []
+  } catch (error) {
+    if (isNpmNotFoundError(error)) {
+      return []
+    }
+
+    throw new Error(
+      `Failed to fetch published versions for ${packageName}: ${describeExecError(error)}`,
+      { cause: error },
+    )
   }
+}
+
+function isNpmNotFoundError(error: unknown): boolean {
+  return /\bE404\b/.test(execErrorStderr(error))
+}
+
+function execErrorStderr(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('stderr' in error)) {
+    return ''
+  }
+
+  const stderr = error.stderr
+  if (typeof stderr === 'string') {
+    return stderr
+  }
+
+  return stderr instanceof Uint8Array ? Buffer.from(stderr).toString('utf8') : ''
+}
+
+function describeExecError(error: unknown): string {
+  const stderr = execErrorStderr(error).trim()
+  if (stderr !== '') {
+    return stderr
+  }
+
+  return error instanceof Error ? error.message : String(error)
 }
 
 function parseCliArgs(argv: string[]): Record<string, string> {
