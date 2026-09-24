@@ -686,10 +686,10 @@ type RowState<T> = {
   signal: Signal<T>
 }
 
-const renderScopedNodes = (value: Insertable, cleanups: Cleanup[]) => {
+const renderScopedNodes = (render: () => Insertable, cleanups: Cleanup[]) => {
   const previousCleanups = pushCleanupScope(cleanups)
   try {
-    const nodes = renderNodes(value)
+    const nodes = renderNodes(render())
     return nodes.length === 0 ? [document.createTextNode('')] : nodes
   } finally {
     popCleanupScope(previousCleanups)
@@ -764,7 +764,10 @@ export const insertFor = <T>(
       clearRows()
       if (fallbackNodes.length === 0) {
         fallbackCleanups = []
-        fallbackNodes = renderScopedNodes((props.fallback ?? null) as Insertable, fallbackCleanups)
+        fallbackNodes = renderScopedNodes(
+          () => (props.fallback ?? null) as Insertable,
+          fallbackCleanups,
+        )
       }
       insertNodeGroups(parent, marker, [fallbackNodes])
       return
@@ -788,7 +791,7 @@ export const insertFor = <T>(
         const cleanups: Cleanup[] = []
         const rowSignal = createSignal(item)
         const indexSignal = createSignal(index)
-        const nodes = renderScopedNodes(props.fn(rowSignal, indexSignal), cleanups)
+        const nodes = renderScopedNodes(() => props.fn(rowSignal, indexSignal), cleanups)
         row = {
           cleanups,
           key,

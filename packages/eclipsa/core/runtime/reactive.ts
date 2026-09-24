@@ -7,8 +7,11 @@ type FixedSignalEffectHandler = <T>(
   options?: { skipInitialRun?: boolean },
 ) => boolean
 
-const signalRecords = new WeakMap<object, { effects: Set<Effect>; value: unknown }>()
-let currentEffect: Effect | null = null
+type SignalRecord = { effects: Set<Effect>; value: unknown }
+type TrackedEffect = { run: Effect; records: Set<SignalRecord> }
+
+const signalRecords = new WeakMap<object, SignalRecord>()
+let currentEffect: TrackedEffect | null = null
 let currentCleanups: Cleanup[] | null = null
 let runtimeCleanupHandler: ((fn: Cleanup) => boolean) | null = null
 let runtimeEffectWrapper: ((fn: Effect) => Effect) | null = null
@@ -51,7 +54,8 @@ const createSignal = <T>(initialValue: T): Signal<T> => {
     enumerable: true,
     get() {
       if (currentEffect) {
-        record.effects.add(currentEffect)
+        record.effects.add(currentEffect.run)
+        currentEffect.records.add(record)
       }
       return record.value as T
     },
@@ -72,19 +76,29 @@ const createSignal = <T>(initialValue: T): Signal<T> => {
 export const useSignal = createSignal
 export const signal = createSignal
 
+const untrack = (tracked: TrackedEffect) => {
+  for (const record of tracked.records) {
+    record.effects.delete(tracked.run)
+  }
+  tracked.records.clear()
+}
+
 export const effect = (fn: () => void) => {
-  let run: Effect
+  const tracked: TrackedEffect = { run: () => {}, records: new Set() }
   const baseRun = () => {
-    currentEffect = run
+    untrack(tracked)
+    const previousEffect = currentEffect
+    currentEffect = tracked
     try {
       fn()
     } finally {
-      currentEffect = null
+      currentEffect = previousEffect
     }
   }
-  run = runtimeEffectWrapper?.(baseRun) ?? baseRun
-  run()
-  return run
+  tracked.run = runtimeEffectWrapper?.(baseRun) ?? baseRun
+  currentCleanups?.push(() => untrack(tracked))
+  tracked.run()
+  return tracked.run
 }
 
 export const onCleanup = (fn: Cleanup) => {

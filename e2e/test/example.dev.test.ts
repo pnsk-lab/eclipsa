@@ -111,6 +111,27 @@ test.describe('example app in dev mode', () => {
     await expect(page.getByRole('button', { name: /^Layout count:\s*1$/ })).toBeVisible()
   })
 
+  test('unsubscribes removed For rows from outer signals', async ({ page }) => {
+    await page.goto('/effect-scope')
+    await waitForResumedRoute(page)
+
+    const items = page.getByRole('listitem')
+    await expect(items).toHaveCount(3)
+
+    await page.getByRole('button', { name: 'Tick' }).click()
+    await expect(page.getByText('tick: 1')).toBeVisible()
+    await expect(items.nth(2)).toHaveAttribute('data-tick', 'gamma:1')
+
+    await page.getByRole('button', { name: 'Keep first row' }).click()
+    await expect(items).toHaveCount(1)
+
+    await page.getByRole('button', { name: 'Reset probe' }).click()
+    await page.getByRole('button', { name: 'Tick' }).click()
+    await expect(page.getByText('tick: 2')).toBeVisible()
+    await expect(items.first()).toHaveAttribute('data-tick', 'alpha:2')
+    expect(await page.evaluate(() => globalThis.__effectScopeProbeRuns)).toBe(1)
+  })
+
   test('restores the previous route when using the browser back button', async ({ page }) => {
     await page.goto('/')
     await waitForResumedRoute(page)
