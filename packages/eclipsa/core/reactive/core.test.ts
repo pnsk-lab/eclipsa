@@ -53,4 +53,54 @@ describe('signal', () => {
     expect(cb).toHaveBeenNthCalledWith(2, '1:new')
     expect(cb).toHaveBeenNthCalledWith(3, '2:new')
   })
+
+  it('records read signals on the effect and unsubscribes them on dispose', () => {
+    const count = signal(0)
+    const cb = vi.fn()
+
+    const dispose = effect(() => {
+      cb(count.get())
+    })
+
+    expect(count.effects.size).toBe(1)
+    const [tracked] = count.effects
+    expect(tracked?.signals.has(count)).toBe(true)
+
+    dispose()
+
+    expect(count.effects.size).toBe(0)
+    count.set(1)
+    expect(cb).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the previous tracking context when an effect body throws', () => {
+    const count = signal(0)
+
+    expect(() =>
+      effect(() => {
+        throw new Error('boom')
+      }),
+    ).toThrow('boom')
+
+    count.get()
+    expect(count.effects.size).toBe(0)
+  })
+
+  it('keeps tracking the outer effect after a nested effect finishes', () => {
+    const outer = signal(0)
+    const inner = signal(0)
+    const outerCb = vi.fn()
+
+    effect(() => {
+      effect(() => {
+        inner.get()
+      })
+      outerCb(outer.get())
+    })
+
+    expect(outerCb).toHaveBeenCalledTimes(1)
+    outer.set(1)
+    expect(outerCb).toHaveBeenCalledTimes(2)
+    expect(outerCb).toHaveBeenNthCalledWith(2, 1)
+  })
 })

@@ -27,6 +27,7 @@ export const signal = <T>(init: T): Signal<T> => {
     get() {
       if (currentEffect) {
         this.effects.add(currentEffect)
+        currentEffect.signals.add(this)
       }
       return value
     },
@@ -45,23 +46,34 @@ export const signal = <T>(init: T): Signal<T> => {
   return signal
 }
 
-const registry = new FinalizationRegistry<Effect>((effect) => {
+const unsubscribeEffect = (effect: Effect) => {
   for (const signal of effect.signals) {
     signal.effects.delete(effect)
   }
-})
+  effect.signals.clear()
+}
 
-export const effect = (fn: () => void) => {
+const registry = new FinalizationRegistry<Effect>(unsubscribeEffect)
+
+export const effect = (fn: () => void): (() => void) => {
   const newEffect: Effect = {
-    fn() {
-      fn()
-    },
+    fn,
     signals: new Set(),
   }
 
+  const previousEffect = currentEffect
   currentEffect = newEffect
-  newEffect.fn()
-  currentEffect = null
+  try {
+    newEffect.fn()
+  } finally {
+    currentEffect = previousEffect
+  }
 
-  registry.register(fn, newEffect)
+  const dispose = () => {
+    registry.unregister(dispose)
+    unsubscribeEffect(newEffect)
+  }
+  registry.register(dispose, newEffect, dispose)
+
+  return dispose
 }
