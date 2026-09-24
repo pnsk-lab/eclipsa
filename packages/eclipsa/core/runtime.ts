@@ -4491,13 +4491,60 @@ export const preserveReusableContentInRoots = (
   return preservedComponentIds
 }
 
-const replaceProjectionSlotContents = (start: Comment, end: Comment, nodes: Node[]) => {
+const isNodeWithinRoots = (node: Node, roots: Node[]) => {
+  let cursor: Node | null = node
+  while (cursor) {
+    if (roots.includes(cursor)) {
+      return true
+    }
+    cursor = cursor.parentNode
+  }
+  return false
+}
+
+const clearRemovedComponentBoundaryAnchors = (
+  container: RuntimeContainer,
+  removedRoots: Node[],
+) => {
+  if (removedRoots.length === 0) {
+    return
+  }
+  for (const componentId of collectComponentBoundaryIds(removedRoots)) {
+    const component = container.components.get(componentId)
+    if (!component) {
+      continue
+    }
+    if (component.start && isNodeWithinRoots(component.start, removedRoots)) {
+      component.start = undefined
+    }
+    if (component.end && isNodeWithinRoots(component.end, removedRoots)) {
+      component.end = undefined
+    }
+  }
+}
+
+const clearComponentBoundaryAnchorsInRange = (
+  container: RuntimeContainer,
+  start: Comment,
+  end: Comment,
+) => {
+  clearRemovedComponentBoundaryAnchors(container, getBoundaryChildren(start, end))
+}
+
+const replaceProjectionSlotContents = (
+  container: RuntimeContainer,
+  start: Comment,
+  end: Comment,
+  nodes: Node[],
+) => {
+  const removedRoots = getBoundaryChildren(start, end)
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
     cursor.remove()
     cursor = next
   }
+  clearRemovedComponentBoundaryAnchors(container, removedRoots)
   for (const node of nodes) {
     end.parentNode?.insertBefore(node, end)
   }
@@ -4509,21 +4556,22 @@ const replaceBoundaryContents = (
   end: Comment,
   nodes: Node[],
   options?: {
+    container?: RuntimeContainer
     preserveProjectionSlots?: boolean
   },
 ) => {
-  const preservedComponentIds = preserveReusableContentInRoots(
-    getBoundaryChildren(start, end),
-    nodes,
-    {
-      preserveProjectionSlots: options?.preserveProjectionSlots ?? true,
-    },
-  )
+  const removedRoots = getBoundaryChildren(start, end)
+  const preservedComponentIds = preserveReusableContentInRoots(removedRoots, nodes, {
+    preserveProjectionSlots: options?.preserveProjectionSlots ?? true,
+  })
   let cursor = start.nextSibling
   while (cursor && cursor !== end) {
     const next = cursor.nextSibling
     cursor.remove()
     cursor = next
+  }
+  if (options?.container) {
+    clearRemovedComponentBoundaryAnchors(options.container, removedRoots)
   }
   for (const node of nodes) {
     end.parentNode?.insertBefore(node, end)
@@ -5545,7 +5593,7 @@ const syncExternalProjectionSlotDom = (
           continue
         }
         if (!tryPatchBoundaryContentsInPlace(range.start, range.end, [])) {
-          replaceProjectionSlotContents(range.start, range.end, [])
+          replaceProjectionSlotContents(container, range.start, range.end, [])
         }
         changed = true
         continue
@@ -5568,7 +5616,7 @@ const syncExternalProjectionSlotDom = (
 
       if (range) {
         if (!tryPatchBoundaryContentsInPlace(range.start, range.end, nodes)) {
-          replaceProjectionSlotContents(range.start, range.end, nodes)
+          replaceProjectionSlotContents(container, range.start, range.end, nodes)
         }
         changed = true
         continue
@@ -8847,12 +8895,13 @@ const updateSharedLayoutBoundary = async (
   if (routeRoot.kind === 'owner') {
     deactivateComponentSubtree(container, routeRoot.rootId)
     const focusSnapshot = captureBoundaryFocus(container.doc!, slotRange.start, slotRange.end)
+    clearComponentBoundaryAnchorsInRange(container, slotRange.start, slotRange.end)
     const { nodes } = renderRouteSubtreeForProjectionSlotOwner(
       container,
       routeRoot.ownerId,
       nextChildren,
     )
-    replaceProjectionSlotContents(slotRange.start, slotRange.end, nodes)
+    replaceProjectionSlotContents(container, slotRange.start, slotRange.end, nodes)
     restoreBoundaryFocus(container.doc!, slotRange.start, slotRange.end, focusSnapshot)
     const boundaryProps =
       boundary.props && typeof boundary.props === 'object'
@@ -8893,13 +8942,14 @@ const updateSharedLayoutBoundary = async (
   }
   deactivateComponentSubtree(container, routeRoot.rootId)
   const focusSnapshot = captureBoundaryFocus(container.doc!, slotRange.start, slotRange.end)
+  clearComponentBoundaryAnchorsInRange(container, slotRange.start, slotRange.end)
   const { nodes, visitedDescendants } = renderRouteSubtreeForProjectionSlot(
     container,
     boundary,
     routeRoot.childIndex,
     nextChildren,
   )
-  replaceProjectionSlotContents(slotRange.start, slotRange.end, nodes)
+  replaceProjectionSlotContents(container, slotRange.start, slotRange.end, nodes)
   restoreBoundaryFocus(container.doc!, slotRange.start, slotRange.end, focusSnapshot)
   pruneRemovedComponents(container, routeRoot.rootId, visitedDescendants)
   boundary.active = false
@@ -9638,6 +9688,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
           : new Set<string>()
         : withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
             replaceBoundaryContents(start, end, nodes, {
+              container,
               preserveProjectionSlots: frame.projectionState.reuseExistingDom,
             }),
           ),
@@ -9669,6 +9720,9 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
   const scope = materializeScope(container, ensureComponentScopeId(container, component))
   await preloadResumableValue(container, scope)
   const module = await loadSymbol(container, activateSymbol)
+  if (component.active || component.symbol !== activateSymbol) {
+    return false
+  }
   const rawProps =
     component.rawProps && typeof component.rawProps === 'object' ? component.rawProps : null
   if (rawProps) {
@@ -9683,9 +9737,12 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
     const focusSnapshot = captureBoundaryFocus(container.doc!, component.start, component.end)
     let host = getExternalRoot(component)
     if (!host) {
-      replaceBoundaryContents(component.start, component.end, [
-        createExternalRootNode(container, component.id, externalMeta.kind),
-      ])
+      replaceBoundaryContents(
+        component.start,
+        component.end,
+        [createExternalRootNode(container, component.id, externalMeta.kind)],
+        { container },
+      )
       host = getExternalRoot(component)
     }
     if (!host) {
@@ -9814,6 +9871,7 @@ const activateComponent = async (container: RuntimeContainer, componentId: strin
         : new Set<string>()
       : withCompiledReactiveTargetPatchPreservation(preserveCompiledTargets, () =>
           replaceBoundaryContents(start, end, nodes, {
+            container,
             preserveProjectionSlots: frame.projectionState.reuseExistingDom,
           }),
         ),
@@ -10649,7 +10707,7 @@ const applyStreamedSuspenseBoundary = (
   const focusSnapshot = captureBoundaryFocus(doc, component.start, component.end)
   const fragment = template.content.cloneNode(true) as DocumentFragment
   const nodes = [...fragment.childNodes]
-  replaceBoundaryContents(component.start, component.end, nodes)
+  replaceBoundaryContents(component.start, component.end, nodes, { container })
   pruneStreamedBoundaryDescendants(container, chunk.boundaryId, payload)
   mergeResumePayload(container, payload)
   component.suspensePromise = null
