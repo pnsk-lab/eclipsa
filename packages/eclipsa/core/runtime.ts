@@ -9465,6 +9465,9 @@ const navigateContainer = async (
       await Promise.resolve()
       if (!settled) {
         const loadingRoute = await loadResolvedRoute(container, matched, 'loading')
+        if (sequence !== router.sequence) {
+          return
+        }
         if (loadingRoute) {
           renderCurrentRoute(container, loadingRoute)
         }
@@ -9476,11 +9479,11 @@ const navigateContainer = async (
         : loadRouteComponent(container, router.currentPath.value),
       nextRoutePromise,
     ])
-    if (!nextRoute) {
-      fallbackDocumentNavigation(doc, url, mode)
+    if (sequence !== router.sequence) {
       return
     }
-    if (sequence !== router.sequence) {
+    if (!nextRoute) {
+      fallbackDocumentNavigation(doc, url, mode)
       return
     }
 
@@ -9492,6 +9495,9 @@ const navigateContainer = async (
       currentRoute && sharedLayoutCount > 0
         ? await updateSharedLayoutBoundary(container, currentRoute, nextRoute, sharedLayoutCount)
         : false
+    if (sequence !== router.sequence) {
+      return
+    }
 
     if (!reusedLayout) {
       renderCurrentRoute(container, nextRoute)
