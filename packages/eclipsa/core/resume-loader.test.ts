@@ -238,4 +238,19 @@ describe('resume loader', () => {
       ),
     ).toBe(true)
   })
+
+  it('requires full resume when mount callbacks are serialized', () => {
+    expect(
+      needsFullResumeOnStart(
+        createPayload({
+          components: {
+            c0: {
+              mountCount: 1,
+            } as any,
+          },
+        }),
+        { client: null },
+      ),
+    ).toBe(true)
+  })
 })

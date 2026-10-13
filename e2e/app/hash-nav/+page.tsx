@@ -12,5 +12,8 @@ export default () => (
       Deep Dive Target
     </h3>
     <p data-testid="hash-nav-target-copy">The target should be scrolled into view.</p>
+    <p>
+      <Link href="/counter">Open counter after deep scroll</Link>
+    </p>
   </section>
 )
